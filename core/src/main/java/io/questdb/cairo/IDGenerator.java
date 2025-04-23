@@ -35,6 +35,8 @@ public interface IDGenerator extends Closeable {
 
     void open(Path path);
 
+    long getCurrentId();
+
     long getNextId();
 
     void reset();

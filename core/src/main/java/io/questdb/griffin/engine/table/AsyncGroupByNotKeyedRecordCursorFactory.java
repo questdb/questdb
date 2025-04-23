@@ -197,23 +197,26 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         record.init(frameMemory);
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
-        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-        final SimpleMapValue value = atom.getMapValue(slotId);
         try {
-            record.setRowIndex(0);
-            long rowId = record.getRowId();
-            for (long r = 0; r < frameRowCount; r++) {
-                record.setRowIndex(r);
-                if (value.isNew()) {
-                    functionUpdater.updateNew(value, record, rowId++);
-                    value.setNew(false);
-                } else {
-                    functionUpdater.updateExisting(value, record, rowId++);
+            final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+            final SimpleMapValue value = atom.getMapValue(slotId);
+            try {
+                record.setRowIndex(0);
+                long rowId = record.getRowId();
+                for (long r = 0; r < frameRowCount; r++) {
+                    record.setRowIndex(r);
+                    if (value.isNew()) {
+                        functionUpdater.updateNew(value, record, rowId++);
+                        value.setNew(false);
+                    } else {
+                        functionUpdater.updateExisting(value, record, rowId++);
+                    }
                 }
+            } finally {
+                atom.release(slotId);
             }
         } finally {
-            atom.release(slotId);
             task.releaseFrameMemory();
         }
     }
@@ -257,24 +260,27 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         assert frameRowCount > 0;
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
-        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-        final SimpleMapValue value = atom.getMapValue(slotId);
-        final CompiledFilter compiledFilter = atom.getCompiledFilter();
-        final Function filter = atom.getFilter(slotId);
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
-                applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-            }
+            final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+            final SimpleMapValue value = atom.getMapValue(slotId);
+            final CompiledFilter compiledFilter = atom.getCompiledFilter();
+            final Function filter = atom.getFilter(slotId);
+            try {
+                if (compiledFilter == null || frameMemory.hasColumnTops()) {
+                    // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
+                    applyFilter(filter, rows, record, frameRowCount);
+                } else {
+                    applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
+                }
 
-            record.setRowIndex(0);
-            long baseRowId = record.getRowId();
-            aggregateFiltered(record, rows, baseRowId, value, functionUpdater);
+                record.setRowIndex(0);
+                long baseRowId = record.getRowId();
+                aggregateFiltered(record, rows, baseRowId, value, functionUpdater);
+            } finally {
+                atom.release(slotId);
+            }
         } finally {
-            atom.release(slotId);
             task.releaseFrameMemory();
         }
     }

@@ -129,6 +129,10 @@ public class QueryRegistry {
     public long register(CharSequence query, SqlExecutionContext executionContext) {
         final long queryId = idSeq.getAndIncrement();
         final Entry e = tlQueryPool.get().pop();
+        // Just in case something messed the cached Entry
+        // while it was in the pool, like late query cancel()
+        // clean the object before using.
+        e.clear();
 
         e.registeredAtNs = clock.getTicks();
         e.changedAtNs = e.registeredAtNs;
@@ -177,6 +181,9 @@ public class QueryRegistry {
             return;
         }
 
+        // Remove shared AtomicBoolean from execution context CircuitBreaker
+        // before returning Entry to the pool
+        executionContext.setCancelledFlag(null);
         final Entry e = registry.remove(queryId);
         if (e != null) {
             tlQueryPool.get().push(e);
@@ -184,8 +191,6 @@ public class QueryRegistry {
             // this might happen if query was cancelled
             LOG.error().$("query to unregister not found [id=").$(queryId).I$();
         }
-
-        executionContext.setCancelledFlag(null);
     }
 
     public interface Listener {

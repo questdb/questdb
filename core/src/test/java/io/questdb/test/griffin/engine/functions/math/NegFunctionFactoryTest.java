@@ -42,7 +42,7 @@ public class NegFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNegFloat() throws Exception {
-        assertNeg("select -x, typeOf(-x) from (select cast(10 as float) x)", "-10.0000\tFLOAT\n");
+        assertNeg("select -x, typeOf(-x) from (select cast(10 as float) x)", "-10.0\tFLOAT\n");
     }
 
     @Test

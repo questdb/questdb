@@ -627,11 +627,11 @@ public final class TestUtils {
         }
     }
 
-    public static void assertEventually(Runnable assertion) {
+    public static void assertEventually(EventualCode assertion) throws Exception {
         assertEventually(assertion, 30);
     }
 
-    public static void assertEventually(Runnable assertion, int timeoutSeconds) {
+    public static void assertEventually(EventualCode assertion, int timeoutSeconds) throws Exception {
         long maxSleepingTimeMillis = 1000;
         long nextSleepingTimeMillis = 10;
         long startTime = System.nanoTime();
@@ -877,6 +877,36 @@ public final class TestUtils {
             latch.await();
         } catch (Throwable ignore) {
         }
+    }
+
+    /**
+     * Generates a cartesian product from multiple sets of values.
+     * <p>
+     * This utility method creates all possible combinations of elements where each combination
+     * takes exactly one element from each input set. It's primarily used to generate comprehensive
+     * test parameters for parameterized tests.
+     * <p>
+     * Example usage:
+     * <pre>{@code
+     * Object[][] parameters = cartesianProduct(new Object[][]{
+     *     JoinType.values(),     // First set: all join types
+     *     {true, false},         // Second set: boolean values
+     *     LimitType.values(),    // Third set: all limit types
+     *     {true, false}          // Fourth set: more boolean values
+     * });
+     * }</pre>
+     *
+     * @param values A non-empty array of arrays, where each inner array represents a set of values.
+     *               None of the inner arrays can be empty.
+     * @return A two-dimensional array containing all possible combinations of the input values,
+     * where each row is one combination.
+     * @throws AssertionError If the input array is empty or any inner array is empty
+     */
+    public static Object[][] cartesianProduct(@NotNull Object[][] values) {
+        if (values.length == 0) {
+            throw new AssertionError("Expected at least one set of values");
+        }
+        return cartesianProduct(values, 0);
     }
 
     public static int connect(long fd, long sockAddr) {
@@ -1903,6 +1933,32 @@ public final class TestUtils {
         }
     }
 
+    private static Object[][] cartesianProduct(Object[][] values, int offset) {
+        Object[] currentLvlValues = values[offset];
+        if (currentLvlValues.length == 0) {
+            throw new AssertionError("Expected at least one value [offset=" + offset + "]");
+        }
+
+        if (values.length - offset == 1) {
+            // the last level
+            Object[][] result = new Object[currentLvlValues.length][1];
+            for (int i = 0; i < currentLvlValues.length; i++) {
+                result[i][0] = currentLvlValues[i];
+            }
+            return result;
+        }
+
+        Object[][] lowerLvlValues = cartesianProduct(values, offset + 1);
+        Object[][] res = new Object[currentLvlValues.length * lowerLvlValues.length][lowerLvlValues[0].length + 1];
+        for (int i = 0; i < currentLvlValues.length; i++) {
+            for (int j = 0; j < lowerLvlValues.length; j++) {
+                res[i * lowerLvlValues.length + j][0] = currentLvlValues[i];
+                System.arraycopy(lowerLvlValues[j], 0, res[i * lowerLvlValues.length + j], 1, lowerLvlValues[0].length);
+            }
+        }
+        return res;
+    }
+
     private static ObjObjHashMap<String, Long> findPartitionSizes(
             Utf8Sequence root,
             String tableName,
@@ -2051,6 +2107,10 @@ public final class TestUtils {
 
     public interface CheckedSupplier<T> {
         T get() throws Throwable;
+    }
+
+    public interface EventualCode {
+        void run() throws Exception;
     }
 
     @FunctionalInterface

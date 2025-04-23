@@ -47,4 +47,9 @@ public class BitwiseOrIPv4StrFunctionFactory implements FunctionFactory {
     ) {
         return new BitwiseOrIPv4FunctionFactory.BitwiseOrIPv4Function(args.getQuick(0), args.getQuick(1));
     }
+
+    @Override
+    public boolean supportImplicitCastCharToStr() {
+        return false;
+    }
 }

@@ -28,15 +28,16 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
-import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.RecordToRowCopier;
@@ -44,34 +45,42 @@ import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
-    private final BlockFileWriter blockFileWriter;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
     private final ObjList<TableToken> childViewSink2 = new ObjList<>();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final CairoConfiguration configuration;
-    private final Path dbRoot;
-    private final int dbRootLen;
     private final CairoEngine engine;
+    private final StringSink errorMsgSink = new StringSink();
+    private final FixedOffsetIntervalIterator fixedOffsetIterator = new FixedOffsetIntervalIterator();
+    private final MatViewGraph graph;
+    private final LongList intervals = new LongList();
     private final MicrosecondClock microsecondClock;
     private final MatViewRefreshExecutionContext refreshExecutionContext;
     private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
+    private final MatViewStateStore stateStore;
+    private final TimeZoneIntervalIterator timeZoneIterator = new TimeZoneIntervalIterator();
     private final WalTxnRangeLoader txnRangeLoader;
-    private final MatViewGraph viewGraph;
     private final int workerId;
 
     public MatViewRefreshJob(int workerId, CairoEngine engine, int workerCount, int sharedWorkerCount) {
@@ -79,14 +88,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             this.workerId = workerId;
             this.engine = engine;
             this.refreshExecutionContext = new MatViewRefreshExecutionContext(engine, workerCount, sharedWorkerCount);
-            this.viewGraph = engine.getMatViewGraph();
+            this.graph = engine.getMatViewGraph();
+            this.stateStore = engine.getMatViewStateStore();
             this.configuration = engine.getConfiguration();
             this.txnRangeLoader = new WalTxnRangeLoader(configuration.getFilesFacade());
             this.microsecondClock = configuration.getMicrosecondClock();
-            this.blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
-            this.dbRoot = new Path();
-            dbRoot.of(engine.getConfiguration().getDbRoot());
-            this.dbRootLen = dbRoot.size();
         } catch (Throwable th) {
             close();
             throw th;
@@ -102,8 +108,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     public void close() {
         LOG.info().$("materialized view refresh job closing [workerId=").$(workerId).I$();
         Misc.free(refreshExecutionContext);
-        Misc.free(blockFileWriter);
-        Misc.free(dbRoot);
+        Misc.free(txnRangeLoader);
     }
 
     @Override
@@ -113,66 +118,235 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return processNotifications();
     }
 
-    private void enqueueInvalidateDependentViews(TableToken viewToken, String invalidationReason) {
-        childViewSink2.clear();
-        viewGraph.getDependentMatViews(viewToken, childViewSink2);
-        for (int v = 0, n = childViewSink2.size(); v < n; v++) {
-            viewGraph.enqueueInvalidate(childViewSink2.get(v), invalidationReason);
+    private static long approxPartitionMicros(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.HOUR:
+                return Timestamps.HOUR_MICROS;
+            case PartitionBy.DAY:
+                return Timestamps.DAY_MICROS;
+            case PartitionBy.WEEK:
+                return Timestamps.WEEK_MICROS;
+            case PartitionBy.MONTH:
+                return Timestamps.MONTH_MICROS_APPROX;
+            case PartitionBy.YEAR:
+                return Timestamps.YEAR_MICROS_NONLEAP;
+            default:
+                throw new UnsupportedOperationException("unexpected partition by: " + partitionBy);
         }
     }
 
-    private boolean findCommitTimestampRanges(
-            @NotNull MatViewRefreshExecutionContext executionContext,
+    /**
+     * Estimates density of rows per SAMPLE BY bucket. The estimate is not very precise as
+     * it doesn't use exact min/max timestamps for each partition, but it should do the job
+     * of splitting large refresh table scans into multiple smaller scans.
+     */
+    private static long estimateRowsPerBucket(@NotNull TableReader baseTableReader, long bucketMicros) {
+        final long rows = baseTableReader.size();
+        final long partitionMicros = approxPartitionMicros(baseTableReader.getPartitionedBy());
+        final int partitionCount = baseTableReader.getPartitionCount();
+        if (partitionCount > 0) {
+            return Math.max(1, (rows * bucketMicros) / (partitionMicros * partitionCount));
+        }
+        return 1;
+    }
+
+    private boolean checkIfBaseTableDropped(MatViewRefreshTask refreshTask) {
+        final TableToken baseTableToken = refreshTask.baseTableToken;
+        final TableToken matViewToken = refreshTask.matViewToken;
+        if (matViewToken == null) {
+            assert baseTableToken != null;
+            try {
+                engine.verifyTableToken(baseTableToken);
+            } catch (CairoException | TableReferenceOutOfDateException e) {
+                LOG.info().$("base table is dropped or renamed [table=").$(baseTableToken)
+                        .$(", error=").$(e.getFlyweightMessage())
+                        .I$();
+                invalidateDependentViews(baseTableToken, "base table is dropped or renamed");
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void enqueueInvalidateDependentViews(TableToken viewToken, String invalidationReason) {
+        childViewSink2.clear();
+        graph.getDependentViews(viewToken, childViewSink2);
+        for (int v = 0, n = childViewSink2.size(); v < n; v++) {
+            stateStore.enqueueInvalidate(childViewSink2.get(v), invalidationReason);
+        }
+    }
+
+    private SampleByIntervalIterator findSampleByIntervals(
             @NotNull TableReader baseTableReader,
             @NotNull MatViewDefinition viewDefinition,
             long lastRefreshTxn
     ) throws SqlException {
         final long lastTxn = baseTableReader.getSeqTxn();
+        final TableToken baseTableToken = baseTableReader.getTableToken();
+        final TableToken matViewToken = viewDefinition.getMatViewToken();
 
+        LongList txnIntervals = null;
+        long minTs;
+        long maxTs;
         if (lastRefreshTxn > 0) {
-            txnRangeLoader.load(engine, Path.PATH.get(), baseTableReader.getTableToken(), lastRefreshTxn, lastTxn);
-            long minTs = txnRangeLoader.getMinTimestamp();
-            long maxTs = txnRangeLoader.getMaxTimestamp();
-
-            if (minTs <= maxTs) {
-                // there are no concurrent accesses to the sampler at this point
-                final TimestampSampler sampler = viewDefinition.getTimestampSampler();
-                sampler.setStart(viewDefinition.getFixedOffset());
-                TimeZoneRules rules = viewDefinition.getTzRules();
-                // convert UTC timestamp into Time Zone timestamp
-                // round to the nearest sampling interval
-                // then convert back to UTC
-                long tzMinOffset = rules != null ? rules.getOffset(minTs) : 0;
-                long tzMaxOffset = rules != null ? rules.getOffset(maxTs) : 0;
-
-                final long tzMinTs = sampler.round(minTs + tzMinOffset);
-                minTs = rules != null ? Timestamps.toUTC(tzMinTs, rules) : tzMinTs - tzMinOffset;
-
-                final long tzMaxTs = sampler.nextTimestamp(sampler.round(maxTs + tzMaxOffset));
-                maxTs = rules != null ? Timestamps.toUTC(tzMaxTs, rules) : tzMaxTs - tzMaxOffset;
-
-                executionContext.setRange(minTs, maxTs);
-                LOG.info().$("refreshing materialized view [view=").$(viewDefinition.getMatViewToken())
-                        .$(", base=").$(baseTableReader.getTableToken())
-                        .$(", fromTxn=").$(lastRefreshTxn)
-                        .$(", toTxn=").$(lastTxn)
-                        .$(", ts>=").$ts(minTs)
-                        .$(", ts<").$ts(maxTs)
-                        .I$();
-
-                return true;
-            }
+            // Find min/max timestamps from WAL transactions.
+            txnIntervals = intervals;
+            txnIntervals.clear();
+            txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, lastRefreshTxn, lastTxn);
+            minTs = txnRangeLoader.getMinTimestamp();
+            maxTs = txnRangeLoader.getMaxTimestamp();
         } else {
-            executionContext.setRange(Long.MIN_VALUE + 1, Long.MAX_VALUE);
-
-            LOG.info().$("refreshing materialized view, full refresh [view=").$(viewDefinition.getMatViewToken())
-                    .$(", base=").$(baseTableReader.getTableToken())
-                    .$(", toTxn=").$(lastTxn)
-                    .I$();
-            return true;
+            // Full table scan.
+            // When the table is empty, min timestamp is set to Long.MAX_VALUE,
+            // while max timestamp is Long.MIN_VALUE, so we end up skipping the refresh.
+            minTs = baseTableReader.getMinTimestamp();
+            maxTs = baseTableReader.getMaxTimestamp();
         }
 
-        return false;
+        if (minTs <= maxTs) {
+            TimestampSampler timestampSampler = viewDefinition.getTimestampSampler();
+            // For small sampling intervals such as '10T' or '2s' the actual sampler is
+            // chosen as a 10x multiple of the original interval. That's to speed up
+            // iteration done by the interval iterator.
+            final long minIntervalMicros = configuration.getMatViewMinRefreshInterval();
+            long approxBucketSize = timestampSampler.getApproxBucketSize();
+            long actualInterval = viewDefinition.getSamplingInterval();
+            if (approxBucketSize < minIntervalMicros) {
+                while (approxBucketSize < minIntervalMicros) {
+                    approxBucketSize *= 10;
+                    actualInterval *= 10;
+                }
+                timestampSampler = TimestampSamplerFactory.getInstance(
+                        actualInterval,
+                        viewDefinition.getSamplingIntervalUnit(),
+                        0
+                );
+            }
+
+            final long rowsPerBucket = estimateRowsPerBucket(baseTableReader, timestampSampler.getApproxBucketSize());
+            final int rowsPerQuery = configuration.getMatViewRowsPerQueryEstimate();
+            final int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));
+
+            // there are no concurrent accesses to the sampler at this point as we've locked the state
+            final SampleByIntervalIterator intervalIterator = intervalIterator(
+                    timestampSampler,
+                    viewDefinition.getTzRules(),
+                    viewDefinition.getFixedOffset(),
+                    txnIntervals,
+                    minTs,
+                    maxTs,
+                    step
+            );
+
+            final long iteratorMinTs = intervalIterator.getMinTimestamp();
+            final long iteratorMaxTs = intervalIterator.getMaxTimestamp();
+
+            LOG.info().$("refreshing materialized view [view=").$(matViewToken)
+                    .$(", base=").$(baseTableToken)
+                    .$(", fromTxn=").$(lastRefreshTxn)
+                    .$(", toTxn=").$(lastTxn)
+                    .$(", iteratorMinTs>=").$ts(iteratorMinTs)
+                    .$(", iteratorMaxTs<").$ts(iteratorMaxTs)
+                    .I$();
+
+            return intervalIterator;
+        }
+
+        return null;
+    }
+
+    private boolean fullRefresh(MatViewRefreshTask refreshTask) {
+        final TableToken viewToken = refreshTask.matViewToken;
+        assert viewToken != null;
+        final long refreshTriggeredTimestamp = refreshTask.refreshTriggeredTimestamp;
+
+        final MatViewState state = stateStore.getViewState(viewToken);
+        if (state == null || state.isDropped()) {
+            return false;
+        }
+
+        if (!state.tryLock()) {
+            // Someone is refreshing the view, so we're going for another attempt.
+            // Just mark the view invalid to prevent intermediate incremental refreshes and republish the task.
+            LOG.debug().$("could not lock materialized view for full refresh, will retry [view=").$(viewToken).I$();
+            state.markAsPendingInvalidation();
+            stateStore.enqueueFullRefresh(viewToken);
+            return false;
+        }
+
+        try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
+            final TableToken baseTableToken;
+            final String baseTableName = state.getViewDefinition().getBaseTableName();
+            try {
+                baseTableToken = engine.verifyTableName(state.getViewDefinition().getBaseTableName());
+            } catch (CairoException e) {
+                LOG.error()
+                        .$("could not perform full refresh, could not verify base table [view=").$(viewToken)
+                        .$(", baseTableName=").$(baseTableName)
+                        .$(", errno=").$(e.getErrno())
+                        .$(", errorMsg=").$(e.getFlyweightMessage())
+                        .I$();
+                refreshFailState(state, walWriter, microsecondClock.getTicks(), e);
+                return false;
+            }
+
+            if (!baseTableToken.isWal()) {
+                refreshFailState(state, walWriter, microsecondClock.getTicks(), "base table is not a WAL table");
+                return false;
+            }
+
+            // Steps:
+            // - truncate view
+            // - compile view and insert as select on all base table partitions
+            // - write the result set to WAL (or directly to table writer O3 area)
+            // - apply resulting commit
+            // - update applied to txn in MatViewStateStore
+            try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
+                // Operate SQL on a fixed reader that has known max transaction visible. The reader
+                // is used to initialize base table readers returned from the refreshExecutionContext.getReader()
+                // call, so that all of them are at the same txn.
+                engine.detachReader(baseTableReader);
+                refreshExecutionContext.of(baseTableReader);
+                try {
+                    walWriter.truncateSoft();
+                    resetInvalidState(state, walWriter);
+
+                    final long toBaseTxn = baseTableReader.getSeqTxn();
+                    final MatViewDefinition viewDef = state.getViewDefinition();
+                    // Specify -1 as the last refresh txn, so that we scan all partitions.
+                    final SampleByIntervalIterator intervalIterator = findSampleByIntervals(baseTableReader, viewDef, -1);
+                    if (intervalIterator != null) {
+                        insertAsSelect(state, viewDef, walWriter, intervalIterator, toBaseTxn, refreshTriggeredTimestamp);
+                    }
+                } finally {
+                    refreshExecutionContext.clearReader();
+                    engine.attachReader(baseTableReader);
+                }
+            } catch (Throwable th) {
+                LOG.error()
+                        .$("could not perform full refresh [view=").$(viewToken)
+                        .$(", baseTableToken=").$(baseTableToken)
+                        .$(", ex=").$(th).I$();
+                refreshFailState(state, walWriter, microsecondClock.getTicks(), th);
+                return false;
+            }
+        } catch (Throwable th) {
+            // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
+            // invalid state transaction. Update the in-memory state and call it a day.
+            LOG.critical()
+                    .$("could not perform incremental refresh, unexpected error [view=").$(viewToken)
+                    .$(", ex=").$(th)
+                    .I$();
+            refreshFailState(state, null, microsecondClock.getTicks(), th);
+            return false;
+        } finally {
+            state.unlock();
+            state.tryCloseIfDropped();
+        }
+
+        // Kickstart incremental refresh.
+        stateStore.enqueueIncrementalRefresh(viewToken);
+        return true;
     }
 
     private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) throws SqlException {
@@ -185,44 +359,61 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         );
     }
 
+    private boolean incrementalRefresh(MatViewRefreshTask refreshTask) {
+        final TableToken baseTableToken = refreshTask.baseTableToken;
+        final TableToken matViewToken = refreshTask.matViewToken;
+        final long refreshTriggeredTimestamp = refreshTask.refreshTriggeredTimestamp;
+        if (matViewToken == null) {
+            return refreshDependentViewsIncremental(baseTableToken, graph, stateStore, refreshTriggeredTimestamp);
+        } else {
+            return refreshIncremental(matViewToken, stateStore, refreshTriggeredTimestamp);
+        }
+    }
+
     private boolean insertAsSelect(
-            MatViewRefreshState state,
+            MatViewState state,
             MatViewDefinition viewDef,
-            TableWriterAPI tableWriter,
+            WalWriter walWriter,
+            SampleByIntervalIterator intervalIterator,
             long baseTableTxn,
             long refreshTriggeredTimestamp
-    ) throws SqlException {
+    ) {
         assert state.isLocked();
 
-        final int maxRecompileAttempts = configuration.getMatViewMaxRecompileAttempts();
+        final int maxRetries = configuration.getMatViewMaxRefreshRetries();
+        final long oomRetryTimeout = configuration.getMatViewRefreshOomRetryTimeout();
         final long batchSize = configuration.getMatViewInsertAsSelectBatchSize();
 
         RecordCursorFactory factory = null;
         RecordToRowCopier copier;
-        long rowCount = 0;
+        int intervalStep = intervalIterator.getStep();
         long refreshTimestamp = microsecondClock.getTicks();
+        final TableToken viewTableToken = viewDef.getMatViewToken();
         try {
             factory = state.acquireRecordFactory();
             copier = state.getRecordToRowCopier();
 
-            for (int i = 0; i < maxRecompileAttempts; i++) {
+            for (int i = 0; i <= maxRetries; i++) {
                 try {
                     if (factory == null) {
+                        final String viewSql = viewDef.getMatViewSql();
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                            LOG.info().$("compiling materialized view [view=").$(viewDef.getMatViewToken()).$(", attempt=").$(i).I$();
-                            final CompiledQuery compiledQuery = compiler.compile(viewDef.getMatViewSql(), refreshExecutionContext);
+                            LOG.info().$("compiling materialized view [view=").$(viewTableToken).$(", attempt=").$(i).I$();
+                            final CompiledQuery compiledQuery = compiler.compile(viewSql, refreshExecutionContext);
                             assert compiledQuery.getType() == CompiledQuery.SELECT;
                             factory = compiledQuery.getRecordCursorFactory();
-
-                            if (copier == null || tableWriter.getMetadata().getMetadataVersion() != state.getRecordRowCopierMetadataVersion()) {
-                                copier = getRecordToRowCopier(tableWriter, factory, compiler);
+                            if (copier == null || walWriter.getMetadata().getMetadataVersion() != state.getRecordRowCopierMetadataVersion()) {
+                                copier = getRecordToRowCopier(walWriter, factory, compiler);
                             }
                         } catch (SqlException e) {
                             factory = Misc.free(factory);
-                            LOG.error().$("error refreshing materialized view, compilation error [view=").$(viewDef.getMatViewToken())
+                            LOG.error().$("could not compile materialized view [view=").$(viewTableToken)
+                                    .$(", sql=").$(viewSql)
+                                    .$(", errorPos=").$(e.getPosition())
+                                    .$(", attempt=").$(i)
                                     .$(", error=").$(e.getFlyweightMessage())
                                     .I$();
-                            refreshFailState(state, refreshTimestamp, e.getMessage());
+                            refreshFailState(state, walWriter, refreshTimestamp, e);
                             return false;
                         }
                     }
@@ -230,128 +421,165 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     assert factory != null;
                     assert copier != null;
 
-                    final CharSequence timestampName = tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex());
+                    final CharSequence timestampName = walWriter.getMetadata().getColumnName(walWriter.getMetadata().getTimestampIndex());
                     final int cursorTimestampIndex = factory.getMetadata().getColumnIndex(timestampName);
                     assert cursorTimestampIndex > -1;
 
-                    try (RecordCursor cursor = factory.getCursor(refreshExecutionContext)) {
-                        final Record record = cursor.getRecord();
-                        long deadline = batchSize;
-                        rowCount = 0;
-                        while (cursor.hasNext()) {
-                            TableWriter.Row row = tableWriter.newRow(record.getTimestamp(cursorTimestampIndex));
-                            copier.copy(record, row);
-                            row.append();
-                            if (++rowCount >= deadline) {
-                                tableWriter.ic();
-                                deadline = rowCount + batchSize;
+                    long commitTarget = batchSize;
+                    long rowCount = 0;
+
+                    intervalIterator.toTop(intervalStep);
+                    while (intervalIterator.next()) {
+                        refreshExecutionContext.setRange(intervalIterator.getTimestampLo(), intervalIterator.getTimestampHi());
+                        try (RecordCursor cursor = factory.getCursor(refreshExecutionContext)) {
+                            final Record record = cursor.getRecord();
+                            while (cursor.hasNext()) {
+                                TableWriter.Row row = walWriter.newRow(record.getTimestamp(cursorTimestampIndex));
+                                copier.copy(record, row);
+                                row.append();
+                                if (++rowCount >= commitTarget) {
+                                    walWriter.commit();
+                                    commitTarget = rowCount + batchSize;
+                                }
                             }
                         }
                     }
                     break;
                 } catch (TableReferenceOutOfDateException e) {
                     factory = Misc.free(factory);
-                    if (i == maxRecompileAttempts - 1) {
-                        LOG.info().$("base table is under heavy DDL changes, will reattempt refresh later [view=").$(viewDef.getMatViewToken())
-                                .$(", recompileAttempts=").$(maxRecompileAttempts)
+                    if (i == maxRetries) {
+                        LOG.info().$("base table is under heavy DDL changes, will retry refresh later [view=").$(viewTableToken)
+                                .$(", totalAttempts=").$(maxRetries)
+                                .$(", msg=").$(e.getFlyweightMessage())
                                 .I$();
-                        viewGraph.enqueueIncrementalRefresh(viewDef.getMatViewToken());
+                        stateStore.enqueueIncrementalRefresh(viewTableToken);
                         return false;
                     }
                 } catch (Throwable th) {
                     factory = Misc.free(factory);
-                    refreshFailState(state, refreshTimestamp, th.getMessage());
+                    if (th instanceof CairoException && CairoException.isCairoOomError(th) && i < maxRetries && intervalStep > 1) {
+                        intervalStep /= 2;
+                        LOG.info().$("query failed with out-of-memory, retrying with a reduced intervalStep")
+                                .$(" [view=").$(viewTableToken)
+                                .$(", intervalStep=").$(intervalStep)
+                                .$(", error=").$(((CairoException) th).getFlyweightMessage())
+                                .I$();
+                        Os.sleep(oomRetryTimeout);
+                        continue;
+                    }
                     throw th;
                 }
             }
 
-            tableWriter.commit();
-            state.refreshSuccess(factory, copier, tableWriter.getMetadata().getMetadataVersion(), refreshTimestamp, refreshTriggeredTimestamp, baseTableTxn);
+            walWriter.commitMatView(baseTableTxn, refreshTimestamp);
+            state.refreshSuccess(factory, copier, walWriter.getMetadata().getMetadataVersion(), refreshTimestamp, refreshTriggeredTimestamp, baseTableTxn);
+            state.setLastRefreshBaseTableTxn(baseTableTxn);
         } catch (Throwable th) {
-            LOG.error().$("error refreshing materialized view [view=").$(viewDef.getMatViewToken()).$(", error=").$(th).I$();
             Misc.free(factory);
-            refreshFailState(state, refreshTimestamp, th.getMessage());
-            throw th;
+            LOG.error()
+                    .$("could not perform materialized view refresh [view=").$(viewTableToken)
+                    .$(", ex=").$(th)
+                    .I$();
+            refreshFailState(state, walWriter, refreshTimestamp, th);
+            return false;
         }
 
-        return rowCount > 0;
+        return true;
     }
 
-    private void invalidateDependentViews(TableToken baseTableToken, MatViewGraph viewGraph, String invalidationReason) {
+    private SampleByIntervalIterator intervalIterator(
+            @NotNull TimestampSampler sampler,
+            @Nullable TimeZoneRules tzRules,
+            long fixedOffset,
+            @Nullable LongList txnIntervals,
+            long minTs,
+            long maxTs,
+            int step
+    ) {
+        if (tzRules == null || tzRules.hasFixedOffset()) {
+            long fixedTzOffset = tzRules != null ? tzRules.getOffset(0) : 0;
+            return fixedOffsetIterator.of(
+                    sampler,
+                    fixedOffset - fixedTzOffset,
+                    txnIntervals,
+                    minTs,
+                    maxTs,
+                    step
+            );
+        }
+
+        return timeZoneIterator.of(
+                sampler,
+                tzRules,
+                fixedOffset,
+                txnIntervals,
+                minTs,
+                maxTs,
+                step
+        );
+    }
+
+    private void invalidate(MatViewRefreshTask refreshTask) {
+        final String invalidationReason = refreshTask.invalidationReason;
+        if (refreshTask.isBaseTableTask()) {
+            invalidateDependentViews(refreshTask.baseTableToken, invalidationReason);
+        } else {
+            invalidateView(refreshTask.matViewToken, invalidationReason, true);
+        }
+    }
+
+    private void invalidateDependentViews(TableToken baseTableToken, String invalidationReason) {
         childViewSink.clear();
-        viewGraph.getDependentMatViews(baseTableToken, childViewSink);
+        graph.getDependentViews(baseTableToken, childViewSink);
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
             final TableToken viewToken = childViewSink.get(v);
-            invalidateView(viewToken, viewGraph, invalidationReason, false);
+            invalidateView(viewToken, invalidationReason, false);
         }
-        viewGraph.notifyBaseInvalidated(baseTableToken);
+        stateStore.notifyBaseInvalidated(baseTableToken);
     }
 
-    private void invalidateView(TableToken viewToken, MatViewGraph viewGraph, String invalidationReason, boolean force) {
-        final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
+    private void invalidateView(TableToken viewToken, String invalidationReason, boolean force) {
+        final MatViewState state = stateStore.getViewState(viewToken);
         if (state != null && !state.isDropped()) {
             if (!state.tryLock()) {
                 LOG.debug().$("skipping materialized view invalidation, locked by another refresh run [view=").$(viewToken).I$();
                 state.markAsPendingInvalidation();
-                viewGraph.enqueueInvalidate(viewToken, invalidationReason);
+                stateStore.enqueueInvalidate(viewToken, invalidationReason);
                 return;
             }
 
-            try {
-                // Mark the view invalid only if the operation is forced or the view was ever refreshed.
+            try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
+                // Mark the view invalid only if the operation is forced or the view was never refreshed.
                 if (force || state.getLastRefreshBaseTxn() != -1) {
-                    setInvalidState(state, invalidationReason);
+                    setInvalidState(state, walWriter, invalidationReason);
                 }
             } finally {
                 state.unlock();
+                state.tryCloseIfDropped();
             }
 
             // Invalidate dependent views recursively.
-            enqueueInvalidateDependentViews(viewToken, invalidationReason);
+            enqueueInvalidateDependentViews(viewToken, "base materialized view is invalidated");
         }
     }
 
     private boolean processNotifications() {
         boolean refreshed = false;
-        while (viewGraph.tryDequeueRefreshTask(refreshTask)) {
-            final int operation = refreshTask.operation;
-            final TableToken baseTableToken = refreshTask.baseTableToken;
-            final TableToken matViewToken = refreshTask.matViewToken;
-            final long refreshTriggeredTimestamp = refreshTask.refreshTriggeredTimestamp;
-            final String invalidationReason = refreshTask.invalidationReason;
-
-            if (matViewToken == null) {
-                assert baseTableToken != null;
-                try {
-                    engine.verifyTableToken(baseTableToken);
-                } catch (CairoException | TableReferenceOutOfDateException e) {
-                    LOG.info().$("base table is dropped or renamed [table=").$(baseTableToken)
-                            .$(", error=").$(e.getFlyweightMessage())
-                            .I$();
-                    invalidateDependentViews(baseTableToken, viewGraph, "base table is dropped or renamed");
-                    continue;
-                }
+        while (stateStore.tryDequeueRefreshTask(refreshTask)) {
+            if (checkIfBaseTableDropped(refreshTask)) {
+                continue;
             }
 
+            final int operation = refreshTask.operation;
             switch (operation) {
                 case MatViewRefreshTask.INCREMENTAL_REFRESH:
-                    if (matViewToken == null) {
-                        refreshed |= refreshDependentViewsIncremental(baseTableToken, viewGraph, refreshTriggeredTimestamp);
-                    } else {
-                        refreshed |= refreshIncremental(matViewToken, viewGraph, refreshTriggeredTimestamp);
-                    }
+                    refreshed |= incrementalRefresh(refreshTask);
                     break;
                 case MatViewRefreshTask.FULL_REFRESH:
-                    assert matViewToken != null;
-                    refreshed |= refreshFull(matViewToken, viewGraph, refreshTriggeredTimestamp);
+                    refreshed |= fullRefresh(refreshTask);
                     break;
                 case MatViewRefreshTask.INVALIDATE:
-                    if (matViewToken == null) {
-                        invalidateDependentViews(baseTableToken, viewGraph, invalidationReason);
-                    } else {
-                        // Force invalidation was requested for the specific mat view.
-                        invalidateView(matViewToken, viewGraph, invalidationReason, true);
-                    }
+                    invalidate(refreshTask);
                     break;
                 default:
                     throw new RuntimeException("unexpected operation: " + operation);
@@ -360,7 +588,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return refreshed;
     }
 
-    private boolean refreshDependentViewsIncremental(TableToken baseTableToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
+    private boolean refreshDependentViewsIncremental(
+            TableToken baseTableToken,
+            MatViewGraph graph,
+            MatViewStateStore stateStore,
+            long refreshTriggeredTimestamp
+    ) {
         assert baseTableToken.isWal();
 
         boolean refreshed = false;
@@ -368,31 +601,40 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long minRefreshToTxn = baseSeqTracker.getWriterTxn();
 
         childViewSink.clear();
-        viewGraph.getDependentMatViews(baseTableToken, childViewSink);
+        graph.getDependentViews(baseTableToken, childViewSink);
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
             final TableToken viewToken = childViewSink.get(v);
-            final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
+            final MatViewState state = stateStore.getViewState(viewToken);
             if (state != null && !state.isPendingInvalidation() && !state.isInvalid() && !state.isDropped()) {
                 if (!state.tryLock()) {
                     LOG.debug().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
-                    viewGraph.enqueueIncrementalRefresh(viewToken);
+                    stateStore.enqueueIncrementalRefresh(viewToken);
                     continue;
                 }
-
-                try {
-                    refreshed = refreshIncremental0(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
+                try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
+                    try {
+                        refreshed |= refreshIncremental0(state, baseTableToken, walWriter, refreshTriggeredTimestamp);
+                    } catch (Throwable th) {
+                        refreshFailState(state, walWriter, microsecondClock.getTicks(), th);
+                    }
                 } catch (Throwable th) {
-                    LOG.error().$("error refreshing materialized view [view=").$(viewToken).$(", error=").$(th).I$();
-                    refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
+                    // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
+                    // invalid state transaction. Update the in-memory state and call it a day.
+                    LOG.error()
+                            .$("could not get table writer for view [view=").$(viewToken)
+                            .$(", ex=").$(th)
+                            .I$();
+                    refreshFailState(state, null, microsecondClock.getTicks(), th);
                 } finally {
                     state.unlock();
+                    state.tryCloseIfDropped();
                 }
             }
         }
         refreshTask.clear();
         refreshTask.baseTableToken = baseTableToken;
         refreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
-        viewGraph.notifyBaseRefreshed(refreshTask, minRefreshToTxn);
+        stateStore.notifyBaseRefreshed(refreshTask, minRefreshToTxn);
 
         if (refreshed) {
             LOG.info().$("refreshed materialized views dependent on [table=").$(baseTableToken).I$();
@@ -400,140 +642,88 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return refreshed;
     }
 
-    private void refreshFailState(MatViewRefreshState state, long refreshTimestamp, String errorMessage) {
-        state.refreshFail(blockFileWriter, dbRoot.trimTo(dbRootLen), refreshTimestamp, errorMessage);
+    private void refreshFailState(MatViewState state, @Nullable WalWriter walWriter, long refreshTimestamp, CharSequence errorMessage) {
+        state.refreshFail(refreshTimestamp, errorMessage);
+        if (walWriter != null) {
+            walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), true, errorMessage);
+        }
         // Invalidate dependent views recursively.
-        enqueueInvalidateDependentViews(state.getViewDefinition().getMatViewToken(), errorMessage);
+        enqueueInvalidateDependentViews(state.getViewDefinition().getMatViewToken(), "base materialized view refresh failed");
     }
 
-    private boolean refreshFull(@NotNull TableToken viewToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
-        final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
-        if (state == null || state.isDropped()) {
-            return false;
+    private void refreshFailState(MatViewState state, @Nullable WalWriter walWriter, long refreshTimestamp, Throwable th) {
+        errorMsgSink.clear();
+        if (th instanceof Sinkable) {
+            ((Sinkable) th).toSink(errorMsgSink);
+        } else {
+            errorMsgSink.put(th.getMessage());
         }
-
-        if (!state.tryLock()) {
-            // Someone is refreshing the view, so we're going for another attempt.
-            // Just mark the view invalid to prevent intermediate incremental refreshes and republish the task.
-            LOG.info().$("delaying full refresh of materialized view, locked by another refresh run [view=").$(viewToken).I$();
-            state.markAsPendingInvalidation();
-            viewGraph.enqueueFullRefresh(viewToken);
-            return false;
-        }
-
-        try {
-            final TableToken baseTableToken;
-            try {
-                baseTableToken = engine.verifyTableName(state.getViewDefinition().getBaseTableName());
-            } catch (CairoException th) {
-                LOG.error().$("full refresh error, cannot resolve base table [view=").$(viewToken)
-                        .$(", error=").$(th.getFlyweightMessage())
-                        .I$();
-                refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
-                return false;
-            }
-
-            if (!baseTableToken.isWal()) {
-                refreshFailState(state, microsecondClock.getTicks(), "base table is not a WAL table");
-                return false;
-            }
-
-            refreshFull0(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
-        } catch (Throwable th) {
-            LOG.error().$("full refresh error [view=").$(viewToken).$(", error=").$(th).I$();
-            refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
-            return false;
-        } finally {
-            state.unlock();
-        }
-
-        // Kickstart incremental refresh.
-        viewGraph.enqueueIncrementalRefresh(viewToken);
-        return true;
+        refreshFailState(state, walWriter, refreshTimestamp, errorMsgSink);
     }
 
-    private void refreshFull0(
-            @NotNull MatViewRefreshState state,
-            @NotNull TableToken baseTableToken,
-            @NotNull TableToken viewToken,
-            long refreshTriggeredTimestamp
-    ) throws SqlException {
-        assert state.isLocked();
-
-        // Steps:
-        // - truncate view
-        // - compile view and insert as select on all base table partitions
-        // - write the result set to WAL (or directly to table writer O3 area)
-        // - apply resulting commit
-        // - update applied to txn in MatViewGraph
-        try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
-            // Operate SQL on a fixed reader that has known max transaction visible. The reader
-            // is used to initialize base table readers returned from the refreshExecutionContext.getReader()
-            // call, so that all of them are at the same txn.
-            engine.detachReader(baseTableReader);
-            refreshExecutionContext.of(baseTableReader);
-            try {
-                final long toBaseTxn = baseTableReader.getSeqTxn();
-                // Make time interval filter no-op as we're querying all partitions.
-                refreshExecutionContext.setRange(Long.MIN_VALUE + 1, Long.MAX_VALUE);
-
-                try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "mat view full refresh")) {
-                    commitWriter.truncateSoft();
-                    final MatViewDefinition viewDef = state.getViewDefinition();
-                    insertAsSelect(state, viewDef, commitWriter, toBaseTxn, refreshTriggeredTimestamp);
-                    resetInvalidState(state);
-                    writeLastRefreshBaseTableTxn(state, toBaseTxn);
-                }
-            } finally {
-                refreshExecutionContext.clearReader();
-                engine.attachReader(baseTableReader);
-            }
-        }
-    }
-
-    private boolean refreshIncremental(@NotNull TableToken viewToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
-        final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
+    private boolean refreshIncremental(@NotNull TableToken viewToken, MatViewStateStore stateStore, long refreshTriggeredTimestamp) {
+        final MatViewState state = stateStore.getViewState(viewToken);
         if (state == null || state.isPendingInvalidation() || state.isInvalid() || state.isDropped()) {
             return false;
         }
 
         if (!state.tryLock()) {
-            LOG.debug().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
-            viewGraph.enqueueIncrementalRefresh(viewToken);
+            LOG.debug().$("could not lock materialized view for incremental refresh, will retry [view=").$(viewToken).I$();
+            stateStore.enqueueIncrementalRefresh(viewToken);
             return false;
         }
 
-        try {
+        final String baseTableName = state.getViewDefinition().getBaseTableName();
+        try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             final TableToken baseTableToken;
             try {
-                baseTableToken = engine.verifyTableName(state.getViewDefinition().getBaseTableName());
-            } catch (CairoException th) {
-                LOG.error().$("error refreshing materialized view, cannot resolve base table [view=").$(viewToken)
-                        .$(", error=").$(th.getFlyweightMessage())
+                baseTableToken = engine.verifyTableName(baseTableName);
+            } catch (CairoException e) {
+                LOG.error()
+                        .$("could not perform incremental refresh, could not verify base table [view=").$(viewToken)
+                        .$(", baseTableName=").$(baseTableName)
+                        .$(", errno=").$(e.getErrno())
+                        .$(", errorMsg=").$(e.getFlyweightMessage())
                         .I$();
-                refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
+                refreshFailState(state, walWriter, microsecondClock.getTicks(), e);
                 return false;
             }
 
             if (!baseTableToken.isWal()) {
-                refreshFailState(state, microsecondClock.getTicks(), "base table is not a WAL table");
+                refreshFailState(state, walWriter, microsecondClock.getTicks(), "base table is not a WAL table");
                 return false;
             }
 
-            return refreshIncremental0(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
+            try {
+                return refreshIncremental0(state, baseTableToken, walWriter, refreshTriggeredTimestamp);
+            } catch (Throwable th) {
+                LOG.error()
+                        .$("could not perform incremental refresh [view=").$(viewToken)
+                        .$(", baseTableToken=").$(baseTableToken)
+                        .$(", ex=").$(th)
+                        .I$();
+                refreshFailState(state, walWriter, microsecondClock.getTicks(), th);
+                return false;
+            }
         } catch (Throwable th) {
-            LOG.error().$("error refreshing materialized view [view=").$(viewToken).$(", error=").$(th).I$();
-            refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
+            // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
+            // invalid state transaction. Update the in-memory state and call it a day.
+            LOG.critical()
+                    .$("could not perform incremental refresh, unexpected error [view=").$(viewToken)
+                    .$(", ex=").$(th)
+                    .I$();
+            refreshFailState(state, null, microsecondClock.getTicks(), th);
             return false;
         } finally {
             state.unlock();
+            state.tryCloseIfDropped();
         }
     }
 
     private boolean refreshIncremental0(
-            @NotNull MatViewRefreshState state,
+            @NotNull MatViewState state,
             @NotNull TableToken baseTableToken,
-            @NotNull TableToken viewToken,
+            @NotNull WalWriter walWriter,
             long refreshTriggeredTimestamp
     ) throws SqlException {
         assert state.isLocked();
@@ -551,7 +741,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // - compile view and execute with timestamp ranges from the unprocessed commits
         // - write the result set to WAL (or directly to table writer O3 area)
         // - apply resulting commit
-        // - update applied to txn in MatViewGraph
+        // - update applied to txn in MatViewStateStore
 
         try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
             // Operate SQL on a fixed reader that has known max transaction visible. The reader
@@ -561,16 +751,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             refreshExecutionContext.of(baseTableReader);
             try {
                 final MatViewDefinition viewDef = state.getViewDefinition();
-                if (findCommitTimestampRanges(refreshExecutionContext, baseTableReader, viewDef, fromBaseTxn)) {
-                    toBaseTxn = baseTableReader.getSeqTxn();
-
-                    try (TableWriterAPI tableWriter = engine.getTableWriterAPI(viewToken, "Mat View refresh")) {
-                        boolean changed = insertAsSelect(state, viewDef, tableWriter, toBaseTxn, refreshTriggeredTimestamp);
-                        if (changed) {
-                            writeLastRefreshBaseTableTxn(state, toBaseTxn);
-                        }
-                        return changed;
-                    }
+                final SampleByIntervalIterator intervalIterator = findSampleByIntervals(baseTableReader, viewDef, fromBaseTxn);
+                if (intervalIterator != null) {
+                    return insertAsSelect(state, viewDef, walWriter, intervalIterator, baseTableReader.getSeqTxn(), refreshTriggeredTimestamp);
                 }
             } finally {
                 refreshExecutionContext.clearReader();
@@ -580,15 +763,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return false;
     }
 
-    private void resetInvalidState(MatViewRefreshState state) {
-        state.markAsValid(blockFileWriter, dbRoot.trimTo(dbRootLen));
+    private void resetInvalidState(MatViewState state, WalWriter walWriter) {
+        state.markAsValid();
+        state.setLastRefreshBaseTableTxn(-1);
+        walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), false, null);
     }
 
-    private void setInvalidState(MatViewRefreshState state, String invalidationReason) {
-        state.markAsInvalid(blockFileWriter, dbRoot.trimTo(dbRootLen), invalidationReason);
-    }
-
-    private void writeLastRefreshBaseTableTxn(MatViewRefreshState state, long txn) {
-        state.writeLastRefreshBaseTableTxn(blockFileWriter, dbRoot.trimTo(dbRootLen), txn);
+    private void setInvalidState(MatViewState state, WalWriter walWriter, CharSequence invalidationReason) {
+        state.markAsInvalid(invalidationReason);
+        walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), true, invalidationReason);
     }
 }

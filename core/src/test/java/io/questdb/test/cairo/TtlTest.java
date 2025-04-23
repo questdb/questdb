@@ -302,12 +302,11 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testGranularityInvalidCreate() throws Exception {
-        try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 1 HOUR");
-            fail("Accepted a TTL that's too fine-grained for partition size");
-        } catch (SqlException e) {
-            assertEquals("[69] TTL value must be an integer multiple of partition size", e.getMessage());
-        }
+        assertException(
+                "CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 1 HOUR",
+                69,
+                "TTL value must be an integer multiple of partition size"
+        );
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 25 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");

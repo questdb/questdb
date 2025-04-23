@@ -47,7 +47,6 @@ import io.questdb.cutlass.http.processors.TextQueryProcessor;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.QueryFutureUpdateListener;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
@@ -65,7 +64,6 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.concurrent.BrokenBarrierException;
 import java.util.function.LongSupplier;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -386,7 +384,7 @@ public class HttpQueryTestBuilder {
 
     @FunctionalInterface
     public interface HttpClientCode {
-        void run(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws InterruptedException, SqlException, BrokenBarrierException;
+        void run(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws Exception;
     }
 
     @FunctionalInterface

@@ -103,7 +103,7 @@ public class LineHttpSenderFailureTest extends AbstractBootstrapTest {
     public static class ServerController implements Closeable {
         private TestServerMain serverMain;
 
-        public void assertSqlEventually(String sql, String expected) {
+        public void assertSqlEventually(String sql, String expected) throws Exception {
             TestUtils.assertEventually(() -> serverMain.assertSql(sql, expected));
         }
 

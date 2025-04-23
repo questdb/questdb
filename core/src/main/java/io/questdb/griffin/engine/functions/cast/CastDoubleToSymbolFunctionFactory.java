@@ -52,24 +52,22 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             final StringSink sink = Misc.getThreadLocalSink();
-            sink.put(arg.getDouble(null), configuration.getDoubleToStrCastScale());
+            sink.put(arg.getDouble(null));
             return SymbolConstant.newInstance(sink);
         }
-        return new Func(arg, configuration.getDoubleToStrCastScale());
+        return new Func(arg);
     }
 
     private static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
-        private final int scale;
         private final StringSink sink = new StringSink();
         private final LongIntHashMap symbolTableShortcut = new LongIntHashMap();
         private final ObjList<String> symbols = new ObjList<>();
         private int next = 1;
 
-        public Func(Function arg, int scale) {
+        public Func(Function arg) {
             this.arg = arg;
             symbols.add(null);
-            this.scale = scale;
         }
 
         @Override
@@ -92,7 +90,7 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
 
             symbolTableShortcut.putAt(keyIndex, key, next);
             sink.clear();
-            sink.put(value, scale);
+            sink.put(value);
             symbols.add(Chars.toString(sink));
             return next++ - 1;
         }
@@ -112,7 +110,7 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
 
             symbolTableShortcut.putAt(keyIndex, key, next++);
             sink.clear();
-            sink.put(value, scale);
+            sink.put(value);
             final String str = Chars.toString(sink);
             symbols.add(Chars.toString(sink));
             return str;
@@ -139,7 +137,7 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public @Nullable SymbolTable newSymbolTable() {
-            Func copy = new Func(arg, scale);
+            Func copy = new Func(arg);
             copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
             copy.symbols.clear();
             copy.symbols.addAll(this.symbols);

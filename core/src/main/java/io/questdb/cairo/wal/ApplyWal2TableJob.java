@@ -36,7 +36,9 @@ import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewRefreshTask;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
@@ -71,6 +73,7 @@ import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
+import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
@@ -85,6 +88,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
+    private final BlockFileWriter mvStateWriter;
     private final OperationExecutor operationExecutor;
     private final long tableTimeQuotaMicros;
     private final Telemetry<TelemetryTask> telemetry;
@@ -109,12 +113,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         metrics = engine.getMetrics().walMetrics();
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Timestamps.DAY_MICROS;
         config = engine.getConfiguration();
+        mvStateWriter = new BlockFileWriter(config.getFilesFacade(), config.getCommitMode());
     }
 
     @Override
     public void close() {
         Misc.free(operationExecutor);
         Misc.free(walEventReader);
+        Misc.free(mvStateWriter);
     }
 
     private static void cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, TableToken tableToken) {
@@ -387,6 +393,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 final int txnCommitted = processWalCommit(
                                         writer,
                                         walId,
+                                        segmentId,
                                         tempPath,
                                         segmentTxn,
                                         operationExecutor,
@@ -437,7 +444,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 if (initialSeqTxn < writer.getSeqTxn()) {
-                    engine.notifyMatViewBaseCommit(mvRefreshTask, writer.getSeqTxn());
+                    engine.notifyMatViewBaseTableCommit(mvRefreshTask, writer.getSeqTxn());
                 }
             } catch (Throwable th) {
                 // We could have been applying multiple txns, and we failed somewhere in the middle. The writer will
@@ -512,6 +519,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private int processWalCommit(
             TableWriter writer,
             int walId,
+            int segmentId,
             @Transient Path walPath,
             long segmentTxn,
             OperationExecutor operationExecutor,
@@ -525,6 +533,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
         switch (walTxnType) {
             case DATA:
+            case MAT_VIEW_DATA:
                 walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
                 writer.commitWalInsertTransactions(
                         walPath,
@@ -542,11 +551,38 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, s, walRowCount, commitPhRowCount, latency);
                     lastCommittedRows += walRowCount;
                 }
+
+                if (writer.getTableToken().isMatView()) {
+                    for (long s = lastCommittedSeqTxn; s >= seqTxn; s--) {
+                        byte txnType = txnDetails.getWalTxnType(s);
+                        if (txnType == MAT_VIEW_DATA) {
+                            try {
+                                final Path path = Path.PATH2.get();
+                                final TableToken token = writer.getTableToken();
+                                path.of(engine.getConfiguration().getDbRoot()).concat(token);
+                                updateMatViewRefreshState(
+                                        path,
+                                        txnDetails.getMatViewRefreshTxn(s),
+                                        txnDetails.getMatViewRefreshTimestamp(s),
+                                        false,
+                                        null
+                                );
+                            } catch (CairoException e) {
+                                LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
+                                        .$(", msg=").$(e.getFlyweightMessage())
+                                        .$(", errno=").$(e.getErrno())
+                                        .I$();
+                            }
+                            break;
+                        }
+                    }
+                }
+
                 return (int) (writer.getAppliedSeqTxn() - seqTxn + 1);
 
             case SQL:
                 try (WalEventReader eventReader = walEventReader) {
-                    final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
+                    final WalEventCursor walEventCursor = eventReader.of(walPath, segmentTxn);
                     final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
                     walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
                     processWalSql(writer, sqlInfo, operationExecutor, seqTxn);
@@ -567,6 +603,34 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // Invalidate dependent mat views on truncate.
                 mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                 mvRefreshTask.invalidationReason = "truncate operation";
+                return 1;
+            case MAT_VIEW_INVALIDATE:
+                try (WalEventReader eventReader = walEventReader) {
+                    final Path path = Path.PATH2.get();
+                    final TableToken token = writer.getTableToken();
+                    path.of(engine.getConfiguration().getDbRoot()).concat(token);
+                    int tablePathLen = path.size();
+                    path.slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                    final WalEventCursor walEventCursor = eventReader.of(path, segmentTxn);
+                    final WalEventCursor.MatViewInvalidationInfo info = walEventCursor.getMvInvalidationInfo();
+                    updateMatViewRefreshState(
+                            path.trimTo(tablePathLen),
+                            info.getLastRefreshBaseTableTxn(),
+                            info.getLastRefreshTimestamp(),
+                            info.isInvalid(),
+                            info.getInvalidationReason()
+                    );
+                } catch (CairoException e) {
+                    LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
+                            .$(", msg=").$(e.getFlyweightMessage())
+                            .$(", errno=").$(e.getErrno())
+                            .I$();
+                }
+                // WAL-E files can be deleted by the purge job after a commit.
+                // Update the materialized view state before committing the transaction.
+                writer.setSeqTxn(seqTxn);
+                writer.markSeqTxnCommitted(seqTxn);
+                lastCommittedRows = 0;
                 return 1;
             default:
                 throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
@@ -600,6 +664,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
                     }
                 } catch (SqlException ex) {
+                    if (ex.isWalRecoverable()) {
+                        LOG.info().$("recoverable error applying SQL to wal table [table=").$(tableWriter.getTableToken())
+                                .$(", sql=").$(sql)
+                                .$(", position=").$(ex.getPosition())
+                                .$(", error=").$(ex.getFlyweightMessage())
+                                .I$();
+
+                        return;
+                    }
                     if (!ex.isTableDoesNotExist()) {
                         throw ex;
                     }
@@ -639,8 +712,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             LogRecord log = !e.isWALTolerable() ? LOG.error() : LOG.info();
             log.$("error applying SQL to wal table [table=")
                     .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql)
-                    .$(", error=").$(e.getFlyweightMessage())
-                    .$(", errno=").$(e.getErrno()).I$();
+                    .$(", msg=").$(e.getFlyweightMessage())
+                    .$(", errno=").$(e.getErrno())
+                    .I$();
 
             if (!e.isWALTolerable()) {
                 throw e;
@@ -655,6 +729,26 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     private void storeWalTelemetryNoop(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {
+    }
+
+    private void updateMatViewRefreshState(
+            Path tablePath,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            boolean invalid,
+            @Nullable CharSequence invalidationReason
+    ) {
+        try (BlockFileWriter stateWriter = mvStateWriter) {
+            stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+
+            MatViewState.append(
+                    lastRefreshTimestamp,
+                    lastRefreshBaseTxn,
+                    invalid,
+                    invalidationReason,
+                    stateWriter
+            );
+        }
     }
 
     /**

@@ -44,10 +44,9 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     private final DirectString csviewB = new DirectString();
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
+    private final DirectUtf8String utf8DirectView = new DirectUtf8String();
     private final Utf8SplitString utf8SplitViewA = new Utf8SplitString();
     private final Utf8SplitString utf8SplitViewB = new Utf8SplitString();
-    private final DirectUtf8String utf8ViewA = new DirectUtf8String();
-    private final DirectUtf8String utf8ViewB = new DirectUtf8String();
     protected FilesFacade ff;
     protected long lim;
     protected long pageAddress = 0;
@@ -72,13 +71,20 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     }
 
     @Override
-    public DirectUtf8Sequence getDirectVarcharA(long offset, int size, boolean ascii) {
-        return getDirectVarchar(offset, size, utf8ViewA, ascii);
-    }
-
-    @Override
-    public DirectUtf8Sequence getDirectVarcharB(long offset, int size, boolean ascii) {
-        return getDirectVarchar(offset, size, utf8ViewB, ascii);
+    public DirectUtf8Sequence getDirectVarchar(long offset, int size, boolean ascii) {
+        long addr = addressOf(offset);
+        assert addr > 0;
+        if (checkOffsetMapped(size + offset)) {
+            return utf8DirectView.of(addr, addr + size, ascii);
+        }
+        throw CairoException.critical(0)
+                .put("varchar is outside of file boundary [offset=")
+                .put(offset)
+                .put(", size=")
+                .put(size)
+                .put(", size()=")
+                .put(size())
+                .put(']');
     }
 
     public FilesFacade getFilesFacade() {
@@ -148,19 +154,4 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return size;
     }
 
-    private DirectUtf8String getDirectVarchar(long offset, int size, DirectUtf8String u8view, boolean ascii) {
-        long addr = addressOf(offset);
-        assert addr > 0;
-        if (checkOffsetMapped(size + offset)) {
-            return u8view.of(addr, addr + size, ascii);
-        }
-        throw CairoException.critical(0)
-                .put("varchar is outside of file boundary [offset=")
-                .put(offset)
-                .put(", size=")
-                .put(size)
-                .put(", size()=")
-                .put(size())
-                .put(']');
-    }
 }
