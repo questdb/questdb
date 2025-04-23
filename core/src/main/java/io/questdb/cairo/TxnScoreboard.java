@@ -28,7 +28,7 @@ import io.questdb.std.QuietCloseable;
 
 /**
  * Per-table transaction scoreboard. Used as a MVCC building block:
- * table readers register transaction numbers in the scoreboard when
+ * table readers acquire a transaction number lock in the scoreboard when
  * going active. This way table writers and purge jobs (GC) can check
  * if files associated with an older transaction can be deleted.
  */

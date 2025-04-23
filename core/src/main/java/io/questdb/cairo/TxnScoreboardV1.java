@@ -36,9 +36,9 @@ import org.jetbrains.annotations.TestOnly;
 
 /**
  * mmapped file-based transaction scoreboard. Txn numbers are organized
- * in a ring buffer-like array of counters where each active slot corresponds
- * to a txn number. Hence, the "distance" between the minimum and maximum
- * active txn numbers is limited with the array size.
+ * in a ring buffer-like array of reader counters where each active slot
+ * corresponds to a txn number. Hence, the "distance" between the minimum
+ * and maximum active txn numbers is limited with the array size.
  * <p>
  * Supports multiple server instances pointed as the same DB root.
  * The downside is that long-running or leaked table readers lead

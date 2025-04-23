@@ -29,7 +29,7 @@ import io.questdb.std.str.Path;
 
 public class TxnScoreboardPoolV1 implements TxnScoreboardPool {
     private final CairoConfiguration configuration;
-    java.lang.ThreadLocal<ScoreboardPoolTenant> scoreboardPoolV1ThreadLocal = new java.lang.ThreadLocal<>();
+    private final ThreadLocal<ScoreboardPoolTenant> tlScoreboardPoolV1 = new ThreadLocal<>();
 
     public TxnScoreboardPoolV1(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -37,20 +37,23 @@ public class TxnScoreboardPoolV1 implements TxnScoreboardPool {
 
     @Override
     public void clear() {
-        scoreboardPoolV1ThreadLocal.remove();
+        tlScoreboardPoolV1.remove();
     }
 
     @Override
     public TxnScoreboard getTxnScoreboard(TableToken token) {
-        var scoreboard = scoreboardPoolV1ThreadLocal.get();
+        var scoreboard = tlScoreboardPoolV1.get();
         if (scoreboard == null) {
             scoreboard = new ScoreboardPoolTenant(configuration, this, token);
         } else {
-            scoreboardPoolV1ThreadLocal.remove();
+            // Don't use .remove() here to keep the TL around.
+            // Static analysis warning is irrelevant as our threads
+            // have the same lifetime as the server instance.
+            tlScoreboardPoolV1.set(null);
         }
         Path path = Path.getThreadLocal(configuration.getDbRoot());
         scoreboard.ofRW(token, path.concat(token));
-        assert scoreboardPoolV1ThreadLocal.get() == null;
+        assert tlScoreboardPoolV1.get() == null;
         return scoreboard;
     }
 
@@ -61,7 +64,7 @@ public class TxnScoreboardPoolV1 implements TxnScoreboardPool {
 
     @Override
     public void remove(TableToken token) {
-        // no op
+        // no-op
     }
 
     static class ScoreboardPoolTenant extends TxnScoreboardV1 {
@@ -75,8 +78,8 @@ public class TxnScoreboardPoolV1 implements TxnScoreboardPool {
         @Override
         public void close() {
             super.close();
-            if (parent.scoreboardPoolV1ThreadLocal.get() == null) {
-                parent.scoreboardPoolV1ThreadLocal.set(this);
+            if (parent.tlScoreboardPoolV1.get() == null) {
+                parent.tlScoreboardPoolV1.set(this);
             }
         }
     }
