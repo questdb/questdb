@@ -1,0 +1,14 @@
+{
+  "name": "nodejs_test_runner-postgres",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "private": true,
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "postgres": "^3.4.5"
+  }
+}
