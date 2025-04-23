@@ -88,7 +88,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                         ", exerciseIntervals=" + exerciseIntervals +
                         ", limitType=" + limitType +
                         ", exerciseFilters=" + exerciseFilters +
-                        ", projectionType=" + projectionType, e);
+                        ", projectionType=" + projectionType +
+                        ", applyOuterProjection = " + applyOuterProjection,
+                        e);
             }
         }
     }
