@@ -1462,36 +1462,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int columnIndex,
             long columnNameTxn
     ) {
-//        if (tableWriter.isCommitReplaceMode()) {
-//            // Replace block has 2 artificial rows inserted in the index block
-//            // that indicate start and end of the range.
-//            if (prefixType == O3_BLOCK_O3) {
-//                if (ColumnType.isDesignatedTimestamp(columnType)) {
-//                    prefixLo++;
-//                    prefixHi--;
-//                } else {
-//                    prefixHi -= 2;
-//                }
-//            }
-//
-//            if (suffixType == O3_BLOCK_O3) {
-//                if (ColumnType.isDesignatedTimestamp(columnType)) {
-//                    suffixLo++;
-//                    suffixHi--;
-//                } else {
-//                    suffixHi -= 2;
-//                }
-//            }
-//
-//            if (mergeType == O3_BLOCK_O3) {
-//                if (ColumnType.isDesignatedTimestamp(columnType)) {
-//                    mergeOOOLo++;
-//                    mergeOOOHi--;
-//                } else {
-//                    mergeOOOHi -= 2;
-//                }
-//            }
-//        }
         final long mergeRowCount;
         if (mergeType == O3_BLOCK_MERGE) {
             mergeRowCount = timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES;

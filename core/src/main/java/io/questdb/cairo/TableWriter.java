@@ -6904,13 +6904,46 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
                     } else {
                         if (srcOoo < srcOooMax) {
+                            // There is o3 data to process
                             long o3ts = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
-                            long o3PartitionTs = txWriter.getPartitionTimestampByTimestamp(o3ts);
-                            o3Timestamp = o3PartitionTs == partitionTimestamp || o3ts < partitionTimestamp ? o3ts : partitionTimestamp;
+                            if (o3ts < partitionTimestamp) {
+                                // o3 data is before next existing partition, add partition
+                                o3Timestamp = o3ts;
+                                partitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3Timestamp);
+                            } else {
+                                long o3PartitionTs = txWriter.getPartitionTimestampByTimestamp(o3ts);
+                                if (o3PartitionTs == partitionTimestamp) {
+                                    // o3 data is at the same partition as the next partition
+                                    o3Timestamp = o3ts;
+                                    partitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3Timestamp);
+                                } else {
+                                    if (txWriter.isInsideExistingPartition(partitionTimestamp)) {
+                                        // o3 data is after the existing partition
+                                        // but the partition is inside replace range.
+                                        // Process the partition to remove it from the partitions list
+                                        o3Timestamp = partitionTimestamp;
+                                    } else {
+                                        // there is no partition and no O3 data to process
+                                        // switch partition to the next one and continue
+                                        partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
+                                        continue;
+                                    }
+                                }
+                            }
                         } else {
                             // There is no O3 data for this partition, but it's inside the replacement range
                             // e.g. the partition will be fully or partially deleted
-                            o3Timestamp = partitionTimestamp;
+                            if (txWriter.isInsideExistingPartition(partitionTimestamp)) {
+                                // o3 data is after the existing partition
+                                // but the partition is inside replace range.
+                                // Process the partition to remove it from the partitions list
+                                o3Timestamp = partitionTimestamp;
+                            } else {
+                                // there is no partition and no O3 data to process
+                                // switch partition to the next one and continue
+                                partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
+                                continue;
+                            }
                         }
                     }
                     partitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3Timestamp);

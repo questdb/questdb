@@ -33,6 +33,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
@@ -235,6 +236,20 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public boolean isActivePartition(long timestamp) {
         return getPartitionTimestampByTimestamp(maxTimestamp) == timestamp;
+    }
+
+    public boolean isInsideExistingPartition(long timestamp) {
+        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
+        if (index > -1 && index < attachedPartitions.size()) {
+            return true;
+        }
+
+        int prevPartition = (-index - 1) - LONGS_PER_TX_ATTACHED_PARTITION;
+        if (prevPartition > -1) {
+            long prevPartitionTs = attachedPartitions.getQuick(prevPartition + PARTITION_TS_OFFSET);
+            return getPartitionFloor(prevPartitionTs) == getPartitionFloor(timestamp);
+        }
+        return false;
     }
 
     @Override
