@@ -71,6 +71,34 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceCommitAdds2PartitionsBeforeExisting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
+            drainWalQueue();
+
+            insertRowWithReplaceRange("2022-02-20T17,2022-02-21T17", "2022-02-20T17", "2022-02-21T18", tableToken);
+        });
+    }
+
+    @Test
+    public void testReplaceRangeBeforeFirstPartitionAndData() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
+            drainWalQueue();
+
+            insertRowWithReplaceRange("2022-02-20T17", "2022-02-19T17", "2022-02-21T18", tableToken);
+        });
+    }
+
+    @Test
     public void testReplaceRangeTwoPartitionsDataInFirst() throws Exception {
         testReplaceRangeCommit("2022-02-24T16:25", "2022-02-24T16:25", "2022-02-25T01:00");
     }
@@ -101,7 +129,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
             Utf8StringSink sink = new Utf8StringSink();
 
-            insertOneRowWithRangeReplace(tableToken, sink, "2022-02-24T14:45", "2022-02-24T12:45", "2022-02-24T23", true);
+            insertRowsWithRangeReplace(tableToken, sink, "2022-02-24T14:45", "2022-02-24T12:45", "2022-02-24T23", true);
             drainWalQueue();
 
             assertSql("min\tmax\tcount\n" +
@@ -153,7 +181,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
             Utf8StringSink sink = new Utf8StringSink();
 
-            insertOneRowWithRangeReplace(tableToken, sink, "2022-02-24T14:30", "2022-02-24", "2022-02-24T23", true);
+            insertRowsWithRangeReplace(tableToken, sink, "2022-02-24T14:30", "2022-02-24", "2022-02-24T23", true);
             drainWalQueue();
 
             assertSql("min\tmax\tcount\n" +
@@ -204,7 +232,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
             Utf8StringSink sink = new Utf8StringSink();
 
-            insertOneRowWithRangeReplace(tableToken, sink, "2022-02-24T14:45", "2022-02-24T12:45", "2022-02-24T23:59:59.999999", true);
+            insertRowsWithRangeReplace(tableToken, sink, "2022-02-24T14:45", "2022-02-24T12:45", "2022-02-24T23:59:59.999999", true);
             drainWalQueue();
 
             assertSql("min\tmax\tcount\n" +
@@ -235,7 +263,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         });
     }
 
-    private static void insertOneRowWithRangeReplace(
+    private static void insertRowsWithRangeReplace(
             TableToken tableToken,
             Utf8StringSink sink,
             String tsStr,
@@ -244,16 +272,19 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             boolean commitWithRangeReplace
     ) throws NumericException {
         try (WalWriter ww = engine.getWalWriter(tableToken)) {
-            long ts = IntervalUtils.parseFloorPartialTimestamp(tsStr);
-            TableWriter.Row row = ww.newRow(ts);
-            row.putInt(0, 100);
-            row.putLong(2, 1000);
-            row.putStr(3, "hello");
-            sink.clear();
-            sink.put("w");
-            row.putVarchar(4, sink);
-            row.putSym(5, "a");
-            row.append();
+
+            for (String tsStrPart : tsStr.split(",")) {
+                long ts = IntervalUtils.parseFloorPartialTimestamp(tsStrPart);
+                TableWriter.Row row = ww.newRow(ts);
+                row.putInt(0, 100);
+                row.putLong(2, 1000);
+                row.putStr(3, "hello");
+                sink.clear();
+                sink.put("w");
+                row.putVarchar(4, sink);
+                row.putSym(5, "a");
+                row.append();
+            }
 
             if (commitWithRangeReplace) {
                 long rangeStart = IntervalUtils.parseFloorPartialTimestamp(rangeStartStr);
@@ -340,11 +371,11 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
         Utf8StringSink sink = new Utf8StringSink();
 
-        insertOneRowWithRangeReplace(tableToken, sink, tsStr, rangeStartStr, rangeEndStr, true);
+        insertRowsWithRangeReplace(tableToken, sink, tsStr, rangeStartStr, rangeEndStr, true);
         drainWalQueue();
 
         var ttExpected = engine.verifyTableName("expected");
-        insertOneRowWithRangeReplace(ttExpected, sink, tsStr, rangeStartStr, rangeEndStr, false);
+        insertRowsWithRangeReplace(ttExpected, sink, tsStr, rangeStartStr, rangeEndStr, false);
         drainWalQueue();
 
         Assert.assertEquals(

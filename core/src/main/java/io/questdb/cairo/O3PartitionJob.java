@@ -812,14 +812,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 mergeDataHi = -1;
                                 mergeDataLo = -1;
                             }
-                        } else if (mergeType == O3_BLOCK_O3) {
-//                        newPartitionSize -= 2;
-//                        srcDataNewPartitionSize -= 2;
-                        } else {
-                            // TODO: should be impossible, need to prove it
-                            assert false;
                         }
-
                     } else {
 
                         // srcOooLo > srcOooHi means that O3 data is empty

@@ -1245,7 +1245,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         boolean committed;
         final long initialCommittedRowCount = txWriter.getRowCount();
-        final long initialCommittedRowCountWithLag = txWriter.getRowCount() + txWriter.getLagRowCount();
 
         try {
             if (transactionBlock == 1) {
@@ -2790,7 +2789,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean processWalCommit(Path walPath, long seqTxn, TableWriterPressureControl pressureControl, long commitToTimestamp) {
-        boolean committed;
         int walId = walTxnDetails.getWalId(seqTxn);
         long txnMinTs = walTxnDetails.getMinTimestamp(seqTxn);
         long txnMaxTs = walTxnDetails.getMaxTimestamp(seqTxn);
@@ -2881,12 +2879,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             o3Columns = segmentFileCache.getWalMappedColumns();
             long initialPartitionTimestampHi = partitionTimestampHi;
 
-            long o3Hi = rowHi;
             try {
-                long o3Lo = rowLo;
                 long commitRowCount = rowHi - rowLo;
-                boolean copiedToMemory;
-
 
                 // Re-valuate WAL lag min/max with impact of the current transaction.
 
@@ -2901,64 +2895,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long timestampMemorySize = (commitRowCount + 2) << 4;
                 o3TimestampMem.jumpTo(timestampMemorySize);
                 o3TimestampMemCpy.jumpTo(timestampMemorySize);
-
-                MemoryMA timestampColumn = columns.get(getPrimaryColumnIndex(timestampIndex));
-                final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
                 long timestampAddr = walTimestampColumn.addressOf(0);
 
-//                long timestampAddr = o3TimestampMem.getAddress();
-                // Add virtual index records with replaceRangeTsLow with index -1
-//                Unsafe.getUnsafe().putLong(timestampAddr, replaceRangeTsLow);
-//                Unsafe.getUnsafe().putLong(timestampAddr + Long.BYTES, -1);
-//
-//                // Copy the timestamp index from WAL to memory
-//                Vect.memcpy(timestampAddr + 2 * Long.BYTES, mappedTimestampIndexAddr, commitRowCount << 4);
-//
-//                // Add virtual index record with replaceRangeTsHi with index -2
-//                long rangeHiOffset = (commitRowCount + 1) << 4;
-//                Unsafe.getUnsafe().putLong(timestampAddr + rangeHiOffset, replaceRangeTsHi);
-//                Unsafe.getUnsafe().putLong(timestampAddr + rangeHiOffset + Long.BYTES, -2);
-
-//                if (rowLo > 0) {
-//                    memColumnShifted = true;
-//                    for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-//                        var column = o3Columns.get(getPrimaryColumnIndex(i));
-//                        if (column instanceof MemoryCMORImpl) {
-//                            var col = (MemoryCMORImpl) column;
-//                            col.shiftAddressRight(col.getOffset());
-//                        }
-//                        column = o3Columns.get(getSecondaryColumnIndex(i));
-//                        if (column instanceof MemoryCMORImpl) {
-//                            var col = (MemoryCMORImpl) column;
-//                            col.shiftAddressRight(-col.getOffset());
-//                        }
-//                    }
-//                }
-
-                // Mv refresh should insert ordered data
                 assert ordered;
-//                if (needsOrdering) {
-//                    Vect.radixSortLongIndexAscInPlaceBounded(
-//                            timestampAddr + 2 * Long.BYTES,
-//                            commitRowCount,
-//                            o3TimestampMemCpy.addressOf(0),
-//                            o3TimestampMin,
-//                            o3TimestampMax
-//                    );
-//                    // Keep other column mapped and unshuffled
-//                }
-//                    dispatchColumnTasks(timestampAddr + 2, commitRowCount, 0, rowLo, rowHi, cthMergeWalColumnWithLag);
-//                    swapO3ColumnsExcept(timestampIndex);
-//                }
 
-//                if (o3Columns != o3ColumnOverrides) {
-//                    o3ColumnOverrides.clear();
-//                    o3ColumnOverrides.addAll(o3Columns);
-//                    o3Columns = o3ColumnOverrides;
-//                }
-//
-//                assert o3TimestampMem == o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex));
-//                o3ColumnOverrides.set(getPrimaryColumnIndex(timestampIndex), o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex)));
                 txWriter.setLagMinTimestamp(replaceRangeTsLow);
                 txWriter.setLagMaxTimestamp(replaceRangeTsHi);
                 this.dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
@@ -2966,10 +2906,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // total rows to process is commitRowCount + 2 virtual index records
                 // Sorted data is now sorted in memory copy of the data from mmap files
                 // Row indexes start from 0, not rowLo
-                o3Hi = rowHi;
-                o3Lo = rowLo;
-//                timestampAddr -= rowLo * 2 * Long.BYTES;
-                processWalCommitFinishApply(0, timestampAddr, o3Lo, o3Hi, pressureControl, false, initialPartitionTimestampHi);
+                processWalCommitFinishApply(0, timestampAddr, rowLo, rowHi, pressureControl, false, initialPartitionTimestampHi);
             } finally {
                 finishO3Append(0);
                 o3Columns = o3MemColumns1;
@@ -6969,7 +6906,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         if (srcOoo < srcOooMax) {
                             long o3ts = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
                             long o3PartitionTs = txWriter.getPartitionTimestampByTimestamp(o3ts);
-                            o3Timestamp = o3PartitionTs == partitionTimestamp ? o3ts : partitionTimestamp;
+                            o3Timestamp = o3PartitionTs == partitionTimestamp || o3ts < partitionTimestamp ? o3ts : partitionTimestamp;
                         } else {
                             // There is no O3 data for this partition, but it's inside the replacement range
                             // e.g. the partition will be fully or partially deleted
@@ -7090,10 +7027,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     if (append) {
-//                        if (isCommitReplaceMode()) {
-//                            newPartitionSize -= 2;
-//                        }
-
                         // we are appending last partition, make sure it has been mapped!
                         // this also might fail, make sure exception is trapped and partitions are
                         // counted down correctly
@@ -7142,16 +7075,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 dstVarMem = mem1;
                             }
 
-                            long srcO3Lo = srcOooLo;
-                            long srcO3Hi = srcOooHi;
-//                            if (isCommitReplaceMode()) {
-//                                if (notTheTimestamp) {
-//                                    srcO3Hi -= 2;
-//                                } else {
-//                                    srcO3Lo++;
-//                                    srcO3Hi--;
-//                                }
-//                            }
                             columnsPublished++;
                             try {
                                 O3OpenColumnJob.appendLastPartition(
@@ -7162,8 +7085,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
                                         srcOooFixAddr,
                                         srcOooVarAddr,
-                                        srcO3Lo,
-                                        srcO3Hi,
+                                        srcOooLo,
+                                        srcOooHi,
                                         srcOooMax,
                                         o3TimestampMin,
                                         partitionTimestamp,
