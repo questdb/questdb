@@ -37,9 +37,6 @@ public interface TxnScoreboard extends QuietCloseable {
 
     boolean acquireTxn(int id, long txn);
 
-    @Override
-    void close();
-
     int getEntryCount();
 
     TableToken getTableToken();
