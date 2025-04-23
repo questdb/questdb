@@ -306,6 +306,7 @@ import static io.questdb.griffin.model.QueryModel.QUERY;
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
     public static final int GKK_VANILLA_INT = 0;
+    private static final String ASOF_JOIN_BINARY_SEARCH_HINT = "USE_ASOF_BINARY_SEARCH";
     private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
@@ -2454,7 +2455,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         }
                                     } else {
                                         boolean binarySearchHinted = false;
-                                        CharSequence hintParams = model.getHints().get("USE_ASOF_BINARY_SEARCH");
+                                        CharSequence hintParams = model.getHints().get(ASOF_JOIN_BINARY_SEARCH_HINT);
                                         if (hintParams != null) {
                                             // todo: investigate the exact data flow to aliases and when it can be null
                                             // todo: better parsing
