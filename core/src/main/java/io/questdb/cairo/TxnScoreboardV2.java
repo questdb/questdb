@@ -30,6 +30,11 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.TestOnly;
 
+/**
+ * In-memory transaction scoreboard. Each table reader mutates its own
+ * slot based on the assigned id. Cross-reader operations require all slots
+ * to be checked. On the other hand, single-reader operations are cheap.
+ */
 public class TxnScoreboardV2 implements TxnScoreboard {
     private static final int RESERVED_ID_COUNT = 16;
     private static final long UNLOCKED = -1;
@@ -59,7 +64,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     public boolean acquireTxn(int id, long txn) {
         long internalId = toInternalId(id);
         assert internalId < entryScanCount;
-        // Don not check max if it's a special id, like CHECKPOINT_ID.
+        // Do not check max if it's a special id, like CHECKPOINT_ID.
         if (id > -1 && !updateMax(txn)) {
             return false;
         }

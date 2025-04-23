@@ -34,6 +34,16 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
 
+/**
+ * mmapped file-based transaction scoreboard. Txn numbers are organized
+ * in a ring buffer-like array of counters where each active slot corresponds
+ * to a txn number. Hence, the "distance" between the minimum and maximum
+ * active txn numbers is limited with the array size.
+ * <p>
+ * Supports multiple server instances pointed as the same DB root.
+ * The downside is that long-running or leaked table readers lead
+ * to max txn in-flight errors.
+ */
 public class TxnScoreboardV1 implements TxnScoreboard {
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
     private final FilesFacade ff;

@@ -29,6 +29,7 @@ import io.questdb.std.QuietCloseable;
 
 public interface TxnScoreboardPool extends QuietCloseable, Mutable {
 
+    @Override
     default void close() {
         clear();
     }

@@ -24,9 +24,15 @@
 
 package io.questdb.cairo;
 
-import java.io.Closeable;
+import io.questdb.std.QuietCloseable;
 
-public interface TxnScoreboard extends Closeable {
+/**
+ * Per-table transaction scoreboard. Used as a MVCC building block:
+ * table readers register transaction numbers in the scoreboard when
+ * going active. This way table writers and purge jobs (GC) can check
+ * if files associated with an older transaction can be deleted.
+ */
+public interface TxnScoreboard extends QuietCloseable {
     int CHECKPOINT_ID = -1;
 
     boolean acquireTxn(int id, long txn);
@@ -36,23 +42,23 @@ public interface TxnScoreboard extends Closeable {
 
     int getEntryCount();
 
+    TableToken getTableToken();
+
     boolean hasEarlierTxnLocks(long maxTxn);
+
+    /**
+     * Ignores min/max txn values and increments the counter. Must be called only when there is
+     * an active reader that already acquired this txn.
+     * <p>
+     * Used by {@link io.questdb.cairo.pool.ReaderPool#getCopyOf(TableReader)}.
+     */
+    boolean incrementTxn(int id, long txn);
+
+    boolean isMax(long txn);
 
     boolean isRangeAvailable(long fromTxn, long toTxn);
 
     boolean isTxnAvailable(long txn);
 
     long releaseTxn(int id, long txn);
-
-    TableToken getTableToken();
-
-    boolean isMax(long txn);
-
-    /**
-     * Ignores min/max txn values and increments the counter. Must be called only when there is already
-     * an active reader that already acquired this txn.
-     * <p>
-     * Used by {@link io.questdb.cairo.pool.ReaderPool#getCopyOf(TableReader)}.
-     */
-    boolean incrementTxn(int id, long txn);
 }
