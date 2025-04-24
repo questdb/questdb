@@ -509,7 +509,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testColumnDoesNotExist() throws Exception {
         Assume.assumeTrue(!walEnabled && partitioned);
-        assertFailure("alter table x alter column non_existing", 27, "column 'non_existing' does not exists in table 'x'");
+        assertFailure("alter table x alter column non_existing", 27, "column 'non_existing' does not exist in table 'x'");
     }
 
     @Test

@@ -97,6 +97,148 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterSymbolCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table and mat view
+            execute(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            drainQueues();
+
+            // expect default capacity
+            assertSql(
+                    "column\tsymbolCapacity\nsym\t128\n",
+                    "select \"column\", symbolCapacity from (show columns from price_1h) where type = 'SYMBOL'"
+            );
+
+            // change sym capacity
+            execute("alter materialized view price_1h alter column sym symbol capacity 1000");
+            drainQueues();
+
+            // expect larger capacity
+            assertSql(
+                    "column\tsymbolCapacity\nsym\t1024\n",
+                    "select \"column\", symbolCapacity from (show columns from price_1h) where type = 'SYMBOL'"
+            );
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
+                    "materialized_views",
+                    null,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterSymbolCapacityInvalidStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table and mat view
+            execute(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized foobar;",
+                    19,
+                    "'view' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view foobar;",
+                    24,
+                    "table does not exist [table=foobar]"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h",
+                    32,
+                    "'alter' or 'resume' or 'suspend' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h foobar",
+                    33,
+                    "'alter' or 'resume' or 'suspend' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter",
+                    38,
+                    "'column' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter foobar;",
+                    39,
+                    "'column' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column foobar",
+                    46,
+                    "column 'foobar' does not exist in materialized view 'price_1h'"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym;",
+                    49,
+                    "'symbol' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym foobar;",
+                    50,
+                    "'symbol' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column price symbol;",
+                    46,
+                    "column 'price' is not of symbol type"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym symbol",
+                    56,
+                    "'capacity' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym symbol capacity;",
+                    65,
+                    "numeric capacity expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW price_1h ALTER COLUMN sym SYMBOL CAPACITY 42 foobar;",
+                    69,
+                    "unexpected token [foobar] while trying to change symbol capacity"
+            );
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t-1\t0\n",
+                    "materialized_views",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testBaseTableInvalidateOnAttachPartition() throws Exception {
         final String partition = "2024-01-01";
         testBaseTableInvalidateOnOperation(
