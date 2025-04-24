@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.jit.JitUtil;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -90,7 +91,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             "                Interval forward scan on: orders\n" +
                             "                  intervals: [(\"2025-01-01T00:00:00.000001Z\",\"MAX\")]\n" +
                             "            SelectedRecord\n" +
-                            "                Async JIT Filter workers: 1\n" +
+                            "                Async " + (JitUtil.isJitSupported() ? "JIT " : "") + "Filter workers: 1\n" +
                             "                  filter: market_Data_symbol='sym_1'\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
