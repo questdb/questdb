@@ -84,7 +84,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             final Thread creator = new Thread(() -> {
                 try (
-                        MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+                        MatViewRefreshJob refreshJob = createMatViewRefreshJob(engine);
                         SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                 ) {
                     barrier.await();
@@ -98,7 +98,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         );
                         execute("insert into base_price values('gbpusd', 1.320, now())", executionContext);
                         drainWalQueue();
-                        refreshJob.run(0);
+                        drainMatViewQueue(refreshJob);
                         createCounter.incrementAndGet();
                     }
                 } catch (Exception e) {
@@ -1213,7 +1213,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             creator.start();
 
             final Thread refresher = new Thread(() -> {
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
+                try (MatViewRefreshJob refreshJob = createMatViewRefreshJob()) {
                     try {
                         barrier.await();
                         while (createCounter.get() < iterations && errorCounter.get() == 0) {
@@ -1840,12 +1840,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     private void drainQueues() {
-        drainWalQueue();
-        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-            while (refreshJob.run(0)) {
-            }
-            drainWalQueue();
-        }
+        drainWalAndMatViewQueues();
         // purge job may create MatViewRefreshList for existing tables by calling engine.getDependentMatViews();
         // this affects refresh logic in some scenarios, so make sure to run it
         runWalPurgeJob();
