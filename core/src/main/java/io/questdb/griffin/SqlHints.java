@@ -33,10 +33,6 @@ public final class SqlHints {
     public static final String ASOF_JOIN_BINARY_SEARCH_HINT = "use_asof_binary_search";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
 
-    private SqlHints() {
-
-    }
-
     public static boolean hasAsOfJoinBinarySearchHint(@NotNull QueryModel queryModel, CharSequence tableNameA, CharSequence tableNameB) {
         LowerCaseCharSequenceObjHashMap<CharSequence> hints = queryModel.getHints();
         CharSequence params = hints.get(SqlHints.ASOF_JOIN_BINARY_SEARCH_HINT);
