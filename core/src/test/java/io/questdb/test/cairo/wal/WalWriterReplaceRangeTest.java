@@ -85,6 +85,20 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceCommitNotOrdered() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
+            drainWalQueue();
+
+            insertRowWithReplaceRange("2022-02-21T17,2022-02-20T17", "2022-02-20T17", "2022-02-21T18", tableToken);
+        });
+    }
+
+    @Test
     public void testReplaceRangeBeforeFirstPartitionAndData() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
@@ -137,7 +151,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
             assertSql("id\tts\ty\ts\tv\tm\n" +
                             "1\t2022-02-24T12:30:00.000000Z\t0\t1\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\ta\n" +
-                            "100\t2022-02-24T14:45:00.000000Z\t1000\thello\tw\ta\n" +
+                            "100\t2022-02-24T14:45:00.000000Z\t1000\thello\tw\tw\n" +
                             "44\t2022-02-24T23:15:00.000000Z\t22\t44\t\uDAB1\uDC25J\uD969\uDF86gǢ\uDA97\uDEDC\t\n" +
                             "45\t2022-02-24T23:30:00.000000Z\t22\t45\tHEZqUhE\ta\n" +
                             "46\t2022-02-24T23:45:00.000000Z\t23\t46\tL^bE);P\tc\n" +
@@ -188,7 +202,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     "2022-02-24T14:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t5\n", "select min(ts), max(ts), count(*) from rg");
 
             assertSql("id\tts\ty\ts\tv\tm\n" +
-                            "100\t2022-02-24T14:30:00.000000Z\t1000\thello\tw\ta\n" +
+                            "100\t2022-02-24T14:30:00.000000Z\t1000\thello\tw\tw\n" +
                             "44\t2022-02-24T23:15:00.000000Z\t22\t44\t\uDAB1\uDC25J\uD969\uDF86gǢ\uDA97\uDEDC\t\n" +
                             "45\t2022-02-24T23:30:00.000000Z\t22\t45\tHEZqUhE\ta\n" +
                             "46\t2022-02-24T23:45:00.000000Z\t23\t46\tL^bE);P\tc\n" +
@@ -240,7 +254,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
             assertSql("id\tts\ty\ts\tv\tm\n" +
                             "1\t2022-02-24T12:30:00.000000Z\t0\t1\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\ta\n" +
-                            "100\t2022-02-24T14:45:00.000000Z\t1000\thello\tw\ta\n" +
+                            "100\t2022-02-24T14:45:00.000000Z\t1000\thello\tw\tw\n" +
                             "47\t2022-02-25T00:00:00.000000Z\t23\t47\t阇1(rոҊG\uD9A6\uDD42\uDB48\uDC78\tb\n",
                     "select * from rg"
             );
@@ -273,6 +287,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     ) throws NumericException {
         try (WalWriter ww = engine.getWalWriter(tableToken)) {
 
+            int i = 0;
+            String[] sybmols = new String[]{"w", "d", "a", "b", "c"};
             for (String tsStrPart : tsStr.split(",")) {
                 long ts = IntervalUtils.parseFloorPartialTimestamp(tsStrPart);
                 TableWriter.Row row = ww.newRow(ts);
@@ -282,7 +298,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                 sink.clear();
                 sink.put("w");
                 row.putVarchar(4, sink);
-                row.putSym(5, "a");
+                row.putSym(5, sybmols[i % sybmols.length]);
                 row.append();
             }
 
@@ -378,6 +394,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         insertRowsWithRangeReplace(ttExpected, sink, tsStr, rangeStartStr, rangeEndStr, false);
         drainWalQueue();
 
+        Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
         Assert.assertEquals(
                 readTxnToSTring(ttExpected),
                 readTxnToSTring(tableToken)

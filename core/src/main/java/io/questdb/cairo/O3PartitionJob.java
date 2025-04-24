@@ -362,6 +362,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // if so we do not need to re-open files and write to existing file descriptors
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
+        if (tableWriter.isCommitReplaceMode() && srcOooLo <= srcOooHi) {
+            o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
+        }
+
         if (isParquet) {
             processParquetPartition(
                     pathToTable,
@@ -422,6 +426,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
 
             assert oldPartitionSize == 0;
+
 
             publishOpenColumnTasks(
                     txn,
@@ -789,8 +794,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (tableWriter.isCommitReplaceMode()) {
 
                     if (srcOooLo <= srcOooHi) {
-                        o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
-
                         if (mergeType == O3_BLOCK_MERGE) {
                             // When replace range deduplication mode is enabled, we need to take into the merge
                             // prefix and suffix it's O3 type.

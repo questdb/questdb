@@ -37,10 +37,13 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.log.LogRecord;
 import org.jetbrains.annotations.NotNull;
 
 public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     private TableReader baseTableReader;
+    private long tsHi;
+    private long tsLo;
     private TableToken viewTableToken;
 
     public MatViewRefreshExecutionContext(CairoEngine engine, int workerCount, int sharedWorkerCount) {
@@ -106,6 +109,12 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
         return tableToken == baseTableReader.getTableToken();
     }
 
+    @Override
+    public void logAdditionalContext(LogRecord logRecord) {
+        logRecord.$(", tsLo=").$ts(tsLo)
+                .$(", tsHi=").$ts(tsHi);
+    }
+
     public void of(TableReader baseTableReader) {
         this.viewTableToken = baseTableReader.getTableToken();
         this.baseTableReader = baseTableReader;
@@ -124,6 +133,8 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
 
     // tsLo is inclusive, tsHi is exclusive
     public void setRange(long tsLo, long tsHi) throws SqlException {
+        this.tsLo = tsLo;
+        this.tsHi = tsHi;
         getBindVariableService().setTimestamp(1, tsLo);
         getBindVariableService().setTimestamp(2, tsHi - 1);
     }

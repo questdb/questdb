@@ -2545,387 +2545,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    // returns true if the tx was committed into the table and can be made visible to readers
-    // returns false if the tx was only copied to LAG and not committed - in this case the tx is not visible to readers
-    public boolean processWalCommit(
-            @Transient Path walPath,
-            boolean ordered,
-            long rowLo,
-            long rowHi,
-            final long o3TimestampMin,
-            final long o3TimestampMax,
-            @Nullable SymbolMapDiffCursor mapDiffCursor,
-            long commitToTimestamp,
-            long walIdSegmentId,
-            boolean isLastSegmentUsage,
-            TableWriterPressureControl pressureControl
-    ) {
-        int initialSize = segmentFileCache.getWalMappedColumns().size();
-        int timestampIndex = metadata.getTimestampIndex();
-        int walRootPathLen = walPath.size();
-        long maxTimestamp = txWriter.getMaxTimestamp();
-        if (isLastPartitionClosed()) {
-            if (isEmptyTable()) {
-                // The table is empty, last partition does not exist
-                // WAL processing needs last partition to store LAG data
-                // Create artificial partition at the point of o3TimestampMin.
-                openPartition(o3TimestampMin);
-                txWriter.setMaxTimestamp(o3TimestampMin);
-                // Add the partition to the list of partitions with 0 size.
-                txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1);
-            } else {
-                throw CairoException.critical(0).put("system error, cannot resolve WAL table last partition [path=")
-                        .put(path).put(']');
-            }
-        }
-
-        assert maxTimestamp == Long.MIN_VALUE ||
-                txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi) == txWriter.getPartitionTimestampByTimestamp(txWriter.maxTimestamp);
-
-        lastPartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi);
-        boolean success = true;
-        try {
-            boolean forceFullCommit = commitToTimestamp == WalTxnDetails.FORCE_FULL_COMMIT;
-            final long maxLagRows = getWalMaxLagRows();
-            final long walLagMaxTimestampBefore = txWriter.getLagMaxTimestamp();
-            segmentFileCache.mmapSegments(metadata, walPath, walIdSegmentId, rowLo, rowHi);
-            o3Columns = segmentFileCache.getWalMappedColumns();
-            final long newMinLagTimestamp = Math.min(o3TimestampMin, txWriter.getLagMinTimestamp());
-            long initialPartitionTimestampHi = partitionTimestampHi;
-
-            long walLagRowCount = txWriter.getLagRowCount();
-            long o3Hi = rowHi;
-            try {
-                long o3Lo = rowLo;
-                long commitRowCount = rowHi - rowLo;
-                boolean copiedToMemory;
-
-                long totalUncommitted = walLagRowCount + commitRowCount;
-                long newMaxLagTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
-                boolean needFullCommit = forceFullCommit
-                        // Too many rows in LAG
-                        || totalUncommitted > maxLagRows
-                        // Can commit without O3 and LAG has just enough rows
-                        || (commitToTimestamp >= newMaxLagTimestamp && totalUncommitted > getMetaMaxUncommittedRows())
-                        // Too many uncommitted transactions in LAG
-                        || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() >= configuration.getWalMaxLagTxnCount())
-                        // when the time between commits is too long we need to commit regardless of the row count or volume filled
-                        // this is to bring the latency of data visibility inline with user expectations
-                        || (configuration.getMicrosecondClock().getTicks() - lastWalCommitTimestampMicros > configuration.getCommitLatency());
-
-                boolean canFastCommit = indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
-                boolean lagOrderedNew = !isDeduplicationEnabled() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin;
-                boolean canFastCommitNew = applyFromWalLagToLastPartitionPossible(commitToTimestamp, totalUncommitted, lagOrderedNew, txWriter.getMaxTimestamp(), newMinLagTimestamp, newMaxLagTimestamp);
-
-                // Fast commit of existing LAG data is possible but will not be possible after current transaction is added to the lag.
-                // Also fast LAG commit will not cause O3 with the current transaction.
-                if (!needFullCommit && canFastCommit && !canFastCommitNew && txWriter.getLagMaxTimestamp() <= o3TimestampMin) {
-                    // Fast commit lag data and then proceed.
-                    applyFromWalLagToLastPartition(commitToTimestamp, false);
-
-                    // Re-evaluate commit decision
-                    walLagRowCount = txWriter.getLagRowCount();
-                    totalUncommitted = commitRowCount;
-                    newMaxLagTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
-                    needFullCommit =
-                            // Too many rows in LAG
-                            totalUncommitted > maxLagRows
-                                    // Can commit without O3 and LAG has just enough rows
-                                    || (commitToTimestamp >= newMaxLagTimestamp && totalUncommitted > getMetaMaxUncommittedRows())
-                                    // Too many uncommitted transactions in LAG
-                                    || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() > configuration.getWalMaxLagTxnCount());
-                }
-
-                if (!needFullCommit || canFastCommitNew) {
-                    // Don't commit anything, move everything to lag area of last partition instead.
-                    // This usually happens when WAL transactions are very small, so it's faster
-                    // to squash several of them together before writing anything to all the partitions.
-                    LOG.debug().$("all WAL rows copied to LAG [table=").$(tableToken).I$();
-
-                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
-                    // This will copy data from mmap files to memory.
-                    // Symbols are already mapped to the correct destination.
-                    dispatchColumnTasks(
-                            o3Hi - o3Lo,
-                            IGNORE,
-                            o3Lo,
-                            walLagRowCount,
-                            1,
-                            this.cthAppendWalColumnToLastPartition
-                    );
-                    walLagRowCount += commitRowCount;
-                    addPhysicallyWrittenRows(commitRowCount);
-                    txWriter.setLagRowCount((int) walLagRowCount);
-                    txWriter.setLagOrdered(lagOrderedNew);
-                    txWriter.setLagMinTimestamp(newMinLagTimestamp);
-                    txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
-                    txWriter.setLagTxnCount(txWriter.getLagTxnCount() + 1);
-
-                    if (canFastCommitNew) {
-                        applyFromWalLagToLastPartition(commitToTimestamp, false);
-                    }
-
-                    return forceFullCommit;
-                }
-
-                // Try to fast apply records from LAG to last partition which are before o3TimestampMin and commitToTimestamp.
-                // This application will not include the current transaction data, only what's already in WAL lag.
-                if (applyFromWalLagToLastPartition(Math.min(o3TimestampMin, commitToTimestamp), true) != Long.MIN_VALUE) {
-                    walLagRowCount = txWriter.getLagRowCount();
-                    totalUncommitted = walLagRowCount + commitRowCount;
-                }
-
-                // Re-valuate WAL lag min/max with impact of the current transaction.
-                txWriter.setLagMinTimestamp(Math.min(o3TimestampMin, txWriter.getLagMinTimestamp()));
-                txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
-                boolean needsOrdering = !ordered || walLagRowCount > 0;
-                boolean needsDedup = isDeduplicationEnabled();
-
-                long timestampAddr = 0;
-                MemoryCR walTimestampColumn = segmentFileCache.getWalMappedColumns().getQuick(getPrimaryColumnIndex(timestampIndex));
-                o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
-
-                if (needsOrdering || needsDedup) {
-                    if (needsOrdering) {
-                        LOG.debug().$("sorting WAL [table=").$(tableToken)
-                                .$(", ordered=").$(ordered)
-                                .$(", lagRowCount=").$(walLagRowCount)
-                                .$(", walRowLo=").$(rowLo)
-                                .$(", walRowHi=").$(rowHi).I$();
-
-                        final long timestampMemorySize = totalUncommitted << 4;
-                        o3TimestampMem.jumpTo(timestampMemorySize);
-                        o3TimestampMemCpy.jumpTo(timestampMemorySize);
-
-                        MemoryMA timestampColumn = columns.get(getPrimaryColumnIndex(timestampIndex));
-                        final long tsLagOffset = txWriter.getTransientRowCount() << 3;
-                        final long tsLagSize = walLagRowCount << 3;
-                        final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
-                        timestampAddr = o3TimestampMem.getAddress();
-
-                        final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
-                        try {
-                            long rowCount = Vect.radixSortABLongIndexAsc(
-                                    Math.abs(tsLagBufferAddr),
-                                    walLagRowCount,
-                                    mappedTimestampIndexAddr,
-                                    commitRowCount,
-                                    timestampAddr,
-                                    o3TimestampMemCpy.addressOf(0),
-                                    txWriter.getLagMinTimestamp(),
-                                    txWriter.getLagMaxTimestamp()
-                            );
-                            assert rowCount == totalUncommitted : "radix sort error, result: " + rowCount + " expected " + totalUncommitted;
-                        } finally {
-                            mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
-                        }
-                    } else {
-                        // Needs deduplication only
-                        timestampAddr = walTimestampColumn.addressOf(rowLo * TIMESTAMP_MERGE_ENTRY_BYTES);
-                    }
-
-                    if (needsDedup) {
-                        o3TimestampMemCpy.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
-                        o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
-                        long dedupTimestampAddr = o3TimestampMem.getAddress();
-                        long deduplicatedRowCount = deduplicateSortedIndex(
-                                totalUncommitted,
-                                timestampAddr,
-                                dedupTimestampAddr,
-                                o3TimestampMemCpy.addressOf(0),
-                                walLagRowCount
-                        );
-                        if (deduplicatedRowCount > 0) {
-                            // There are timestamp duplicates, reshuffle the records
-                            needsOrdering = true;
-                            timestampAddr = dedupTimestampAddr;
-                            totalUncommitted = deduplicatedRowCount;
-                        }
-                    }
-                }
-
-                if (needsOrdering) {
-                    dispatchColumnTasks(timestampAddr, totalUncommitted, walLagRowCount, rowLo, rowHi, cthMergeWalColumnWithLag);
-                    swapO3ColumnsExcept(timestampIndex);
-
-                    // Sorted data is now sorted in memory copy of the data from mmap files
-                    // Row indexes start from 0, not rowLo
-                    o3Hi = totalUncommitted;
-                    o3Lo = 0L;
-                    walLagRowCount = 0L;
-                    o3Columns = o3MemColumns1;
-                    copiedToMemory = true;
-                } else {
-                    // Wal column can are lazily mapped to improve performance. It works ok, except in this case
-                    // where access getAddress() calls are concurrent. Map them eagerly now.
-                    segmentFileCache.mmapWalColsEager();
-
-                    timestampAddr = walTimestampColumn.addressOf(0);
-                    copiedToMemory = false;
-                }
-
-                // We could commit some portion of the lag into the partitions and keep some data in the lag
-                // like 70/30 split, but it would break snapshot assumptions and this optimization is removed
-                // in the next release after v7.3.9.
-                // Commit everything.
-                walLagRowCount = 0;
-                processWalCommitFinishApply(walLagRowCount, timestampAddr, o3Lo, o3Hi, pressureControl, copiedToMemory, initialPartitionTimestampHi);
-            } finally {
-                finishO3Append(walLagRowCount);
-                o3Columns = o3MemColumns1;
-            }
-
-            return true;
-        } catch (Throwable th) {
-            success = false;
-            throw th;
-        } finally {
-            if (memColumnShifted) {
-                clearMemColumnShifts();
-            }
-            walPath.trimTo(walRootPathLen);
-            segmentFileCache.closeWalFiles(isLastSegmentUsage || !success, walIdSegmentId, initialSize);
-        }
-    }
-
-    public boolean processWalCommit(Path walPath, long seqTxn, TableWriterPressureControl pressureControl, long commitToTimestamp) {
-        int walId = walTxnDetails.getWalId(seqTxn);
-        long txnMinTs = walTxnDetails.getMinTimestamp(seqTxn);
-        long txnMaxTs = walTxnDetails.getMaxTimestamp(seqTxn);
-        long rowLo = walTxnDetails.getSegmentRowLo(seqTxn);
-        long rowHi = walTxnDetails.getSegmentRowHi(seqTxn);
-        boolean inOrder = walTxnDetails.getTxnInOrder(seqTxn);
-        byte dedupMode = walTxnDetails.getDedupMode(seqTxn);
-        long replaceRangeTsLo = walTxnDetails.getReplaceRangeTsLow(seqTxn);
-        long replaceRangeTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
-
-        LogRecord logLine = LOG.info();
-        logLine.$("processing WAL [path=").$substr(pathRootSize, walPath)
-                .$(", roLo=").$(rowLo)
-                .$(", roHi=").$(rowHi)
-                .$(", seqTxn=").$(seqTxn)
-                .$(", tsMin=").$ts(txnMinTs).$(", tsMax=").$ts(txnMaxTs)
-                .$(", commitToTs=").$ts(commitToTimestamp);
-
-        if (replaceRangeTsLo < replaceRangeTsHi) {
-            logLine.$(", replaceRangeTsLo=").$ts(replaceRangeTsLo)
-                    .$(", replaceRangeTsHi=").$ts(replaceRangeTsHi);
-        }
-        logLine.I$();
-
-        final int segmentId = walTxnDetails.getSegmentId(seqTxn);
-        boolean isLastSegmentUsage = walTxnDetails.isLastSegmentUsage(seqTxn);
-        SymbolMapDiffCursor mapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(seqTxn);
-
-        long walIdSegmentId = Numbers.encodeLowHighInts(segmentId, walId);
-        if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
-            return processWalCommit_dedupReplace(
-                    walPath,
-                    inOrder,
-                    rowLo,
-                    rowHi,
-                    txnMinTs,
-                    txnMaxTs,
-                    mapDiffCursor,
-                    walIdSegmentId,
-                    isLastSegmentUsage,
-                    pressureControl,
-                    replaceRangeTsLo,
-                    replaceRangeTsHi
-            );
-        } else {
-            return processWalCommit(
-                    walPath,
-                    inOrder,
-                    rowLo,
-                    rowHi,
-                    txnMinTs,
-                    txnMaxTs,
-                    mapDiffCursor,
-                    commitToTimestamp,
-                    walIdSegmentId,
-                    isLastSegmentUsage,
-                    pressureControl
-            );
-        }
-    }
-
-    public boolean processWalCommit_dedupReplace(
-            @Transient Path walPath,
-            boolean ordered,
-            long rowLo,
-            long rowHi,
-            final long o3TimestampMin,
-            final long o3TimestampMax,
-            @Nullable SymbolMapDiffCursor mapDiffCursor,
-            long walIdSegmentId,
-            boolean isLastSegmentUsage,
-            TableWriterPressureControl pressureControl,
-            long replaceRangeTsLow,
-            long replaceRangeTsHi
-    ) {
-        assert txWriter.getLagRowCount() == 0;
-        assert replaceRangeTsLow <= o3TimestampMin;
-        assert replaceRangeTsHi >= o3TimestampMax;
-
-        int initialSize = segmentFileCache.getWalMappedColumns().size();
-        int timestampIndex = metadata.getTimestampIndex();
-        int walRootPathLen = walPath.size();
-        boolean success = true;
-        lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-
-        try {
-            segmentFileCache.mmapSegments(metadata, walPath, walIdSegmentId, rowLo, rowHi);
-            o3Columns = segmentFileCache.getWalMappedColumns();
-            long initialPartitionTimestampHi = partitionTimestampHi;
-
-            try {
-                long commitRowCount = rowHi - rowLo;
-
-                // Re-valuate WAL lag min/max with impact of the current transaction.
-
-                MemoryCR walTimestampColumn = segmentFileCache.getWalMappedColumns().getQuick(getPrimaryColumnIndex(timestampIndex));
-                o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
-
-                LOG.debug().$("sorting WAL [table=").$(tableToken)
-                        .$(", ordered=").$(ordered)
-                        .$(", walRowLo=").$(rowLo)
-                        .$(", walRowHi=").$(rowHi).I$();
-
-                final long timestampMemorySize = (commitRowCount + 2) << 4;
-                o3TimestampMem.jumpTo(timestampMemorySize);
-                o3TimestampMemCpy.jumpTo(timestampMemorySize);
-                long timestampAddr = walTimestampColumn.addressOf(0);
-
-                assert ordered;
-
-                txWriter.setLagMinTimestamp(replaceRangeTsLow);
-                txWriter.setLagMaxTimestamp(replaceRangeTsHi);
-                this.dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
-
-                // total rows to process is commitRowCount + 2 virtual index records
-                // Sorted data is now sorted in memory copy of the data from mmap files
-                // Row indexes start from 0, not rowLo
-                processWalCommitFinishApply(0, timestampAddr, rowLo, rowHi, pressureControl, false, initialPartitionTimestampHi);
-            } finally {
-                finishO3Append(0);
-                o3Columns = o3MemColumns1;
-            }
-
-            return true;
-        } catch (Throwable th) {
-            success = false;
-            throw th;
-        } finally {
-            this.dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
-            if (memColumnShifted) {
-                clearMemColumnShifts();
-            }
-            walPath.trimTo(walRootPathLen);
-            segmentFileCache.closeWalFiles(isLastSegmentUsage || !success, walIdSegmentId, initialSize);
-        }
-    }
-
     public void publishAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand) {
         while (true) {
             long seq = commandPubSeq.next();
@@ -4666,7 +4285,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int shl = ColumnType.pow2SizeOf(columnType);
             destMem.jumpTo(mergeCount << shl);
             final long srcMapped = mappedMem.addressOf(mappedRowLo << shl) - (mappedRowLo << shl);
-            long lagMemOffset = (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << shl;
+            long lagMemOffset = lagRows > 0 ? (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << shl : 0;
             long lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagRows << shl, false);
             try {
                 long srcLag = Math.abs(lagAddr);
@@ -6909,13 +6528,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             if (o3ts < partitionTimestamp) {
                                 // o3 data is before next existing partition, add partition
                                 o3Timestamp = o3ts;
-                                partitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3Timestamp);
                             } else {
                                 long o3PartitionTs = txWriter.getPartitionTimestampByTimestamp(o3ts);
                                 if (o3PartitionTs == partitionTimestamp) {
                                     // o3 data is at the same partition as the next partition
                                     o3Timestamp = o3ts;
-                                    partitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3Timestamp);
                                 } else {
                                     if (txWriter.isInsideExistingPartition(partitionTimestamp)) {
                                         // o3 data is after the existing partition
@@ -7298,6 +6915,311 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else {
                 LOG.error().$("could not queue for purge, queue is full [table=").utf8(tableToken.getTableName()).I$();
             }
+        }
+    }
+
+    // returns true if the tx was committed into the table and can be made visible to readers
+    // returns false if the tx was only copied to LAG and not committed - in this case the tx is not visible to readers
+    private boolean processWalCommit(
+            @Transient Path walPath,
+            boolean ordered,
+            long rowLo,
+            long rowHi,
+            final long o3TimestampMin,
+            final long o3TimestampMax,
+            @Nullable SymbolMapDiffCursor mapDiffCursor,
+            long commitToTimestamp,
+            long walIdSegmentId,
+            boolean isLastSegmentUsage,
+            TableWriterPressureControl pressureControl
+    ) {
+        int initialSize = segmentFileCache.getWalMappedColumns().size();
+        int timestampIndex = metadata.getTimestampIndex();
+        int walRootPathLen = walPath.size();
+        long maxTimestamp = txWriter.getMaxTimestamp();
+        if (isLastPartitionClosed()) {
+            if (isEmptyTable()) {
+                // The table is empty, last partition does not exist
+                // WAL processing needs last partition to store LAG data
+                // Create artificial partition at the point of o3TimestampMin.
+                openPartition(o3TimestampMin);
+                txWriter.setMaxTimestamp(o3TimestampMin);
+                // Add the partition to the list of partitions with 0 size.
+                txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1);
+            } else {
+                throw CairoException.critical(0).put("system error, cannot resolve WAL table last partition [path=")
+                        .put(path).put(']');
+            }
+        }
+
+        assert maxTimestamp == Long.MIN_VALUE ||
+                txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi) == txWriter.getPartitionTimestampByTimestamp(txWriter.maxTimestamp);
+
+        lastPartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi);
+        boolean success = true;
+        try {
+            boolean forceFullCommit = commitToTimestamp == WalTxnDetails.FORCE_FULL_COMMIT;
+            final long maxLagRows = getWalMaxLagRows();
+            final long walLagMaxTimestampBefore = txWriter.getLagMaxTimestamp();
+            segmentFileCache.mmapSegments(metadata, walPath, walIdSegmentId, rowLo, rowHi);
+            o3Columns = segmentFileCache.getWalMappedColumns();
+            final long newMinLagTimestamp = Math.min(o3TimestampMin, txWriter.getLagMinTimestamp());
+            long initialPartitionTimestampHi = partitionTimestampHi;
+
+            long walLagRowCount = txWriter.getLagRowCount();
+            long o3Hi = rowHi;
+            try {
+                long o3Lo = rowLo;
+                long commitRowCount = rowHi - rowLo;
+                boolean copiedToMemory;
+
+                long totalUncommitted = walLagRowCount + commitRowCount;
+                long newMaxLagTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
+                boolean needFullCommit = forceFullCommit
+                        // Too many rows in LAG
+                        || totalUncommitted > maxLagRows
+                        // Can commit without O3 and LAG has just enough rows
+                        || (commitToTimestamp >= newMaxLagTimestamp && totalUncommitted > getMetaMaxUncommittedRows())
+                        // Too many uncommitted transactions in LAG
+                        || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() >= configuration.getWalMaxLagTxnCount())
+                        // when the time between commits is too long we need to commit regardless of the row count or volume filled
+                        // this is to bring the latency of data visibility inline with user expectations
+                        || (configuration.getMicrosecondClock().getTicks() - lastWalCommitTimestampMicros > configuration.getCommitLatency());
+
+                boolean canFastCommit = indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
+                boolean lagOrderedNew = !isDeduplicationEnabled() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin;
+                boolean canFastCommitNew = applyFromWalLagToLastPartitionPossible(commitToTimestamp, totalUncommitted, lagOrderedNew, txWriter.getMaxTimestamp(), newMinLagTimestamp, newMaxLagTimestamp);
+
+                // Fast commit of existing LAG data is possible but will not be possible after current transaction is added to the lag.
+                // Also fast LAG commit will not cause O3 with the current transaction.
+                if (!needFullCommit && canFastCommit && !canFastCommitNew && txWriter.getLagMaxTimestamp() <= o3TimestampMin) {
+                    // Fast commit lag data and then proceed.
+                    applyFromWalLagToLastPartition(commitToTimestamp, false);
+
+                    // Re-evaluate commit decision
+                    walLagRowCount = txWriter.getLagRowCount();
+                    totalUncommitted = commitRowCount;
+                    newMaxLagTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
+                    needFullCommit =
+                            // Too many rows in LAG
+                            totalUncommitted > maxLagRows
+                                    // Can commit without O3 and LAG has just enough rows
+                                    || (commitToTimestamp >= newMaxLagTimestamp && totalUncommitted > getMetaMaxUncommittedRows())
+                                    // Too many uncommitted transactions in LAG
+                                    || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() > configuration.getWalMaxLagTxnCount());
+                }
+
+                if (!needFullCommit || canFastCommitNew) {
+                    // Don't commit anything, move everything to lag area of last partition instead.
+                    // This usually happens when WAL transactions are very small, so it's faster
+                    // to squash several of them together before writing anything to all the partitions.
+                    LOG.debug().$("all WAL rows copied to LAG [table=").$(tableToken).I$();
+
+                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+                    // This will copy data from mmap files to memory.
+                    // Symbols are already mapped to the correct destination.
+                    dispatchColumnTasks(
+                            o3Hi - o3Lo,
+                            IGNORE,
+                            o3Lo,
+                            walLagRowCount,
+                            1,
+                            this.cthAppendWalColumnToLastPartition
+                    );
+                    walLagRowCount += commitRowCount;
+                    addPhysicallyWrittenRows(commitRowCount);
+                    txWriter.setLagRowCount((int) walLagRowCount);
+                    txWriter.setLagOrdered(lagOrderedNew);
+                    txWriter.setLagMinTimestamp(newMinLagTimestamp);
+                    txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
+                    txWriter.setLagTxnCount(txWriter.getLagTxnCount() + 1);
+
+                    if (canFastCommitNew) {
+                        applyFromWalLagToLastPartition(commitToTimestamp, false);
+                    }
+
+                    return forceFullCommit;
+                }
+
+                // Try to fast apply records from LAG to last partition which are before o3TimestampMin and commitToTimestamp.
+                // This application will not include the current transaction data, only what's already in WAL lag.
+                if (applyFromWalLagToLastPartition(Math.min(o3TimestampMin, commitToTimestamp), true) != Long.MIN_VALUE) {
+                    walLagRowCount = txWriter.getLagRowCount();
+                    totalUncommitted = walLagRowCount + commitRowCount;
+                }
+
+                // Re-valuate WAL lag min/max with impact of the current transaction.
+                txWriter.setLagMinTimestamp(Math.min(o3TimestampMin, txWriter.getLagMinTimestamp()));
+                txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
+                boolean needsOrdering = !ordered || walLagRowCount > 0;
+                boolean needsDedup = isDeduplicationEnabled();
+
+                long timestampAddr = 0;
+                MemoryCR walTimestampColumn = segmentFileCache.getWalMappedColumns().getQuick(getPrimaryColumnIndex(timestampIndex));
+                o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+
+                if (needsOrdering || needsDedup) {
+                    if (needsOrdering) {
+                        LOG.debug().$("sorting WAL [table=").$(tableToken)
+                                .$(", ordered=").$(ordered)
+                                .$(", lagRowCount=").$(walLagRowCount)
+                                .$(", walRowLo=").$(rowLo)
+                                .$(", walRowHi=").$(rowHi).I$();
+
+                        final long timestampMemorySize = totalUncommitted << 4;
+                        o3TimestampMem.jumpTo(timestampMemorySize);
+                        o3TimestampMemCpy.jumpTo(timestampMemorySize);
+
+                        MemoryMA timestampColumn = columns.get(getPrimaryColumnIndex(timestampIndex));
+                        final long tsLagOffset = txWriter.getTransientRowCount() << 3;
+                        final long tsLagSize = walLagRowCount << 3;
+                        final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
+                        timestampAddr = o3TimestampMem.getAddress();
+
+                        final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
+                        try {
+                            long rowCount = Vect.radixSortABLongIndexAsc(
+                                    Math.abs(tsLagBufferAddr),
+                                    walLagRowCount,
+                                    mappedTimestampIndexAddr,
+                                    commitRowCount,
+                                    timestampAddr,
+                                    o3TimestampMemCpy.addressOf(0),
+                                    txWriter.getLagMinTimestamp(),
+                                    txWriter.getLagMaxTimestamp()
+                            );
+                            assert rowCount == totalUncommitted : "radix sort error, result: " + rowCount + " expected " + totalUncommitted;
+                        } finally {
+                            mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
+                        }
+                    } else {
+                        // Needs deduplication only
+                        timestampAddr = walTimestampColumn.addressOf(rowLo * TIMESTAMP_MERGE_ENTRY_BYTES);
+                    }
+
+                    if (needsDedup) {
+                        o3TimestampMemCpy.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
+                        o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
+                        long dedupTimestampAddr = o3TimestampMem.getAddress();
+                        long deduplicatedRowCount = deduplicateSortedIndex(
+                                totalUncommitted,
+                                timestampAddr,
+                                dedupTimestampAddr,
+                                o3TimestampMemCpy.addressOf(0),
+                                walLagRowCount
+                        );
+                        if (deduplicatedRowCount > 0) {
+                            // There are timestamp duplicates, reshuffle the records
+                            needsOrdering = true;
+                            timestampAddr = dedupTimestampAddr;
+                            totalUncommitted = deduplicatedRowCount;
+                        }
+                    }
+                }
+
+                if (needsOrdering) {
+                    dispatchColumnTasks(timestampAddr, totalUncommitted, walLagRowCount, rowLo, rowHi, cthMergeWalColumnWithLag);
+                    swapO3ColumnsExcept(timestampIndex);
+
+                    // Sorted data is now sorted in memory copy of the data from mmap files
+                    // Row indexes start from 0, not rowLo
+                    o3Hi = totalUncommitted;
+                    o3Lo = 0L;
+                    walLagRowCount = 0L;
+                    o3Columns = o3MemColumns1;
+                    copiedToMemory = true;
+                } else {
+                    // Wal column can are lazily mapped to improve performance. It works ok, except in this case
+                    // where access getAddress() calls are concurrent. Map them eagerly now.
+                    segmentFileCache.mmapWalColsEager();
+
+                    timestampAddr = walTimestampColumn.addressOf(0);
+                    copiedToMemory = false;
+                }
+
+                // We could commit some portion of the lag into the partitions and keep some data in the lag
+                // like 70/30 split, but it would break snapshot assumptions and this optimization is removed
+                // in the next release after v7.3.9.
+                // Commit everything.
+                walLagRowCount = 0;
+                processWalCommitFinishApply(walLagRowCount, timestampAddr, o3Lo, o3Hi, pressureControl, copiedToMemory, initialPartitionTimestampHi);
+            } finally {
+                finishO3Append(walLagRowCount);
+                o3Columns = o3MemColumns1;
+            }
+
+            return true;
+        } catch (Throwable th) {
+            success = false;
+            throw th;
+        } finally {
+            if (memColumnShifted) {
+                clearMemColumnShifts();
+            }
+            walPath.trimTo(walRootPathLen);
+            segmentFileCache.closeWalFiles(isLastSegmentUsage || !success, walIdSegmentId, initialSize);
+        }
+    }
+
+    private boolean processWalCommit(Path walPath, long seqTxn, TableWriterPressureControl pressureControl, long commitToTimestamp) {
+        int walId = walTxnDetails.getWalId(seqTxn);
+        long txnMinTs = walTxnDetails.getMinTimestamp(seqTxn);
+        long txnMaxTs = walTxnDetails.getMaxTimestamp(seqTxn);
+        long rowLo = walTxnDetails.getSegmentRowLo(seqTxn);
+        long rowHi = walTxnDetails.getSegmentRowHi(seqTxn);
+        boolean inOrder = walTxnDetails.getTxnInOrder(seqTxn);
+        byte dedupMode = walTxnDetails.getDedupMode(seqTxn);
+        long replaceRangeTsLo = walTxnDetails.getReplaceRangeTsLow(seqTxn);
+        long replaceRangeTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
+
+        LogRecord logLine = LOG.info();
+        logLine.$("processing WAL [path=").$substr(pathRootSize, walPath)
+                .$(", roLo=").$(rowLo)
+                .$(", roHi=").$(rowHi)
+                .$(", seqTxn=").$(seqTxn)
+                .$(", tsMin=").$ts(txnMinTs).$(", tsMax=").$ts(txnMaxTs)
+                .$(", commitToTs=").$ts(commitToTimestamp);
+
+        if (replaceRangeTsLo < replaceRangeTsHi) {
+            logLine.$(", replaceRangeTsLo=").$ts(replaceRangeTsLo)
+                    .$(", replaceRangeTsHi=").$ts(replaceRangeTsHi);
+        }
+        logLine.I$();
+
+        final int segmentId = walTxnDetails.getSegmentId(seqTxn);
+        boolean isLastSegmentUsage = walTxnDetails.isLastSegmentUsage(seqTxn);
+        SymbolMapDiffCursor mapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(seqTxn);
+
+        long walIdSegmentId = Numbers.encodeLowHighInts(segmentId, walId);
+        if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            return processWalCommitDedupReplace(
+                    walPath,
+                    inOrder,
+                    rowLo,
+                    rowHi,
+                    txnMinTs,
+                    txnMaxTs,
+                    mapDiffCursor,
+                    walIdSegmentId,
+                    isLastSegmentUsage,
+                    pressureControl,
+                    replaceRangeTsLo,
+                    replaceRangeTsHi
+            );
+        } else {
+            return processWalCommit(
+                    walPath,
+                    inOrder,
+                    rowLo,
+                    rowHi,
+                    txnMinTs,
+                    txnMaxTs,
+                    mapDiffCursor,
+                    commitToTimestamp,
+                    walIdSegmentId,
+                    isLastSegmentUsage,
+                    pressureControl
+            );
         }
     }
 
@@ -7962,6 +7884,101 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     totalSegmentAddressesBytes,
                     th
             );
+        }
+    }
+
+    private boolean processWalCommitDedupReplace(
+            @Transient Path walPath,
+            boolean ordered,
+            long rowLo,
+            long rowHi,
+            final long o3TimestampMin,
+            final long o3TimestampMax,
+            @Nullable SymbolMapDiffCursor mapDiffCursor,
+            long walIdSegmentId,
+            boolean isLastSegmentUsage,
+            TableWriterPressureControl pressureControl,
+            long replaceRangeTsLow,
+            long replaceRangeTsHi
+    ) {
+        assert txWriter.getLagRowCount() == 0;
+        assert replaceRangeTsLow <= o3TimestampMin;
+        assert replaceRangeTsHi >= o3TimestampMax;
+
+        int initialSize = segmentFileCache.getWalMappedColumns().size();
+        int timestampIndex = metadata.getTimestampIndex();
+        int walRootPathLen = walPath.size();
+        boolean success = true;
+        lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+
+        try {
+            segmentFileCache.mmapSegments(metadata, walPath, walIdSegmentId, rowLo, rowHi);
+            o3Columns = segmentFileCache.getWalMappedColumns();
+            long initialPartitionTimestampHi = partitionTimestampHi;
+
+            try {
+                MemoryCR walTimestampColumn = segmentFileCache.getWalMappedColumns().getQuick(getPrimaryColumnIndex(timestampIndex));
+                o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+
+                if (ordered) {
+                    long timestampAddr = walTimestampColumn.addressOf(0);
+
+                    txWriter.setLagMinTimestamp(replaceRangeTsLow);
+                    txWriter.setLagMaxTimestamp(replaceRangeTsHi);
+                    this.dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
+
+                    processWalCommitFinishApply(0, timestampAddr, rowLo, rowHi, pressureControl, false, initialPartitionTimestampHi);
+                } else {
+                    LOG.debug().$("sorting WAL [table=").$(tableToken)
+                            .$(", ordered=").$(ordered)
+                            .$(", walRowLo=").$(rowLo)
+                            .$(", walRowHi=").$(rowHi).I$();
+
+                    long totalUncommitted = rowHi - rowLo;
+                    final long timestampMemorySize = totalUncommitted << 4;
+                    o3TimestampMem.jumpTo(timestampMemorySize);
+                    o3TimestampMemCpy.jumpTo(timestampMemorySize);
+
+                    final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
+                    long timestampAddr = o3TimestampMem.getAddress();
+
+                    long rowCount = Vect.radixSortABLongIndexAsc(
+                            0,
+                            0,
+                            mappedTimestampIndexAddr,
+                            totalUncommitted,
+                            timestampAddr,
+                            o3TimestampMemCpy.addressOf(0),
+                            o3TimestampMin,
+                            o3TimestampMax
+                    );
+                    assert rowCount == totalUncommitted : "radix sort error, result: " + rowCount + " expected " + totalUncommitted;
+                    dispatchColumnTasks(timestampAddr, totalUncommitted, 0, rowLo, rowHi, cthMergeWalColumnWithLag);
+                    swapO3ColumnsExcept(timestampIndex);
+                    o3Columns = o3MemColumns1;
+
+                    txWriter.setLagMinTimestamp(replaceRangeTsLow);
+                    txWriter.setLagMaxTimestamp(replaceRangeTsHi);
+                    this.dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
+
+                    processWalCommitFinishApply(0, timestampAddr, 0, totalUncommitted, pressureControl, true, initialPartitionTimestampHi);
+                }
+            } finally {
+                finishO3Append(0);
+                o3Columns = o3MemColumns1;
+            }
+
+            return true;
+        } catch (Throwable th) {
+            success = false;
+            throw th;
+        } finally {
+            this.dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
+            if (memColumnShifted) {
+                clearMemColumnShifts();
+            }
+            walPath.trimTo(walRootPathLen);
+            segmentFileCache.closeWalFiles(isLastSegmentUsage || !success, walIdSegmentId, initialSize);
         }
     }
 
