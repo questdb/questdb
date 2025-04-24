@@ -265,9 +265,9 @@ public class SqlUtil {
      * <p>
      * This method should only be called after entering a hint block. Specifically,
      * a previous call to {@link #fetchNext(GenericLexer, boolean)} must have returned
-     * a hint start token before this method can be used.
+     * a hint start token (<code>/*+</code>) before this method can be used.
      * <p>
-     * The method processes the input stream, skipping over any tested comments and whitespace,
+     * The method processes the input stream, skipping over any nested comments and whitespace,
      * and returns the next meaningful hint token. This allows for clean parsing of hint
      * content without manual handling of comments and formatting characters.
      * <p>
