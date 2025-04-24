@@ -1558,7 +1558,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(
                 "[/new-path/config,/new-path/config]",
-                configuration.getHttpServerConfiguration().getContextPathSettings().toString()
+                configuration.getHttpServerConfiguration().getContextPathConfig().toString()
         );
 
         // check the ILP did not move
