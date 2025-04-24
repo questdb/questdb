@@ -6133,12 +6133,14 @@ public class SqlOptimiser implements Mutable {
             translatingModel.moveLimitFrom(model);
             translatingModel.moveJoinAliasFrom(model);
             translatingModel.setSelectTranslation(true);
+            translatingModel.copyHints(model.getHints());
         }
 
         if (useInnerModel) {
             innerVirtualModel.setNestedModel(root);
             innerVirtualModel.moveLimitFrom(limitSource);
             innerVirtualModel.moveJoinAliasFrom(limitSource);
+            innerVirtualModel.copyHints(model.getHints());
 
             // Set limit hint if applicable.
             pushDownLimitAdvice(innerVirtualModel, root, useDistinctModel);
@@ -6151,12 +6153,14 @@ public class SqlOptimiser implements Mutable {
             windowModel.setNestedModel(root);
             windowModel.moveLimitFrom(limitSource);
             windowModel.moveJoinAliasFrom(limitSource);
+            windowModel.copyHints(model.getHints());
             root = windowModel;
             limitSource = windowModel;
         } else if (useGroupByModel) {
             groupByModel.setNestedModel(root);
             groupByModel.moveLimitFrom(limitSource);
             groupByModel.moveJoinAliasFrom(limitSource);
+            groupByModel.copyHints(model.getHints());
             root = groupByModel;
             limitSource = groupByModel;
         }
@@ -6165,18 +6169,21 @@ public class SqlOptimiser implements Mutable {
             outerVirtualModel.setNestedModel(root);
             outerVirtualModel.moveLimitFrom(limitSource);
             outerVirtualModel.moveJoinAliasFrom(limitSource);
+            outerVirtualModel.copyHints(model.getHints());
             root = outerVirtualModel;
         } else if (root != outerVirtualModel && root.getBottomUpColumns().size() < outerVirtualModel.getBottomUpColumns().size()) {
             outerVirtualModel.setNestedModel(root);
             outerVirtualModel.moveLimitFrom(limitSource);
             outerVirtualModel.moveJoinAliasFrom(limitSource);
             outerVirtualModel.setSelectModelType(outerVirtualIsSelectChoose ? QueryModel.SELECT_MODEL_CHOOSE : QueryModel.SELECT_MODEL_VIRTUAL);
+            outerVirtualModel.copyHints(model.getHints());
             root = outerVirtualModel;
         }
 
         if (useDistinctModel) {
             distinctModel.setNestedModel(root);
             distinctModel.moveLimitFrom(root);
+            distinctModel.copyHints(model.getHints());
             root = distinctModel;
         }
 
@@ -6188,7 +6195,6 @@ public class SqlOptimiser implements Mutable {
             root.setUnionModel(model.getUnionModel());
             root.setSetOperationType(model.getSetOperationType());
             root.setModelPosition(model.getModelPosition());
-            root.copyHints(model.getHints());
             if (model.isUpdate()) {
                 root.setIsUpdate(true);
                 root.copyUpdateTableMetadata(model);
