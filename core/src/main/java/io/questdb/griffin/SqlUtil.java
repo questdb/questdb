@@ -248,55 +248,6 @@ public class SqlUtil {
         return null;
     }
 
-    public static CharSequence fetchNextHint(GenericLexer lexer) throws SqlException {
-        int blockCount = 0;
-        boolean lineComment = false;
-        while (lexer.hasNext()) {
-            CharSequence cs = lexer.next();
-
-            if (lineComment) {
-                if (Chars.equals(cs, '\n') || Chars.equals(cs, '\r')) {
-                    lineComment = false;
-                }
-                continue;
-            }
-
-            if (Chars.equals("--", cs)) {
-                lineComment = true;
-                continue;
-            }
-
-            if (Chars.equals("/*", cs)) {
-                blockCount++;
-                continue;
-            }
-
-            if (Chars.equals("/*+", cs)) {
-                // nested hints are treated as regular comments
-                blockCount++;
-                continue;
-            }
-
-            // end of hints or a nested comment
-            if (Chars.equals("*/", cs)) {
-                if (blockCount > 0) {
-                    blockCount--;
-                    continue;
-                }
-                return null;
-            }
-
-            if (blockCount == 0 && GenericLexer.WHITESPACE.excludes(cs)) {
-                // unclosed quote check
-                if (cs.length() == 1 && cs.charAt(0) == '"') {
-                    throw SqlException.$(lexer.lastTokenPosition(), "unclosed quotation mark");
-                }
-                return cs;
-            }
-        }
-        return null;
-    }
-
     public static CharSequence fetchNextIncludingHint(GenericLexer lexer) throws SqlException {
         int blockCount = 0;
         boolean lineComment = false;
@@ -886,6 +837,55 @@ public class SqlUtil {
 
     public static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
         return pool.next().of(exprNodeType, token, 0, position);
+    }
+
+    public static CharSequence nextHintToken(GenericLexer lexer) throws SqlException {
+        int blockCount = 0;
+        boolean lineComment = false;
+        while (lexer.hasNext()) {
+            CharSequence cs = lexer.next();
+
+            if (lineComment) {
+                if (Chars.equals(cs, '\n') || Chars.equals(cs, '\r')) {
+                    lineComment = false;
+                }
+                continue;
+            }
+
+            if (Chars.equals("--", cs)) {
+                lineComment = true;
+                continue;
+            }
+
+            if (Chars.equals("/*", cs)) {
+                blockCount++;
+                continue;
+            }
+
+            if (Chars.equals("/*+", cs)) {
+                // nested hints are treated as regular comments
+                blockCount++;
+                continue;
+            }
+
+            // end of hints or a nested comment
+            if (Chars.equals("*/", cs)) {
+                if (blockCount > 0) {
+                    blockCount--;
+                    continue;
+                }
+                return null;
+            }
+
+            if (blockCount == 0 && GenericLexer.WHITESPACE.excludes(cs)) {
+                // unclosed quote check
+                if (cs.length() == 1 && cs.charAt(0) == '"') {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unclosed quotation mark");
+                }
+                return cs;
+            }
+        }
+        return null;
     }
 
     /**

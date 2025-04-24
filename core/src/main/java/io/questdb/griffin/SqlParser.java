@@ -2257,18 +2257,36 @@ public class SqlParser {
         parseTableName(lexer, model);
     }
 
-    private void parseHints(GenericLexer lexer, QueryModel model) throws SqlException {
-        CharSequence hintToken;
+    private void parseHints(GenericLexer lexer, QueryModel model) {
+        CharSequence hintToken = null;
         boolean parsingParams = false;
         CharSequence hintKey = null;
         CharacterStoreEntry hintValuesEntry = null;
-        while (((hintToken = SqlUtil.fetchNextHint(lexer)) != null)) {
+        boolean error = false;
+        while (true) {
+            try {
+                if ((hintToken = SqlUtil.nextHintToken(lexer)) == null) {
+                    break;
+                }
+            } catch (SqlException e) {
+                error = true;
+            }
+
+            if (error) {
+                // if in error state, just consume the rest of hints, but ignore them
+                // since in error state we cannot reliably parse them
+                continue;
+            }
             if (Chars.equals(hintToken, '(')) {
                 if (parsingParams) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected '(', hint parameters cannot be nested");
+                    // hints cannot be nested
+                    error = true;
+                    continue;
                 }
                 if (hintKey == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "missing hint key");
+                    // missing key
+                    error = true;
+                    continue;
                 }
                 parsingParams = true;
                 continue;
@@ -2276,7 +2294,9 @@ public class SqlParser {
 
             if (Chars.equals(hintToken, ')')) {
                 if (!parsingParams) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected ')' when parsing hint");
+                    // unexpected closing parenthesis
+                    error = true;
+                    continue;
                 }
                 if (hintValuesEntry == null) {
                     // store last parameter-less hint, e.g. KEY()
@@ -2295,11 +2315,10 @@ public class SqlParser {
                 if (hintValuesEntry == null) {
                     // store first parameter
                     hintValuesEntry = characterStore.newEntry();
-                    hintValuesEntry.put(hintToken);
                 } else {
                     hintValuesEntry.put(HINTS_PARAMS_DELIMITER);
-                    hintValuesEntry.put(hintToken);
                 }
+                hintValuesEntry.put(GenericLexer.unquote(hintToken));
                 continue;
             }
 
@@ -2308,15 +2327,16 @@ public class SqlParser {
                 model.addHint(hintKey, null);
             }
             CharacterStoreEntry entry = characterStore.newEntry();
-            entry.put(hintToken);
+            entry.put(GenericLexer.unquote(hintToken));
             hintKey = entry.toImmutable();
         }
-        if (parsingParams) {
-            throw SqlException.$(lexer.lastTokenPosition(), "missing hint parameter closing parenthesis");
-        }
-        if (hintKey != null) {
-            // store last parameter-less hint
-            model.addHint(hintKey, null);
+        if (!error) {
+            if (parsingParams) {
+                // dangling opening parenthesis, ignore
+            } else if (hintKey != null) {
+                // store last parameter-less hint
+                model.addHint(hintKey, null);
+            }
         }
     }
 
