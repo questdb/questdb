@@ -223,11 +223,13 @@ public class ServerMain implements Closeable {
                 // Still useful in case of custom logger
                 bootstrap.getLog().info().$("QuestDB is shutting down...").$();
             }
+            freeOnExit.close();
             if (initialized) {
+                // Close the worker pool last to prevent Dispatchers from deadlocking.
+                // Dispatchers may hang during shutdown if no threads remain to process their queues.
                 workerPoolManager.halt();
                 fileWatcher = Misc.free(fileWatcher);
             }
-            freeOnExit.close();
         }
     }
 
