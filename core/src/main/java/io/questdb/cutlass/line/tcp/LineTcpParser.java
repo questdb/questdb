@@ -398,14 +398,20 @@ public class LineTcpParser implements QuietCloseable {
         }
 
         if (bufAt + 1 < bufHi) {
-            bufAt++;
-            byte expectSeparator = Unsafe.getUnsafe().getByte(bufAt);
+            long next = bufAt + 1;
+            byte expectSeparator = Unsafe.getUnsafe().getByte(next);
             if (expectSeparator == (byte) ' ') {
+                entityHandler = ENTITY_HANDLER_TIMESTAMP;
+                bufAt++;
+                entityLo = bufAt + 1;
+                return true;
+            } else if (expectSeparator == (byte) '\n' || expectSeparator == (byte) '\r') { // end of line
                 entityHandler = ENTITY_HANDLER_TIMESTAMP;
                 entityLo = bufAt + 1;
                 return true;
-            } else if (expectSeparator == (byte) ',' || expectSeparator == (byte) '\n' || expectSeparator == (byte) '\r') {
+            } else if (expectSeparator == (byte) ',') {
                 entityHandler = ENTITY_HANDLER_NAME;
+                bufAt++;
                 entityLo = bufAt + 1;
                 return true;
             } else {

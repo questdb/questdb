@@ -97,6 +97,31 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testArrayAtNow() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build();
+                 DoubleArray a1 = new DoubleArray(1, 1, 2, 1).setAll(1);
+            ) {
+                String table = "array_at_now";
+                CountDownLatch released = createTableCommitNotifier(table);
+                sender.table(table)
+                        .symbol("x", "42i")
+                        .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
+                        .longColumn("l1", 23452345)
+                        .doubleArray("a1", a1)
+                        .atNow();
+                sender.flush();
+                waitTableWriterFinish(released);
+                assertTableSizeEventually(engine, table, 1);
+                // @todo assert table contents, needs getArray support in TestTableReadCursor
+            }
+        });
+    }
+
+    @Test
     public void testArrayDouble() throws Exception {
         runInContext(r -> {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
