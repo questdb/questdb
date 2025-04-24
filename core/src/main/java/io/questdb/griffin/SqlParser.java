@@ -2262,20 +2262,13 @@ public class SqlParser {
         CharSequence hintKey = null;
         CharacterStoreEntry hintValuesEntry = null;
         boolean error = false;
-        while (true) {
-            try {
-                if ((hintToken = SqlUtil.fetchNextHintToken(lexer)) == null) {
-                    break;
-                }
-            } catch (SqlException e) {
-                error = true;
-            }
-
+        while ((hintToken = SqlUtil.fetchNextHintToken(lexer)) != null) {
             if (error) {
                 // if in error state, just consume the rest of hints, but ignore them
                 // since in error state we cannot reliably parse them
                 continue;
             }
+            
             if (Chars.equals(hintToken, '(')) {
                 if (parsingParams) {
                     // hints cannot be nested

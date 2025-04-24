@@ -273,15 +273,19 @@ public class SqlUtil {
      * <p>
      * When the end of the hint block is reached, the method returns null, indicating
      * no more hint tokens are available for processing.
+     * <p>
+     * If a hint contains unbalanced quotes, the method will NOT throw an exception, instead
+     * it will consume all tokens until the end of the hint block is reached and then return null indicating
+     * the end of the hint block.
      *
      * @param lexer The input lexer containing the token stream to process
      * @return The next meaningful hint token, or null if the end of the hint block is reached
-     * @throws SqlException If a parsing error occurs while processing the hint tokens
      * @see #fetchNext(GenericLexer, boolean) For entering the hint block initially
      */
-    public static CharSequence fetchNextHintToken(GenericLexer lexer) throws SqlException {
+    public static CharSequence fetchNextHintToken(GenericLexer lexer) {
         int blockCount = 0;
         boolean lineComment = false;
+        boolean inError = false;
         while (lexer.hasNext()) {
             CharSequence cs = lexer.next();
 
@@ -317,12 +321,13 @@ public class SqlUtil {
                 return null;
             }
 
-            if (blockCount == 0 && GenericLexer.WHITESPACE.excludes(cs)) {
+            if (!inError && blockCount == 0 && GenericLexer.WHITESPACE.excludes(cs)) {
                 // unclosed quote check
                 if (cs.length() == 1 && cs.charAt(0) == '"') {
-                    throw SqlException.$(lexer.lastTokenPosition(), "unclosed quotation mark");
+                    inError = true;
+                } else {
+                    return cs;
                 }
-                return cs;
             }
         }
         return null;
