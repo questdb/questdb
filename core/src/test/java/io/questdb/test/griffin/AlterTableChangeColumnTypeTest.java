@@ -310,7 +310,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 execute("alter table x alter column ik symbol capacity 512 index", sqlExecutionContext);
                 Assert.fail("index syntax not supported when changing SYMBOL capacity");
             } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "INDEX is not supported when changing SYMBOL capacity");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token [index] while trying to change symbol capacity");
             }
             drainWalQueue();
         });

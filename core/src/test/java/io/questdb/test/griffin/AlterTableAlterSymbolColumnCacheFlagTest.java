@@ -159,7 +159,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
 
     @Test
     public void testBadSyntax() throws Exception {
-        assertFailure("alter table x alter column c", 28, "'add index' or 'drop index' or 'type' or 'cache' or 'nocache' expected");
+        assertFailure("alter table x alter column c", 28, "'add index' or 'drop index' or 'type' or 'cache' or 'nocache' or 'symbol' expected");
     }
 
     @Test
