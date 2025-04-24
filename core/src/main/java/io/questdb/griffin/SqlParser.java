@@ -728,14 +728,6 @@ public class SqlParser {
         return tok;
     }
 
-    private CharSequence optTokIncludingHint(GenericLexer lexer) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer, true);
-        if (tok == null || (subQueryMode && Chars.equals(tok, ')') && !overClauseMode)) {
-            return null;
-        }
-        return tok;
-    }
-
     private QueryModel parseAsSubQueryAndExpectClosingBrace(
             GenericLexer lexer,
             LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
@@ -2654,7 +2646,12 @@ public class SqlParser {
     }
 
     private void parseSelectClause(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
-        CharSequence tok = tokIncludingHints(lexer, "[distinct] column");
+        int pos = lexer.getPosition();
+        CharSequence tok = SqlUtil.fetchNext(lexer, true);
+        if (tok == null || (subQueryMode && Chars.equals(tok, ')') && !overClauseMode)) {
+            throw SqlException.position(pos).put("[distinct] column expected");
+        }
+
         if (Chars.equals(tok, "/*+")) {
             parseHints(lexer, model);
             tok = tok(lexer, "[distinct] column");
@@ -2849,7 +2846,7 @@ public class SqlParser {
                                 } else if (isPrecedingKeyword(tok)) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "integer expression expected");
                                 } else {
-                                    int pos = lexer.lastTokenPosition();
+                                    pos = lexer.lastTokenPosition();
                                     lexer.unparseLast();
                                     winCol.setRowsLoExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
@@ -2893,7 +2890,7 @@ public class SqlParser {
                                     } else if (isPrecedingKeyword(tok) || isFollowingKeyword(tok)) {
                                         throw SqlException.$(lexer.lastTokenPosition(), "integer expression expected");
                                     } else {
-                                        int pos = lexer.lastTokenPosition();
+                                        pos = lexer.lastTokenPosition();
                                         lexer.unparseLast();
                                         winCol.setRowsHiExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                         if (framingMode == WindowColumn.FRAMING_RANGE) {
@@ -2923,7 +2920,7 @@ public class SqlParser {
                             } else {
                                 // If you omit BETWEEN and specify only one end point, then QuestDB considers it the
                                 // start point, and the end point defaults to the current row.
-                                int pos = lexer.lastTokenPosition();
+                                pos = lexer.lastTokenPosition();
                                 if (isUnboundedPreceding(lexer, tok)) {
                                     winCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
                                 } else if (isCurrentRow(lexer, tok)) {
@@ -3689,16 +3686,6 @@ public class SqlParser {
         }
         return tok;
     }
-
-    private @NotNull CharSequence tokIncludingHints(GenericLexer lexer, String expectedList) throws SqlException {
-        final int pos = lexer.getPosition();
-        CharSequence tok = optTokIncludingHint(lexer);
-        if (tok == null) {
-            throw SqlException.position(pos).put(expectedList).put(" expected");
-        }
-        return tok;
-    }
-
 
     private @NotNull CharSequence tokIncludingLocalBrace(GenericLexer lexer, String expectedList) throws SqlException {
         final int pos = lexer.getPosition();
