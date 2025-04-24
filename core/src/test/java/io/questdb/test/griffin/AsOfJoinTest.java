@@ -39,6 +39,91 @@ import org.junit.Test;
 public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
+    public void testAsOfJoinBinarySearchHint() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table orders as (\n" +
+                    "  select \n" +
+                    "    concat('sym_', rnd_int(0, 10, 0))::symbol as order_symbol,\n" +
+                    "    rnd_double() price,\n" +
+                    "    rnd_double() volume,\n" +
+                    "    ('2025'::timestamp + x * 200_000_000L + rnd_int(0, 10_000, 0))::timestamp as ts,\n" +
+                    "  from long_sequence(5)\n" +
+                    ") timestamp(ts) partition by day;\n");
+
+            execute("create table market_data as (\n" +
+                    "  select \n" +
+                    "    concat('sym_', rnd_int(0, 10, 0))::symbol as market_data_symbol,\n" +
+                    "    rnd_double() bid,\n" +
+                    "    rnd_double() ask,\n" +
+                    "    ('2025'::timestamp + x * 100_000L + rnd_int(0, 10_000, 0))::timestamp as ts,\n" +
+                    "  from long_sequence(10_000)\n" +
+                    ") timestamp(ts) partition by day;");
+
+            String queryWithoutHint = "select * from (\n" +
+                    "  select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from orders\n" +
+                    "  asof join (\n" +
+                    "    select ts as md_ts, market_Data_symbol, bid from market_data\n" +
+                    "    where market_data_symbol = 'sym_1' \n" +
+                    "  ) md  \n" +
+                    "  where orders.ts > '2025-01-01T00:00:00.000000000Z' \n" +
+                    "  and bid > price\n" +
+                    ");";
+
+            // the same query with hint
+            String queryWithHint = "select /*+ use_asof_binary_search(orders md) */ * from (\n" +
+                    "  select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from orders\n" +
+                    "  asof join (\n" +
+                    "    select ts as md_ts, market_Data_symbol, bid from market_data\n" +
+                    "    where market_data_symbol = 'sym_1' \n" +
+                    "  ) md  \n" +
+                    "  where orders.ts > '2025-01-01T00:00:00.000000000Z' \n" +
+                    "  and bid > price\n" +
+                    ");";
+
+            // plan without the hint should not use the FAST ASOF
+            assertQuery("QUERY PLAN\n" +
+                            "SelectedRecord\n" +
+                            "    Filter filter: orders.price<md.bid\n" +
+                            "        AsOf Join\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: orders\n" +
+                            "                  intervals: [(\"2025-01-01T00:00:00.000001Z\",\"MAX\")]\n" +
+                            "            SelectedRecord\n" +
+                            "                Async JIT Filter workers: 1\n" +
+                            "                  filter: market_Data_symbol='sym_1'\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: market_data\n",
+                    "EXPLAIN " + queryWithoutHint, null, false, true);
+
+            // with hint it generates a plan with the fast asof join
+            assertQuery("QUERY PLAN\n" +
+                            "SelectedRecord\n" +
+                            "    Filter filter: orders.price<md.bid\n" +
+                            "        Filtered AsOf Join Fast Scan\n" +
+                            "          filter: orders.order_symbol='sym_1'\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: orders\n" +
+                            "                  intervals: [(\"2025-01-01T00:00:00.000001Z\",\"MAX\")]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: market_data\n",
+                    "EXPLAIN " + queryWithHint, null, false, true);
+
+            // both querier must return the same result
+            String expectedResult = "ts\tbid\tmarket_data_symbol\torder_symbol\torder_ts\tprice\n" +
+                    "2025-01-01T00:03:20.003570Z\t0.18646912884414946\tsym_1\tsym_4\t2025-01-01T00:03:19.407091Z\t0.08486964232560668\n" +
+                    "2025-01-01T00:06:40.006304Z\t0.9130994629783138\tsym_1\tsym_2\t2025-01-01T00:06:37.303610Z\t0.8423410920883345\n" +
+                    "2025-01-01T00:13:20.002056Z\t0.24872951622414008\tsym_1\tsym_4\t2025-01-01T00:13:19.909382Z\t0.0367581207471136\n" +
+                    "2025-01-01T00:16:40.009947Z\t0.5071618579762882\tsym_1\tsym_6\t2025-01-01T00:16:39.800653Z\t0.3100545983862456\n";
+            assertQuery(expectedResult, queryWithHint, "ts", false, false);
+            assertQuery(expectedResult, queryWithoutHint, "ts", false, false);
+        });
+    }
+
+    @Test
     public void testAsOfJoinAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
             execute(
