@@ -61,10 +61,10 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
  * When timezone is specified, the returned timestamps are in local time.
  */
 public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory {
-    private static final long HOUR_MINUTES = 60;
-    private static final long HOUR_SECONDS = HOUR_MINUTES * 60;
-    private static final long HOUR_MILLIS = HOUR_SECONDS * 1000;
-    private static final long HOUR_MICROS = HOUR_MILLIS * 1000;
+    private static final long MIN_GAP_MINUTES = 15;
+    private static final long MIN_GAP_SECONDS = MIN_GAP_MINUTES * 60;
+    private static final long MIN_GAP_MILLIS = MIN_GAP_SECONDS * 1000;
+    private static final long MIN_GAP_MICROS = MIN_GAP_MILLIS * 1000;
 
     private static final TimestampFloorFunction floorDDFunc = Timestamps::floorDD;
     private static final TimestampFloorFunction floorHHFunc = Timestamps::floorHH;
@@ -189,14 +189,14 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             case 'h':
                 return true;
             case 'm':
-                // a DST gap is 1h, and it starts at the beginning of the hour
-                return HOUR_MINUTES % stride == 0;
+                // min DST gap is 15m, and it starts at the beginning of an hour
+                return MIN_GAP_MINUTES % stride == 0 || stride % MIN_GAP_MINUTES == 0;
             case 's':
-                return HOUR_SECONDS % stride == 0;
+                return MIN_GAP_SECONDS % stride == 0 || stride % MIN_GAP_SECONDS == 0;
             case 'T':
-                return HOUR_MILLIS % stride == 0;
+                return MIN_GAP_MILLIS % stride == 0 || stride % MIN_GAP_MILLIS == 0;
             case 'U':
-                return HOUR_MICROS % stride == 0;
+                return MIN_GAP_MICROS % stride == 0 || stride % MIN_GAP_MICROS == 0;
         }
         return false;
     }
