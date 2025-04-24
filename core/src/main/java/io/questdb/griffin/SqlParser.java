@@ -950,7 +950,7 @@ public class SqlParser {
             // Basic validation - check all nested models that read from the base table for window functions, unions, FROM-TO, or FILL.
             if (!isTableQueried(queryModel, baseTableNameStr)) {
                 throw SqlException.position(queryModel.getModelPosition())
-                        .put("the base table is not referenced in the materialized view query: ").put(baseTableName);
+                        .put("base table is not referenced in materialized view query: ").put(baseTableName);
             }
             validateMatViewQuery(queryModel, baseTableNameStr);
 

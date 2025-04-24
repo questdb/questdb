@@ -170,7 +170,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view test with base " + TABLE1 + " as (" + sql + ") partition by day",
                     108,
-                    "the base table is not referenced in the materialized view query"
+                    "base table is not referenced in materialized view query"
             );
             assertNull(getMatViewDefinition("test"));
         });
