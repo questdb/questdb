@@ -3062,6 +3062,26 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testJsonFloatClipping() throws Exception {
+        getSimpleTester().run((engine, sqlExecutionContext) -> {
+            testHttpClient.assertGet(
+                    "{\"ddl\":\"OK\"}",
+                    "CREATE TABLE t0(f FLOAT, d DOUBLE);"
+            );
+
+            testHttpClient.assertGet(
+                    "{\"dml\":\"OK\"}",
+                    "INSERT INTO t0 VALUES (54321, 54321);"
+            );
+
+            testHttpClient.assertGet(
+                    "{\"query\":\"SELECT * FROM t0;\",\"columns\":[{\"name\":\"f\",\"type\":\"FLOAT\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[54321.0,54321.0]],\"count\":1}",
+                    "SELECT * FROM t0;"
+            );
+        });
+    }
+
+    @Test
     public void testJsonImplicitCastException() throws Exception {
         testJsonQuery(
                 0,
@@ -3989,7 +4009,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withQueryTimeout(100)
                 .run((engine, sqlExecutionContext) -> testHttpClient.assertGetRegexp(
                         "/query",
-                        "\\{\"query\":\"select \\* from test_data_unavailable\\(1, 10\\)\",\"error\":\"timeout, query aborted \\[fd=\\d+, runtime=\\d+us, timeout=\\d+us\\]\",\"position\":0\\}",
+                        "\\{\"query\":\"select \\* from test_data_unavailable\\(1, 10\\)\",\"error\":\"timeout, query aborted \\[fd=\\d+, runtime=\\d+ms, timeout=\\d+ms\\]\",\"position\":0\\}",
                         "select * from test_data_unavailable(1, 10)",
                         null, null, null, null,
                         "400" // Request Timeout
@@ -5126,7 +5146,7 @@ public class IODispatcherTest extends AbstractTest {
                         // we use regexp, because the fd is different every time
                         testHttpClient.assertGetRegexp(
                                 "/query",
-                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"timeout, query aborted \\[fd=\\d+, runtime=\\d+us, timeout=-100us\\]\",\"position\":0\\}",
+                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"timeout, query aborted \\[fd=\\d+, runtime=\\d+ms, timeout=-100ms\\]\",\"position\":0\\}",
                                 "select i, avg(l), max(l) from t group by i order by i asc limit 3",
                                 null, null, null, null,
                                 "400"
@@ -7893,7 +7913,7 @@ public class IODispatcherTest extends AbstractTest {
                         engine.execute(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         testHttpClient.assertGetRegexp(
                                 "/exp",
-                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"\\[-1\\] timeout, query aborted \\[fd=\\d+, runtime=\\d+us, timeout=-100us\\]\",\"position\":0\\}",
+                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"\\[-1\\] timeout, query aborted \\[fd=\\d+, runtime=\\d+ms, timeout=-100ms\\]\",\"position\":0\\}",
                                 QUERY_TIMEOUT_SELECT,
                                 null, null, null, null,
                                 "400"
@@ -8677,6 +8697,7 @@ public class IODispatcherTest extends AbstractTest {
         return delayThread;
     }
 
+
     private static HttpServer createHttpServer(
             ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
@@ -9227,7 +9248,6 @@ public class IODispatcherTest extends AbstractTest {
         String select1 = "select 1 from long_sequence(1) where sleep(120000)";
         String select2 = "select sleep(120000) from long_sequence(1)";
         String selectWithJoin = "select 1 from long_sequence(1) ls1 join long_sequence(1) on sleep(120000)";
-        String insert = "insert into tab values (sleep(120000), 100000000000000L::timestamp, 'A' )";
         String insertAsSelect1 = "insert into tab select true, 100000000000000L::timestamp, 'B' from long_sequence(1) where sleep(120000)";
         String insertAsSelect2 = "insert into tab select sleep(120000), 100000000000000L::timestamp, 'B' from long_sequence(1)";
         String insertAsSelectBatched = "insert batch 100 into tab select true, 100000000000000L::timestamp, 'B' from long_sequence(1) where sleep(120000)";
@@ -9247,7 +9267,6 @@ public class IODispatcherTest extends AbstractTest {
                     select1,
                     select2,
                     selectWithJoin,
-                    insert,
                     insertAsSelect1,
                     insertAsSelect2,
                     insertAsSelectBatched,

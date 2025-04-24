@@ -27,8 +27,8 @@ package io.questdb.std;
 import java.util.Arrays;
 
 public class ObjStack<T> implements Mutable {
-    private static final int DEFAULT_INITIAL_CAPACITY = 16;
-    private static final int MIN_INITIAL_CAPACITY = 8;
+    public static final int DEFAULT_INITIAL_CAPACITY = 16;
+    private final int initialCapacity;
     private T[] elements;
     private int head;
     private int mask;
@@ -39,6 +39,7 @@ public class ObjStack<T> implements Mutable {
     }
 
     public ObjStack(int initialCapacity) {
+        this.initialCapacity = initialCapacity;
         allocateElements(initialCapacity);
     }
 
@@ -47,6 +48,10 @@ public class ObjStack<T> implements Mutable {
             head = tail = 0;
             Arrays.fill(elements, null);
         }
+    }
+
+    public int getCapacity() {
+        return elements.length;
     }
 
     public boolean notEmpty() {
@@ -79,6 +84,40 @@ public class ObjStack<T> implements Mutable {
         }
     }
 
+    /**
+     * Resets the capacity of the stack to exactly initialCapacity.
+     * Intentionally keeps only the most recent (initialCapacity-1) elements,
+     * discarding older elements. This ensures the stack has exactly one free
+     * slot after resetting for the next push operation.
+     */
+    @SuppressWarnings("unchecked")
+    public void resetCapacity() {
+        int n = elements.length;
+        if (n > initialCapacity) {
+            int h = head;
+            int size = size();
+            int newCapacity = initialCapacity;
+            T[] next = (T[]) new Object[newCapacity];
+            int maxCopy = newCapacity - 1;
+            if (size > 0) {
+                int t = (h + size) & mask;
+                if (head < t) {
+                    System.arraycopy(elements, h, next, 0, Math.min(size, maxCopy));
+                } else {
+                    int r = Math.min(n - h, maxCopy);
+                    System.arraycopy(elements, h, next, 0, r);
+                    if (r < maxCopy && t < head) {
+                        System.arraycopy(elements, 0, next, r, Math.min(t, maxCopy - r));
+                    }
+                }
+            }
+            head = 0;
+            tail = Math.min(size, maxCopy);
+            elements = next;
+            mask = maxCopy;
+        }
+    }
+
     public int size() {
         return (tail - head) & mask;
     }
@@ -89,7 +128,7 @@ public class ObjStack<T> implements Mutable {
 
     @SuppressWarnings("unchecked")
     private void allocateElements(int capacity) {
-        capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
+        capacity = Numbers.ceilPow2(capacity);
         elements = (T[]) new Object[capacity];
         mask = capacity - 1;
     }
@@ -107,7 +146,6 @@ public class ObjStack<T> implements Mutable {
         T[] next = (T[]) new Object[newCapacity];
         System.arraycopy(elements, h, next, 0, r);
         System.arraycopy(elements, 0, next, r, h);
-        Arrays.fill(next, r + h, newCapacity, null);
         elements = next;
         head = 0;
         tail = n;

@@ -30,7 +30,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -243,7 +243,9 @@ public final class TableUtils {
     }
 
     public static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
-        return TX_RECORD_HEADER_SIZE + Integer.BYTES + bytesSymbols + Integer.BYTES + bytesPartitions;
+        // Note that 32 bit symbol length is included in TX_RECORD_HEADER_SIZE,
+        // hence the record size is head + symbol sizes + 32bit partition count + bytes to store partitions
+        return TX_RECORD_HEADER_SIZE + bytesSymbols + Integer.BYTES + bytesPartitions;
     }
 
     public static int calculateTxnLagChecksum(long txn, long seqTxn, int lagRowCount, long lagMinTimestamp, long lagMaxTimestamp, int lagTxnCount) {
@@ -547,8 +549,6 @@ public final class TableUtils {
                 try (BlockFileWriter writer = blockFileWriter) {
                     writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                     MatViewDefinition.append(structure.getMatViewDefinition(), writer);
-                    writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                    MatViewRefreshState.append(null, writer);
                 }
             }
 
@@ -913,7 +913,7 @@ public final class TableUtils {
 
     public static boolean isMatViewStateFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
         FilesFacade ff = configuration.getFilesFacade();
-        path.of(configuration.getDbRoot()).concat(dirName).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+        path.of(configuration.getDbRoot()).concat(dirName).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
         return ff.exists(path.$());
     }
 
@@ -2006,6 +2006,7 @@ public final class TableUtils {
                         // right, cannot open file for some reason?
                         LOG.error()
                                 .$("could not open swap [file=").$(path)
+                                .$(", msg=").$(e.getFlyweightMessage())
                                 .$(", errno=").$(e.getErrno())
                                 .I$();
                     }

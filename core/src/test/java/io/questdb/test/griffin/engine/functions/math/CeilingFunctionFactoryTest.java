@@ -57,7 +57,7 @@ public class CeilingFunctionFactoryTest extends AbstractCairoTest {
     public void testFloatNegative() throws Exception {
         assertQuery(
                 "ceiling\n" +
-                        "-13.0000\n",
+                        "-13.0\n",
                 "select ceiling(-13.1f)",
                 null,
                 true,
@@ -69,7 +69,7 @@ public class CeilingFunctionFactoryTest extends AbstractCairoTest {
     public void testFloatPositive() throws Exception {
         assertQuery(
                 "ceiling\n" +
-                        "14.0000\n",
+                        "14.0\n",
                 "select ceiling(13.1f)",
                 null,
                 true,

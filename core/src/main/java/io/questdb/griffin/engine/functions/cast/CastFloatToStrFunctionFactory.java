@@ -45,20 +45,18 @@ public class CastFloatToStrFunctionFactory implements FunctionFactory {
         Function floatFunc = args.getQuick(0);
         if (floatFunc.isConstant()) {
             final StringSink sink = Misc.getThreadLocalSink();
-            sink.put(floatFunc.getFloat(null), configuration.getFloatToStrCastScale());
+            sink.put(floatFunc.getFloat(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0), configuration.getFloatToStrCastScale());
+        return new Func(args.getQuick(0));
     }
 
     public static class Func extends AbstractCastToStrFunction {
-        private final int scale;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public Func(Function arg, int scale) {
+        public Func(Function arg) {
             super(arg);
-            this.scale = scale;
         }
 
         @Override
@@ -68,7 +66,7 @@ public class CastFloatToStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             sinkA.clear();
-            sinkA.put(value, scale);
+            sinkA.put(value);
             return sinkA;
         }
 
@@ -79,7 +77,7 @@ public class CastFloatToStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             sinkB.clear();
-            sinkB.put(value, 4);
+            sinkB.put(value);
             return sinkB;
         }
     }

@@ -368,11 +368,11 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     public void testFloat3Args() throws Exception {
         assertQuery(
                 "c1\tc2\ta\tb\tx\n" +
-                        "10.0000\t10.0000\tnull\t10.0000\tnull\n" +
+                        "10.0\t10.0\tnull\t10.0\tnull\n" +
                         "null\tnull\tnull\tnull\tnull\n" +
-                        "0.5000\t0.5000\t0.5000\tnull\tnull\n" +
-                        "10.0000\t10.0000\tnull\t10.0000\t4.0000\n" +
-                        "5.0000\tnull\tnull\tnull\t5.0000\n",
+                        "0.5\t0.5\t0.5\tnull\tnull\n" +
+                        "10.0\t10.0\tnull\t10.0\t4.0\n" +
+                        "5.0\tnull\tnull\tnull\t5.0\n",
                 "select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
                         "from alex",
                 "create table alex as (" +

@@ -145,7 +145,9 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             // trust _txn file, not the key count in the files
             indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
         } catch (Throwable e) {
-            close();
+            // if .o file is corrupt, for example because of a disk unmount
+            // we should not truncate .c files and other files, it will result to a data loss.
+            closeNoTruncate();
             throw e;
         } finally {
             path.trimTo(plen);
@@ -249,103 +251,113 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             int newCapacity,
             boolean newCacheFlag
     ) {
-        // Re-open files and re-build indexes keeping .c, .o files.
-        // This is very similar to the constructor, but we need to keep .c, .o files and re-nitialize k,v files.
-        // Also cache is conditionally re-used.
+        try {
+            // Re-open files and re-build indexes keeping .c, .o files.
+            // This is very similar to the constructor, but we need to keep .c, .o files and re-nitialize k,v files.
+            // Also cache is conditionally re-used.
 
-        final int plen = path.size();
-        int symbolCount = getSymbolCount();
-        final FilesFacade ff = configuration.getFilesFacade();
-        final long mapPageSize = configuration.getMiscAppendPageSize();
+            final int plen = path.size();
+            int symbolCount = getSymbolCount();
+            final FilesFacade ff = configuration.getFilesFacade();
+            final long mapPageSize = configuration.getMiscAppendPageSize();
 
-        // formula for calculating symbol capacity needs to be in agreement with symbol reader
-        this.symbolCapacity = newCapacity;
-        assert symbolCapacity > 0;
+            // formula for calculating symbol capacity needs to be in agreement with symbol reader
+            this.symbolCapacity = newCapacity;
+            assert symbolCapacity > 0;
 
-        // init key files, use offsetMem for that
-        this.offsetMem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
-        BitmapIndexWriter.initKeyMemory(this.offsetMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
-        ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
-        this.indexWriter.of(path.trimTo(plen), columnName, columnNameTxn);
+            // init key files, use offsetMem for that
+            this.offsetMem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
+            BitmapIndexWriter.initKeyMemory(this.offsetMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
+            ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
+            this.indexWriter.of(path.trimTo(plen), columnName, columnNameTxn);
 
-        // open .o, .c files, they should exist
-        if (!ff.exists(offsetFileName(path.trimTo(plen), columnName, columnNameTxn))) {
-            LOG.error().$(path).$(" is not found").$();
-            throw CairoException.fileNotFound().put("SymbolMap does not exist: ").put(path);
-        }
+            // open .o, .c files, they should exist
+            if (!ff.exists(offsetFileName(path.trimTo(plen), columnName, columnNameTxn))) {
+                LOG.error().$(path).$(" is not found").$();
+                throw CairoException.fileNotFound().put("SymbolMap does not exist: ").put(path);
+            }
 
-        // is there enough length in "offset" file for "header"?
-        LPSZ lpsz = path.$();
-        long len = ff.length(lpsz);
-        if (len < HEADER_SIZE) {
-            LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
-            throw CairoException.critical(0).put("SymbolMap is too short [path=").put(path)
-                    .put(", expected=").put(HEADER_SIZE)
-                    .put(", actual=").put(len)
-                    .put(']');
-        }
+            // is there enough length in "offset" file for "header"?
+            LPSZ lpsz = path.$();
+            long len = ff.length(lpsz);
+            if (len < HEADER_SIZE) {
+                LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
+                throw CairoException.critical(0).put("SymbolMap is too short [path=").put(path)
+                        .put(", expected=").put(HEADER_SIZE)
+                        .put(", actual=").put(len)
+                        .put(']');
+            }
 
-        // open "offset" memory and make sure we start appending from where
-        // we left off. Where we left off is stored externally to symbol map
-        this.offsetMem.of(
-                ff,
-                lpsz,
-                mapPageSize,
-                MemoryTag.MMAP_INDEX_WRITER,
-                configuration.getWriterFileOpenOpts()
-        );
+            // open "offset" memory and make sure we start appending from where
+            // we left off. Where we left off is stored externally to symbol map
+            this.offsetMem.of(
+                    ff,
+                    lpsz,
+                    mapPageSize,
+                    MemoryTag.MMAP_INDEX_WRITER,
+                    configuration.getWriterFileOpenOpts()
+            );
 
-        offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
-        offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
+            offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
+            offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
 
-        // this is the place where symbol values are stored
-        this.charMem.of(
-                ff,
-                charFileName(path.trimTo(plen), columnName, columnNameTxn),
-                mapPageSize,
-                MemoryTag.MMAP_INDEX_WRITER,
-                configuration.getWriterFileOpenOpts()
-        );
+            // this is the place where symbol values are stored
+            this.charMem.of(
+                    ff,
+                    charFileName(path.trimTo(plen), columnName, columnNameTxn),
+                    mapPageSize,
+                    MemoryTag.MMAP_INDEX_WRITER,
+                    configuration.getWriterFileOpenOpts()
+            );
 
-        // move append pointer for symbol values in the correct place
-        jumpCharMemToSymbolCount(symbolCount);
+            // move append pointer for symbol values in the correct place
+            jumpCharMemToSymbolCount(symbolCount);
 
-        // we use index hash maximum equals to half of symbol capacity, which
-        // theoretically should require 2 value cells in index per hash
-        // we use 4 cells to compensate for occasionally unlucky hash distribution
-        this.maxHash = calculateMaxHashFromCapacity();
+            // we use index hash maximum equals to half of symbol capacity, which
+            // theoretically should require 2 value cells in index per hash
+            // we use 4 cells to compensate for occasionally unlucky hash distribution
+            this.maxHash = calculateMaxHashFromCapacity();
 
-        if (newCacheFlag != cachedFlag) {
-            setupCache(newCacheFlag);
-        }
+            if (newCacheFlag != cachedFlag) {
+                setupCache(newCacheFlag);
+            }
 
-        LOG.debug()
-                .$("open [columnName=").$(path.trimTo(plen).concat(columnName).$())
-                .$(", fd=").$(offsetMem.getFd())
-                .$(", cache=").$(cache != null)
-                .$(", capacity=").$(symbolCapacity)
-                .I$();
+            LOG.debug()
+                    .$("open [columnName=").$(path.trimTo(plen).concat(columnName).$())
+                    .$(", fd=").$(offsetMem.getFd())
+                    .$(", cache=").$(cache != null)
+                    .$(", capacity=").$(symbolCapacity)
+                    .I$();
 
 
-        // Re-index the existing symbols, reading values from .c, .o files
-        // and re-writing .k, .v files
-        for (int i = 0; i < symbolCount; i++) {
-            long offset = SymbolMapWriter.keyToOffset(i);
-            long strOffset = offsetMem.getLong(offset);
-            CharSequence symbol = charMem.getStrA(strOffset);
-            int hash = Hash.boundedHash(symbol, maxHash);
-            indexWriter.add(hash, offset);
+            // Re-index the existing symbols, reading values from .c, .o files
+            // and re-writing .k, .v files
+            for (int i = 0; i < symbolCount; i++) {
+                long offset = SymbolMapWriter.keyToOffset(i);
+                long strOffset = offsetMem.getLong(offset);
+                CharSequence symbol = charMem.getStrA(strOffset);
+                int hash = Hash.boundedHash(symbol, maxHash);
+                indexWriter.add(hash, offset);
+            }
+        } catch (Throwable th) {
+            closeNoTruncate();
+            throw th;
         }
     }
 
     @Override
     public void rollback(int symbolCount) {
-        indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
-        offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
-        jumpCharMemToSymbolCount(symbolCount);
-        valueCountCollector.collectValueCount(symbolIndexInTxWriter, symbolCount);
-        if (cache != null) {
-            cache.clear();
+        try {
+            indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
+            offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
+            valueCountCollector.collectValueCount(symbolIndexInTxWriter, symbolCount);
+            Misc.clear(cache);
+            // This line can throw if the data is corrupt
+            // run it last
+            jumpCharMemToSymbolCount(symbolCount);
+        } catch (Throwable th) {
+            closeNoTruncate();
+            throw th;
         }
     }
 
@@ -392,9 +404,35 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         return Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);
     }
 
+    private void closeNoTruncate() {
+        // If we fail to rebuild or open the files, we need to close them without truncate.
+        // Truncating them can lead to full symbol map data loss when truncate offsets are not set correctly.
+        if (charMem != null) {
+            charMem.close(false);
+        }
+        if (offsetMem != null) {
+            offsetMem.close(false);
+        }
+        if (indexWriter != null) {
+            indexWriter.closeNoTruncate();
+        }
+    }
+
     private void jumpCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
-            charMem.jumpTo(offsetMem.getLong(keyToOffset(symbolCount)));
+            long cFileSize = offsetMem.getLong(keyToOffset(symbolCount));
+            long minExpectedSize = symbolCount * Vm.getStorageLength(1) - 2;
+            if (cFileSize < minExpectedSize) {
+                // There should be at least 1 character per symbol
+                // the size read from .o file is less than that
+                // it means .o is corrupt, e.g. binary zeros at the end
+                // This can happen in case of hard resets on power failures.
+                throw CairoException.nonCritical().put("symbol column map is corrupt, offsetFileLastOffset=").put(cFileSize)
+                        .put(", symbolCount=").put(symbolCount)
+                        .put(", expectedMin=").put(minExpectedSize)
+                        .put(']');
+            }
+            charMem.jumpTo(cFileSize);
         } else {
             charMem.jumpTo(0);
         }

@@ -134,9 +134,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.tasks.TableWriterTask.*;
@@ -3045,7 +3045,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 freeColumns(false);
                 txWriter.unsafeLoadAll();
                 rollbackIndexes();
-                rollbackSymbolTables();
+                rollbackSymbolTables(true);
                 columnVersionWriter.readUnsafe();
                 closeActivePartition(false);
                 purgeUnusedPartitions();
@@ -4321,6 +4321,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // lets not leave half-baked file sitting around
                 LOG.error()
                         .$("could not create index [name=").$(path)
+                        .$(", msg=").$(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .I$();
                 if (!ff.removeQuiet(path.$())) {
@@ -6630,7 +6631,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void performRecovery() {
         rollbackIndexes();
-        rollbackSymbolTables();
+        rollbackSymbolTables(false);
         performRecovery = false;
     }
 
@@ -8715,10 +8716,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void rollbackSymbolTables() {
+    private void rollbackSymbolTables(boolean quiet) {
         int expectedMapWriters = txWriter.unsafeReadSymbolColumnCount();
         for (int i = 0; i < expectedMapWriters; i++) {
-            denseSymbolMapWriters.getQuick(i).rollback(txWriter.unsafeReadSymbolWriterIndexOffset(i));
+            try {
+                denseSymbolMapWriters.get(i).rollback(txWriter.unsafeReadSymbolWriterIndexOffset(i));
+            } catch (Throwable th) {
+                if (quiet) {
+                    distressed = true;
+                    CharSequence columnName = metadata.getColumnName(i);
+                    LOG.error().$("could not rollback symbol table [table=").$(tableToken).$(", columnName=").$(columnName)
+                            .$(", exception=").$(th)
+                            .I$();
+                } else {
+                    throw th;
+                }
+            }
         }
     }
 

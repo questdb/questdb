@@ -57,10 +57,13 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.VacuumColumnVersions;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
-import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
+import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -1373,9 +1376,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), "'resume' or 'suspend'").put(" expected");
             }
         } catch (CairoException e) {
-            LOG.info().$("could not alter materialized view [table=").$(matViewToken.getTableName())
+            LOG.info().$("could not alter materialized view [view=").$(matViewToken.getTableName())
+                    .$(", msg=").$(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
-                    .$(", ex=").$(e.getFlyweightMessage())
                     .I$();
             if (e.getPosition() == 0) {
                 e.position(lexer.lastTokenPosition());
@@ -1646,8 +1649,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } catch (CairoException e) {
             LOG.info().$("could not alter table [table=").$(tableToken.getTableName())
+                    .$(", msg=").$(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
-                    .$(", ex=").$(e.getFlyweightMessage())
                     .I$();
             if (e.getPosition() == 0) {
                 e.position(lexer.lastTokenPosition());
@@ -1689,6 +1692,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void compileCheckpoint(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         executionContext.getSecurityContext().authorizeDatabaseSnapshot();
+        executionContext.getCircuitBreaker().resetTimer();
         CharSequence tok = expectToken(lexer, "'create' or 'release'");
 
         if (isCreateKeyword(tok)) {
@@ -1983,6 +1987,113 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.withContext(executionContext);
     }
 
+    private InsertOperation compileInsert(InsertModel insertModel, SqlExecutionContext executionContext) throws SqlException {
+        // todo: consider moving this method to InsertModel
+        final ExpressionNode tableNameExpr = insertModel.getTableNameExpr();
+        ObjList<Function> valueFunctions = null;
+        TableToken token = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
+
+        try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(token)) {
+            final long metadataVersion = metadata.getMetadataVersion();
+            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
+            final int metadataTimestampIndex = metadata.getTimestampIndex();
+            final ObjList<CharSequence> columnNameList = insertModel.getColumnNameList();
+            final int columnSetSize = columnNameList.size();
+            int designatedTimestampPosition = 0;
+            for (int tupleIndex = 0, n = insertModel.getRowTupleCount(); tupleIndex < n; tupleIndex++) {
+                Function timestampFunction = null;
+                listColumnFilter.clear();
+                if (columnSetSize > 0) {
+                    valueFunctions = new ObjList<>(columnSetSize);
+                    for (int i = 0; i < columnSetSize; i++) {
+                        int metadataColumnIndex = metadata.getColumnIndexQuiet(columnNameList.getQuick(i));
+                        if (metadataColumnIndex > -1) {
+                            final ExpressionNode node = insertModel.getRowTupleValues(tupleIndex).getQuick(i);
+                            final Function function = functionParser.parseFunction(
+                                    node,
+                                    EmptyRecordMetadata.INSTANCE,
+                                    executionContext
+                            );
+
+                            insertValidateFunctionAndAddToList(
+                                    insertModel,
+                                    tupleIndex,
+                                    valueFunctions,
+                                    metadata,
+                                    metadataTimestampIndex,
+                                    i,
+                                    metadataColumnIndex,
+                                    function,
+                                    node.position,
+                                    executionContext.getBindVariableService()
+                            );
+
+                            if (metadataTimestampIndex == metadataColumnIndex) {
+                                timestampFunction = function;
+                                designatedTimestampPosition = node.position;
+                            }
+                        } else {
+                            throw SqlException.invalidColumn(insertModel.getColumnPosition(i), columnNameList.getQuick(i));
+                        }
+                    }
+                } else {
+                    final int columnCount = metadata.getColumnCount();
+                    final ObjList<ExpressionNode> values = insertModel.getRowTupleValues(tupleIndex);
+                    final int valueCount = values.size();
+                    if (columnCount != valueCount) {
+                        throw SqlException.$(
+                                        insertModel.getEndOfRowTupleValuesPosition(tupleIndex),
+                                        "row value count does not match column count [expected="
+                                ).put(columnCount).put(", actual=").put(values.size())
+                                .put(", tuple=").put(tupleIndex + 1).put(']');
+                    }
+                    valueFunctions = new ObjList<>(columnCount);
+
+                    for (int i = 0; i < columnCount; i++) {
+                        final ExpressionNode node = values.getQuick(i);
+
+                        Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
+                        insertValidateFunctionAndAddToList(
+                                insertModel,
+                                tupleIndex,
+                                valueFunctions,
+                                metadata,
+                                metadataTimestampIndex,
+                                i,
+                                i,
+                                function,
+                                node.position,
+                                executionContext.getBindVariableService()
+                        );
+
+                        if (metadataTimestampIndex == i) {
+                            timestampFunction = function;
+                            designatedTimestampPosition = node.position;
+                        }
+                    }
+                }
+
+                // validate timestamp
+                if (metadataTimestampIndex > -1) {
+                    if (timestampFunction == null) {
+                        throw SqlException.$(0, "insert statement must populate timestamp");
+                    } else if (ColumnType.isNull(timestampFunction.getType()) || timestampFunction.isNullConstant()) {
+                        throw SqlException.$(designatedTimestampPosition, "designated timestamp column cannot be NULL");
+                    }
+                }
+
+
+                VirtualRecord record = new VirtualRecord(valueFunctions);
+                RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter);
+                insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction, designatedTimestampPosition, tupleIndex));
+            }
+            return insertOperation;
+        } catch (SqlException e) {
+            Misc.freeObjList(valueFunctions);
+            throw e;
+        }
+    }
+
     private void compileLegacyCheckpoint(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         executionContext.getSecurityContext().authorizeDatabaseSnapshot();
         CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
@@ -2016,23 +2127,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         lexer.unparseLast();
 
-        this.sqlText = createTableOp.getSelectText();
+        sqlText = createTableOp.getSelectText();
         compiledQuery.withContext(executionContext);
 
         final int startPos = lexer.getPosition();
         final long beginNanos = configuration.getNanosecondClock().getTicks();
 
+        final int selectTextPosition = createTableOp.getSelectTextPosition();
         try {
-            final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
-            if (executionModel.getModelType() != ExecutionModel.QUERY) {
-                throw SqlException.$(startPos, "SELECT query expected");
+            final QueryModel queryModel;
+            try {
+                final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
+                if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                    throw SqlException.$(startPos, "SELECT query expected");
+                }
+                queryModel = optimiser.optimise((QueryModel) executionModel, executionContext, this);
+            } catch (SqlException e) {
+                e.setPosition(e.getPosition() + selectTextPosition);
+                throw e;
             }
-            final QueryModel queryModel = optimiser.optimise((QueryModel) executionModel, executionContext, this);
-            createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser, queryModel);
+            createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
             queryModel.setIsMatView(true);
-            compiledQuery.ofSelect(
-                    generateSelectWithRetries(queryModel, executionContext, false)
-            );
+            try {
+                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, executionContext, false));
+            } catch (SqlException e) {
+                e.setPosition(e.getPosition() + selectTextPosition);
+                throw e;
+            }
         } catch (Throwable th) {
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
             throw th;
@@ -2076,12 +2197,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to refresh materialized view");
         }
 
-        final MatViewGraph matViewGraph = engine.getMatViewGraph();
+        final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
         executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
         if (incremental) {
-            matViewGraph.enqueueIncrementalRefresh(matViewToken);
+            matViewStateStore.enqueueIncrementalRefresh(matViewToken);
         } else {
-            matViewGraph.enqueueFullRefresh(matViewToken);
+            matViewStateStore.enqueueFullRefresh(matViewToken);
         }
         compiledQuery.ofRefreshMatView();
     }
@@ -2355,7 +2476,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         );
                     } else {
                         // we use SQL Compiler state (reusing objects) to generate InsertOperation
-                        compiledQuery.ofInsert(insert(sqlText, insertModel, executionContext));
+                        compiledQuery.ofInsert(compileInsert(insertModel, executionContext));
                     }
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
@@ -2506,7 +2627,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        long deadline = batchSize;
+        long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
@@ -2514,9 +2635,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
             copier.copy(record, row);
             row.append();
-            if (++rowCount >= deadline) {
+            if (++rowCount >= commitTarget) {
                 writer.ic(o3MaxLag);
-                deadline = rowCount + batchSize;
+                commitTarget = rowCount + batchSize;
             }
         }
         return rowCount;
@@ -2532,7 +2653,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        long deadline = batchSize;
+        long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
@@ -2542,9 +2663,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, -1, ColumnType.STRING, ColumnType.TIMESTAMP));
             copier.copy(record, row);
             row.append();
-            if (++rowCount >= deadline) {
+            if (++rowCount >= commitTarget) {
                 writer.ic(o3MaxLag);
-                deadline = rowCount + batchSize;
+                commitTarget = rowCount + batchSize;
             }
         }
 
@@ -2704,11 +2825,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
                     if (volumePath != null) {
                         if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
-                            throw CairoException.critical(0).put("not a valid path for volume [alias=")
+                            throw CairoException.critical(0).position(createMatViewOp.getVolumePosition())
+                                    .put("not a valid path for volume [alias=")
                                     .put(volumeAlias).put(", path=").put(path).put(']');
                         }
                     } else {
-                        throw SqlException.position(0).put("volume alias is not allowed [alias=")
+                        throw SqlException.position(createMatViewOp.getVolumePosition()).put("volume alias is not allowed [alias=")
                                 .put(volumeAlias).put(']');
                     }
                 }
@@ -2761,7 +2883,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         Misc.free(newFactory);
                     }
 
-                    engine.getMatViewGraph().createView(matViewDefinition);
                     createMatViewOp.updateOperationFutureTableToken(matViewToken);
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "materialized view requires a SELECT statement");
@@ -2805,11 +2926,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
                     if (volumePath != null) {
                         if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
-                            throw CairoException.critical(0).put("not a valid path for volume [alias=")
+                            throw CairoException.critical(0).position(createTableOp.getVolumePosition())
+                                    .put("not a valid path for volume [alias=")
                                     .put(volumeAlias).put(", path=").put(path).put(']');
                         }
                     } else {
-                        throw SqlException.position(0).put("volume alias is not allowed [alias=")
+                        throw SqlException.position(createTableOp.getVolumePosition()).put("volume alias is not allowed [alias=")
                                 .put(volumeAlias).put(']');
                     }
                 }
@@ -3265,118 +3387,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         return lexer.getPosition();
-    }
-
-    private InsertOperation insert(
-            CharSequence sqlText,
-            InsertModel insertModel,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        // todo: rename method to compileInsert()
-        //       consider moving this method to InsertModel
-        final ExpressionNode tableNameExpr = insertModel.getTableNameExpr();
-        ObjList<Function> valueFunctions = null;
-        TableToken token = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
-
-        try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(token)) {
-            final long metadataVersion = metadata.getMetadataVersion();
-            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
-            final int metadataTimestampIndex = metadata.getTimestampIndex();
-            final ObjList<CharSequence> columnNameList = insertModel.getColumnNameList();
-            final int columnSetSize = columnNameList.size();
-            for (int tupleIndex = 0, n = insertModel.getRowTupleCount(); tupleIndex < n; tupleIndex++) {
-                Function timestampFunction = null;
-                listColumnFilter.clear();
-                if (columnSetSize > 0) {
-                    valueFunctions = new ObjList<>(columnSetSize);
-                    for (int i = 0; i < columnSetSize; i++) {
-                        int metadataColumnIndex = metadata.getColumnIndexQuiet(columnNameList.getQuick(i));
-                        if (metadataColumnIndex > -1) {
-                            final ExpressionNode node = insertModel.getRowTupleValues(tupleIndex).getQuick(i);
-                            final Function function = functionParser.parseFunction(
-                                    node,
-                                    EmptyRecordMetadata.INSTANCE,
-                                    executionContext
-                            );
-
-                            insertValidateFunctionAndAddToList(
-                                    insertModel,
-                                    tupleIndex,
-                                    valueFunctions,
-                                    metadata,
-                                    metadataTimestampIndex,
-                                    i,
-                                    metadataColumnIndex,
-                                    function,
-                                    node.position,
-                                    executionContext.getBindVariableService()
-                            );
-
-                            if (metadataTimestampIndex == metadataColumnIndex) {
-                                timestampFunction = function;
-                            }
-
-                        } else {
-                            throw SqlException.invalidColumn(insertModel.getColumnPosition(i), columnNameList.getQuick(i));
-                        }
-                    }
-                } else {
-                    final int columnCount = metadata.getColumnCount();
-                    final ObjList<ExpressionNode> values = insertModel.getRowTupleValues(tupleIndex);
-                    final int valueCount = values.size();
-                    if (columnCount != valueCount) {
-                        throw SqlException.$(
-                                        insertModel.getEndOfRowTupleValuesPosition(tupleIndex),
-                                        "row value count does not match column count [expected="
-                                ).put(columnCount).put(", actual=").put(values.size())
-                                .put(", tuple=").put(tupleIndex + 1).put(']');
-                    }
-                    valueFunctions = new ObjList<>(columnCount);
-
-                    for (int i = 0; i < columnCount; i++) {
-                        final ExpressionNode node = values.getQuick(i);
-
-                        Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
-                        insertValidateFunctionAndAddToList(
-                                insertModel,
-                                tupleIndex,
-                                valueFunctions,
-                                metadata,
-                                metadataTimestampIndex,
-                                i,
-                                i,
-                                function,
-                                node.position,
-                                executionContext.getBindVariableService()
-                        );
-
-                        if (metadataTimestampIndex == i) {
-                            timestampFunction = function;
-                        }
-                    }
-                }
-
-                // validate timestamp
-                if (metadataTimestampIndex > -1) {
-                    if (timestampFunction == null) {
-                        throw SqlException.$(0, "insert statement must populate timestamp");
-                    } else if (ColumnType.isNull(timestampFunction.getType()) || timestampFunction.isNullConstant()) {
-                        throw SqlException.$(0, "designated timestamp column cannot be NULL");
-                    }
-                }
-
-
-                VirtualRecord record = new VirtualRecord(valueFunctions);
-                RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter);
-                insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction, tupleIndex));
-            }
-
-            insertOperation.setInsertSql(sqlText);
-            return insertOperation;
-        } catch (SqlException e) {
-            Misc.freeObjList(valueFunctions);
-            throw e;
-        }
     }
 
     private void insertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
@@ -4017,16 +4027,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
 
                         if (tableToken.isMatView()) {
-                            try (BlockFileWriter writer = new BlockFileWriter(ff, configuration.getCommitMode())) {
+                            try (
+                                    BlockFileReader matViewFileReader = new BlockFileReader(configuration);
+                                    BlockFileWriter matViewFileWriter = new BlockFileWriter(ff, configuration.getCommitMode())
+                            ) {
                                 MatViewGraph graph = engine.getMatViewGraph();
-                                MatViewRefreshState state = graph.getViewRefreshState(tableToken);
-                                writer.of(auxPath.trimTo(tableRootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                                MatViewRefreshState.append(state, writer);
-                                MatViewDefinition matViewDefinition = (state != null)
-                                        ? state.getViewDefinition() : graph.getViewDefinition(tableToken);
+                                final MatViewDefinition matViewDefinition = graph.getViewDefinition(tableToken);
                                 if (matViewDefinition != null) {
-                                    writer.of(auxPath.trimTo(tableRootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                                    MatViewDefinition.append(matViewDefinition, writer);
+                                    // srcPath is unused at this point, so we can overwrite it
+                                    final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, srcPath, tableToken.getDirName());
+                                    if (isMatViewStateExists) {
+                                        matViewFileReader.of(srcPath.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                        MatViewStateReader matViewStateReader = new MatViewStateReader().of(matViewFileReader, tableToken);
+                                        matViewFileWriter.of(auxPath.trimTo(tableRootLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                        MatViewState.append(matViewStateReader, matViewFileWriter);
+                                        matViewFileWriter.of(auxPath.trimTo(tableRootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                                        MatViewDefinition.append(matViewDefinition, matViewFileWriter);
+                                    } else {
+                                        LOG.info().$("materialized view state for backup not found [view=").$(tableToken).I$();
+                                    }
                                 } else {
                                     LOG.info().$("materialized view definition for backup not found [view=").$(tableToken).I$();
                                 }
@@ -4096,7 +4115,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } catch (CairoException e) {
                 LOG.info()
                         .$("could not backup [table=").utf8(tableName)
-                        .$(", ex=").$(e.getFlyweightMessage())
+                        .$(", msg=").$(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .I$();
                 auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();
