@@ -2268,7 +2268,7 @@ public class SqlParser {
                 // since in error state we cannot reliably parse them
                 continue;
             }
-            
+
             if (Chars.equals(hintToken, '(')) {
                 if (parsingParams) {
                     // hints cannot be nested
@@ -2319,7 +2319,7 @@ public class SqlParser {
                 model.addHint(hintKey, null);
             }
             CharacterStoreEntry entry = characterStore.newEntry();
-            entry.put(GenericLexer.unquote(hintToken));
+            entry.put(hintToken);
             hintKey = entry.toImmutable();
         }
         if (!error && !parsingParams && hintKey != null) {

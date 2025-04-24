@@ -4665,9 +4665,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("c", ColumnType.INT)
         );
 
-        // quoted hint name
+        // quoted hint name is NOT unquoted!
         assertQuery(
-                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NO_INDEX]) hints[NO_INDEX]",
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[\"NO_INDEX\"]) hints[\"NO_INDEX\"]",
                 "select /*+ \"NO_INDEX\"  */ a,b,c from xyz where a = 1",
                 modelOf("xyz")
                         .col("a", ColumnType.SYMBOL)
@@ -4675,7 +4675,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("c", ColumnType.INT)
         );
 
-        // quoted param
+        // quoted param - params are unquoted!
         assertQuery(
                 "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NO_INDEX(a)]) hints[NO_INDEX(a)]",
                 "select /*+ NO_INDEX(\"a\")  */ a,b,c from xyz where a = 1",
