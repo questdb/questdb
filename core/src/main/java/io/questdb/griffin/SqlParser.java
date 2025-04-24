@@ -2262,20 +2262,13 @@ public class SqlParser {
         CharSequence hintKey = null;
         CharacterStoreEntry hintValuesEntry = null;
         boolean error = false;
-        while (true) {
-            try {
-                if ((hintToken = SqlUtil.fetchNextHintToken(lexer)) == null) {
-                    break;
-                }
-            } catch (SqlException e) {
-                error = true;
-            }
-
+        while ((hintToken = SqlUtil.fetchNextHintToken(lexer)) != null) {
             if (error) {
                 // if in error state, just consume the rest of hints, but ignore them
                 // since in error state we cannot reliably parse them
                 continue;
             }
+
             if (Chars.equals(hintToken, '(')) {
                 if (parsingParams) {
                     // hints cannot be nested
@@ -2326,16 +2319,14 @@ public class SqlParser {
                 model.addHint(hintKey, null);
             }
             CharacterStoreEntry entry = characterStore.newEntry();
-            entry.put(GenericLexer.unquote(hintToken));
+            entry.put(hintToken);
             hintKey = entry.toImmutable();
         }
-        if (!error) {
-            if (parsingParams) {
-                // dangling opening parenthesis, ignore
-            } else if (hintKey != null) {
-                // store last parameter-less hint
-                model.addHint(hintKey, null);
-            }
+        if (!error && !parsingParams && hintKey != null) {
+            // store the last parameter-less hint
+            // why only when not parsingParams? dangling parsingParams indicates a syntax error and in this case
+            // we don't want to store the hint
+            model.addHint(hintKey, null);
         }
     }
 
