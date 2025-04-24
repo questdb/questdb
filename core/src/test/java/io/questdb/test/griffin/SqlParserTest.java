@@ -4585,6 +4585,31 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("quotes").timestamp()
         );
 
+        // model with sample by - simple
+        assertQuery(
+                "select-group-by timestamp_floor('1d',timestamp,null,'00:00',null) timestamp, count() count from (select [timestamp] from trades timestamp (timestamp) stride 1d hints[HINT]) order by timestamp hints[HINT]",
+                "select /*+ HINT*/ timestamp, count(*) from trades sample by 1d",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL)
+        );
+
+        // model with sample by - with projection
+        // todo: hints currently do not appear in the outer SELECT-CHOOSE, consider adding them?
+        assertQuery(
+                "select-choose tag, count from (select-group-by [tag, count() count, timestamp_floor('1d',timestamp,null,'00:00',null) timestamp] tag, count() count, timestamp_floor('1d',timestamp,null,'00:00',null) timestamp from (select [tag, timestamp] from trades timestamp (timestamp) stride 1d hints[HINT]) order by timestamp hints[HINT])",
+                "select /*+ HINT*/ tag, count(*) from trades sample by 1d",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL)
+        );
+
+        // model with union
+        // todo: this plan is funky, propagations with UNION must change
+        assertQuery(
+                "select-choose [a, b, c] a, b, c from (select [a, b, c] from xyz where a = 1 hints[HINT_A]) union select-choose [a, b, c] a, b, c from (select [a, b, c] from xyz where a = 2) hints[HINT_B] hints[HINT_A]",
+                "select /*+ HINT_A*/ a,b,c from xyz where a = 1 union select /*+ HINT_B*/ a,b,c from xyz where a = 2",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
 
     }
 
