@@ -523,8 +523,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private int addColumnWithType(
             AlterOperationBuilder addColumn,
             CharSequence columnName,
-            int columnNamePosition,
-            boolean symbolsCanHaveIndex
+            int columnNamePosition
     ) throws SqlException {
         CharSequence tok;
         tok = expectToken(lexer, "column type");
@@ -612,9 +611,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
             if (indexed) {
-                if (!symbolsCanHaveIndex) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "INDEX is not supported when changing SYMBOL capacity");
-                }
                 tok = SqlUtil.fetchNext(lexer);
             }
 
@@ -631,7 +627,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 indexValueBlockCapacity = configuration.getIndexValueBlockSize();
             }
         } else { // set defaults
-
             // ignore `NULL` and `NOT NULL`
             if (tok != null && isNotKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
@@ -722,7 +717,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
             }
 
-            addColumnWithType(addColumn, columnName, columnNamePosition, true);
+            addColumnWithType(addColumn, columnName, columnNamePosition);
             tok = SqlUtil.fetchNext(lexer);
 
             if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
@@ -756,7 +751,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tableMetadata.getTableId()
         );
         int existingColumnType = tableMetadata.getColumnType(columnIndex);
-        int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition, true);
+        int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition);
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change column type");
@@ -786,21 +781,55 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableRecordMetadata tableMetadata,
             int columnIndex
     ) throws SqlException {
-        AlterOperationBuilder changeColumn = alterOperationBuilder.ofSymbolCapacityChange(
+        final AlterOperationBuilder changeColumn = alterOperationBuilder.ofSymbolCapacityChange(
                 tableNamePosition,
                 tableToken,
                 tableMetadata.getTableId()
         );
-        int existingColumnType = tableMetadata.getColumnType(columnIndex);
+        final int existingColumnType = tableMetadata.getColumnType(columnIndex);
         if (!ColumnType.isSymbol(existingColumnType)) {
             throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName).put("' is not of symbol type");
         }
-        lexer.unparseLast();
-        addColumnWithType(changeColumn, columnName, columnNamePosition, false);
+        expectKeyword(lexer, "capacity");
 
-        CharSequence tok = SqlUtil.fetchNext(lexer);
+        CharSequence tok = expectToken(lexer, "symbol capacity");
+
+        final boolean negative;
+        final int errorPos = lexer.lastTokenPosition();
+        if (Chars.equals(tok, '-')) {
+            negative = true;
+            tok = expectToken(lexer, "symbol capacity");
+        } else {
+            negative = false;
+        }
+
+        int symbolCapacity;
+        try {
+            symbolCapacity = Numbers.parseInt(tok);
+        } catch (NumericException e) {
+            throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
+        }
+
+        if (negative) {
+            symbolCapacity = -symbolCapacity;
+        }
+
+        TableUtils.validateSymbolCapacity(errorPos, symbolCapacity);
+
+        changeColumn.addColumnToList(
+                columnName,
+                columnNamePosition,
+                ColumnType.SYMBOL,
+                Numbers.ceilPow2(symbolCapacity),
+                configuration.getDefaultSymbolCacheFlag(), // ignored
+                false, // ignored
+                Numbers.ceilPow2(configuration.getIndexValueBlockSize()), // ignored
+                false // ignored
+        );
+
+        tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !isSemicolon(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change column type");
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change symbol capacity");
         }
 
         securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
@@ -1365,15 +1394,37 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         tok = expectToken(lexer, "materialized view name");
         assertTableNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
         final TableToken matViewToken = tableExistsOrFail(matViewNamePosition, GenericLexer.unquote(tok), executionContext);
+        final SecurityContext securityContext = executionContext.getSecurityContext();
 
-        try {
-            tok = expectToken(lexer, "'resume' or 'suspend'");
-            if (isResumeKeyword(tok)) {
+        try (TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(matViewToken)) {
+            tok = expectToken(lexer, "'alter' or 'resume' or 'suspend'");
+            if (isAlterKeyword(tok)) {
+                expectKeyword(lexer, "column");
+                final int columnNamePosition = lexer.getPosition();
+                tok = expectToken(lexer, "column name");
+                final CharSequence columnName = GenericLexer.immutableOf(tok);
+                final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
+                if (columnIndex == -1) {
+                    throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
+                            .put("' does not exist in materialized view '").put(matViewToken.getTableName()).put('\'');
+                }
+
+                expectKeyword(lexer, "symbol");
+                alterTableChangeSymbolCapacity(
+                        securityContext,
+                        matViewNamePosition,
+                        matViewToken,
+                        columnNamePosition,
+                        columnName,
+                        tableMetadata,
+                        columnIndex
+                );
+            } else if (isResumeKeyword(tok)) {
                 parseResumeWal(matViewToken, matViewNamePosition, executionContext);
             } else if (isSuspendKeyword(tok)) {
                 parseSuspendWal(matViewToken, matViewNamePosition, executionContext);
             } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "'resume' or 'suspend'").put(" expected");
+                throw SqlException.$(lexer.lastTokenPosition(), "'alter' or 'resume' or 'suspend' expected");
             }
         } catch (CairoException e) {
             LOG.info().$("could not alter materialized view [view=").$(matViewToken.getTableName())
@@ -1480,10 +1531,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
                     if (columnIndex == -1) {
                         throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
-                                .put("' does not exists in table '").put(tableToken.getTableName()).put('\'');
+                                .put("' does not exist in table '").put(tableToken.getTableName()).put('\'');
                     }
 
-                    tok = expectToken(lexer, "'add index' or 'drop index' or 'type' or 'cache' or 'nocache'");
+                    tok = expectToken(lexer, "'add index' or 'drop index' or 'type' or 'cache' or 'nocache' or 'symbol'");
                     if (isAddKeyword(tok)) {
                         expectKeyword(lexer, "index");
                         tok = SqlUtil.fetchNext(lexer);
