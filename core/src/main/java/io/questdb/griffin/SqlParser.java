@@ -2329,13 +2329,11 @@ public class SqlParser {
             entry.put(GenericLexer.unquote(hintToken));
             hintKey = entry.toImmutable();
         }
-        if (!error) {
-            if (parsingParams) {
-                // dangling opening parenthesis, ignore
-            } else if (hintKey != null) {
-                // store last parameter-less hint
-                model.addHint(hintKey, null);
-            }
+        if (!error && !parsingParams && hintKey != null) {
+            // store the last parameter-less hint
+            // why only when not parsingParams? dangling parsingParams indicates a syntax error and in this case
+            // we don't want to store the hint
+            model.addHint(hintKey, null);
         }
     }
 
