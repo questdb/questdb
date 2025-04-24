@@ -174,7 +174,7 @@ public final class Chars {
         return indexOfLowerCase(sequence, 0, sequence.length(), termLC) != -1;
     }
 
-    public static boolean containsWord(CharSequence seq, CharSequence term, char separator) {
+    public static boolean containsWordIgnoreCase(CharSequence seq, CharSequence term, char separator) {
         if (Chars.isBlank(seq)) {
             return false;
         }
@@ -183,7 +183,7 @@ public final class Chars {
         }
 
         int seqLen = seq.length();
-        int i = Chars.indexOf(seq, 0, seqLen, term);
+        int i = Chars.indexOfIgnoreCase(seq, 0, seqLen, term);
 
         if (i < 0) {
             return false;
@@ -696,6 +696,37 @@ public final class Chars {
                 int j = i + 1;
                 int end = j + termLen - 1;
                 for (int k = 1; j < end && Character.toLowerCase(seq.charAt(j)) == termLC.charAt(k); ++k) {
+                    ++j;
+                }
+                if (j == end) {
+                    return i;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    public static int indexOfIgnoreCase(@NotNull CharSequence seq, int seqLo, int seqHi, @NotNull CharSequence term) {
+        int termLen = term.length();
+        if (termLen == 0) {
+            return 0;
+        }
+
+        char first = Character.toLowerCase(term.charAt(0));
+        int max = seqHi - termLen;
+
+        for (int i = seqLo; i <= max; ++i) {
+            if (Character.toLowerCase(seq.charAt(i)) != first) {
+                do {
+                    ++i;
+                } while (i <= max && Character.toLowerCase(seq.charAt(i)) != first);
+            }
+
+            if (i <= max) {
+                int j = i + 1;
+                int end = j + termLen - 1;
+                for (int k = 1; j < end && Character.toLowerCase(seq.charAt(j)) == Character.toLowerCase(term.charAt(k)); ++k) {
                     ++j;
                 }
                 if (j == end) {

@@ -60,22 +60,22 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day;");
 
             String queryWithoutHint = "select * from (\n" +
-                    "  select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from orders\n" +
+                    "  select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from oRdERS\n" +
                     "  asof join (\n" +
                     "    select ts as md_ts, market_Data_symbol, bid from market_data\n" +
                     "    where market_data_symbol = 'sym_1' \n" +
-                    "  ) md  \n" +
+                    "  ) MD  \n" +
                     "  where orders.ts > '2025-01-01T00:00:00.000000000Z' \n" +
                     "  and bid > price\n" +
                     ");";
 
             // the same query with hint
             String queryWithHint = "select /*+ use_asof_binary_search(orders md) */ * from (\n" +
-                    "  select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from orders\n" +
+                    "  select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from oRdERS\n" +
                     "  asof join (\n" +
                     "    select ts as md_ts, market_Data_symbol, bid from market_data\n" +
                     "    where market_data_symbol = 'sym_1' \n" +
-                    "  ) md  \n" +
+                    "  ) MD  \n" +
                     "  where orders.ts > '2025-01-01T00:00:00.000000000Z' \n" +
                     "  and bid > price\n" +
                     ");";
@@ -83,7 +83,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // plan without the hint should not use the FAST ASOF
             assertQuery("QUERY PLAN\n" +
                             "SelectedRecord\n" +
-                            "    Filter filter: orders.price<md.bid\n" +
+                            "    Filter filter: oRdERS.price<MD.bid\n" +
                             "        AsOf Join\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
@@ -100,9 +100,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // with hint it generates a plan with the fast asof join
             assertQuery("QUERY PLAN\n" +
                             "SelectedRecord\n" +
-                            "    Filter filter: orders.price<md.bid\n" +
+                            "    Filter filter: oRdERS.price<MD.bid\n" +
                             "        Filtered AsOf Join Fast Scan\n" +
-                            "          filter: orders.order_symbol='sym_1'\n" +
+                            "          filter: oRdERS.order_symbol='sym_1'\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Interval forward scan on: orders\n" +

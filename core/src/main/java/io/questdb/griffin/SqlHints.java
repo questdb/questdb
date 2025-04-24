@@ -36,7 +36,7 @@ public final class SqlHints {
     public static boolean hasAsOfJoinBinarySearchHint(@NotNull QueryModel queryModel, CharSequence tableNameA, CharSequence tableNameB) {
         LowerCaseCharSequenceObjHashMap<CharSequence> hints = queryModel.getHints();
         CharSequence params = hints.get(SqlHints.ASOF_JOIN_BINARY_SEARCH_HINT);
-        return Chars.containsWord(params, tableNameA, HINTS_PARAMS_DELIMITER) &&
-                Chars.containsWord(params, tableNameB, HINTS_PARAMS_DELIMITER);
+        return Chars.containsWordIgnoreCase(params, tableNameA, HINTS_PARAMS_DELIMITER) &&
+                Chars.containsWordIgnoreCase(params, tableNameB, HINTS_PARAMS_DELIMITER);
     }
 }

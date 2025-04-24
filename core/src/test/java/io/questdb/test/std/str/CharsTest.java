@@ -281,74 +281,74 @@ public class CharsTest {
     }
 
     @Test
-    public void testContainsWord() {
+    public void testContainsWordIgnoreCase() {
         // --- Positive Cases ---
         // Middle
-        Assert.assertTrue(Chars.containsWord("a b c", "b", ' '));
-        Assert.assertTrue(Chars.containsWord("alpha beta gamma", "beta", ' '));
-        Assert.assertTrue(Chars.containsWord("a,b,c", "b", ','));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("a b c", "b", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("alpha beta gamma", "beta", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("a,b,c", "b", ','));
         // Start
-        Assert.assertTrue(Chars.containsWord("b c d", "b", ' '));
-        Assert.assertTrue(Chars.containsWord("beta gamma", "beta", ' '));
-        Assert.assertTrue(Chars.containsWord("b,c,d", "b", ','));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("b c d", "b", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("beta gamma", "beta", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("b,c,d", "b", ','));
         // End
-        Assert.assertTrue(Chars.containsWord("a b c", "c", ' '));
-        Assert.assertTrue(Chars.containsWord("alpha beta", "beta", ' '));
-        Assert.assertTrue(Chars.containsWord("a,b,c", "c", ','));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("a b c", "c", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("alpha beta", "beta", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("a,b,c", "c", ','));
         // Single word sequence
-        Assert.assertTrue(Chars.containsWord("word", "word", ' '));
-        Assert.assertTrue(Chars.containsWord("word", "word", ','));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("word", "word", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("word", "word", ','));
         // Multiple occurrences
-        Assert.assertTrue(Chars.containsWord("a b a", "a", ' '));
-        Assert.assertTrue(Chars.containsWord("beta alpha beta", "beta", ' '));
-        Assert.assertTrue(Chars.containsWord("a b,c d", "b,c", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("a b a", "a", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("beta alpha beta", "beta", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("a b,c d", "b,c", ' '));
 
         // --- Negative Cases ---
         // Term not present
-        Assert.assertFalse(Chars.containsWord("a b c", "d", ' '));
-        Assert.assertFalse(Chars.containsWord("alpha beta", "gamma", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a b c", "d", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("alpha beta", "gamma", ' '));
         // Term is substring (start)
-        Assert.assertFalse(Chars.containsWord("abc d", "ab", ' '));
-        Assert.assertFalse(Chars.containsWord("alphabet soup", "alpha", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("abc d", "ab", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("alphabet soup", "alpha", ' '));
         // Term is substring (middle) - not preceded by separator
-        Assert.assertFalse(Chars.containsWord("xabc d", "abc", ' '));
-        Assert.assertFalse(Chars.containsWord("alphabet soup", "lphabe", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("xabc d", "abc", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("alphabet soup", "lphabe", ' '));
         // Term is substring (middle) - not followed by separator
-        Assert.assertFalse(Chars.containsWord("a bcd", "bc", ' '));
-        Assert.assertFalse(Chars.containsWord("alpha beta", "bet", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a bcd", "bc", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("alpha beta", "bet", ' '));
         // Term is substring (end)
-        Assert.assertFalse(Chars.containsWord("the alphabet", "bet", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("the alphabet", "bet", ' '));
         // Incorrect separator used in check
-        Assert.assertFalse(Chars.containsWord("a,b,c", "b", ' '));
-        Assert.assertFalse(Chars.containsWord("a b c", "b", ','));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a,b,c", "b", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a b c", "b", ','));
         // Term matches but wrong separator before
-        Assert.assertFalse(Chars.containsWord("a,b c", "b", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a,b c", "b", ' '));
         // Term matches but wrong separator after
-        Assert.assertFalse(Chars.containsWord("a b,c", "b", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a b,c", "b", ' '));
         // Term contains separator char, but boundaries don't match separator
-        Assert.assertFalse(Chars.containsWord("a b,c d", "b,c", ',')); // Space before/after != ','
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a b,c d", "b,c", ',')); // Space before/after != ','
 
         // --- Edge Cases ---
         // Null inputs
-        Assert.assertFalse(Chars.containsWord(null, "a", ' '));
-        Assert.assertFalse(Chars.containsWord("a b c", null, ' '));
-        Assert.assertFalse(Chars.containsWord(null, null, ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase(null, "a", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a b c", null, ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase(null, null, ' '));
         // Empty inputs (Assuming empty term is not a word)
-        Assert.assertFalse(Chars.containsWord("", "a", ' '));
-        Assert.assertFalse(Chars.containsWord("a b c", "", ' '));
-        Assert.assertFalse(Chars.containsWord("", "", ' '));
-        Assert.assertFalse(Chars.containsWord(" ", "", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("", "a", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a b c", "", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("", "", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase(" ", "", ' '));
         // Sequence equals term
-        Assert.assertTrue(Chars.containsWord("abc", "abc", ' '));
-        Assert.assertTrue(Chars.containsWord("abc", "abc", ','));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("abc", "abc", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("abc", "abc", ','));
         // Sequence contains only separators
-        Assert.assertFalse(Chars.containsWord("   ", "a", ' '));
-        Assert.assertFalse(Chars.containsWord(",,,", "a", ','));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("   ", "a", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase(",,,", "a", ','));
         // Using StringBuilder (different CharSequence type)
-        Assert.assertTrue(Chars.containsWord(new StringBuilder("a b c"), "b", ' '));
-        Assert.assertFalse(Chars.containsWord(new StringBuilder("abc d"), "ab", ' '));
-        Assert.assertFalse(Chars.containsWord(new StringBuilder("a b c"), null, ' '));
-        Assert.assertFalse(Chars.containsWord(new StringBuilder("a b c"), "", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase(new StringBuilder("a b c"), "b", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase(new StringBuilder("abc d"), "ab", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase(new StringBuilder("a b c"), null, ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase(new StringBuilder("a b c"), "", ' '));
     }
 
     @Test
@@ -398,6 +398,32 @@ public class CharsTest {
         Assert.assertEquals(-1, Chars.indexOfLowerCase("foo bar baz", 2, 4, "y"));
         Assert.assertEquals(-1, Chars.indexOfLowerCase("", 0, 0, "oo"));
         Assert.assertEquals(-1, Chars.indexOfLowerCase("", 0, 0, "y"));
+    }
+
+    @Test
+    public void testIndexOfIgnoreCase() {
+        Assert.assertEquals(4, Chars.indexOfIgnoreCase("foo bar baz", 0, 11, "bar"));
+        Assert.assertEquals(4, Chars.indexOfIgnoreCase("foo bar baz", 0, 11, "BAR"));
+
+        Assert.assertEquals(4, Chars.indexOfIgnoreCase("FOO BAR BAZ", 0, 11, "bar"));
+        Assert.assertEquals(4, Chars.indexOfIgnoreCase("FOO BAR BAZ", 0, 11, "BAR"));
+
+        Assert.assertEquals(4, Chars.indexOfIgnoreCase("foo bar baz", 0, 11, "ba"));
+        Assert.assertEquals(4, Chars.indexOfIgnoreCase("foo bar baz", 0, 11, "BA"));
+
+        Assert.assertEquals(8, Chars.indexOfIgnoreCase("foo BAr BAz", 6, 11, "ba"));
+        Assert.assertEquals(8, Chars.indexOfIgnoreCase("foo BAr BAz", 6, 11, "BA"));
+
+        Assert.assertEquals(1, Chars.indexOfIgnoreCase("foo bar baz", 0, 7, "oo"));
+        Assert.assertEquals(1, Chars.indexOfIgnoreCase("foo bar baz", 0, 7, "OO"));
+
+        Assert.assertEquals(0, Chars.indexOfIgnoreCase("foo bar baz", 2, 4, ""));
+        Assert.assertEquals(-1, Chars.indexOfIgnoreCase("foo bar baz", 2, 4, "y"));
+        Assert.assertEquals(-1, Chars.indexOfIgnoreCase("foo bar baz", 2, 4, "Y"));
+        Assert.assertEquals(-1, Chars.indexOfIgnoreCase("", 0, 0, "oo"));
+        Assert.assertEquals(-1, Chars.indexOfIgnoreCase("", 0, 0, "OO"));
+        Assert.assertEquals(-1, Chars.indexOfIgnoreCase("", 0, 0, "y"));
+        Assert.assertEquals(-1, Chars.indexOfIgnoreCase("", 0, 0, "y"));
     }
 
     @Test
