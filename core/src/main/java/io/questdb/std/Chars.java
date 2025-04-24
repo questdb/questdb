@@ -181,17 +181,23 @@ public final class Chars {
         if (Chars.isBlank(term)) {
             return false;
         }
-        int i = Chars.indexOf(seq, 0, seq.length(), term);
+
+        int seqLen = seq.length();
+        int i = Chars.indexOf(seq, 0, seqLen, term);
+
         if (i < 0) {
             return false;
         }
+
         if (i > 0) {
             if (seq.charAt(i - 1) != separator) {
                 return false;
             }
         }
-        if (i + term.length() < seq.length()) {
-            return seq.charAt(i + term.length()) == separator;
+
+        int termLen = term.length();
+        if (i + termLen < seqLen) {
+            return seq.charAt(i + termLen) == separator;
         }
         return true;
     }
