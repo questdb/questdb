@@ -4575,6 +4575,26 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("c", ColumnType.INT)
         );
 
+        // hints nested inside another hint are ignored
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NO_INDEX(a)]) hints[NO_INDEX(a)]",
+                "select /*+ NO_INDEX(a) /*+ IGNORED */ */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // line comment inside hints are honoured
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NO_INDEX(a)]) hints[NO_INDEX(a)]",
+                "select /*+ NO_INDEX(a) -- IGNORED \n */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
         // todo: comment nested inside hints
 
         // model with joins
