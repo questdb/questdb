@@ -228,6 +228,11 @@ public class MatViewTest extends AbstractCairoTest {
                     "min symbol capacity is 2"
             );
             assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym symbol capacity 1073741825;",
+                    66,
+                    "max symbol capacity is 1073741824"
+            );
+            assertExceptionNoLeakCheck(
                     "ALTER MATERIALIZED VIEW price_1h ALTER COLUMN sym SYMBOL CAPACITY 42 foobar;",
                     69,
                     "unexpected token [foobar] while trying to change symbol capacity"
