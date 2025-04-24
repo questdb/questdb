@@ -408,9 +408,6 @@ public class SqlParser {
                     throw SqlException.position(windowFuncColumn.getAst().position)
                             .put("window function on base table is not supported for materialized views: ").put(baseTableName);
                 }
-            } else {
-                throw SqlException.position(model.getModelPosition())
-                        .put("the base table is not referenced in the materialized view query: ").put(baseTableName);
             }
 
             final ObjList<QueryModel> joinModels = m.getJoinModels();
@@ -951,6 +948,10 @@ public class SqlParser {
             mvOpBuilder.setBaseTableName(baseTableNameStr);
 
             // Basic validation - check all nested models that read from the base table for window functions, unions, FROM-TO, or FILL.
+            if (!isTableQueried(queryModel, baseTableNameStr)) {
+                throw SqlException.position(queryModel.getModelPosition())
+                        .put("the base table is not referenced in the materialized view query: ").put(baseTableName);
+            }
             validateMatViewQuery(queryModel, baseTableNameStr);
 
             final QueryModel nestedModel = queryModel.getNestedModel();
