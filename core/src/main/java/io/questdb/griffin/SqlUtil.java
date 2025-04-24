@@ -292,6 +292,12 @@ public class SqlUtil {
                 continue;
             }
 
+            if (Chars.equals("/*+", cs) && (blockCount > 0)) {
+                // when hints are nested in an outer comment then we need to ignore the hints and treat them as a regular comment
+                blockCount++;
+                continue;
+            }
+
             if (Chars.equals("*/", cs) && blockCount > 0) {
                 blockCount--;
                 continue;

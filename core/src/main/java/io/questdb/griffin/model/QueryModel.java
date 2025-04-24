@@ -783,6 +783,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return groupBy;
     }
 
+    @NotNull
     public LowerCaseCharSequenceObjHashMap<CharSequence> getHints() {
         return hintsMap;
     }
@@ -1992,6 +1993,29 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 }
             }
             unionModel.toSink0(sink, false, showOrderBy);
+        }
+
+        if (hintsMap.size() > 0) {
+            sink.putAscii(" hints[");
+            boolean first = true;
+            for (int i = 0, n = hintsMap.getKeyCount(); i < n; i++) {
+                CharSequence hint = hintsMap.getKey(i);
+                if (hint == null) {
+                    continue;
+                }
+                if (!first) {
+                    sink.putAscii(", ");
+                }
+                sink.put(hint);
+                CharSequence params = hintsMap.valueAt(-i - 1);
+                if (params != null) {
+                    sink.putAscii("(");
+                    sink.put(params);
+                    sink.putAscii(")");
+                }
+                first = false;
+            }
+            sink.putAscii(']');
         }
     }
 

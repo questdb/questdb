@@ -4534,6 +4534,61 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testHints() throws SqlException {
+        // simple smoke test
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NEW_HINT(a b), NO_INDEX(a), NO_PARAM_HINT]) hints[NEW_HINT(a b), NO_INDEX(a), NO_PARAM_HINT]",
+                "select /*+ NO_INDEX(a) NEW_HINT(a b) NO_PARAM_HINT*/ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // empty hints
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1)",
+                "select /*+ */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // hint nested inside outer comment is ignored
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1)",
+                "select /* /*+ NO_INDEX(a) */ */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // hint nested in a line comment is ignored
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1)",
+                "select -- /*+ NO_INDEX(a) */ \n a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // todo: comment nested inside hints
+
+        // model with joins
+        assertQuery(
+                "select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) asof join select [timestamp] from quotes q timestamp (timestamp) hints[HINT] where tag = null hints[HINT]) t hints[HINT]",
+                "select /*+ HINT*/ * from trades t ASOF JOIN quotes q WHERE tag = null",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
+                modelOf("quotes").timestamp()
+        );
+
+
+    }
+
+    @Test
     public void testInnerJoin() throws Exception {
         assertQuery(
                 "select-choose a.x x from (select [x] from a a join select [x] from b on b.x = a.x) a",
