@@ -112,7 +112,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             "                Frame forward scan on: market_data\n",
                     "EXPLAIN " + queryWithHint, null, false, true);
 
-            // both querier must return the same result
+            // both queries must return the same result
             String expectedResult = "ts\tbid\tmarket_data_symbol\torder_symbol\torder_ts\tprice\n" +
                     "2025-01-01T00:03:20.003570Z\t0.18646912884414946\tsym_1\tsym_4\t2025-01-01T00:03:19.407091Z\t0.08486964232560668\n" +
                     "2025-01-01T00:06:40.006304Z\t0.9130994629783138\tsym_1\tsym_2\t2025-01-01T00:06:37.303610Z\t0.8423410920883345\n" +
