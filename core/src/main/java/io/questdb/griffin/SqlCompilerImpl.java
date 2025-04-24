@@ -821,10 +821,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 columnNamePosition,
                 ColumnType.SYMBOL,
                 Numbers.ceilPow2(symbolCapacity),
-                configuration.getDefaultSymbolCacheFlag(),
-                false,
-                Numbers.ceilPow2(configuration.getIndexValueBlockSize()),
-                false
+                configuration.getDefaultSymbolCacheFlag(), // ignored
+                false, // ignored
+                Numbers.ceilPow2(configuration.getIndexValueBlockSize()), // ignored
+                false // ignored
         );
 
         tok = SqlUtil.fetchNext(lexer);
