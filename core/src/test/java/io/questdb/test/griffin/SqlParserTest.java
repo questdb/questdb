@@ -4729,9 +4729,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         // model with union
-        // todo: this plan is funky, propagations with UNION must change
         assertQuery(
-                "select-choose [a, b, c] a, b, c from (select [a, b, c] from xyz where a = 1 hints[HINT_A]) union select-choose [a, b, c] a, b, c from (select [a, b, c] from xyz where a = 2) hints[HINT_B] hints[HINT_A]",
+                "select-choose [a, b, c] a, b, c from (select [a, b, c] from xyz where a = 1 hints[HINT_A]) union select-choose [a, b, c] a, b, c from (select [a, b, c] from xyz where a = 2 hints[HINT_A, HINT_B]) hints[HINT_A, HINT_B] hints[HINT_A]",
                 "select /*+ HINT_A*/ a,b,c from xyz where a = 1 union select /*+ HINT_B*/ a,b,c from xyz where a = 2",
                 modelOf("xyz")
                         .col("a", ColumnType.SYMBOL)

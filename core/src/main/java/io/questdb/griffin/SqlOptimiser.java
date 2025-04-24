@@ -3445,6 +3445,13 @@ public class SqlOptimiser implements Mutable {
             jm.copyHints(model.getHints());
             propagateHints(jm);
         }
+
+        // propagate to union model
+        QueryModel union = model.getUnionModel();
+        if (union != null) {
+            union.copyHints(model.getHints());
+            propagateHints(union);
+        }
     }
 
     private void propagateTopDownColumns(QueryModel model, boolean allowColumnChange) {
