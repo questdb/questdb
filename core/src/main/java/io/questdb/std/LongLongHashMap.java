@@ -52,6 +52,20 @@ public class LongLongHashMap extends AbstractLongHashSet {
         return valueAt(keyIndex(key));
     }
 
+    public void inc(long key) {
+        int index = keyIndex(key);
+        long value = valueAt(index);
+        if (value != noEntryValue) {
+            values[-index - 1]++;
+        } else {
+            putAt(index, key, 1);
+        }
+    }
+
+    public void inc(int index) {
+        values[-index - 1]++;
+    }
+
     public long keyAtRaw(int index) {
         return keys[index];
     }

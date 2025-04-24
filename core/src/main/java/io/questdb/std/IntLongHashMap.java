@@ -48,6 +48,16 @@ public class IntLongHashMap extends AbstractIntHashSet {
         return valueAt(keyIndex(key));
     }
 
+    public void inc(int key) {
+        int index = keyIndex(key);
+        long value = valueAt(index);
+        if (value != noEntryValue) {
+            values[-index - 1]++;
+        } else {
+            putAt(index, key, 1);
+        }
+    }
+
     public void put(int key, long value) {
         putAt(keyIndex(key), key, value);
     }
