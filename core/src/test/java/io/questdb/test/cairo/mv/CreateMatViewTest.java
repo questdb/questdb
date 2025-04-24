@@ -140,6 +140,18 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewAsExpectedPosition() throws Exception {
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck(
+                    "create materialized view test select as sym",
+                    30,
+                    "'as' expected"
+            );
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewBaseTableDoesNotExist() throws Exception {
         assertException(
                 "create materialized view testView as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
@@ -147,6 +159,21 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 "table does not exist [table=" + TABLE1 + "]"
         );
         assertNull(getMatViewDefinition("testView"));
+    }
+
+    @Test
+    public void testCreateMatViewBaseTableNoReference() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+            final String sql = "with t as (select ts, avg(v) as avgv from " + TABLE2 + ") select ts, avgv from t sample by 30s";
+            assertExceptionNoLeakCheck(
+                    "create materialized view test with base " + TABLE1 + " as (" + sql + ") partition by day",
+                    108,
+                    "the base table is not referenced in the materialized view query"
+            );
+            assertNull(getMatViewDefinition("test"));
+        });
     }
 
     @Test
@@ -480,6 +507,19 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             " as t2 on v sample by 30s) partition by day",
                     34,
                     "more than one table used in query, base table has to be set using 'WITH BASE'"
+            );
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewNoAggrFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            assertExceptionNoLeakCheck(
+                    "create materialized view test as (select ts from " + TABLE1 + " sample by 10s) partition by day",
+                    66,
+                    "at least one aggregation function must be present in 'select' clause"
             );
             assertNull(getMatViewDefinition("test"));
         });

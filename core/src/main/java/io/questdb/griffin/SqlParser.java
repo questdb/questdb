@@ -408,6 +408,9 @@ public class SqlParser {
                     throw SqlException.position(windowFuncColumn.getAst().position)
                             .put("window function on base table is not supported for materialized views: ").put(baseTableName);
                 }
+            } else {
+                throw SqlException.position(model.getModelPosition())
+                        .put("the base table is not referenced in the materialized view query: ").put(baseTableName);
             }
 
             final ObjList<QueryModel> joinModels = m.getJoinModels();
@@ -975,7 +978,7 @@ public class SqlParser {
                 return mvOpBuilder;
             }
         } else {
-            throw SqlException.position(lexer.getPosition()).put("'as' expected");
+            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
         }
 
         // Optional clauses that go after the parentheses.
