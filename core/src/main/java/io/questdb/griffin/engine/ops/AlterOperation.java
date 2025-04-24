@@ -88,9 +88,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         this(new LongList(), new ObjList<>());
     }
 
-    public AlterOperation(LongList extraInfo, ObjList<CharSequence> charSequenceObjList) {
+    public AlterOperation(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
         this.extraInfo = extraInfo;
-        this.extraStrInfo = new ObjCharSequenceList(charSequenceObjList);
+        this.extraStrInfo = new ObjCharSequenceList(extraStrInfo);
         this.command = DO_NOTHING;
     }
 
