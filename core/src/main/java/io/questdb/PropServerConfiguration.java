@@ -203,6 +203,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration;
+    private final ObjList<String> httpContextPathConfig = new ObjList<>();
     private final ObjList<String> httpContextPathExec = new ObjList<>();
     private final ObjList<String> httpContextPathExport = new ObjList<>();
     private final ObjList<String> httpContextPathILP = new ObjList<>();
@@ -964,6 +965,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_IMPORT, this.httpContextPathImport, httpContextWebConsole + "/imp");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXPORT, this.httpContextPathExport, httpContextWebConsole + "/exp");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_SETTINGS, this.httpContextPathSettings, httpContextWebConsole + "/settings");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_CONFIG, this.httpContextPathConfig, httpContextWebConsole + "/config");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_TABLE_STATUS, this.httpContextPathTableStatus, httpContextWebConsole + "/chk");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathExec, httpContextWebConsole + "/exec");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_WARNINGS, this.httpContextPathWarnings, httpContextWebConsole + "/warnings");
@@ -977,14 +979,16 @@ public class PropServerConfiguration implements ServerConfiguration {
             // 1. import, to support CSV import UI
             // 2. export, to support CSV export UI
             // 3. settings, that is what the Web Console loads on startup
-            // 4. table status, to support CSV import UI
-            // 5. JSON query execution, e.g. exec
-            // 6. warnings, that displays warnings in the table view
+            // 4. config, the Web Console can persist settings via this endpoint
+            // 5. table status, to support CSV import UI
+            // 6. JSON query execution, e.g. exec
+            // 7. warnings, that displays warnings in the table view
 
             // we use defaults, because this is what the Web Console expects
             httpContextPathImport.add(httpContextWebConsole + "/imp");
             httpContextPathExport.add(httpContextWebConsole + "/exp");
             httpContextPathSettings.add(httpContextWebConsole + "/settings");
+            httpContextPathConfig.add(httpContextWebConsole + "/config");
             httpContextPathTableStatus.add(httpContextWebConsole + "/chk");
             httpContextPathExec.add(httpContextWebConsole + "/exec");
             httpContextPathWarnings.add(httpContextWebConsole + "/warnings");
@@ -4025,6 +4029,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public LongGauge getConnectionCountGauge() {
             return metrics.httpMetrics().connectionCountGauge();
+        }
+
+        @Override
+        public ObjList<String> getContextPathConfig() {
+            return httpContextPathConfig;
         }
 
         @Override

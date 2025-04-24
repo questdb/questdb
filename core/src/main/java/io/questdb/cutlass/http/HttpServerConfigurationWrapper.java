@@ -76,6 +76,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
+    public ObjList<String> getContextPathConfig() {
+        return getDelegate().getContextPathConfig();
+    }
+
+    @Override
     public ObjList<String> getContextPathExec() {
         return getDelegate().getContextPathExec();
     }

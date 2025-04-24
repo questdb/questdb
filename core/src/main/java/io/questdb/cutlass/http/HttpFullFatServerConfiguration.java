@@ -35,6 +35,10 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
 
     ConcurrentCacheConfiguration getConcurrentCacheConfiguration();
 
+    default ObjList<String> getContextPathConfig() {
+        return new ObjList<>("/config");
+    }
+
     default ObjList<String> getContextPathDefault() {
         return new ObjList<>(DEFAULT_PROCESSOR_URL);
     }

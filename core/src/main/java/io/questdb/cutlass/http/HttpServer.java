@@ -27,6 +27,7 @@ package io.questdb.cutlass.http;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.http.processors.ConfigProcessor;
 import io.questdb.cutlass.http.processors.LineHttpPingProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.SettingsProcessor;
@@ -194,6 +195,22 @@ public class HttpServer implements Closeable {
             @Override
             public HttpRequestProcessor newInstance() {
                 return settingsProcessor;
+            }
+        });
+
+        final ConfigProcessor configProcessor = new ConfigProcessor(
+                cairoEngine,
+                httpServerConfiguration.getJsonQueryProcessorConfiguration()
+        );
+        server.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public ObjList<String> getUrls() {
+                return httpServerConfiguration.getContextPathConfig();
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return configProcessor;
             }
         });
 
