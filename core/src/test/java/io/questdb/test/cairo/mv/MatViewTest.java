@@ -282,7 +282,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~3\ttable rename operation\tinvalid\t1\t1\n",
+                            "price_1h\tincremental\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~3\ttable rename operation\tinvalid\t1\t1\n",
                     "materialized_views",
                     null,
                     false
@@ -2296,6 +2296,46 @@ public class MatViewTest extends AbstractCairoTest {
                         "price_1h order by ts0, sym0"
                 );
             }
+        });
+    }
+
+    @Test
+    public void testTimestampGetsRefreshedOnInvalidation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, amount int, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            final String viewQuery = "select sym, last(price) as price, ts from base_price sample by 1d";
+            createMatView(viewQuery);
+
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainQueues();
+
+            final String expected = "sym\tprice\tts\n" +
+                    "gbpusd\t1.321\t2024-09-10T00:00:00.000000Z\n" +
+                    "jpyusd\t103.21\t2024-09-10T00:00:00.000000Z\n";
+            assertQueryNoLeakCheck(expected, viewQuery, "ts", true, true);
+            assertQueryNoLeakCheck(expected, "price_1h", "ts", true, true);
+
+            currentMicros = parseFloorPartialTimestamp("2020-01-01T01:01:01.000000Z");
+            execute("drop table base_price;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2020-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1d\tprice_1h~2\tbase table is dropped or renamed\tinvalid\t1\t-1\n",
+                    "materialized_views",
+                    null,
+                    false
+            );
         });
     }
 

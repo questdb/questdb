@@ -572,7 +572,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void copyHints(LowerCaseCharSequenceObjHashMap<CharSequence> hints) {
-        this.hintsMap.putAll(hints);
+        // do not copy hints to self
+        if (hintsMap != hints) {
+            this.hintsMap.putAll(hints);
+        }
     }
 
     public void copyOrderByAdvice(ObjList<ExpressionNode> orderByAdvice) {
