@@ -2271,7 +2271,10 @@ public class SqlParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "missing hint key");
                 }
                 parsingParams = true;
-            } else if (Chars.equals(hintToken, ')')) {
+                continue;
+            }
+
+            if (Chars.equals(hintToken, ')')) {
                 if (!parsingParams) {
                     throw SqlException.$(lexer.lastTokenPosition(), "unexpected ')' when parsing hint");
                 }
@@ -2285,26 +2288,28 @@ public class SqlParser {
                 }
                 hintKey = null;
                 parsingParams = false;
-            } else {
-                if (parsingParams) {
-                    if (hintValuesEntry == null) {
-                        // store first parameter
-                        hintValuesEntry = characterStore.newEntry();
-                        hintValuesEntry.put(hintToken);
-                    } else {
-                        hintValuesEntry.put(HINTS_PARAMS_DELIMITER);
-                        hintValuesEntry.put(hintToken);
-                    }
-                } else {
-                    if (hintKey != null) {
-                        // store previous parameter-less hint
-                        model.addHint(hintKey, null);
-                    }
-                    CharacterStoreEntry entry = characterStore.newEntry();
-                    entry.put(hintToken);
-                    hintKey = entry.toImmutable();
-                }
+                continue;
             }
+
+            if (parsingParams) {
+                if (hintValuesEntry == null) {
+                    // store first parameter
+                    hintValuesEntry = characterStore.newEntry();
+                    hintValuesEntry.put(hintToken);
+                } else {
+                    hintValuesEntry.put(HINTS_PARAMS_DELIMITER);
+                    hintValuesEntry.put(hintToken);
+                }
+                continue;
+            }
+
+            if (hintKey != null) {
+                // store previous parameter-less hint
+                model.addHint(hintKey, null);
+            }
+            CharacterStoreEntry entry = characterStore.newEntry();
+            entry.put(hintToken);
+            hintKey = entry.toImmutable();
         }
         if (parsingParams) {
             throw SqlException.$(lexer.lastTokenPosition(), "missing hint parameter closing parenthesis");
