@@ -306,7 +306,6 @@ import static io.questdb.griffin.model.QueryModel.QUERY;
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
     public static final int GKK_VANILLA_INT = 0;
-    private static final String ASOF_JOIN_BINARY_SEARCH_HINT = "USE_ASOF_BINARY_SEARCH";
     private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
@@ -2454,9 +2453,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             );
                                         }
                                     } else {
-                                        CharSequence hintParams = model.getHints().get(ASOF_JOIN_BINARY_SEARCH_HINT);
-                                        boolean binarySearchHinted = Chars.containsWord(hintParams, masterAlias, SqlParser.HINTS_PARAMS_DELIMITER) &&
-                                                Chars.containsWord(hintParams, slaveModel.getName(), ' ');
+                                        boolean binarySearchHinted = SqlHints.hasAsOfJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
                                         boolean created = false;
                                         if (fastAsOfJoins || binarySearchHinted) {
                                             // when slave directly supports time frame cursor then it's strictly better to use it, even without any hint

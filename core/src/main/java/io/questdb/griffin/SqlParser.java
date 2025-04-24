@@ -70,7 +70,6 @@ import static io.questdb.std.GenericLexer.assertNoDotsAndSlashes;
 import static io.questdb.std.GenericLexer.unquote;
 
 public class SqlParser {
-    public static final char HINTS_PARAMS_DELIMITER = ' ';
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
     public static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
     private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
@@ -2316,7 +2315,7 @@ public class SqlParser {
                     // store first parameter
                     hintValuesEntry = characterStore.newEntry();
                 } else {
-                    hintValuesEntry.put(HINTS_PARAMS_DELIMITER);
+                    hintValuesEntry.put(SqlHints.HINTS_PARAMS_DELIMITER);
                 }
                 hintValuesEntry.put(GenericLexer.unquote(hintToken));
                 continue;
