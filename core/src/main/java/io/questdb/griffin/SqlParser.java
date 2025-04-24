@@ -730,7 +730,7 @@ public class SqlParser {
     }
 
     private CharSequence optTokIncludingHint(GenericLexer lexer) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNextIncludingHint(lexer);
+        CharSequence tok = SqlUtil.fetchNext(lexer, true);
         if (tok == null || (subQueryMode && Chars.equals(tok, ')') && !overClauseMode)) {
             return null;
         }
@@ -2265,7 +2265,7 @@ public class SqlParser {
         boolean error = false;
         while (true) {
             try {
-                if ((hintToken = SqlUtil.nextHintToken(lexer)) == null) {
+                if ((hintToken = SqlUtil.fetchNextHintToken(lexer)) == null) {
                     break;
                 }
             } catch (SqlException e) {

@@ -203,6 +203,20 @@ public class SqlUtil {
      * @return with next valid token or null if end of input is reached .
      */
     public static CharSequence fetchNext(GenericLexer lexer) throws SqlException {
+        return fetchNext(lexer, false);
+    }
+
+    /**
+     * Fetches next non-whitespace token that's not part of single or multiline comment.
+     *
+     * @param lexer        The input lexer containing the token stream to process
+     * @param includeHints If true, hint block markers (/*+) are treated as valid tokens and returned;
+     *                     if false, hint blocks are treated as comments and skipped
+     * @return The next meaningful token as a CharSequence, or null if the end of input is reached
+     * @throws SqlException If a parsing error occurs while processing the token stream
+     * @see #fetchNextHintToken(GenericLexer) For handling tokens within hint blocks
+     */
+    public static CharSequence fetchNext(GenericLexer lexer, boolean includeHints) throws SqlException {
         int blockCount = 0;
         boolean lineComment = false;
         while (lexer.hasNext()) {
@@ -225,9 +239,7 @@ public class SqlUtil {
                 continue;
             }
 
-            // ignoring hints. why? there is a dedicated method to obtain hints. it's opt-in.
-            // we do not want to surprise callers with hints in the middle of the token stream.
-            if (Chars.equals("/*+", cs)) {
+            if (Chars.equals("/*+", cs) && (!includeHints || blockCount > 0)) {
                 blockCount++;
                 continue;
             }
@@ -248,7 +260,26 @@ public class SqlUtil {
         return null;
     }
 
-    public static CharSequence fetchNextIncludingHint(GenericLexer lexer) throws SqlException {
+    /**
+     * Fetches the next non-whitespace, non-comment hint token from the lexer.
+     * <p>
+     * This method should only be called after entering a hint block. Specifically,
+     * a previous call to {@link #fetchNext(GenericLexer, boolean)} must have returned
+     * a hint start token before this method can be used.
+     * <p>
+     * The method processes the input stream, skipping over any tested comments and whitespace,
+     * and returns the next meaningful hint token. This allows for clean parsing of hint
+     * content without manual handling of comments and formatting characters.
+     * <p>
+     * When the end of the hint block is reached, the method returns null, indicating
+     * no more hint tokens are available for processing.
+     *
+     * @param lexer The input lexer containing the token stream to process
+     * @return The next meaningful hint token, or null if the end of the hint block is reached
+     * @throws SqlException If a parsing error occurs while processing the hint tokens
+     * @see #fetchNext(GenericLexer, boolean) For entering the hint block initially
+     */
+    public static CharSequence fetchNextHintToken(GenericLexer lexer) throws SqlException {
         int blockCount = 0;
         boolean lineComment = false;
         while (lexer.hasNext()) {
@@ -271,15 +302,19 @@ public class SqlUtil {
                 continue;
             }
 
-            if (Chars.equals("/*+", cs) && (blockCount > 0)) {
-                // when hints are nested in an outer comment then we need to ignore the hints and treat them as a regular comment
+            if (Chars.equals("/*+", cs)) {
+                // nested hints are treated as regular comments
                 blockCount++;
                 continue;
             }
 
-            if (Chars.equals("*/", cs) && blockCount > 0) {
-                blockCount--;
-                continue;
+            // end of hints or a nested comment
+            if (Chars.equals("*/", cs)) {
+                if (blockCount > 0) {
+                    blockCount--;
+                    continue;
+                }
+                return null;
             }
 
             if (blockCount == 0 && GenericLexer.WHITESPACE.excludes(cs)) {
@@ -837,55 +872,6 @@ public class SqlUtil {
 
     public static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
         return pool.next().of(exprNodeType, token, 0, position);
-    }
-
-    public static CharSequence nextHintToken(GenericLexer lexer) throws SqlException {
-        int blockCount = 0;
-        boolean lineComment = false;
-        while (lexer.hasNext()) {
-            CharSequence cs = lexer.next();
-
-            if (lineComment) {
-                if (Chars.equals(cs, '\n') || Chars.equals(cs, '\r')) {
-                    lineComment = false;
-                }
-                continue;
-            }
-
-            if (Chars.equals("--", cs)) {
-                lineComment = true;
-                continue;
-            }
-
-            if (Chars.equals("/*", cs)) {
-                blockCount++;
-                continue;
-            }
-
-            if (Chars.equals("/*+", cs)) {
-                // nested hints are treated as regular comments
-                blockCount++;
-                continue;
-            }
-
-            // end of hints or a nested comment
-            if (Chars.equals("*/", cs)) {
-                if (blockCount > 0) {
-                    blockCount--;
-                    continue;
-                }
-                return null;
-            }
-
-            if (blockCount == 0 && GenericLexer.WHITESPACE.excludes(cs)) {
-                // unclosed quote check
-                if (cs.length() == 1 && cs.charAt(0) == '"') {
-                    throw SqlException.$(lexer.lastTokenPosition(), "unclosed quotation mark");
-                }
-                return cs;
-            }
-        }
-        return null;
     }
 
     /**
