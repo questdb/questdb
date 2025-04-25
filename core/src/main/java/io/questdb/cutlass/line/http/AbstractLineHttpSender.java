@@ -185,7 +185,8 @@ public abstract class AbstractLineHttpSender implements Sender {
                         protocolVersion = parser.parse(responseHeaders.getResponse());
                     }
                 } else {
-                    // set to PROTOCOL_VERSION_V1
+                    // The client is unable to differentiate between a server shutdown and connecting to an older version.
+                    // So, the protocol is set to PROTOCOL_VERSION_V1 here for both scenarios.
                     protocolVersion = PROTOCOL_VERSION_V1;
                 }
             } catch (Throwable e) {
