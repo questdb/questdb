@@ -219,6 +219,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                         try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                                 .address("localhost:" + serverMain.getHttpServerPort())
                                 .httpPath(ILP_TEST_PATH)
+                                .protocolVersion(Sender.PROTOCOL_VERSION_V2)
                                 .build()
                         ) {
                             sender.table("tab").longColumn("col", 1).atNow();

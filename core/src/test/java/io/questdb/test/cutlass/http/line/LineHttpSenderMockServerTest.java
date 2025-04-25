@@ -165,7 +165,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                         .doubleColumn("x", 1.0)
                         .atNow();
             }
-        }, port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush=off;"));
+        }, port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush=off;protocol_version=2;"));
     }
 
     @Test
@@ -181,7 +181,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                         Os.sleep(10);
                     }
                 },
-                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_interval=off;"));
+                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_interval=off;protocol_version=2;"));
     }
 
     @Test
@@ -215,7 +215,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                                 .atNow();
                     }
                 },
-                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_rows=off;auto_flush_interval=100000;"));
+                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_rows=off;auto_flush_interval=100000;protocol_version=2;"));
     }
 
     @Test
@@ -236,6 +236,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testMaxRequestBufferSizeExceeded() {
         try (Sender sender = Sender.builder(Sender.Transport.HTTP).address("localhost:1")
                 .maxBufferCapacity(65536)
+                .protocolVersion(Sender.PROTOCOL_VERSION_V2)
                 .autoFlushRows(Integer.MAX_VALUE)
                 .build()
         ) {
@@ -279,7 +280,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                             .atNow();
 
                     sender.flush();
-                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=1;request_min_throughput=1;retry_timeout=0;") // 1ms base timeout and 1 byte per second to extend the timeout
+                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=1;request_min_throughput=1;retry_timeout=0;protocol_version=2;") // 1ms base timeout and 1 byte per second to extend the timeout
         );
     }
 
@@ -288,6 +289,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                 .address("127.0.0.1:1")
                 .retryTimeoutMillis(1000)
+                .protocolVersion(Sender.PROTOCOL_VERSION_V2)
                 .build()) {
             sender.table("test")
                     .symbol("sym", "bol")
@@ -428,7 +430,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                     } finally {
                         delayLatch.countDown();
                     }
-                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=100;retry_timeout=0;")
+                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=100;retry_timeout=0;protocol_version=2;")
         );
     }
 
