@@ -40,12 +40,21 @@ public class AlterOperationBuilder implements Mutable {
     private int tableNamePosition = -1;
     private TableToken tableToken;
 
-    // builder and the operation it is building share two lists.
+    // the builder and the operation it builds share the extraInfo list
     public AlterOperationBuilder() {
         this.op = new AlterOperation(extraInfo, extraStrInfo);
     }
 
-    public void addColumnToList(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity, boolean dedupKey) {
+    public void addColumnToList(
+            CharSequence columnName,
+            int columnNamePosition,
+            int type,
+            int symbolCapacity,
+            boolean cache,
+            boolean indexed,
+            int indexValueBlockCapacity,
+            boolean dedupKey
+    ) {
         assert columnName != null && columnName.length() > 0;
         extraStrInfo.add(columnName);
         extraInfo.add(type);
@@ -128,14 +137,6 @@ public class AlterOperationBuilder implements Mutable {
 
     public AlterOperationBuilder ofColumnChangeType(int tableNamePosition, TableToken tableToken, int tableId) {
         this.command = CHANGE_COLUMN_TYPE;
-        this.tableNamePosition = tableNamePosition;
-        this.tableToken = tableToken;
-        this.tableId = tableId;
-        return this;
-    }
-
-    public AlterOperationBuilder ofSymbolCapacityChange(int tableNamePosition, TableToken tableToken, int tableId) {
-        this.command = CHANGE_SYMBOL_CAPACITY;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;
@@ -267,6 +268,14 @@ public class AlterOperationBuilder implements Mutable {
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableToken.getTableId();
+        return this;
+    }
+
+    public AlterOperationBuilder ofSymbolCapacityChange(int tableNamePosition, TableToken tableToken, int tableId) {
+        this.command = CHANGE_SYMBOL_CAPACITY;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
         return this;
     }
 
