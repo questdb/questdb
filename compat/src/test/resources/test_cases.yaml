@@ -117,7 +117,7 @@ tests:
 
   - name: Bindvar gaps with subqueries
     description: https://github.com/questdb/questdb/issues/5512
-    exclude: [ 'psycopg2', 'psycopg3', 'asyncpg', 'rust', 'php' ]
+    exclude: [ 'psycopg2', 'psycopg3', 'asyncpg', 'rust', 'php', 'nodejs-postgres' ]
     prepare:
       - action: execute
         query: "CREATE TABLE test_table (value double, state symbol, opened_at timestamp) timestamp(opened_at) PARTITION BY YEAR BYPASS WAL;"

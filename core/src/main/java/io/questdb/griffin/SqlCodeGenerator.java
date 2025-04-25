@@ -2511,6 +2511,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                                             if (!created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
                                                 RecordCursorFactory slaveBase = slave.getBaseFactory();
+                                                int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
+
+                                                // slave.supportsFilterStealing() means slave is nothing but a filter.
+                                                // if slave is just a filter then it must have the same metadata as its base,
+                                                // that includes the timestamp index.
+                                                assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
+
+
                                                 Function stolenFilter = slave.getFilter();
                                                 assert stolenFilter != null;
 
@@ -2518,6 +2526,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 Misc.free(slave.getBindVarMemory());
                                                 Misc.freeObjList(slave.getBindVarFunctions());
                                                 slave.halfClose();
+
 
                                                 master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
                                                         configuration,
@@ -2527,7 +2536,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         stolenFilter,
                                                         masterMetadata.getColumnCount(),
                                                         NullRecordFactory.getInstance(slaveMetadata),
-                                                        null);
+                                                        null,
+                                                        slaveTimestampIndex
+                                                );
                                                 created = true;
                                             }
 
@@ -2547,6 +2558,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         Function stolenFilter = projectionBase.getFilter();
                                                         assert stolenFilter != null;
 
+                                                        // index *after* applying the projection
+                                                        int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
+                                                        assert stolenCrossIndex.get(slaveTimestampIndex) == filterStealingBase.getMetadata().getTimestampIndex();
+
                                                         Misc.free(projectionBase.getCompiledFilter());
                                                         Misc.free(projectionBase.getBindVarMemory());
                                                         Misc.freeObjList(projectionBase.getBindVarFunctions());
@@ -2560,7 +2575,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                                 stolenFilter,
                                                                 masterMetadata.getColumnCount(),
                                                                 NullRecordFactory.getInstance(slaveMetadata),
-                                                                stolenCrossIndex
+                                                                stolenCrossIndex,
+                                                                slaveTimestampIndex
                                                         );
                                                         created = true;
                                                     }

@@ -858,7 +858,6 @@ public class ExpressionParser {
                                 }
                                 processDefaultBranch = true;
                             }
-
                         } else {
                             processDefaultBranch = true;
                         }

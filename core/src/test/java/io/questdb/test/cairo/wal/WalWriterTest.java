@@ -4122,7 +4122,7 @@ public class WalWriterTest extends AbstractCairoTest {
         try {
             path = constructPath(path, tableName, walName, segment, fileName);
             if (!Files.exists(path.$())) {
-                throw new AssertionError("Path " + path + " does not exists!");
+                throw new AssertionError("Path " + path + " does not exist!");
             }
         } finally {
             path.trimTo(pathLen);
