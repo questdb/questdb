@@ -34,21 +34,22 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.LongList;
-import io.questdb.std.LongLongHashMap;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByLongLongHashMap;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.std.Numbers.INT_NULL;
 import static io.questdb.std.Numbers.LONG_NULL;
 
 public class ModeLongGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     final Function arg;
-    ObjList<LongList> keys = new ObjList<>();
+    GroupByAllocator allocator;
+    int initialCapacity = 4;
+    double loadFactor = 0.7d;
+    GroupByLongLongHashMap mapA = new GroupByLongLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
+    GroupByLongLongHashMap mapB = new GroupByLongLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
     int mapIndex;// a pointer to the map that allows you to derive the mode
-    ObjList<LongLongHashMap> maps = new ObjList<>();
     int valueIndex;
-
 
     public ModeLongGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -56,50 +57,29 @@ public class ModeLongGroupByFunction extends LongFunction implements UnaryFuncti
 
     @Override
     public void clear() {
-        maps.clear();
         mapIndex = 0;
-        keys.clear();
+        mapA.resetPtr();
+        mapB.resetPtr();
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final LongLongHashMap map;
-        final LongList mapKeys;
-        if (maps.size() <= mapIndex) {
-            maps.extendAndSet(mapIndex, map = new LongLongHashMap());
+        long val = arg.getLong(record);
+        if (val != Numbers.LONG_NULL) {
+            mapA.of(0).inc(val);
+            mapValue.putLong(valueIndex, mapA.ptr());
         } else {
-            map = maps.getQuick(mapIndex);
-            map.clear();
+            mapValue.putLong(valueIndex, 0);
         }
-
-        if (keys.size() <= mapIndex) {
-            keys.extendAndSet(mapIndex, mapKeys = new LongList());
-        } else {
-            mapKeys = keys.getQuick(mapIndex);
-            mapKeys.clear();
-        }
-
-        long value = arg.getLong(record);
-        if (value != LONG_NULL) {
-            map.inc(value);
-            mapKeys.add(value);
-        }
-        mapValue.putInt(valueIndex, mapIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final LongLongHashMap map = maps.getQuick(mapValue.getInt(valueIndex));
-        final LongList mapKeys = keys.getQuick(mapValue.getInt(valueIndex));
-        long value = arg.getLong(record);
+        final long value = arg.getLong(record);
         if (value != LONG_NULL) {
-            int index = map.keyIndex(value);
-            if (index > 0) {
-                map.inc(value);
-                mapKeys.add(value);
-            } else {
-                map.inc(index);
-            }
+            mapA.of(mapValue.getLong(valueIndex));
+            mapA.inc(value);
+            mapValue.putLong(valueIndex, mapA.ptr());
         }
     }
 
@@ -110,16 +90,18 @@ public class ModeLongGroupByFunction extends LongFunction implements UnaryFuncti
 
     @Override
     public long getLong(Record record) {
-        final LongLongHashMap map = maps.getQuick(record.getInt(valueIndex));
-        final LongList mapKeys = keys.getQuick(record.getInt(valueIndex));
+        mapA.of(record.getLong(valueIndex));
         long modeKey = LONG_NULL;
         long modeCount = -1;
-        for (int i = 0, n = mapKeys.size(); i < n; i++) {
-            long key = mapKeys.getQuick(i);
-            long count = map.get(key);
-            if (count > modeCount) {
-                modeKey = key;
-                modeCount = count;
+
+        for (int i = 0, n = mapA.capacity(); i < n; i++) {
+            final long key = mapA.keyAt(i);
+            if (key != LONG_NULL) {
+                final long value = mapA.valueAt(i);
+                if (value > modeCount) {
+                    modeKey = key;
+                    modeCount = value;
+                }
             }
         }
         return modeKey;
@@ -148,7 +130,7 @@ public class ModeLongGroupByFunction extends LongFunction implements UnaryFuncti
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
+        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
@@ -162,13 +144,33 @@ public class ModeLongGroupByFunction extends LongFunction implements UnaryFuncti
     }
 
     @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        final long destPtr = destValue.getLong(valueIndex);
+        mapA.of(destPtr);
+
+        final long srcPtr = srcValue.getLong(valueIndex);
+        mapB.of(srcPtr);
+
+        final long outPtr = mapA.size() > mapB.size() ? mapA.mergeAdd(mapB) : mapB.mergeAdd(mapA);
+
+        destValue.putLong(valueIndex, outPtr);
+    }
+
+    @Override
+    public void setAllocator(GroupByAllocator allocator) {
+        this.allocator = allocator;
+        mapA.setAllocator(allocator);
+        mapB.setAllocator(allocator);
+    }
+
+    @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putInt(valueIndex, INT_NULL);
+        mapValue.putLong(valueIndex, LONG_NULL);
     }
 
     @Override
     public boolean supportsParallelism() {
-        return false;
+        return UnaryFunction.super.supportsParallelism();
     }
 
     @Override

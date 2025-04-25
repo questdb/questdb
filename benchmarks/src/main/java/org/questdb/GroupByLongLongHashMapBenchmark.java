@@ -54,7 +54,7 @@ public class GroupByLongLongHashMapBenchmark {
     private static final GroupByAllocator allocator = new FastGroupByAllocator(128 * 1024, Numbers.SIZE_1GB);
     private static final int initialCapacity = 64;
     private static final double loadFactor = 0.7;
-    private static final GroupByLongLongHashMap groupByLongLongHashMap = new GroupByLongLongHashMap(initialCapacity, loadFactor, 0);
+    private static final GroupByLongLongHashMap groupByLongLongHashMap = new GroupByLongLongHashMap(initialCapacity, loadFactor, 0, 0);
     private static final GroupByLongHashSet groupByLongHashSet = new GroupByLongHashSet(initialCapacity, loadFactor, 0);
     private static final LongLongHashMap longLongHashMap = new LongLongHashMap(initialCapacity, loadFactor);
     private static final Rnd rnd = new Rnd();
