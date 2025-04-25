@@ -3458,6 +3458,88 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByAlignToCalendarDSTGapNoBackwardJumpsWithFrom() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (i int, ts timestamp) timestamp(ts) PARTITION by day;");
+            execute(
+                    "insert into x " +
+                            "select x, timestamp_sequence('2021-03-26', 60 * 1000000) " +
+                            "from long_sequence(4 * 24 * 60);"
+            );
+
+            assertQueryNoLeakCheck(
+                    "min\tmax\tts\n" +
+                            "2821\t2825\t2021-03-27T22:48:00.000000Z\n" +
+                            "2826\t2842\t2021-03-27T23:05:00.000000Z\n" +
+                            "2843\t2859\t2021-03-27T23:22:00.000000Z\n" +
+                            "2860\t2876\t2021-03-27T23:39:00.000000Z\n" +
+                            "2877\t2893\t2021-03-27T23:56:00.000000Z\n" +
+                            "2894\t2910\t2021-03-28T00:13:00.000000Z\n" +
+                            "2911\t2927\t2021-03-28T00:30:00.000000Z\n" +
+                            "2928\t2940\t2021-03-28T00:47:00.000000Z\n" +
+                            "2941\t2952\t2021-03-28T00:55:00.000000Z\n" +
+                            "2953\t2969\t2021-03-28T01:12:00.000000Z\n" +
+                            "2970\t2983\t2021-03-28T01:29:00.000000Z\n",
+                    "select min(i), max(i), ts from x " +
+                            "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
+                            "sample by 17m from '2021-03-27' align to calendar time zone 'Europe/Berlin';",
+                    "ts",
+                    true,
+                    true
+            );
+
+            // The timestamps in the second query must not be before the ones from the first query.
+            // If we wouldn't be doing DST gap hour check when flooring the timestamps, that would not hold.
+            assertQueryNoLeakCheck(
+                    "min\tmax\tts\n" +
+                            "2984\t2998\t2021-03-28T01:41:00.000000Z\n" +
+                            "2999\t3015\t2021-03-28T01:58:00.000000Z\n" +
+                            "3016\t3032\t2021-03-28T02:15:00.000000Z\n" +
+                            "3033\t3049\t2021-03-28T02:32:00.000000Z\n" +
+                            "3050\t3066\t2021-03-28T02:49:00.000000Z\n" +
+                            "3067\t3083\t2021-03-28T03:06:00.000000Z\n" +
+                            "3084\t3100\t2021-03-28T03:23:00.000000Z\n" +
+                            "3101\t3117\t2021-03-28T03:40:00.000000Z\n" +
+                            "3118\t3134\t2021-03-28T03:57:00.000000Z\n" +
+                            "3135\t3151\t2021-03-28T04:14:00.000000Z\n" +
+                            "3152\t3168\t2021-03-28T04:31:00.000000Z\n" +
+                            "3169\t3185\t2021-03-28T04:48:00.000000Z\n" +
+                            "3186\t3202\t2021-03-28T05:05:00.000000Z\n" +
+                            "3203\t3219\t2021-03-28T05:22:00.000000Z\n" +
+                            "3220\t3236\t2021-03-28T05:39:00.000000Z\n" +
+                            "3237\t3253\t2021-03-28T05:56:00.000000Z\n" +
+                            "3254\t3270\t2021-03-28T06:13:00.000000Z\n" +
+                            "3271\t3287\t2021-03-28T06:30:00.000000Z\n" +
+                            "3288\t3304\t2021-03-28T06:47:00.000000Z\n" +
+                            "3305\t3321\t2021-03-28T07:04:00.000000Z\n" +
+                            "3322\t3338\t2021-03-28T07:21:00.000000Z\n" +
+                            "3339\t3355\t2021-03-28T07:38:00.000000Z\n" +
+                            "3356\t3372\t2021-03-28T07:55:00.000000Z\n" +
+                            "3373\t3389\t2021-03-28T08:12:00.000000Z\n" +
+                            "3390\t3406\t2021-03-28T08:29:00.000000Z\n" +
+                            "3407\t3423\t2021-03-28T08:46:00.000000Z\n" +
+                            "3424\t3440\t2021-03-28T09:03:00.000000Z\n" +
+                            "3441\t3457\t2021-03-28T09:20:00.000000Z\n" +
+                            "3458\t3474\t2021-03-28T09:37:00.000000Z\n" +
+                            "3475\t3491\t2021-03-28T09:54:00.000000Z\n" +
+                            "3492\t3508\t2021-03-28T10:11:00.000000Z\n" +
+                            "3509\t3525\t2021-03-28T10:28:00.000000Z\n" +
+                            "3526\t3542\t2021-03-28T10:45:00.000000Z\n" +
+                            "3543\t3559\t2021-03-28T11:02:00.000000Z\n" +
+                            "3560\t3576\t2021-03-28T11:19:00.000000Z\n" +
+                            "3577\t3593\t2021-03-28T11:36:00.000000Z\n" +
+                            "3594\t3596\t2021-03-28T11:53:00.000000Z\n",
+                    "select min(i), max(i), ts from x " +
+                            "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
+                            "sample by 17m from '2021-03-28' align to calendar time zone 'Europe/Berlin';",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testSampleByAlignToCalendarFillNoneWithoutKey1() throws Exception {
         assertQuery(
                 "ts\tfirst\tavg\tlast\tmax\n" +

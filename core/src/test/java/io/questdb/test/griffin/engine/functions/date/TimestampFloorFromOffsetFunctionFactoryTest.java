@@ -166,6 +166,15 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
             );
 
             assertPlanNoLeakCheck(
+                    "select timestamp_floor('3d', ts, '1980-01-01T00:00:00.000000Z', null, 'Europe/Berlin') from x",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp_floor('3d',ts,'1980-01-01T00:00:00.000Z','00:00','Europe/Berlin')]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
                     "select timestamp_floor('33m', ts, '1980-01-01T16:00:00.000000Z', null, 'Europe/Berlin') from x",
                     "VirtualRecord\n" +
                             "  functions: [timestamp_floor('33m',ts,'1980-01-01T16:00:00.000Z','00:00','Europe/Berlin')]\n" +
@@ -251,6 +260,17 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
                     "select timestamp_floor('d', ts, null, '00:00', :tz) from x",
                     "VirtualRecord\n" +
                             "  functions: [timestamp_floor('1d',ts,null,'00:00',:tz::string)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "UTC");
+            assertPlanNoLeakCheck(
+                    "select timestamp_floor('d', ts, '1980-01-01T00:00:00.000000Z', null, :tz) from x",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp_floor('1d',ts,'1980-01-01T00:00:00.000Z','00:00',:tz::string)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"

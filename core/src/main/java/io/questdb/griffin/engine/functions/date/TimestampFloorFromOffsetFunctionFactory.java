@@ -180,7 +180,13 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
         throw SqlException.$(timezonePos, "const or runtime const expected");
     }
 
-    private static boolean canSkipDstGapCorrection(int stride, char unit) {
+    private static boolean canSkipDstGapCorrection(int stride, char unit, long from, long offset) {
+        // require the effective offset to be aligned at day boundary;
+        // we may relax this check in the future, if necessary
+        if ((from + offset) % Timestamps.DAY_MICROS != 0) {
+            return false;
+        }
+
         switch (unit) {
             case 'M':
             case 'y':
@@ -253,8 +259,8 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             @NotNull TimeZoneRules tzRules,
             @NotNull String tzStr
     ) {
-        if (from + offset == 0 && canSkipDstGapCorrection(stride, unit)) {
-            return new AllConstTzFunc(timestampFunc, floorFunc, stride, unit, tzRules, tzStr);
+        if (canSkipDstGapCorrection(stride, unit, from, offset)) {
+            return new AllConstTzFunc(timestampFunc, floorFunc, stride, unit, from, offset, offsetStr, tzRules, tzStr);
         }
         return new AllConstDstGapAwareFunc(timestampFunc, floorFunc, stride, unit, from, offset, offsetStr, tzRules, tzStr);
     }
@@ -270,8 +276,8 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             Function timezoneFunc,
             int timezonePos
     ) {
-        if (from + offset == 0 && canSkipDstGapCorrection(stride, unit)) {
-            return new RuntimeConstTzFunc(timestampFunc, floorFunc, stride, unit, timezoneFunc, timezonePos);
+        if (canSkipDstGapCorrection(stride, unit, from, offset)) {
+            return new RuntimeConstTzFunc(timestampFunc, floorFunc, stride, unit, from, offset, offsetStr, timezoneFunc, timezonePos);
         }
         return new RuntimeConstDstGapAwareFunc(timestampFunc, floorFunc, stride, unit, from, offset, offsetStr, timezoneFunc, timezonePos);
     }
@@ -454,7 +460,10 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
     }
 
     private static class AllConstTzFunc extends TimestampFunction implements UnaryFunction {
+        private final long effectiveOffset; // from + offset
         private final TimestampFloorFunction floorFunc;
+        private final long from;
+        private final String offsetStr;
         private final int stride;
         private final Function tsFunc;
         private final TimeZoneRules tzRules;
@@ -466,6 +475,9 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
                 TimestampFloorFunction floorFunc,
                 int stride,
                 char unit,
+                long from,
+                long offset,
+                String offsetStr,
                 TimeZoneRules tzRules,
                 String tzStr
         ) {
@@ -473,6 +485,9 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             this.floorFunc = floorFunc;
             this.stride = stride;
             this.unit = unit;
+            this.from = from;
+            this.effectiveOffset = from + offset;
+            this.offsetStr = offsetStr;
             this.tzRules = tzRules;
             this.tzStr = tzStr;
         }
@@ -487,7 +502,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             final long timestamp = tsFunc.getTimestamp(rec);
             if (timestamp != Numbers.LONG_NULL) {
                 final long localTimestamp = timestamp + tzRules.getOffset(timestamp);
-                return floorFunc.floor(localTimestamp, stride, 0);
+                return floorFunc.floor(localTimestamp, stride, effectiveOffset);
             }
             return Numbers.LONG_NULL;
         }
@@ -498,8 +513,16 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(stride);
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
-            sink.val("null,");
-            sink.val("'00:00',");
+            if (from != 0) {
+                sink.val('\'').val(Timestamps.toString(from)).val("',");
+            } else {
+                sink.val("null,");
+            }
+            if (offsetStr != null) {
+                sink.val('\'').val(offsetStr).val("',");
+            } else {
+                sink.val("'00:00',");
+            }
             sink.val('\'').val(tzStr).val('\'');
             sink.val(')');
         }
@@ -919,8 +942,12 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
         }
     }
 
+    // offset is const and time zone is runtime const
     private static class RuntimeConstTzFunc extends TimestampFunction implements BinaryFunction {
+        private final long effectiveOffset; // from + offset
         private final TimestampFloorFunction floorFunc;
+        private final long from;
+        private final String offsetStr;
         private final int stride;
         private final Function timezoneFunc;
         private final int timezonePos;
@@ -934,6 +961,9 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
                 TimestampFloorFunction floorFunc,
                 int stride,
                 char unit,
+                long from,
+                long offset,
+                String offsetStr,
                 Function timezoneFunc,
                 int timezonePos
         ) {
@@ -941,6 +971,9 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             this.floorFunc = floorFunc;
             this.stride = stride;
             this.unit = unit;
+            this.from = from;
+            this.effectiveOffset = from + offset;
+            this.offsetStr = offsetStr;
             this.timezoneFunc = timezoneFunc;
             this.timezonePos = timezonePos;
         }
@@ -962,7 +995,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
                 final long localTimestamp = tzRules != null
                         ? timestamp + tzRules.getOffset(timestamp)
                         : timestamp + tzOffset;
-                return floorFunc.floor(localTimestamp, stride, 0);
+                return floorFunc.floor(localTimestamp, stride, effectiveOffset);
             }
             return Numbers.LONG_NULL;
         }
@@ -996,14 +1029,22 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(TimestampFloorFunctionFactory.NAME).val("('")
-                    .val(stride)
-                    .val(unit).val("',")
-                    .val(tsFunc).val(',')
-                    .val("null,")
-                    .val("'00:00',")
-                    .val(timezoneFunc)
-                    .val(')');
+            sink.val(TimestampFloorFunctionFactory.NAME).val("('");
+            sink.val(stride);
+            sink.val(unit).val("',");
+            sink.val(tsFunc).val(',');
+            if (from != 0) {
+                sink.val('\'').val(Timestamps.toString(from)).val("',");
+            } else {
+                sink.val("null,");
+            }
+            if (offsetStr != null) {
+                sink.val('\'').val(offsetStr).val("',");
+            } else {
+                sink.val("'00:00',");
+            }
+            sink.val(timezoneFunc);
+            sink.val(')');
         }
     }
 }
