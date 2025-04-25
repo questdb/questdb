@@ -178,7 +178,16 @@ public abstract class AbstractLineHttpSender implements Sender {
                 cli = HttpClientFactory.newPlainTextInstance(clientConfiguration);
             }
             try {
-                HttpClient.ResponseHeaders responseHeaders = cli.newRequest(host, port).GET().url(clientConfiguration.getSettingsPath()).send();
+                HttpClient.Request req = cli.newRequest(host, port).GET();
+                if (username != null) {
+                    if (password != null) {
+                        req.authBasic(username, password);
+                    } else if (authToken != null) {
+                        req.authToken(username, authToken);
+                    }
+                }
+
+                HttpClient.ResponseHeaders responseHeaders = req.url(clientConfiguration.getSettingsPath()).send();
                 responseHeaders.await();
                 if (Utf8s.equalsNcAscii("200", responseHeaders.getStatusCode())) {
                     try (JsonSettingsParser parser = new JsonSettingsParser()) {
