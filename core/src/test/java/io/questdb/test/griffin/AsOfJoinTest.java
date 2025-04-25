@@ -40,6 +40,49 @@ import org.junit.Test;
 public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
+    public void testAsOfJoinAliasDuplication() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE fx_rate (" +
+                            "    ts TIMESTAMP, " +
+                            "    code SYMBOL CAPACITY 128 NOCACHE, " +
+                            "    rate INT" +
+                            ") timestamp(ts)",
+                    sqlExecutionContext
+            );
+            execute("INSERT INTO fx_rate values ('2022-10-05T04:00:00.000000Z', '1001', 10);");
+
+            execute(
+                    "CREATE TABLE trades (" +
+                            "    ts TIMESTAMP, " +
+                            "    price INT, " +
+                            "    qty INT, " +
+                            "    flag INT, " +
+                            "    fx_rate_code SYMBOL CAPACITY 128 NOCACHE" +
+                            ") timestamp(ts);",
+                    sqlExecutionContext
+            );
+            execute("INSERT INTO trades values ('2022-10-05T08:15:00.000000Z', 100, 500, 0, '1001');");
+            execute("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 1, '1001');");
+            execute("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 2, '1001');");
+
+            String query =
+                    "SELECT\n" +
+                            "  SUM(CASE WHEN t.flag = 0 THEN 0.9 * (t.price * f.rate) ELSE 0.0 END)," +
+                            "  SUM(CASE WHEN t.flag = 1 THEN 0.7 * (t.price * f.rate) ELSE 0.0 END)," +
+                            "  SUM(CASE WHEN t.flag = 2 THEN 0.2 * (t.price * f.rate) ELSE 0.0 END)" +
+                            "FROM  " +
+                            "  trades t " +
+                            "ASOF JOIN fx_rate f on f.code = t.fx_rate_code";
+
+            String expected = "SUM\tSUM1\tSUM2\n" +
+                    "900.0\t700.0\t200.0\n";
+
+            printSqlResult(expected, query, null, false, true);
+        });
+    }
+
+    @Test
     public void testAsOfJoinBinarySearchHint() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table orders as (\n" +
@@ -121,49 +164,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "2025-01-01T00:16:40.009947Z\t0.5071618579762882\tsym_1\tsym_6\t2025-01-01T00:16:39.800653Z\t0.3100545983862456\n";
             assertQuery(expectedResult, queryWithHint, "ts", false, false);
             assertQuery(expectedResult, queryWithoutHint, "ts", false, false);
-        });
-    }
-
-    @Test
-    public void testAsOfJoinAliasDuplication() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE fx_rate (" +
-                            "    ts TIMESTAMP, " +
-                            "    code SYMBOL CAPACITY 128 NOCACHE, " +
-                            "    rate INT" +
-                            ") timestamp(ts)",
-                    sqlExecutionContext
-            );
-            execute("INSERT INTO fx_rate values ('2022-10-05T04:00:00.000000Z', '1001', 10);");
-
-            execute(
-                    "CREATE TABLE trades (" +
-                            "    ts TIMESTAMP, " +
-                            "    price INT, " +
-                            "    qty INT, " +
-                            "    flag INT, " +
-                            "    fx_rate_code SYMBOL CAPACITY 128 NOCACHE" +
-                            ") timestamp(ts);",
-                    sqlExecutionContext
-            );
-            execute("INSERT INTO trades values ('2022-10-05T08:15:00.000000Z', 100, 500, 0, '1001');");
-            execute("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 1, '1001');");
-            execute("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 2, '1001');");
-
-            String query =
-                    "SELECT\n" +
-                            "  SUM(CASE WHEN t.flag = 0 THEN 0.9 * (t.price * f.rate) ELSE 0.0 END)," +
-                            "  SUM(CASE WHEN t.flag = 1 THEN 0.7 * (t.price * f.rate) ELSE 0.0 END)," +
-                            "  SUM(CASE WHEN t.flag = 2 THEN 0.2 * (t.price * f.rate) ELSE 0.0 END)" +
-                            "FROM  " +
-                            "  trades t " +
-                            "ASOF JOIN fx_rate f on f.code = t.fx_rate_code";
-
-            String expected = "SUM\tSUM1\tSUM2\n" +
-                    "900.0\t700.0\t200.0\n";
-
-            printSqlResult(expected, query, null, false, true);
         });
     }
 
