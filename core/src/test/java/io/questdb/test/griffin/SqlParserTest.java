@@ -4534,7 +4534,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testHints() throws SqlException {
+    public void testHints() throws Exception {
         // simple smoke test
         assertQuery(
                 "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NEW_HINT(a b), NO_INDEX(a), NO_PARAM_HINT]) hints[NEW_HINT(a b), NO_INDEX(a), NO_PARAM_HINT]",
@@ -4748,6 +4748,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("c", ColumnType.INT)
         );
 
+        // ending with unclosed hint - it reports missing columns instead of missing closing comment
+        // this behaviour is consistent with a regular block comments unclosed, except for position
+        assertSyntaxError(
+                "select /*+ HINT_A",
+                17,
+                "[distinct] column expected"
+        );
+        // for a comparison: here the same error with regular (non-hint) comments
+        assertSyntaxError(
+                "select /* HINT_A",
+                7,
+                "[distinct] column expected"
+        );
     }
 
     @Test
