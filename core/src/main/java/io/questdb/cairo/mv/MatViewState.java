@@ -236,6 +236,10 @@ public class MatViewState implements QuietCloseable {
         lastRefreshBaseTxn = txn;
     }
 
+    public void setLastRefreshTimestamp(long ts) {
+        this.lastRefreshTimestamp = ts;
+    }
+
     public void tryCloseIfDropped() {
         if (dropped && tryLock()) {
             try {

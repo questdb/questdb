@@ -70,6 +70,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 LimitType.values(),
                 {true, false}, // exercise filters
                 ProjectionType.values(),
+                {true, false} // apply outer projection
         });
         for (int i = 0, n = allParameterPermutations.length; i < n; i++) {
             Object[] params = allParameterPermutations[i];
@@ -78,8 +79,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             LimitType limitType = (LimitType) params[2];
             boolean exerciseFilters = (boolean) params[3];
             ProjectionType projectionType = (ProjectionType) params[4];
+            boolean applyOuterProjection = (boolean) params[5];
             try {
-                assertResultSetsMatch0(joinType, exerciseIntervals, limitType, exerciseFilters, projectionType, rnd);
+                assertResultSetsMatch0(joinType, exerciseIntervals, limitType, exerciseFilters, projectionType, applyOuterProjection, rnd);
             } catch (AssertionError e) {
                 throw new AssertionError("Failed with parameters: " +
                         "joinType=" + joinType +
@@ -91,7 +93,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private void assertResultSetsMatch0(JoinType joinType, boolean exerciseIntervals, LimitType limitType, boolean exerciseFilters, ProjectionType projectionType, Rnd rnd) throws Exception {
+    private void assertResultSetsMatch0(JoinType joinType, boolean exerciseIntervals, LimitType limitType, boolean exerciseFilters, ProjectionType projectionType, boolean applyOuterProjection, Rnd rnd) throws Exception {
         String join;
         String onSuffix = "";
         switch (joinType) {
@@ -169,7 +171,12 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 break;
         }
 
-        String query = "select * from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
+        String outerProjection = "*";
+        if (applyOuterProjection) {
+            char mainProjectionSuffix = projectionType == ProjectionType.RENAME_COLUMN ? '2' : ' ';
+            outerProjection = "t1.ts, t2.i" + mainProjectionSuffix;
+        }
+        String query = "select " + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
         int limit;
         switch (limitType) {
             case POSITIVE_LIMIT:

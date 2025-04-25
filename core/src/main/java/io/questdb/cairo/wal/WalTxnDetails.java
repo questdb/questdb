@@ -105,6 +105,17 @@ public class WalTxnDetails implements QuietCloseable {
         this.maxLookaheadRows = maxLookaheadRows;
     }
 
+    public static WalEventCursor openWalEFile(Path tempPath, WalEventReader eventReader, int segmentTxn, long seqTxn) {
+        WalEventCursor walEventCursor;
+        try {
+            walEventCursor = eventReader.of(tempPath, segmentTxn);
+        } catch (CairoException ex) {
+            throw CairoException.critical(ex.getErrno()).put("cannot read WAL even file for seqTxn=").put(seqTxn)
+                    .put(", ").put(ex.getFlyweightMessage()).put(']');
+        }
+        return walEventCursor;
+    }
+
     /**
      * Creates symbol map for multiple transactions. It is used in {@link io.questdb.cairo.TableWriter} during
      * WAL transaction block application
@@ -198,7 +209,7 @@ public class WalTxnDetails implements QuietCloseable {
             }
         }
 
-        // Return true if there are any sumbol maps created, e.g. mapping is not identical transformation
+        // Return true if there are any symbol maps created, e.g. mapping is not identical transformation
         return outMem.getAppendOffset() > (txnCount << 3);
     }
 
@@ -307,6 +318,14 @@ public class WalTxnDetails implements QuietCloseable {
         return startSeqTxn + transactionMeta.size() / TXN_METADATA_LONGS_SIZE - 1;
     }
 
+    public long getMatViewRefreshTimestamp(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MAT_VIEW_REFRESH_TS);
+    }
+
+    public long getMatViewRefreshTxn(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MAT_VIEW_REFRESH_TXN);
+    }
+
     public long getMaxTimestamp(long seqTxn) {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MAX_TIMESTAMP_OFFSET);
     }
@@ -346,14 +365,6 @@ public class WalTxnDetails implements QuietCloseable {
 
     public long getWalSegment(long seqTxn) {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET));
-    }
-
-    public long getMatViewRefreshTxn(long seqTxn) {
-        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MAT_VIEW_REFRESH_TXN);
-    }
-
-    public long getMatViewRefreshTimestamp(long seqTxn) {
-        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MAT_VIEW_REFRESH_TS);
     }
 
     @Nullable
@@ -538,17 +549,6 @@ public class WalTxnDetails implements QuietCloseable {
         assert totalRowsLoadedToApply >= 0;
     }
 
-    private static WalEventCursor openWalEFile(Path tempPath, WalEventReader eventReader, int segmentTxn, long seqTxn) {
-        WalEventCursor walEventCursor;
-        try {
-            walEventCursor = eventReader.of(tempPath, segmentTxn);
-        } catch (CairoException ex) {
-            throw CairoException.critical(ex.getErrno()).put("cannot read WAL even file for seqTxn=").put(seqTxn)
-                    .put(", ").put(ex.getFlyweightMessage()).put(']');
-        }
-        return walEventCursor;
-    }
-
     private long findFirstSymbolStringMemOffset(long symbolsOffset) {
         int i = (int) (symbolsOffset - currentSymbolIndexesStartOffset), n = (int) symbolIndexes.size();
         if (i < n) {
@@ -601,7 +601,6 @@ public class WalTxnDetails implements QuietCloseable {
         long totalRowsLoaded = 0;
 
         try (WalEventReader eventReader = walEventReader) {
-
             WalEventCursor walEventCursor = null;
 
             txnOrder.clear();
@@ -963,7 +962,7 @@ public class WalTxnDetails implements QuietCloseable {
 
         public WalTxnDetailsSlice of(long lo, int count) {
             txnOrder.clear();
-            // Rserve double capacity to use with radix sort
+            // Reserve double capacity to use with radix sort
             txnOrder.setCapacity(count * 4L);
 
             long min = Long.MAX_VALUE, max = Long.MIN_VALUE;
