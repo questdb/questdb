@@ -42,6 +42,8 @@ import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -104,6 +106,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                 PATH,
                 clientConfiguration,
                 tlsConfig,
+                null,
                 autoFlushRows,
                 authToken,
                 username,
@@ -120,6 +123,7 @@ public abstract class AbstractLineHttpSender implements Sender {
             String path,
             HttpClientConfiguration clientConfiguration,
             ClientTlsConfiguration tlsConfig,
+            HttpClient client,
             int autoFlushRows,
             String authToken,
             String username,
@@ -141,14 +145,67 @@ public abstract class AbstractLineHttpSender implements Sender {
         this.flushIntervalNanos = flushIntervalNanos;
         this.baseTimeoutMillis = clientConfiguration.getTimeout();
         if (tlsConfig != null) {
-            this.client = HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig);
+            this.client = client == null ? HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig) : client;
             this.url = "https://" + host + ":" + port + this.path;
         } else {
-            this.client = HttpClientFactory.newPlainTextInstance(clientConfiguration);
+            this.client = client == null ? HttpClientFactory.newPlainTextInstance(clientConfiguration) : client;
             this.url = "http://" + host + ":" + port + this.path;
         }
         this.questdbVersion = new BuildInformationHolder().getSwVersion();
         this.request = newRequest();
+    }
+
+    public static AbstractLineHttpSender createLineSender(
+            String host,
+            int port,
+            String path,
+            HttpClientConfiguration clientConfiguration,
+            ClientTlsConfiguration tlsConfig,
+            int autoFlushRows,
+            String authToken,
+            String username,
+            String password,
+            long maxRetriesNanos,
+            long minRequestThroughput,
+            long flushIntervalNanos,
+            int protocolVersion
+    ) {
+        HttpClient cli = null;
+        if (protocolVersion == PROTOCOL_VERSION_NOT_SET_EXPLICIT) {
+            if (tlsConfig != null) {
+                cli = HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig);
+            } else {
+                cli = HttpClientFactory.newPlainTextInstance(clientConfiguration);
+            }
+            try {
+                HttpClient.ResponseHeaders responseHeaders = cli.newRequest(host, port).GET().url(clientConfiguration.getSettingsPath()).send();
+                responseHeaders.await();
+                if (Utf8s.equalsNcAscii("200", responseHeaders.getStatusCode())) {
+                    try (JsonSettingsParser parser = new JsonSettingsParser()) {
+                        protocolVersion = parser.parse(responseHeaders.getResponse());
+                    }
+                } else {
+                    // set to PROTOCOL_VERSION_V1
+                    protocolVersion = PROTOCOL_VERSION_V1;
+                }
+            } catch (Throwable e) {
+                Misc.free(cli);
+                throw new LineSenderException("Failed to detect server line protocol version", e);
+            }
+        }
+        if (protocolVersion == PROTOCOL_VERSION_V1) {
+            return new LineHttpSenderV1(
+                    host, port, path, clientConfiguration, tlsConfig, cli, autoFlushRows,
+                    authToken, username, password, maxRetriesNanos, minRequestThroughput,
+                    flushIntervalNanos
+            );
+        } else {
+            return new LineHttpSenderV2(
+                    host, port, path, clientConfiguration, tlsConfig, cli, autoFlushRows,
+                    authToken, username, password, maxRetriesNanos, minRequestThroughput,
+                    flushIntervalNanos
+            );
+        }
     }
 
     @Override
@@ -745,6 +802,45 @@ public abstract class AbstractLineHttpSender implements Sender {
             NEXT_LINE_NUMBER_VALUE,
             NEXT_ERROR_ID_VALUE,
             DONE
+        }
+    }
+
+    private static class JsonSettingsParser implements JsonParser, Closeable {
+        private final JsonLexer lexer = new JsonLexer(1024, 1024);
+        private boolean nextIsIlpProtoVer = false;
+        private int protocolVersion = 1;
+
+        public void close() {
+            Misc.free(lexer);
+        }
+
+        public void onEvent(int code, CharSequence tag, int position) {
+            if (protocolVersion != 1) {
+                return;
+            }
+            if (code == JsonLexer.EVT_NAME && tag.equals("ilp.proto.version")) {
+                nextIsIlpProtoVer = true;
+            } else if (code == JsonLexer.EVT_VALUE && nextIsIlpProtoVer) {
+                try {
+                    Numbers.parseInt(tag);
+                } catch (NumericException e) {
+                    protocolVersion = 2;
+                }
+            }
+        }
+
+        public int parse(Response chunkedRsp) {
+            Fragment fragment;
+            while ((fragment = chunkedRsp.recv()) != null) {
+                try {
+                    lexer.parse(fragment.lo(), fragment.hi(), this);
+                } catch (JsonException e) {
+                    protocolVersion = PROTOCOL_VERSION_V2;
+                    break;
+                }
+            }
+
+            return protocolVersion;
         }
     }
 }

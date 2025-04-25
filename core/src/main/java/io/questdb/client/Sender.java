@@ -34,8 +34,7 @@ import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSenderV1;
 import io.questdb.cutlass.line.LineTcpSenderV2;
-import io.questdb.cutlass.line.http.LineHttpSenderV1;
-import io.questdb.cutlass.line.http.LineHttpSenderV2;
+import io.questdb.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacade;
@@ -84,6 +83,7 @@ import java.util.concurrent.TimeUnit;
  */
 public interface Sender extends Closeable, ArraySender<Sender> {
 
+    int PROTOCOL_VERSION_NOT_SET_EXPLICIT = -1;
     int PROTOCOL_VERSION_V1 = 1;
     int PROTOCOL_VERSION_V2 = 2;
 
@@ -433,6 +433,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private int bufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
         private String host;
         private String httpPath;
+        private String httpSettingsPath;
         private int httpTimeout = PARAMETER_NOT_SET_EXPLICITLY;
         private String httpToken;
         private String keyId;
@@ -446,6 +447,11 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             @Override
             public int getMaximumRequestBufferSize() {
                 return maximumBufferCapacity == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MAXIMUM_BUFFER_CAPACITY : maximumBufferCapacity;
+            }
+
+            @Override
+            public String getSettingsPath() {
+                return httpSettingsPath == null ? super.getSettingsPath() : httpSettingsPath;
             }
 
             @Override
@@ -664,11 +670,8 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                     assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
                     tlsConfig = new ClientTlsConfiguration(trustStorePath, trustStorePassword, tlsValidationMode == TlsValidationMode.DEFAULT ? ClientTlsConfiguration.TLS_VALIDATION_MODE_FULL : ClientTlsConfiguration.TLS_VALIDATION_MODE_NONE);
                 }
-                if (protocolVersion == PROTOCOL_VERSION_V1) {
-                    return new LineHttpSenderV1(host, port, httpPath, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken, username, password, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis);
-                } else {
-                    return new LineHttpSenderV2(host, port, httpPath, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken, username, password, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis);
-                }
+                return AbstractLineHttpSender.createLineSender(host, port, httpPath, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken,
+                        username, password, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis, protocolVersion);
             }
             assert protocol == PROTOCOL_TCP;
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
@@ -802,6 +805,37 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 throw new LineSenderException("the path has to start with '/'");
             }
             this.httpPath = path;
+            return this;
+        }
+
+        /**
+         * Sets the HTTP path for auto-detecting the line protocol version when #protocolVersion is not explicitly set.
+         * <ul>
+         *   <li>only for HTTP transport.</li>
+         *   <li>Mandatory when the server uses a <b>non-default</b> {@code http.context.settings} configuration.</li>
+         * </ul>
+         *
+         * <b>Example:</b> If the server configures {@code http.context.settings=/custom/settings},
+         * call {@code httpSettingPath("/custom/settings")}.
+         *
+         * @param path The HTTP path to query for server protocol settings. Must:
+         *             <ul>
+         *               <li>Start with '/'</li>
+         *               <li>Match the server's {@code http.context.settings} value if non-default</li>
+         *             </ul>
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder httpSettingPath(String path) {
+            if (this.httpSettingsPath != null) {
+                throw new LineSenderException("the path was already configured");
+            }
+            if (Chars.isBlank(path)) {
+                throw new LineSenderException("the path cannot be empty nor null");
+            }
+            if (!Chars.startsWith(path, '/')) {
+                throw new LineSenderException("the path has to start with '/'");
+            }
+            this.httpSettingsPath = path;
             return this;
         }
 
@@ -971,7 +1005,8 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                         .put("[protocolVersion=").put(this.protocolVersion).put("]");
             }
             if (protocolVersion < PROTOCOL_VERSION_V1 || protocolVersion > PROTOCOL_VERSION_V2) {
-                throw new LineSenderException("current client only supports protocol version 1(text format for all datatypes) or 2(binary format for part datatypes)");
+                throw new LineSenderException("current client only supports protocol version 1(text format for all datatypes), " +
+                        "2(binary format for part datatypes) or explicitly unset");
             }
             this.protocolVersion = protocolVersion;
             return this;
@@ -1057,7 +1092,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             if (tlsValidationMode == null) {
                 tlsValidationMode = TlsValidationMode.DEFAULT;
             }
-            if (protocolVersion == PARAMETER_NOT_SET_EXPLICITLY) {
+            if (protocol == PROTOCOL_TCP && protocolVersion == PARAMETER_NOT_SET_EXPLICITLY) {
                 protocolVersion = PROTOCOL_VERSION_V2;
             }
         }
@@ -1384,9 +1419,6 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 }
                 if (autoFlushIntervalMillis != PARAMETER_NOT_SET_EXPLICITLY) {
                     throw new LineSenderException("auto flush interval is not supported for TCP protocol");
-                }
-                if (protocolVersion < PROTOCOL_VERSION_V1 || protocolVersion > PROTOCOL_VERSION_V2) {
-                    throw new LineSenderException("current client only supports protocol version 1(text format for all datatypes) or 2(binary format for part datatypes)");
                 }
             } else {
                 throw new LineSenderException("unsupported protocol ")

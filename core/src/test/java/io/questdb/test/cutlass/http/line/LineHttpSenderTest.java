@@ -59,6 +59,7 @@ import java.time.temporal.ChronoUnit;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 
 public class LineHttpSenderTest extends AbstractBootstrapTest {
 
@@ -166,6 +167,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address("localhost:" + port)
+                        .protocolVersion(PROTOCOL_VERSION_V2)
                         .autoFlushRows(Integer.MAX_VALUE) // we'll flush manually
                         .retryTimeoutMillis(0)
                         .build()
@@ -590,6 +592,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address("localhost:" + port)
+                        .protocolVersion(PROTOCOL_VERSION_V2)
                         .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
                         .retryTimeoutMillis(0)
                         .build()

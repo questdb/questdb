@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.http;
 import io.questdb.ClientTlsConfiguration;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.client.Sender;
+import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
@@ -34,47 +35,25 @@ import org.jetbrains.annotations.NotNull;
 
 public class LineHttpSenderV1 extends AbstractLineHttpSender {
 
-    public LineHttpSenderV1(String host,
-                            int port,
-                            HttpClientConfiguration clientConfiguration,
-                            ClientTlsConfiguration tlsConfig,
-                            int autoFlushRows,
-                            String authToken,
-                            String username,
-                            String password,
-                            long maxRetriesNanos,
-                            long minRequestThroughput,
-                            long flushIntervalNanos) {
-        super(host,
-                port,
-                clientConfiguration,
-                tlsConfig,
-                autoFlushRows,
-                authToken,
-                username,
-                password,
-                maxRetriesNanos,
-                minRequestThroughput,
-                flushIntervalNanos);
-    }
-
-    public LineHttpSenderV1(String host,
-                            int port,
-                            String path,
-                            HttpClientConfiguration clientConfiguration,
-                            ClientTlsConfiguration tlsConfig,
-                            int autoFlushRows,
-                            String authToken,
-                            String username,
-                            String password,
-                            long maxRetriesNanos,
-                            long minRequestThroughput,
-                            long flushIntervalNanos) {
+    protected LineHttpSenderV1(String host,
+                               int port,
+                               String path,
+                               HttpClientConfiguration clientConfiguration,
+                               ClientTlsConfiguration tlsConfig,
+                               HttpClient client,
+                               int autoFlushRows,
+                               String authToken,
+                               String username,
+                               String password,
+                               long maxRetriesNanos,
+                               long minRequestThroughput,
+                               long flushIntervalNanos) {
         super(host,
                 port,
                 path,
                 clientConfiguration,
                 tlsConfig,
+                client,
                 autoFlushRows,
                 authToken,
                 username,

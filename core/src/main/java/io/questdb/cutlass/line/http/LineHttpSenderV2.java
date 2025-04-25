@@ -28,6 +28,7 @@ import io.questdb.ClientTlsConfiguration;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.client.Sender;
+import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.line.array.ArrayDataAppender;
 import io.questdb.cutlass.line.array.ArrayShapeAppender;
 import io.questdb.cutlass.line.array.DoubleArray;
@@ -62,23 +63,25 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 flushIntervalNanos);
     }
 
-    public LineHttpSenderV2(String host,
-                            int port,
-                            String path,
-                            HttpClientConfiguration clientConfiguration,
-                            ClientTlsConfiguration tlsConfig,
-                            int autoFlushRows,
-                            String authToken,
-                            String username,
-                            String password,
-                            long maxRetriesNanos,
-                            long minRequestThroughput,
-                            long flushIntervalNanos) {
+    protected LineHttpSenderV2(String host,
+                               int port,
+                               String path,
+                               HttpClientConfiguration clientConfiguration,
+                               ClientTlsConfiguration tlsConfig,
+                               HttpClient client,
+                               int autoFlushRows,
+                               String authToken,
+                               String username,
+                               String password,
+                               long maxRetriesNanos,
+                               long minRequestThroughput,
+                               long flushIntervalNanos) {
         super(host,
                 port,
                 path,
                 clientConfiguration,
                 tlsConfig,
+                client,
                 autoFlushRows,
                 authToken,
                 username,

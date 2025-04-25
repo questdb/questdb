@@ -273,11 +273,13 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("http::addr=localhost;auto_flush=off;auto_flush_interval=1;", "cannot set auto flush interval when interval based auto-flush is already disabled");
             assertConfStrError("http::addr=localhost;auto_flush=off;auto_flush_rows=1;", "cannot set auto flush rows when auto-flush is already disabled");
             assertConfStrError("http::addr=localhost;auto_flush_bytes=1024;", "auto_flush_bytes is only supported for TCP transport");
+            assertConfStrError("http::addr=localhost;protocol_version=10", "current client only supports protocol version 1(text format for all datatypes), 2(binary format for part datatypes) or explicitly unset");
+            assertConfStrError("http::addr=127.0.0.1:12345;auto_flush=off;", "Failed to detect server line protocol version");
 
-            assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100");
-            assertConfStrOk("addr=localhost:8080", "auto_flush=on", "auto_flush_rows=100");
-            assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100", "auto_flush=on");
-            assertConfStrOk("addr=localhost", "auto_flush=on");
+            assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100", "protocol_version=1");
+            assertConfStrOk("addr=localhost:8080", "auto_flush=on", "auto_flush_rows=100", "protocol_version=2");
+            assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100", "auto_flush=on", "protocol_version=2");
+            assertConfStrOk("addr=localhost", "auto_flush=on", "protocol_version=2");
 
             runInContext(r -> {
                 String tcpAddr = "tcp::addr=localhost:" + bindPort;
@@ -293,7 +295,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 assertConfStrOk(tcpAddr + ";init_buf_size=1024;auto_flush_bytes=1024;");
 
                 assertConfStrOk(tcpAddr + ";auto_flush_bytes=1024;init_buf_size=1024");
-                assertConfStrOk(tcpAddr + ";auto_flush_bytes=1024;init_buf_size=1024;");
+                assertConfStrOk(tcpAddr + ";auto_flush_bytes=1024;init_buf_size=1024;protocol_version=1");
 
                 assertConfStrOk(tcpAddr + ";unknown=foo");
                 assertConfStrOk(tcpAddr + ";unknown=foo;");
@@ -305,23 +307,23 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("tcp::addr=localhost;auto_flush_bytes=off;", "TCP transport must have auto_flush_bytes enabled");
 
 
-            assertConfStrOk("http::addr=localhost;auto_flush=off;");
-            assertConfStrOk("http::addr=localhost;");
-            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;");
-            assertConfStrOk("http::addr=localhost;auto_flush_rows=off;");
-            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;auto_flush_rows=off;");
-            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;auto_flush_rows=1;");
-            assertConfStrOk("http::addr=localhost;auto_flush_rows=off;auto_flush_interval=1;");
-            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;auto_flush_rows=off;auto_flush=off;");
-            assertConfStrOk("http::addr=localhost;auto_flush=off;auto_flush_interval=off;auto_flush_rows=off;");
-            assertConfStrOk("http::addr=localhost:8080;");
-            assertConfStrOk("http::addr=localhost:8080;token=foo;");
-            assertConfStrOk("http::addr=localhost:8080;token=foo=bar;");
-            assertConfStrOk("addr=localhost:8080", "token=foo", "retry_timeout=1000", "max_buf_size=1000000");
-            assertConfStrOk("addr=localhost:8080", "token=foo", "retry_timeout=1000", "max_buf_size=1000000");
-            assertConfStrOk("http::addr=localhost:8080;token=foo;max_buf_size=1000000;retry_timeout=1000;");
-            assertConfStrOk("https::addr=localhost:8080;tls_verify=unsafe_off;auto_flush_rows=100;");
-            assertConfStrOk("https::addr=localhost:8080;tls_verify=on;");
+            assertConfStrOk("http::addr=localhost;auto_flush=off;protocol_version=2;");
+            assertConfStrOk("http::addr=localhost;protocol_version=2;");
+            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;protocol_version=2;");
+            assertConfStrOk("http::addr=localhost;auto_flush_rows=off;protocol_version=2;");
+            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;auto_flush_rows=off;protocol_version=1;");
+            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;auto_flush_rows=1;protocol_version=2;");
+            assertConfStrOk("http::addr=localhost;auto_flush_rows=off;auto_flush_interval=1;protocol_version=2;");
+            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;auto_flush_rows=off;auto_flush=off;protocol_version=2;");
+            assertConfStrOk("http::addr=localhost;auto_flush=off;auto_flush_interval=off;auto_flush_rows=off;protocol_version=1;");
+            assertConfStrOk("http::addr=localhost:8080;protocol_version=2;");
+            assertConfStrOk("http::addr=localhost:8080;token=foo;protocol_version=2;");
+            assertConfStrOk("http::addr=localhost:8080;token=foo=bar;protocol_version=2;");
+            assertConfStrOk("addr=localhost:8080", "token=foo", "retry_timeout=1000", "max_buf_size=1000000", "protocol_version=2");
+            assertConfStrOk("addr=localhost:8080", "token=foo", "retry_timeout=1000", "max_buf_size=1000000", "protocol_version=1");
+            assertConfStrOk("http::addr=localhost:8080;token=foo;max_buf_size=1000000;retry_timeout=1000;protocol_version=2;");
+            assertConfStrOk("https::addr=localhost:8080;tls_verify=unsafe_off;auto_flush_rows=100;protocol_version=2;");
+            assertConfStrOk("https::addr=localhost:8080;tls_verify=on;protocol_version=2;");
             assertConfStrError("https::addr=2001:0db8:85a3:0000:0000:8a2e:0370:7334;tls_verify=on;", "cannot parse a port from the address, use IPv4 address or a domain name [address=2001:0db8:85a3:0000:0000:8a2e:0370:7334]");
             assertConfStrError("https::addr=[2001:0db8:85a3:0000:0000:8a2e:0370:7334]:9000;tls_verify=on;", "cannot parse a port from the address, use IPv4 address or a domain name [address=[2001:0db8:85a3:0000:0000:8a2e:0370:7334]:9000]");
         });
