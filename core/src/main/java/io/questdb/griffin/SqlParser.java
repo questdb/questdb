@@ -2248,6 +2248,80 @@ public class SqlParser {
         parseTableName(lexer, model);
     }
 
+    private void parseHints(GenericLexer lexer, QueryModel model) {
+        CharSequence hintToken = null;
+        boolean parsingParams = false;
+        CharSequence hintKey = null;
+        CharacterStoreEntry hintValuesEntry = null;
+        boolean error = false;
+        while ((hintToken = SqlUtil.fetchNextHintToken(lexer)) != null) {
+            if (error) {
+                // if in error state, just consume the rest of hints, but ignore them
+                // since in error state we cannot reliably parse them
+                continue;
+            }
+
+            if (Chars.equals(hintToken, '(')) {
+                if (parsingParams) {
+                    // hints cannot be nested
+                    error = true;
+                    continue;
+                }
+                if (hintKey == null) {
+                    // missing key
+                    error = true;
+                    continue;
+                }
+                parsingParams = true;
+                continue;
+            }
+
+            if (Chars.equals(hintToken, ')')) {
+                if (!parsingParams) {
+                    // unexpected closing parenthesis
+                    error = true;
+                    continue;
+                }
+                if (hintValuesEntry == null) {
+                    // store last parameter-less hint, e.g. KEY()
+                    model.addHint(hintKey, null);
+                } else {
+                    // ok, there are some parameters
+                    model.addHint(hintKey, hintValuesEntry.toImmutable());
+                    hintValuesEntry = null;
+                }
+                hintKey = null;
+                parsingParams = false;
+                continue;
+            }
+
+            if (parsingParams) {
+                if (hintValuesEntry == null) {
+                    // store first parameter
+                    hintValuesEntry = characterStore.newEntry();
+                } else {
+                    hintValuesEntry.put(SqlHints.HINTS_PARAMS_DELIMITER);
+                }
+                hintValuesEntry.put(GenericLexer.unquote(hintToken));
+                continue;
+            }
+
+            if (hintKey != null) {
+                // store previous parameter-less hint
+                model.addHint(hintKey, null);
+            }
+            CharacterStoreEntry entry = characterStore.newEntry();
+            entry.put(hintToken);
+            hintKey = entry.toImmutable();
+        }
+        if (!error && !parsingParams && hintKey != null) {
+            // store the last parameter-less hint
+            // why only when not parsingParams? dangling parsingParams indicates a syntax error and in this case
+            // we don't want to store the hint
+            model.addHint(hintKey, null);
+        }
+    }
+
     private void parseInVolume(GenericLexer lexer, CreateTableOperationBuilderImpl tableOpBuilder) throws SqlException {
         int volumeKwPos = lexer.getPosition();
         expectTok(lexer, "volume");
@@ -2572,7 +2646,16 @@ public class SqlParser {
     }
 
     private void parseSelectClause(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
-        CharSequence tok = tok(lexer, "[distinct] column");
+        int pos = lexer.getPosition();
+        CharSequence tok = SqlUtil.fetchNext(lexer, true);
+        if (tok == null || (subQueryMode && Chars.equals(tok, ')') && !overClauseMode)) {
+            throw SqlException.position(pos).put("[distinct] column expected");
+        }
+
+        if (Chars.equals(tok, "/*+")) {
+            parseHints(lexer, model);
+            tok = tok(lexer, "[distinct] column");
+        }
 
         ExpressionNode expr;
         if (isDistinctKeyword(tok)) {
@@ -2763,7 +2846,7 @@ public class SqlParser {
                                 } else if (isPrecedingKeyword(tok)) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "integer expression expected");
                                 } else {
-                                    int pos = lexer.lastTokenPosition();
+                                    pos = lexer.lastTokenPosition();
                                     lexer.unparseLast();
                                     winCol.setRowsLoExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
@@ -2807,7 +2890,7 @@ public class SqlParser {
                                     } else if (isPrecedingKeyword(tok) || isFollowingKeyword(tok)) {
                                         throw SqlException.$(lexer.lastTokenPosition(), "integer expression expected");
                                     } else {
-                                        int pos = lexer.lastTokenPosition();
+                                        pos = lexer.lastTokenPosition();
                                         lexer.unparseLast();
                                         winCol.setRowsHiExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                         if (framingMode == WindowColumn.FRAMING_RANGE) {
@@ -2837,7 +2920,7 @@ public class SqlParser {
                             } else {
                                 // If you omit BETWEEN and specify only one end point, then QuestDB considers it the
                                 // start point, and the end point defaults to the current row.
-                                int pos = lexer.lastTokenPosition();
+                                pos = lexer.lastTokenPosition();
                                 if (isUnboundedPreceding(lexer, tok)) {
                                     winCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
                                 } else if (isCurrentRow(lexer, tok)) {
