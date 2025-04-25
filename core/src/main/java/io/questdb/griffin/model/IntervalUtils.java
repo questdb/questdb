@@ -897,7 +897,7 @@ public final class IntervalUtils {
      *
      * @param intervals 2 lists of intervals concatenated in 1
      */
-    public static void unionInplace(LongList intervals, int dividerIndex) {
+    public static void unionInPlace(LongList intervals, int dividerIndex) {
         final int sizeB = dividerIndex + (intervals.size() - dividerIndex);
         int aLower = 0;
 
@@ -909,7 +909,6 @@ public final class IntervalUtils {
         long aLo = 0, aHi = 0, bLo = 0, bHi = 0;
 
         while (aLower < dividerIndex || aUpper < aUpperSize || intervalB < sizeB) {
-
             // This tries to get either interval from A or from B
             // where it's available
             // and union with last interval in writePoint position
