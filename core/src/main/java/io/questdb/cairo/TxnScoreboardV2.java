@@ -40,10 +40,10 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     private static final long UNLOCKED = -1;
     private static final int VIRTUAL_ID_COUNT = 1;
     private final int entryScanCount;
-    private final long maxIdMem;
     private final int pow2EntryCount;
     private long activeReaderCountMem;
     private long entriesMem;
+    private long maxIdMem;
     private long maxMem;
     private long mem;
     private TableToken tableToken;
@@ -61,6 +61,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         Vect.memset(mem, 3 * Long.BYTES, 0);
     }
 
+    @Override
     public boolean acquireTxn(int id, long txn) {
         long internalId = toInternalId(id);
         assert internalId < entryScanCount;
@@ -88,6 +89,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         mem = Unsafe.free(mem, (long) pow2EntryCount * Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
         entriesMem = 0;
         maxMem = 0;
+        maxIdMem = 0;
         activeReaderCountMem = 0;
     }
 
@@ -98,8 +100,8 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         }
 
         long count = 0;
-        for (int i = 0; i < entryScanCount; i++) {
-            long lockedTxn = Unsafe.getUnsafe().getLongVolatile(null, entriesMem + (long) i * Long.BYTES);
+        for (long p = entriesMem, lim = entriesMem + (long) entryScanCount * Long.BYTES; p < lim; p += Long.BYTES) {
+            long lockedTxn = Unsafe.getUnsafe().getLongVolatile(null, p);
             if (lockedTxn == txn) {
                 count++;
             }
@@ -107,12 +109,9 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         return count;
     }
 
+    @Override
     public int getEntryCount() {
         return entryScanCount;
-    }
-
-    public long getMax() {
-        return Unsafe.getUnsafe().getLongVolatile(null, maxMem);
     }
 
     @TestOnly
@@ -173,6 +172,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         return txn >= getMax();
     }
 
+    @Override
     public boolean isRangeAvailable(long fromTxn, long toTxn) {
         if (getActiveReaderCount() == 0) {
             return true;
@@ -188,6 +188,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         return true;
     }
 
+    @Override
     public boolean isTxnAvailable(long txn) {
         if (getActiveReaderCount() == 0) {
             return true;
@@ -203,6 +204,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         return true;
     }
 
+    @Override
     public long releaseTxn(int id, long txn) {
         long internalId = toInternalId(id);
         assert internalId < entryScanCount;
@@ -221,6 +223,10 @@ public class TxnScoreboardV2 implements TxnScoreboard {
 
     private long getActiveReaderCount() {
         return Unsafe.getUnsafe().getLongVolatile(null, activeReaderCountMem);
+    }
+
+    private long getMax() {
+        return Unsafe.getUnsafe().getLongVolatile(null, maxMem);
     }
 
     private void incrementActiveReaderCount() {

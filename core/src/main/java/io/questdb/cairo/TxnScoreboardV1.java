@@ -62,6 +62,7 @@ public class TxnScoreboardV1 implements TxnScoreboard {
 
     public static native long getScoreboardSize(int entryCount);
 
+    @Override
     public boolean acquireTxn(int id, long txn) {
         assert txn > -1;
         final long internalTxn = toInternalTxn(txn);
@@ -94,6 +95,7 @@ public class TxnScoreboardV1 implements TxnScoreboard {
         }
     }
 
+    @TestOnly
     public long getActiveReaderCount(long txn) {
         return getCount(mem, toInternalTxn(txn));
     }
@@ -136,6 +138,7 @@ public class TxnScoreboardV1 implements TxnScoreboard {
         }
     }
 
+    @Override
     public boolean incrementTxn(int id, long txn) {
         assert txn > -1;
         final long internalTxn = toInternalTxn(txn);
