@@ -705,6 +705,10 @@ public class WalTxnDetails implements QuietCloseable {
                             }
                             transactionMeta.set(txnMetaOffset + WAL_TXN_REPLACE_RANGE_TS_LOW, commitInfo.getReplaceRangeTsLow());
                             transactionMeta.set(txnMetaOffset + WAL_TXN_REPLACE_RANGE_TS_HI, commitInfo.getReplaceRangeTsHi());
+                            if (commitInfo.getDedupMode() != WAL_DEDUP_MODE_DEFAULT) {
+                                // If it is a replace range commit, we need to commit everything and not store it in the lag.
+                                transactionMeta.set(txnMetaOffset + COMMIT_TO_TIMESTAMP_OFFSET, FORCE_FULL_COMMIT);
+                            }
                             continue;
                         }
                     } else {

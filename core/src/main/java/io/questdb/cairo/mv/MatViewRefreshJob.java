@@ -431,8 +431,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         if (replacementTimestampLo == Long.MIN_VALUE) {
                             replacementTimestampLo = intervalIterator.getTimestampLo();
                         }
-                        // TODO: check that interval hi is exclusive
-                        replacementTimestampHi = intervalIterator.getTimestampHi() - 1;
+                        // Interval high and replace range high are both exclusive
+                        replacementTimestampHi = intervalIterator.getTimestampHi();
 
                         try (RecordCursor cursor = factory.getCursor(refreshExecutionContext)) {
                             final Record record = cursor.getRecord();

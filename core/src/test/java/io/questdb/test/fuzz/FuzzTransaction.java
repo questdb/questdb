@@ -24,6 +24,7 @@
 
 package io.questdb.test.fuzz;
 
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 
 public class FuzzTransaction {
@@ -33,5 +34,32 @@ public class FuzzTransaction {
     public int structureVersion;
     public boolean waitAllDone;
     public int waitBarrierVersion;
+    private LongList noCommitIntervals;
+    private long replaceHiTs;
+    private long replaceLoTs;
 
+    public LongList getNoCommitIntervals() {
+        return noCommitIntervals;
+    }
+
+    public long getReplaceHiTs() {
+        return replaceHiTs;
+    }
+
+    public long getReplaceLoTs() {
+        return replaceLoTs;
+    }
+
+    public boolean hasReplaceRange() {
+        return replaceHiTs > replaceLoTs;
+    }
+
+    public void setNoCommitIntervals(LongList excludedIntervals) {
+        this.noCommitIntervals = excludedIntervals;
+    }
+
+    public void setReplaceRange(long replaceLoTs, long replaceHiTs) {
+        this.replaceLoTs = replaceLoTs;
+        this.replaceHiTs = replaceHiTs;
+    }
 }

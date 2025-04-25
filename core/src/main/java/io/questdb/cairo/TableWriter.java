@@ -4385,7 +4385,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             final long src1DataSize = columnTypeDriver.getDataVectorSize(srcMappedAuxAddr, mappedRowLo, mappedRowHi - 1);
             assert o3dataMem.size() >= src1DataSize;
-            final long lagAuxOffset = columnTypeDriver.getAuxVectorOffset(txWriter.getTransientRowCount() - getColumnTop(columnIndex));
+            final long lagAuxOffset = lagRows > 0 ? columnTypeDriver.getAuxVectorOffset(txWriter.getTransientRowCount() - getColumnTop(columnIndex)) : 0;
             final long lagAuxSize = columnTypeDriver.getAuxVectorSize(lagRows);
             final long signedLagAuxAddr = lagRows > 0 ? mapAppendColumnBuffer(lagAuxMem, lagAuxOffset, lagAuxSize, false) : 0;
 
@@ -7899,10 +7899,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isLastSegmentUsage,
             TableWriterPressureControl pressureControl,
             long replaceRangeTsLow,
-            long replaceRangeTsHi
+            long replaceRangeTsHiExcl
     ) {
         assert txWriter.getLagRowCount() == 0;
         assert replaceRangeTsLow <= o3TimestampMin;
+        long replaceRangeTsHi = replaceRangeTsHiExcl - 1;
         assert replaceRangeTsHi >= o3TimestampMax;
 
         int initialSize = segmentFileCache.getWalMappedColumns().size();

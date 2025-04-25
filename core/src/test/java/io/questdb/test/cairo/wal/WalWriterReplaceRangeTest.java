@@ -304,7 +304,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
             if (commitWithRangeReplace) {
                 long rangeStart = IntervalUtils.parseFloorPartialTimestamp(rangeStartStr);
-                long rangeEnd = IntervalUtils.parseFloorPartialTimestamp(rangeEndStr);
+                long rangeEnd = IntervalUtils.parseFloorPartialTimestamp(rangeEndStr) + 1;
                 ww.commitWithParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
             } else {
                 ww.commit();

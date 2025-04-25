@@ -333,7 +333,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.1 * rnd.nextDouble(),
                 0.0,
-                0.5
+                0.5,
+                0.0
         );
 
         setFuzzCounts(
@@ -369,7 +370,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.1 * rnd.nextDouble(),
                 0.0,
-                0.5
+                0.5,
+                0.0
         );
 
         setFuzzCounts(
@@ -407,7 +409,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 // This test does not support Drop Partition operations,
                 // it is not trivial to build the result set of data to assert against with drop partitions
                 0,
-                0.4
+                0.4,
+                0.0
         );
 
         setFuzzCounts(

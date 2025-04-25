@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.Utf8StringSink;
@@ -91,7 +92,11 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex) {
+    public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex, LongList excludedTsIntervals) {
+        if (excludedTsIntervals != null && IntervalUtils.isInIntervals(excludedTsIntervals, timestamp)) {
+            return false;
+        }
+
         rnd.reset(this.s1, this.s0);
         rnd.nextLong();
         rnd.nextLong();

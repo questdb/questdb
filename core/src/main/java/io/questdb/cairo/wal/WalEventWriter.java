@@ -114,7 +114,19 @@ class WalEventWriter implements Closeable {
         }
     }
 
-    private int appendData(byte txnType, long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder, long lastRefreshBaseTxn, long lastRefreshTimestamp, long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
+    private int appendData(
+            byte txnType,
+            long startRowID,
+            long endRowID,
+            long minTimestamp,
+            long maxTimestamp,
+            boolean outOfOrder,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode
+    ) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(txnType);
@@ -266,7 +278,18 @@ class WalEventWriter implements Closeable {
         eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
     }
 
-    int appendData(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder, long lastRefreshBaseTxn, long lastRefreshTimestamp, long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
+    int appendData(
+            long startRowID,
+            long endRowID,
+            long minTimestamp,
+            long maxTimestamp,
+            boolean outOfOrder,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode
+    ) {
         byte msgType = lastRefreshBaseTxn != Numbers.LONG_NULL ? WalTxnType.MAT_VIEW_DATA : WalTxnType.DATA;
         return appendData(
                 msgType,

@@ -61,7 +61,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0.1 * rnd.nextDouble(),
                 0.0,
-                0.4
+                0.4,
+                0.0
         );
 
         partitionCount = 5 + rnd.nextInt(10);
@@ -98,7 +99,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0.1 * rnd.nextDouble(),
                 0.0,
-                0.4
+                0.4,
+                0.0
         );
 
         partitionCount = 5 + rnd.nextInt(10);
