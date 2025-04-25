@@ -9,6 +9,9 @@ import io.questdb.network.ServerDisconnectException;
 public interface TextImportRequestHeaderProcessor {
     TextImportRequestHeaderProcessor DEFAULT = new TextImportRequestHeaderProcessorImpl();
 
-    void processRequestHeader(HttpRequestHeader partHeader, HttpConnectionContext transientContext, TextImportProcessorState transientState)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
+    void processRequestHeader(
+            HttpRequestHeader partHeader,
+            HttpConnectionContext transientContext,
+            TextImportProcessorState transientState
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
 }
