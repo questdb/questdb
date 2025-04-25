@@ -138,6 +138,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
     public static final String TMP_DIRECTORY = "tmp";
+    private static final String ILP_PROTO_PROTOCOL_VERSION = "2";
+    private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
+    private static final String ILP_PROTO_VERSION = "ilp.proto.version";
     private static final String RELEASE_TYPE = "release.type";
     private static final String RELEASE_VERSION = "release.version";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
@@ -237,6 +240,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long idleCheckInterval;
     private final boolean ilpAutoCreateNewColumns;
     private final boolean ilpAutoCreateNewTables;
+    private final String ilpProtoTransports;
     private final int inactiveReaderMaxOpenPartitions;
     private final long inactiveReaderTTL;
     private final long inactiveWalWriterTTL;
@@ -1662,6 +1666,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.buildInformation = buildInformation;
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
         }
+        this.ilpProtoTransports = initIlpTransport();
         this.allowTableRegistrySharedWrite = getBoolean(properties, env, PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE, false);
         this.enableTestFactories = getBoolean(properties, env, PropertyKey.DEBUG_ENABLE_TEST_FACTORIES, false);
 
@@ -1893,6 +1898,32 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private DateFormat getTimestampFormat(Properties properties, @Nullable Map<String, String> env) {
         return compiler.compile(getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT, "yyyy-MM-dd"));
+    }
+
+    // The enterprise version needs to add tcps and https
+    private String initIlpTransport() {
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put('[');
+        boolean addComma = false;
+        if (lineTcpEnabled) {
+            addComma = true;
+            sink.put("\"tcp\"");
+        }
+        if (lineHttpEnabled && httpServerEnabled) {
+            if (addComma) {
+                sink.put(", ");
+            }
+            sink.put("\"http\"");
+            addComma = true;
+        }
+        if (lineUdpEnabled) {
+            if (addComma) {
+                sink.put(", ");
+            }
+            sink.put("\"udp\"");
+        }
+        sink.put(']');
+        return sink.toString();
     }
 
     private boolean pathEquals(String p1, String p2) {
@@ -3794,6 +3825,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             settings.put(RELEASE_TYPE, str(getReleaseType()));
             settings.put(RELEASE_VERSION, str(getBuildInformation().getSwVersion()));
             settings.put(ACL_ENABLED, Boolean.toString(!Chars.empty(httpUsername)));
+            settings.put(ILP_PROTO_VERSION, ILP_PROTO_PROTOCOL_VERSION);
+            settings.put(ILP_PROTO_TRANSPORTS, ilpProtoTransports);
         }
 
         @Override

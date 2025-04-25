@@ -24,7 +24,16 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.*;
+import io.questdb.Bootstrap;
+import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.DefaultPublicPassthroughConfiguration;
+import io.questdb.FactoryProviderImpl;
+import io.questdb.PropBootstrapConfiguration;
+import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
+import io.questdb.PublicPassthroughConfiguration;
+import io.questdb.ServerConfiguration;
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.client.Fragment;
@@ -47,9 +56,10 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "\"release.type\":\"OSS\"," +
             "\"release.version\":\"[DEVELOPMENT]\"," +
             "\"acl.enabled\":false," +
+            "\"ilp.proto.version\":2," +
+            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
             "\"posthog.enabled\":false," +
-            "\"posthog.api.key\":null" +
-            "}";
+            "\"posthog.api.key\":null}";
 
     private static final String TEST_PAYLOAD = "{" +
             "\"cairo.snapshot.instance.id\":\"db\"," +
