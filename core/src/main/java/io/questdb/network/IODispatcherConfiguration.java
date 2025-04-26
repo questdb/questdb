@@ -51,7 +51,7 @@ public interface IODispatcherConfiguration {
     EpollFacade getEpollFacade();
 
     default int getEventCapacity() {
-        return Numbers.ceilPow2(getLimit());
+        return Numbers.ceilPow2(getLimit() * 2);
     }
 
     long getHeartbeatInterval();
