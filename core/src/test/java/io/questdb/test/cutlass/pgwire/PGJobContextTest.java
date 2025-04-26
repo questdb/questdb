@@ -136,10 +136,10 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.*;
 import static io.questdb.test.tools.TestUtils.assertEquals;
-import static org.junit.Assert.*;
+import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -8359,6 +8359,7 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithNowFunction() throws Exception {
+        Assume.assumeFalse(legacyMode);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(
                     "create table xts (ts timestamp) timestamp(ts) partition by YEAR")) {

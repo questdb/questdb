@@ -1102,7 +1102,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(
                         path.of(configuration.getLegacyCheckpointRoot()).concat(configuration.getDbDirectory()).slash$()
                 ));
-                // Assert .checkpint folder DOES NOT exists
+                // Assert .checkpoint folder DOES NOT exist
                 Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(
                         path.of(configuration.getCheckpointRoot()).slash$()
                 ));
