@@ -34,17 +34,21 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.CharSequenceLongHashMap;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByCharSequenceLongHashMap;
+import io.questdb.griffin.engine.groupby.GroupByCharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.std.Numbers.INT_NULL;
+import static io.questdb.std.Numbers.LONG_NULL;
 
 public class ModeStringGroupByFunction extends StrFunction implements UnaryFunction, GroupByFunction {
     final Function arg;
-    int mapIndex;// a pointer to the map that allows you to derive the mode
-    ObjList<CharSequenceLongHashMap> maps = new ObjList<>();
+    int initialCapacity = 4;
+    double loadFactor = 0.7d;
+    GroupByCharSequenceLongHashMap mapA = new GroupByCharSequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
+    GroupByCharSequenceLongHashMap mapB = new GroupByCharSequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
+    GroupByCharSink sink = new GroupByCharSink();
     int valueIndex;
 
     public ModeStringGroupByFunction(@NotNull Function arg) {
@@ -53,33 +57,29 @@ public class ModeStringGroupByFunction extends StrFunction implements UnaryFunct
 
     @Override
     public void clear() {
-        maps.clear();
-        mapIndex = 0;
+        mapA.resetPtr();
+        mapB.resetPtr();
+        sink.of(0);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final CharSequenceLongHashMap map;
-        if (maps.size() <= mapIndex) {
-            maps.extendAndSet(mapIndex, map = new CharSequenceLongHashMap());
+        CharSequence val = arg.getStrA(record);
+        if (val != null) {
+            mapA.of(0).inc(val);
+            mapValue.putLong(valueIndex, mapA.ptr());
         } else {
-            map = maps.getQuick(mapIndex);
-            map.clear();
+            mapValue.putLong(valueIndex, 0);
         }
-
-        CharSequence value = arg.getStrA(record);
-        if (value != null) {
-            map.put(value, 1);
-        }
-        mapValue.putInt(valueIndex, mapIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final CharSequenceLongHashMap map = maps.getQuick(mapValue.getInt(valueIndex));
-        CharSequence value = arg.getStrA(record);
+        final CharSequence value = arg.getStrA(record);
         if (value != null) {
-            map.inc(value);
+            mapA.of(mapValue.getLong(valueIndex));
+            mapA.inc(value);
+            mapValue.putLong(valueIndex, mapA.ptr());
         }
     }
 
@@ -100,18 +100,26 @@ public class ModeStringGroupByFunction extends StrFunction implements UnaryFunct
 
     @Override
     public CharSequence getStrA(Record record) {
-        final CharSequenceLongHashMap map = maps.getQuick(record.getInt(valueIndex));
-        CharSequence modeKey = null;
+        long mapPtr = record.getLong(valueIndex);
+        if (mapPtr <= 0) {
+            return null;
+        }
+        mapA.of(mapPtr);
+        long modeKey = LONG_NULL;
         long modeCount = -1;
-        for (int i = 0, n = map.keys().size(); i < n; i++) {
-            CharSequence key = map.keys().getQuick(i);
-            long count = map.get(key);
-            if (count > modeCount) {
-                modeKey = key;
-                modeCount = count;
+
+        for (int i = 0, n = mapA.capacity(); i < n; i++) {
+            final long kPtr = mapA.keyAt(i);
+            if (kPtr != LONG_NULL) {
+                final long value = mapA.valueAt(i);
+                if (value > modeCount) {
+                    modeKey = kPtr;
+                    modeCount = value;
+                }
             }
         }
-        return modeKey;
+        sink.of(modeKey);
+        return sink;
     }
 
     @Override
@@ -132,7 +140,7 @@ public class ModeStringGroupByFunction extends StrFunction implements UnaryFunct
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
+        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
@@ -146,13 +154,33 @@ public class ModeStringGroupByFunction extends StrFunction implements UnaryFunct
     }
 
     @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        final long destPtr = destValue.getLong(valueIndex);
+        mapA.of(destPtr);
+
+        final long srcPtr = srcValue.getLong(valueIndex);
+        mapB.of(srcPtr);
+
+        final long outPtr = mapA.size() > mapB.size() ? mapA.mergeAdd(mapB) : mapB.mergeAdd(mapA);
+
+        destValue.putLong(valueIndex, outPtr);
+    }
+
+    @Override
+    public void setAllocator(GroupByAllocator allocator) {
+        mapA.setAllocator(allocator);
+        mapB.setAllocator(allocator);
+        sink.setAllocator(allocator);
+    }
+
+    @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putInt(valueIndex, INT_NULL);
+        mapValue.putLong(valueIndex, LONG_NULL);
     }
 
     @Override
     public boolean supportsParallelism() {
-        return false;
+        return UnaryFunction.super.supportsParallelism();
     }
 
     @Override
@@ -163,6 +191,6 @@ public class ModeStringGroupByFunction extends StrFunction implements UnaryFunct
     @Override
     public void toTop() {
         UnaryFunction.super.toTop();
-        mapIndex = 0;
     }
 }
+

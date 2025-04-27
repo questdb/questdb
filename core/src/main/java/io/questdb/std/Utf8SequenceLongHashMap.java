@@ -47,7 +47,7 @@ public class Utf8SequenceLongHashMap extends AbstractUtf8SequenceHashSet {
         this(initialCapacity, 0.5, NO_ENTRY_VALUE);
     }
 
-    private Utf8SequenceLongHashMap(int initialCapacity, double loadFactor, long noEntryValue) {
+    public Utf8SequenceLongHashMap(int initialCapacity, double loadFactor, long noEntryValue) {
         super(initialCapacity, loadFactor);
         this.noEntryValue = noEntryValue;
         this.list = new ObjList<>(capacity);

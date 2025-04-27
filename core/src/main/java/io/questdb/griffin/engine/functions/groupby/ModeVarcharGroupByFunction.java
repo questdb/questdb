@@ -34,21 +34,23 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
-import io.questdb.std.ObjList;
-import io.questdb.std.Utf8SequenceLongHashMap;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByUtf8SequenceLongHashMap;
+import io.questdb.griffin.engine.groupby.GroupByUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.std.Numbers.INT_NULL;
+import static io.questdb.std.Numbers.LONG_NULL;
 
 public class ModeVarcharGroupByFunction extends VarcharFunction implements UnaryFunction, GroupByFunction {
     final Function arg;
-    int mapIndex;// a pointer to the map that allows you to derive the mode
-    ObjList<Utf8SequenceLongHashMap> maps = new ObjList<>();
+    int initialCapacity = 4;
+    double loadFactor = 0.7d;
+    GroupByUtf8SequenceLongHashMap mapA = new GroupByUtf8SequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
+    GroupByUtf8SequenceLongHashMap mapB = new GroupByUtf8SequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
+    GroupByUtf8Sink sink = new GroupByUtf8Sink();
     int valueIndex;
-
 
     public ModeVarcharGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -56,33 +58,29 @@ public class ModeVarcharGroupByFunction extends VarcharFunction implements Unary
 
     @Override
     public void clear() {
-        maps.clear();
-        mapIndex = 0;
+        mapA.resetPtr();
+        mapB.resetPtr();
+        sink.of(0);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final Utf8SequenceLongHashMap map;
-        if (maps.size() <= mapIndex) {
-            maps.extendAndSet(mapIndex, map = new Utf8SequenceLongHashMap());
+        Utf8Sequence val = arg.getVarcharA(record);
+        if (val != null) {
+            mapA.of(0).inc(val);
+            mapValue.putLong(valueIndex, mapA.ptr());
         } else {
-            map = maps.getQuick(mapIndex);
-            map.clear();
+            mapValue.putLong(valueIndex, 0);
         }
-
-        Utf8Sequence value = arg.getVarcharA(record);
-        if (value != null) {
-            map.put(value, 1);
-        }
-        mapValue.putInt(valueIndex, mapIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final Utf8SequenceLongHashMap map = maps.getQuick(mapValue.getInt(valueIndex));
-        Utf8Sequence value = arg.getVarcharA(record);
+        final Utf8Sequence value = arg.getVarcharA(record);
         if (value != null) {
-            map.inc(value);
+            mapA.of(mapValue.getLong(valueIndex));
+            mapA.inc(value);
+            mapValue.putLong(valueIndex, mapA.ptr());
         }
     }
 
@@ -108,18 +106,26 @@ public class ModeVarcharGroupByFunction extends VarcharFunction implements Unary
 
     @Override
     public Utf8Sequence getVarcharA(Record record) {
-        final Utf8SequenceLongHashMap map = maps.getQuick(record.getInt(valueIndex));
-        Utf8String modeKey = null;
+        long mapPtr = record.getLong(valueIndex);
+        if (mapPtr <= 0) {
+            return null;
+        }
+        mapA.of(mapPtr);
+        long modeKey = LONG_NULL;
         long modeCount = -1;
-        for (int i = 0, n = map.keys().size(); i < n; i++) {
-            Utf8String key = map.keys().getQuick(i);
-            long count = map.get(key);
-            if (count > modeCount) {
-                modeKey = key;
-                modeCount = count;
+
+        for (int i = 0, n = mapA.capacity(); i < n; i++) {
+            final long kPtr = mapA.keyAt(i);
+            if (kPtr != LONG_NULL) {
+                final long value = mapA.valueAt(i);
+                if (value > modeCount) {
+                    modeKey = kPtr;
+                    modeCount = value;
+                }
             }
         }
-        return modeKey;
+        sink.of(modeKey);
+        return sink;
     }
 
     @Override
@@ -135,7 +141,7 @@ public class ModeVarcharGroupByFunction extends VarcharFunction implements Unary
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
+        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
@@ -149,13 +155,33 @@ public class ModeVarcharGroupByFunction extends VarcharFunction implements Unary
     }
 
     @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        final long destPtr = destValue.getLong(valueIndex);
+        mapA.of(destPtr);
+
+        final long srcPtr = srcValue.getLong(valueIndex);
+        mapB.of(srcPtr);
+
+        final long outPtr = mapA.size() > mapB.size() ? mapA.mergeAdd(mapB) : mapB.mergeAdd(mapA);
+
+        destValue.putLong(valueIndex, outPtr);
+    }
+
+    @Override
+    public void setAllocator(GroupByAllocator allocator) {
+        mapA.setAllocator(allocator);
+        mapB.setAllocator(allocator);
+        sink.setAllocator(allocator);
+    }
+
+    @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putInt(valueIndex, INT_NULL);
+        mapValue.putLong(valueIndex, LONG_NULL);
     }
 
     @Override
     public boolean supportsParallelism() {
-        return false;
+        return UnaryFunction.super.supportsParallelism();
     }
 
     @Override
@@ -166,6 +192,5 @@ public class ModeVarcharGroupByFunction extends VarcharFunction implements Unary
     @Override
     public void toTop() {
         UnaryFunction.super.toTop();
-        mapIndex = 0;
     }
 }

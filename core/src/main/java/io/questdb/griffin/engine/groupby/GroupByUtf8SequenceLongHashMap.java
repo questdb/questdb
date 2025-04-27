@@ -25,10 +25,11 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.Hash;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 /**
  * Specialized flyweight hash map used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
@@ -41,22 +42,26 @@ import io.questdb.std.Vect;
  * +---------------------+-----------------+-----------------------+---------+----------------------+
  * |       4 bytes       |     4 bytes     |       4 bytes         | 4 bytes |           -          |
  * +---------------------+-----------------+-----------------------+---------+----------------------+
+ *
+ * Stores pointers to Utf8Sequences in the `key` field, adding an indirection.
  * </pre>
  */
-public class GroupByLongLongHashMap {
+public class GroupByUtf8SequenceLongHashMap {
     private static final long HEADER_SIZE = 4 * Integer.BYTES;
     private static final int MIN_INITIAL_CAPACITY = 2;
     private static final long SIZE_LIMIT_OFFSET = 2 * Integer.BYTES;
     private static final long SIZE_OFFSET = Integer.BYTES;
     private final int initialCapacity;
+    private final GroupByUtf8Sink keyIndexSink;
     private final double loadFactor;
     private final long noEntryValue;
     private final long noKeyValue;
+    private final GroupByUtf8Sink spareSink;
     private GroupByAllocator allocator;
     private long mask;
     private long ptr;
 
-    public GroupByLongLongHashMap(int initialCapacity, double loadFactor, long noKeyValue, long noEntryValue) {
+    public GroupByUtf8SequenceLongHashMap(int initialCapacity, double loadFactor, long noKeyValue, long noEntryValue) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
@@ -64,21 +69,23 @@ public class GroupByLongLongHashMap {
         this.loadFactor = loadFactor;
         this.noKeyValue = noKeyValue;
         this.noEntryValue = noEntryValue;
+        this.keyIndexSink = new GroupByUtf8Sink();
+        this.spareSink = new GroupByUtf8Sink();
     }
 
     public int capacity() {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr) : 0;
     }
 
-    public long get(long key) {
+    public long get(Utf8Sequence key) {
         return getAt(keyIndex(key));
     }
-
-    public void inc(long key) {
+    
+    public void inc(Utf8Sequence key) {
         inc(key, 1);
     }
 
-    public void inc(long key, long delta) {
+    public void inc(Utf8Sequence key, long delta) {
         long index = keyIndex(key);
         if (index < 0) {
             incRaw(-index - 1, delta);
@@ -91,18 +98,19 @@ public class GroupByLongLongHashMap {
         return index < 0 ? keyAtRaw(-index - 1) : keyAtRaw(index);
     }
 
-    public long mergeAdd(GroupByLongLongHashMap srcMap) {
+    public long mergeAdd(GroupByUtf8SequenceLongHashMap srcMap) {
         for (int i = 0; i < srcMap.capacity(); i++) {
-            final long key = srcMap.keyAt(i);
-            if (key != noKeyValue) {
+            final long kPtr = srcMap.keyAt(i);
+            if (kPtr != noKeyValue) {
+                spareSink.of(kPtr);
                 final long value = srcMap.valueAt(i);
-                inc(key, value);
+                inc(spareSink, value);
             }
         }
         return ptr;
     }
 
-    public GroupByLongLongHashMap of(long ptr) {
+    public GroupByUtf8SequenceLongHashMap of(long ptr) {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + 16L * initialCapacity);
             zero(this.ptr, initialCapacity);
@@ -121,7 +129,7 @@ public class GroupByLongLongHashMap {
         return ptr;
     }
 
-    public void put(long key, long value) {
+    public void put(Utf8Sequence key, long value) {
         putAt(keyIndex(key), key, value);
     }
 
@@ -131,6 +139,8 @@ public class GroupByLongLongHashMap {
 
     public void setAllocator(GroupByAllocator allocator) {
         this.allocator = allocator;
+        this.keyIndexSink.setAllocator(allocator);
+        this.spareSink.setAllocator(allocator);
     }
 
     public int size() {
@@ -153,11 +163,12 @@ public class GroupByLongLongHashMap {
         return Unsafe.getUnsafe().getLong(ptr + HEADER_SIZE + 16L * index);
     }
 
-    private void putAt(long index, long key, long value) {
+    private void putAt(long index, Utf8Sequence key, long value) {
         if (index < 0) {
             setValueAtRaw(-index - 1, value);
         } else {
-            setKeyAtRaw(index, key);
+            spareSink.of(0).put(key); // allocating
+            setKeyAtRaw(index, spareSink.ptr());
             setValueAtRaw(index, value);
             int size = size();
             int sizeLimit = sizeLimit();
@@ -170,7 +181,7 @@ public class GroupByLongLongHashMap {
 
     private void rehash(int newCapacity, int newSizeLimit) {
         if (newCapacity < 0) {
-            throw CairoException.nonCritical().put("long long hash map capacity overflow");
+            throw CairoException.nonCritical().put("utf8 sequence long hash map capacity overflow");
         }
 
         final int oldSize = size();
@@ -185,10 +196,11 @@ public class GroupByLongLongHashMap {
         mask = newCapacity - 1;
 
         for (long p = oldPtr + HEADER_SIZE, lim = oldPtr + HEADER_SIZE + 16L * oldCapacity; p < lim; p += 16L) {
-            final long key = Unsafe.getUnsafe().getLong(p);
-            if (key != noKeyValue) {
-                final long index = keyIndex(key);
-                setKeyAtRaw(index, key);
+            final long kPtr = Unsafe.getUnsafe().getLong(p);
+            if (kPtr != noKeyValue) {
+                spareSink.of(kPtr);
+                final long index = keyIndex(spareSink);
+                setKeyAtRaw(index, kPtr);
                 final long value = Unsafe.getUnsafe().getLong(p + 8L);
                 setValueAtRaw(index, value);
             }
@@ -197,8 +209,8 @@ public class GroupByLongLongHashMap {
         allocator.free(oldPtr, HEADER_SIZE + 16L * oldCapacity);
     }
 
-    private void setKeyAtRaw(long index, long key) {
-        Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE + 16L * index, key);
+    private void setKeyAtRaw(long index, long kPtr) {
+        Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE + 16L * index, kPtr);
     }
 
     private void setValueAtRaw(long index, long value) {
@@ -228,32 +240,34 @@ public class GroupByLongLongHashMap {
         }
     }
 
-    long keyIndex(long key) {
-        long hashCode = Hash.hashLong64(key);
+    long keyIndex(Utf8Sequence key) {
+        long hashCode = Utf8s.hashCode(key);
         long index = hashCode & mask;
-        long k = keyAtRaw(index);
-        if (k == noKeyValue) {
+        long kPtr = keyAtRaw(index);
+        if (kPtr == noKeyValue) {
             return index;
         }
-        if (key == k) {
+        keyIndexSink.of(kPtr);
+        if (Utf8s.equals(key, keyIndexSink)) {
             return -index - 1;
         }
         return probe(key, index);
     }
 
-    long probe(long key, long index) {
+    long probe(Utf8Sequence key, long index) {
         final long index0 = index;
         do {
             index = (index + 1) & mask;
-            long k = keyAtRaw(index);
-            if (k == noKeyValue) {
+            long kPtr = keyAtRaw(index);
+            if (kPtr == noKeyValue) {
                 return index;
             }
-            if (key == k) {
+            keyIndexSink.of(kPtr);
+            if (Utf8s.equals(key, keyIndexSink)) {
                 return -index - 1;
             }
         } while (index != index0);
 
-        throw CairoException.critical(0).put("corrupt long hash set");
+        throw CairoException.critical(0).put("corrupt utf8 sequence long long hash map");
     }
 }

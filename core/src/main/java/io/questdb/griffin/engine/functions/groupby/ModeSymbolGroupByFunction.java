@@ -32,23 +32,26 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.IntList;
-import io.questdb.std.IntLongHashMap;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByLongLongHashMap;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.std.Numbers.INT_NULL;
+import static io.questdb.std.Numbers.LONG_NULL;
 
 public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFunction, GroupByFunction {
     final SymbolFunction arg;
-    ObjList<IntList> keys = new ObjList<>();
-    int mapIndex;// a pointer to the map that allows you to derive the mode
-    ObjList<IntLongHashMap> maps = new ObjList<>();
+    int initialCapacity = 4;
+    double loadFactor = 0.7d;
+    GroupByLongLongHashMap mapA = new GroupByLongLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
+    GroupByLongLongHashMap mapB = new GroupByLongLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
     int valueIndex;
 
     public ModeSymbolGroupByFunction(@NotNull SymbolFunction arg) {
@@ -57,48 +60,28 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
 
     @Override
     public void clear() {
-        maps.clear();
-        mapIndex = 0;
-        keys.clear();
+        mapA.resetPtr();
+        mapB.resetPtr();
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final IntLongHashMap map;
-        final IntList mapKeys;
-        if (maps.size() <= mapIndex) {
-            maps.extendAndSet(mapIndex, map = new IntLongHashMap());
-        } else {
-            map = maps.getQuick(mapIndex);
-            map.clear();
-        }
-
-        if (keys.size() <= mapIndex) {
-            keys.extendAndSet(mapIndex, mapKeys = new IntList());
-        } else {
-            mapKeys = keys.getQuick(mapIndex);
-            mapKeys.clear();
-        }
-
-        int value = arg.getInt(record);
+        long value = arg.getInt(record);
         if (value != SymbolTable.VALUE_IS_NULL) {
-            map.inc(value);
-            mapKeys.add(value);
+            mapA.of(0).inc(value);
+            mapValue.putLong(valueIndex, mapA.ptr());
+        } else {
+            mapValue.putLong(valueIndex, 0);
         }
-        mapValue.putInt(valueIndex, mapIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final IntLongHashMap map = maps.getQuick(mapValue.getInt(valueIndex));
-        final IntList mapKeys = keys.getQuick(mapValue.getInt(valueIndex));
-        int value = arg.getInt(record);
+        final long value = arg.getInt(record);
         if (value != SymbolTable.VALUE_IS_NULL) {
-            int index = map.keyIndex(value);
-            map.inc(value);
-            if (index > 0) {
-                mapKeys.add(value);
-            }
+            mapA.of(mapValue.getLong(valueIndex));
+            mapA.inc(value);
+            mapValue.putLong(valueIndex, mapA.ptr());
         }
     }
 
@@ -109,19 +92,25 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
 
     @Override
     public int getInt(Record record) {
-        final IntLongHashMap map = maps.getQuick(record.getInt(valueIndex));
-        final IntList mapKeys = keys.getQuick(record.getInt(valueIndex));
-        int modeKey = SymbolTable.VALUE_IS_NULL;
+        long mapPtr = record.getLong(valueIndex);
+        if (mapPtr <= 0) {
+            return SymbolTable.VALUE_IS_NULL;
+        }
+        mapA.of(mapPtr);
+        long modeKey = LONG_NULL;
         long modeCount = -1;
-        for (int i = 0, n = mapKeys.size(); i < n; i++) {
-            int key = mapKeys.getQuick(i);
-            long count = map.get(key);
-            if (count > modeCount) {
-                modeKey = key;
-                modeCount = count;
+
+        for (int i = 0, n = mapA.capacity(); i < n; i++) {
+            final long key = mapA.keyAt(i);
+            if (key != LONG_NULL) {
+                final long value = mapA.valueAt(i);
+                if (value > modeCount) {
+                    modeKey = key;
+                    modeCount = value;
+                }
             }
         }
-        return modeKey;
+        return (int) modeKey;
     }
 
     @Override
@@ -155,6 +144,11 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
     }
 
     @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        arg.init(symbolTableSource, executionContext);
+    }
+
+    @Override
     public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }
@@ -162,7 +156,7 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
+        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
@@ -181,14 +175,32 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
     }
 
     @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putInt(valueIndex, INT_NULL);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        final long destPtr = destValue.getLong(valueIndex);
+        mapA.of(destPtr);
+
+        final long srcPtr = srcValue.getLong(valueIndex);
+        mapB.of(srcPtr);
+
+        final long outPtr = mapA.size() > mapB.size() ? mapA.mergeAdd(mapB) : mapB.mergeAdd(mapA);
+
+        destValue.putLong(valueIndex, outPtr);
     }
 
-    @SuppressWarnings("RedundantMethodOverride")
+    @Override
+    public void setAllocator(GroupByAllocator allocator) {
+        mapA.setAllocator(allocator);
+        mapB.setAllocator(allocator);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        mapValue.putLong(valueIndex, LONG_NULL);
+    }
+
     @Override
     public boolean supportsParallelism() {
-        return false;
+        return UnaryFunction.super.supportsParallelism();
     }
 
     @Override
@@ -199,16 +211,15 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
     @Override
     public void toTop() {
         UnaryFunction.super.toTop();
-        mapIndex = 0;
     }
 
     @Override
     public CharSequence valueBOf(int key) {
-        return null;
+        return arg.valueBOf(key);
     }
 
     @Override
     public CharSequence valueOf(int key) {
-        return null;
+        return arg.valueOf(key);
     }
 }

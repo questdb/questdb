@@ -43,12 +43,10 @@ import static io.questdb.std.Numbers.LONG_NULL;
 
 public class ModeLongGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     final Function arg;
-    GroupByAllocator allocator;
     int initialCapacity = 4;
     double loadFactor = 0.7d;
     GroupByLongLongHashMap mapA = new GroupByLongLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
     GroupByLongLongHashMap mapB = new GroupByLongLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
-    int mapIndex;// a pointer to the map that allows you to derive the mode
     int valueIndex;
 
     public ModeLongGroupByFunction(@NotNull Function arg) {
@@ -57,16 +55,15 @@ public class ModeLongGroupByFunction extends LongFunction implements UnaryFuncti
 
     @Override
     public void clear() {
-        mapIndex = 0;
         mapA.resetPtr();
         mapB.resetPtr();
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        long val = arg.getLong(record);
-        if (val != Numbers.LONG_NULL) {
-            mapA.of(0).inc(val);
+        long value = arg.getLong(record);
+        if (value != Numbers.LONG_NULL) {
+            mapA.of(0).inc(value);
             mapValue.putLong(valueIndex, mapA.ptr());
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -90,7 +87,11 @@ public class ModeLongGroupByFunction extends LongFunction implements UnaryFuncti
 
     @Override
     public long getLong(Record record) {
-        mapA.of(record.getLong(valueIndex));
+        long mapPtr = record.getLong(valueIndex);
+        if (mapPtr <= 0) {
+            return LONG_NULL;
+        }
+        mapA.of(mapPtr);
         long modeKey = LONG_NULL;
         long modeCount = -1;
 
@@ -158,7 +159,6 @@ public class ModeLongGroupByFunction extends LongFunction implements UnaryFuncti
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
-        this.allocator = allocator;
         mapA.setAllocator(allocator);
         mapB.setAllocator(allocator);
     }
@@ -181,6 +181,5 @@ public class ModeLongGroupByFunction extends LongFunction implements UnaryFuncti
     @Override
     public void toTop() {
         UnaryFunction.super.toTop();
-        mapIndex = 0;
     }
 }
