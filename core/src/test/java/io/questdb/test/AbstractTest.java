@@ -26,6 +26,10 @@ package io.questdb.test;
 
 import io.questdb.Bootstrap;
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Zip;
@@ -77,6 +81,54 @@ public class AbstractTest {
     public void tearDown() throws Exception {
         LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         TestUtils.removeTestPath(root);
+    }
+
+    protected static MatViewRefreshJob createMatViewRefreshJob(CairoEngine engine) {
+        return new MatViewRefreshJob(0, engine);
+    }
+
+    protected static ApplyWal2TableJob createWalApplyJob(CairoEngine engine) {
+        return new ApplyWal2TableJob(engine, 1, 1);
+    }
+
+    protected static void drainMatViewQueue(CairoEngine engine) {
+        try (var refreshJob = createMatViewRefreshJob(engine)) {
+            drainMatViewQueue(refreshJob);
+        }
+    }
+
+    @SuppressWarnings("StatementWithEmptyBody")
+    protected static void drainMatViewQueue(MatViewRefreshJob refreshJob) {
+        while (refreshJob.run(0)) {
+        }
+    }
+
+    protected static void drainWalAndMatViewQueues(CairoEngine engine) {
+        drainWalQueue(engine);
+        drainMatViewQueue(engine);
+        drainWalQueue(engine);
+    }
+
+    protected static void drainWalAndMatViewQueues(MatViewRefreshJob refreshJob, CairoEngine engine) {
+        drainWalQueue(engine);
+        drainMatViewQueue(refreshJob);
+        drainWalQueue(engine);
+    }
+
+    protected static void drainWalQueue(CairoEngine engine) {
+        try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
+            drainWalQueue(walApplyJob, engine);
+        }
+    }
+
+    protected static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
+        var checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+        //noinspection StatementWithEmptyBody
+        while (walApplyJob.run(0)) ;
+        if (checkWalTransactionsJob.run(0)) {
+            //noinspection StatementWithEmptyBody
+            while (walApplyJob.run(0)) ;
+        }
     }
 
     protected static String[] getServerMainArgs() {

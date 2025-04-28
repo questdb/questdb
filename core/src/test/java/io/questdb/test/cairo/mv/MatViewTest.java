@@ -2640,12 +2640,7 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     private void drainQueues() {
-        drainWalQueue();
-        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-            while (refreshJob.run(0)) {
-            }
-            drainWalQueue();
-        }
+        drainWalAndMatViewQueues();
         // purge job may create MatViewRefreshList for existing tables by calling engine.getDependentMatViews();
         // this affects refresh logic in some scenarios, so make sure to run it
         runWalPurgeJob();
@@ -2887,20 +2882,13 @@ public class MatViewTest extends AbstractCairoTest {
         createMatView(viewName, viewQuery);
         drainQueues();
 
-        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-            refreshJob.run(0);
-            drainWalQueue();
-
-            int prev = initSize + 1;
-            for (int i = 0; i < K; i++) {
-                int size = chunkSize + (i < tail ? 1 : 0);
-                execute("insert into x " + copySql(prev, size));
-                prev = prev + size;
-                drainWalQueue();
-                refreshJob.run(0);
-                drainWalQueue();
-                remainingSize -= size;
-            }
+        int prev = initSize + 1;
+        for (int i = 0; i < K; i++) {
+            int size = chunkSize + (i < tail ? 1 : 0);
+            execute("insert into x " + copySql(prev, size));
+            prev = prev + size;
+            drainWalAndMatViewQueues();
+            remainingSize -= size;
         }
 
         Assert.assertEquals(0, remainingSize);
