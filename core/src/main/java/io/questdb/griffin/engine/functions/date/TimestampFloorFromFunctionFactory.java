@@ -55,8 +55,9 @@ public class TimestampFloorFromFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final CharSequence str = args.getQuick(0).getStrA(null);
-        final int stride = Timestamps.getStrideMultiple(str, argPositions.getQuick(0));
-        final char unit = Timestamps.getStrideUnit(str, argPositions.getQuick(0));
+        int unitPosition = argPositions.getQuick(0);
+        final int stride = Timestamps.getStrideMultiple(str, unitPosition);
+        final char unit = Timestamps.getStrideUnit(str, unitPosition);
         final Function timestampFunc = args.getQuick(1);
         long from = args.getQuick(2).getTimestamp(null);
         if (from == Numbers.LONG_NULL) {
@@ -83,9 +84,9 @@ public class TimestampFloorFromFunctionFactory implements FunctionFactory {
             case 'U':
                 return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMCFunction(timestampFunc, stride, from);
             case 0:
-                throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
+                throw SqlException.position(unitPosition).put("invalid unit 'null'");
             default:
-                throw SqlException.position(argPositions.getQuick(0)).put("invalid unit '").put(str).put('\'');
+                throw SqlException.position(unitPosition).put("invalid unit '").put(str).put('\'');
         }
     }
 }

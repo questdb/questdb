@@ -53,7 +53,6 @@ public final class Timestamps {
     public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
     public static final long HOUR_MICROS = 3600000000L;
     public static final long HOUR_SECONDS = 3600;
-    public static final String INVALID_STRIDE_MSG = "Invalid time format. Accepted format is integral number with single unit character: [0-9]+[M,y,w,d,h,m,s,T,U]";
     public static final long MICRO_NANOS = 1000;
     public static final long MILLI_MICROS = 1000;
     public static final long MINUTE_MICROS = 60000000;
@@ -786,7 +785,7 @@ public final class Timestamps {
                 final int multiple = Numbers.parseInt(str, 0, str.length() - 1);
                 return multiple <= 0 ? 1 : multiple;
             } catch (NumericException exception) {
-                throw SqlException.position(position).put(INVALID_STRIDE_MSG);
+                throw SqlException.position(position).put("Invalid stride: ").put(str.subSequence(0, str.length() - 1));
             }
         }
         return 1;
@@ -807,7 +806,7 @@ public final class Timestamps {
             case 'U':
                 return unit;
             default:
-                throw SqlException.position(position).put("Invalid unit: ").put(unit);
+                throw SqlException.position(position + str.length() - 1).put("Invalid unit: ").put(unit);
         }
     }
 
