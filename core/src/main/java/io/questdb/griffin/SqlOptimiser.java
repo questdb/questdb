@@ -5171,7 +5171,7 @@ public class SqlOptimiser implements Mutable {
                 tsFloorFunc.token = TimestampFloorFunctionFactory.NAME;
                 tsFloorFunc.type = FUNCTION;
                 tsFloorFunc.paramCount = 5;
-                tsFloorFunc.position = sampleBy.position;
+                //tsFloorFunc.position = sampleBy.position;
 
                 CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
                 characterStoreEntry.put('\'').put(sampleBy.token).put('\'');
@@ -5180,6 +5180,7 @@ public class SqlOptimiser implements Mutable {
                 tsFloorIntervalParam.token = characterStoreEntry.toImmutable();
                 tsFloorIntervalParam.paramCount = 0;
                 tsFloorIntervalParam.type = CONSTANT;
+                tsFloorIntervalParam.position = sampleBy.position;
 
                 final ExpressionNode tsFloorTsParam = expressionNodePool.next();
                 tsFloorTsParam.token = timestampColumn;

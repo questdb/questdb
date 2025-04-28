@@ -53,6 +53,7 @@ public final class Timestamps {
     public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
     public static final long HOUR_MICROS = 3600000000L;
     public static final long HOUR_SECONDS = 3600;
+    public static final String INVALID_STRIDE_MSG = "Invalid time format. Accepted format is integral number with single unit character: [0-9]+[M,y,w,d,h,m,s,T,U]";
     public static final long MICRO_NANOS = 1000;
     public static final long MILLI_MICROS = 1000;
     public static final long MINUTE_MICROS = 60000000;
@@ -779,12 +780,13 @@ public final class Timestamps {
         return Math.abs(a - b) / SECOND_MICROS;
     }
 
-    public static int getStrideMultiple(CharSequence str) {
+    public static int getStrideMultiple(CharSequence str, int position) throws SqlException {
         if (str != null && str.length() > 1) {
             try {
                 final int multiple = Numbers.parseInt(str, 0, str.length() - 1);
                 return multiple <= 0 ? 1 : multiple;
-            } catch (NumericException ignored) {
+            } catch (NumericException exception) {
+                throw SqlException.position(position).put(INVALID_STRIDE_MSG);
             }
         }
         return 1;
@@ -792,13 +794,6 @@ public final class Timestamps {
 
     public static char getStrideUnit(CharSequence str, int position) throws SqlException {
         assert str.length() > 0;
-        int unitIndex = extractUnitIndex(str);
-        if (unitIndex != str.length() - 1) {
-            String invalidUnit = str.subSequence(unitIndex, str.length()).toString();
-            throw SqlException
-                    .position(position + unitIndex + 1)
-                    .put("Invalid unit: ").put(invalidUnit);
-        }
         final char unit = str.charAt(str.length() - 1);
         switch (unit) {
             case 'M':
@@ -812,18 +807,8 @@ public final class Timestamps {
             case 'U':
                 return unit;
             default:
-                throw SqlException.position(position + (str.length() - 1)).put("Invalid unit: ").put(unit);
+                throw SqlException.position(position).put("Invalid unit: ").put(unit);
         }
-    }
-
-    private static int extractUnitIndex(CharSequence str) {
-        int startIndexOfUnit = str.length() - 1;
-        for (; startIndexOfUnit > -1; startIndexOfUnit--) {
-            if (Character.isDigit(str.charAt(startIndexOfUnit))) {
-                return startIndexOfUnit + 1;
-            }
-        }
-        return 0; // no stride, only unit
     }
 
     public static TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {
@@ -1326,6 +1311,16 @@ public final class Timestamps {
             return Long.MIN_VALUE;
         }
         return micros;
+    }
+
+    private static int extractUnitIndex(CharSequence str) {
+        int startIndexOfUnit = str.length() - 1;
+        for (; startIndexOfUnit > -1; startIndexOfUnit--) {
+            if (Character.isDigit(str.charAt(startIndexOfUnit))) {
+                return startIndexOfUnit + 1;
+            }
+        }
+        return 0; // no stride, only unit
     }
 
     private static long getTimeMicros(long micros) {
