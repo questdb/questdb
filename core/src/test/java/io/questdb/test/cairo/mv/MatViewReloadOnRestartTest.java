@@ -79,7 +79,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
-                createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
+                createMatView(main1);
 
                 execute(
                         main1,
@@ -90,9 +90,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
                 drainWalQueue(main1.getEngine());
 
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine())) {
-                    refreshJob.run(0);
-                    drainWalQueue(main1.getEngine());
+                try (MatViewRefreshJob refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
 
                     assertSql(
                             main1,
@@ -107,10 +106,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                             main1, "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
                                     ",('gbpusd', 1.325, '2024-09-10T13:03')"
                     );
-                    drainWalQueue(main1.getEngine());
 
-                    refreshJob.run(0);
-                    drainWalQueue(main1.getEngine());
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
 
                     String expected = "sym\tprice\tts\n" +
                             "gbpusd\t1.319\t2024-09-10T12:00:00.000000Z\n" +
@@ -167,7 +164,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
-                createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
+                createMatView(main1);
 
                 execute(
                         main1,
@@ -176,11 +173,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                                 ",('gbpusd', 1.321, '2024-09-10T13:02')"
                 );
-                drainWalQueue(main1.getEngine());
-
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine())) {
-                    refreshJob.run(0);
-                    drainWalQueue(main1.getEngine());
+                try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
 
                     assertSql(
                             main1,
@@ -195,10 +189,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                             main1, "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
                                     ",('gbpusd', 1.325, '2024-09-10T13:03')"
                     );
-                    drainWalQueue(main1.getEngine());
-
-                    refreshJob.run(0);
-                    drainWalQueue(main1.getEngine());
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
                 }
 
                 String expected = "sym\tprice\tts\n" +
@@ -225,12 +216,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ",('gbpusd', 1.327, '2024-09-10T13:03')"
                 );
 
-                drainWalQueue(main2.getEngine());
-
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
-                    refreshJob.run(0);
-                    drainWalQueue(main2.getEngine());
-                }
+                drainWalAndMatViewQueues(main2.getEngine());
 
                 expected = "sym\tprice\tts\n" +
                         "gbpusd\t1.32\t2024-09-10T12:00:00.000000Z\n" +
@@ -254,7 +240,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
-                createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
+                createMatView(main1);
 
                 execute(
                         main1,
@@ -263,11 +249,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                                 ",('gbpusd', 1.321, '2024-09-10T13:02')"
                 );
-                drainWalQueue(main1.getEngine());
 
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine())) {
-                    refreshJob.run(0);
-                    drainWalQueue(main1.getEngine());
+                try (MatViewRefreshJob refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
 
                     assertSql(
                             main1,
@@ -282,10 +266,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                             main1, "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
                                     ",('gbpusd', 1.325, '2024-09-10T13:03')"
                     );
-                    drainWalQueue(main1.getEngine());
-
-                    refreshJob.run(0);
-                    drainWalQueue(main1.getEngine());
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
                 }
 
                 // apply WAL and remove WAL files
@@ -324,12 +305,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ",('gbpusd', 1.327, '2024-09-10T13:03')"
                 );
 
-                drainWalQueue(main2.getEngine());
-
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
-                    refreshJob.run(0);
-                    drainWalQueue(main2.getEngine());
-                }
+                drainWalAndMatViewQueues(main2.getEngine());
 
                 expected = "sym\tprice\tts\n" +
                         "gbpusd\t1.32\t2024-09-10T12:00:00.000000Z\n" +
@@ -354,7 +330,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
-                createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
+                createMatView(main1);
 
                 execute(
                         main1,
@@ -363,13 +339,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                                 ",('gbpusd', 1.321, '2024-09-10T13:02')"
                 );
-                drainWalQueue(main1.getEngine());
-
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine())) {
-                    refreshJob.run(0);
-                    drainWalQueue(main1.getEngine());
-                }
-
+                drainWalAndMatViewQueues(main1.getEngine());
                 assertSql(
                         main1,
                         "sym\tprice\tts\n" +
@@ -388,10 +358,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
             // The mat view should be skipped on server start.
             try (final TestServerMain main2 = startMainPortsDisabled()) {
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
-                    refreshJob.run(0);
-                }
-
+                drainMatViewQueue(main2.getEngine());
                 assertSql(
                         main2,
                         "count\n" +
@@ -413,7 +380,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
-                createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
+                createMatView(main1);
 
                 execute(
                         main1,
@@ -422,11 +389,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                                 ",('gbpusd', 1.321, '2024-09-10T13:02')"
                 );
-                drainWalQueue(main1.getEngine());
-
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine())) {
-                    refreshJob.run(0);
-                    drainWalQueue(main1.getEngine());
+                try (MatViewRefreshJob refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
 
                     assertSql(
                             main1,
@@ -442,10 +406,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                             "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
                                     ",('gbpusd', 1.325, '2024-09-10T13:03')"
                     );
-                    drainWalQueue(main1.getEngine());
 
-                    refreshJob.run(0);
-                    drainWalQueue(main1.getEngine());
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
 
                     String expected = "sym\tprice\tts\n" +
                             "gbpusd\t1.319\t2024-09-10T12:00:00.000000Z\n" +
@@ -456,9 +418,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     assertSql(main1, expected, "price_1h order by ts, sym");
 
                     execute(main1, "truncate table base_price");
-                    drainWalQueue(main1.getEngine());
-                    refreshJob.run(0);
-                    drainWalQueue(main1.getEngine());
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
                     assertSql(
                             main1,
                             "view_name\tview_status\tinvalidation_reason\n" +
@@ -477,11 +437,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
 
                 execute(main2, "refresh materialized view price_1h full;");
-                drainWalQueue(main2.getEngine());
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
-                    refreshJob.run(0);
-                    drainWalQueue(main2.getEngine());
-                }
+                drainWalAndMatViewQueues(main2.getEngine());
 
                 assertSql(
                         main2,
@@ -513,7 +469,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
-                createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
+                createMatView(main1);
 
                 execute(
                         main1,
@@ -522,13 +478,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                                 ",('gbpusd', 1.321, '2024-09-10T13:02')"
                 );
-                drainWalQueue(main1.getEngine());
-
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine())) {
-                    refreshJob.run(0);
-                    drainWalQueue(main1.getEngine());
-                }
-
+                drainWalAndMatViewQueues(main1.getEngine());
                 assertSql(
                         main1,
                         "sym\tprice\tts\n" +
@@ -544,10 +494,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
             // The mat view should be skipped on server start.
             try (final TestServerMain main2 = startMainPortsDisabled()) {
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
-                    refreshJob.run(0);
-                    drainWalQueue(main2.getEngine());
-                }
+                drainWalAndMatViewQueues(main2.getEngine());
 
                 // The mat view should be loaded, but left in invalid state.
                 assertSql(
@@ -571,7 +518,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
-                createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
+                createMatView(main1);
 
                 execute(
                         main1,
@@ -580,13 +527,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                                 ",('gbpusd', 1.321, '2024-09-10T13:02')"
                 );
-                drainWalQueue(main1.getEngine());
-
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine())) {
-                    refreshJob.run(0);
-                    drainWalQueue(main1.getEngine());
-                }
-
+                drainWalAndMatViewQueues(main1.getEngine());
                 assertSql(
                         main1,
                         "sym\tprice\tts\n" +
@@ -602,10 +543,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
             // The mat view should be skipped on server start.
             try (final TestServerMain main2 = startMainPortsDisabled()) {
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
-                    refreshJob.run(0);
-                    drainWalQueue(main2.getEngine());
-                }
+                drainWalAndMatViewQueues(main2.getEngine());
 
                 // The mat view should be loaded, but marked as invalid after refresh.
                 assertSql(
@@ -622,8 +560,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         serverMain.assertSql(sql, expected);
     }
 
-    private static void createMatView(TestServerMain serverMain, final String viewName, final String viewSql) {
-        execute(serverMain, "create materialized view " + viewName + " as (" + viewSql + ") partition by DAY");
+    private static void createMatView(TestServerMain serverMain) {
+        execute(serverMain, "create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY");
     }
 
     private static void execute(TestServerMain serverMain, final String sql) {

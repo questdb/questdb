@@ -8389,7 +8389,7 @@ public class IODispatcherTest extends AbstractTest {
                                 () -> {
                                     started.countDown();
 
-                                    try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                                    try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
                                         while (queryError.get() == null) {
                                             walApplyJob.drain(0);
                                             new CheckWalTransactionsJob(engine).run(0);
@@ -8534,7 +8534,7 @@ public class IODispatcherTest extends AbstractTest {
                             () -> {
                                 started.countDown();
 
-                                try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                                try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
                                     while (queryError.get() == null) {
                                         walApplyJob.drain(0);
                                         new CheckWalTransactionsJob(engine).run(0);

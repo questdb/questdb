@@ -97,7 +97,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
                 final CairoEngine engine = questdb.getEngine();
                 final TableToken token = engine.verifyTableName(tableName);
 
-                try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                try (final ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
                     insertInto(tableName);
                     walApplyJob.drain(0);
 
