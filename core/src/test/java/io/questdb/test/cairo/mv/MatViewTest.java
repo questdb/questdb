@@ -249,6 +249,83 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinBinarySearchHintInMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades as (\n" +
+                    "  select \n" +
+                    "    rnd_double() price,\n" +
+                    "    rnd_double() volume,\n" +
+                    "    ('2025'::timestamp + x * 200_000_000L + rnd_int(0, 10_000, 0))::timestamp as ts,\n" +
+                    "  from long_sequence(5_000)\n" +
+                    ") timestamp(ts) partition by day wal;");
+
+            execute("create table prices as (\n" +
+                    "  select \n" +
+                    "    rnd_double() bid,\n" +
+                    "    rnd_double() ask,\n" +
+                    "    rnd_boolean() valid,\n" +
+                    "    ('2025'::timestamp + x * 1_000_000L + rnd_int(0, 10_000, 0))::timestamp as ts,\n" +
+                    "  from long_sequence(1_000_000)\n" +
+                    ") timestamp(ts) partition by day wal;\n");
+
+            String mvWithoutHint = "create materialized view daily_summary \n" +
+                    "WITH BASE trades\n" +
+                    "as (\n" +
+                    "select trades.ts, count(*), sum(volume), min(price), max(price), avg(price)\n" +
+                    "FROM trades\n" +
+                    "asof join (select * from prices where valid) prices\n" +
+                    "sample by 1d\n" +
+                    ");";
+
+            String mvWithHint = "create materialized view daily_summary \n" +
+                    "WITH BASE trades\n" +
+                    "as (\n" +
+                    "select /*+ USE_ASOF_BINARY_SEARCH(trades prices) */ trades.ts, count(*), sum(volume), min(price), max(price), avg(price)\n" +
+                    "FROM trades\n" +
+                    "asof join (select * from prices where valid) prices\n" +
+                    "sample by 1d\n" +
+                    ");";
+
+            // sanity test: without the hint it do not use binary search
+            sink.clear();
+            printSql("EXPLAIN " + mvWithoutHint);
+            TestUtils.assertContains(sink, "AsOf Join");
+            TestUtils.assertNotContains(sink, "Fast Scan");
+
+            // but it does with the hint
+            sink.clear();
+            printSql("EXPLAIN " + mvWithHint);
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
+
+            // ok, now the real data: first try the view without the hint
+            execute(mvWithoutHint);
+            drainQueues();
+            String expectedView = "ts\tcount\tsum\tmin\tmax\tavg\n" +
+                    "2025-01-01T00:00:00.000000Z\t431\t215.12906540853268\t0.0031075670450616544\t0.9975907992178104\t0.4923297830071461\n" +
+                    "2025-01-02T00:00:00.000000Z\t432\t214.8933638390628\t0.0027013057617086833\t0.9997998069306392\t0.5363814932706943\n" +
+                    "2025-01-03T00:00:00.000000Z\t432\t211.63403995544482\t0.0014510055926236776\t0.9979936641680203\t0.4900138748185357\n" +
+                    "2025-01-04T00:00:00.000000Z\t432\t225.1870697913935\t0.0026339327135822543\t0.9996217482017493\t0.49406088823120226\n" +
+                    "2025-01-05T00:00:00.000000Z\t432\t213.8124549264717\t0.00985149958244913\t0.9981734770138071\t0.4728684440748092\n" +
+                    "2025-01-06T00:00:00.000000Z\t432\t214.8994847762188\t0.0010433040681515626\t0.9998120012952196\t0.48758818235506823\n" +
+                    "2025-01-07T00:00:00.000000Z\t432\t220.0881500794553\t0.0014542249844708977\t0.9973956570924076\t0.5131734923704387\n" +
+                    "2025-01-08T00:00:00.000000Z\t432\t218.41372811829154\t8.166095924849737E-4\t0.9976953158075262\t0.5276052830143888\n" +
+                    "2025-01-09T00:00:00.000000Z\t432\t220.10482943202246\t0.0011023415061862663\t0.9974983068581821\t0.493060539742248\n" +
+                    "2025-01-10T00:00:00.000000Z\t432\t208.43848337612906\t0.0028067126112681917\t0.9976283386812487\t0.5136095078793146\n" +
+                    "2025-01-11T00:00:00.000000Z\t432\t213.02005186038846\t8.598501058093566E-4\t0.999708216046598\t0.5040670959429089\n" +
+                    "2025-01-12T00:00:00.000000Z\t249\t119.80938485754517\t0.007906045439897036\t0.9962991313334122\t0.4923923393746041\n";
+            assertQuery(expectedView, "SELECT * FROM daily_summary", "ts", true, true);
+
+            // now, recreate the view with hint
+            execute("drop materialized view daily_summary");
+            execute(mvWithHint);
+            drainQueues();
+
+            // it must result in the same data
+            assertQuery(expectedView, "SELECT * FROM daily_summary", "ts", true, true);
+        });
+    }
+
+    @Test
     public void testBaseTableInvalidateOnAttachPartition() throws Exception {
         final String partition = "2024-01-01";
         testBaseTableInvalidateOnOperation(

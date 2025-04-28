@@ -4557,6 +4557,236 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testHints() throws Exception {
+        // simple smoke test
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NEW_HINT(a b), NO_INDEX(a), NO_PARAM_HINT]) hints[NEW_HINT(a b), NO_INDEX(a), NO_PARAM_HINT]",
+                "select /*+ NO_INDEX(a) NEW_HINT(a b) NO_PARAM_HINT*/ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // empty hints
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1)",
+                "select /*+ */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // hint nested inside outer comment is ignored
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1)",
+                "select /* /*+ NO_INDEX(a) */ */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // hint nested in a line comment is ignored
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1)",
+                "select -- /*+ NO_INDEX(a) */ \n a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // hints nested inside another hint are ignored
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NO_INDEX(a)]) hints[NO_INDEX(a)]",
+                "select /*+ NO_INDEX(a) /*+ IGNORED */ */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // comment nested inside hint is ignored
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NO_INDEX(a), AFTER]) hints[NO_INDEX(a), AFTER]",
+                "select /*+ NO_INDEX(a) /* THIS IS JUST A REGULAR COMMENT */ AFTER */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // line comment inside hints are honoured
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NO_INDEX(a)]) hints[NO_INDEX(a)]",
+                "select /*+ NO_INDEX(a) -- IGNORED \n */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // bad hint syntax - missing closing bracket
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NO_INDEX(a)]) hints[NO_INDEX(a)]",
+                "select /*+ NO_INDEX(a) SKIPPED(  */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // bad hint syntax - missing opening brackets
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NO_INDEX(a)]) hints[NO_INDEX(a)]",
+                "select /*+ NO_INDEX(a) SKIPPED)  */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // bad hint syntax - missing hint key
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NO_INDEX(a)]) hints[NO_INDEX(a)]",
+                "select /*+ NO_INDEX(a) (param)  */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // nested params
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NO_INDEX(a)]) hints[NO_INDEX(a)]",
+                "select /*+ NO_INDEX(a) SKIPPED(a (b))  */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // empty params
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NO_INDEX]) hints[NO_INDEX]",
+                "select /*+ NO_INDEX()  */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // consecutive parameter-free hints
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NO_INDEX, MAKE_IT_FAST]) hints[NO_INDEX, MAKE_IT_FAST]",
+                "select /*+ NO_INDEX MAKE_IT_FAST  */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // quoted hint name is NOT unquoted!
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[\"NO_INDEX\"]) hints[\"NO_INDEX\"]",
+                "select /*+ \"NO_INDEX\"  */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // quoted param - params are unquoted!
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NO_INDEX(a)]) hints[NO_INDEX(a)]",
+                "select /*+ NO_INDEX(\"a\")  */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // dangling quotes in parameter less hint name - we still parse the hint which is right prior to the dangling quote
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NOT_SKIPPED, NO_INDEX(a)]) hints[NOT_SKIPPED, NO_INDEX(a)]",
+                "select /*+ NO_INDEX(a) NOT_SKIPPED\" */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // dangling quote in parameter 1 - right after the opening parenthesis
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NO_INDEX(a)]) hints[NO_INDEX(a)]",
+                "select /*+ NO_INDEX(a) SKIPPED(\"foo) */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // dangling quote in parameter
+        assertQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz where a = 1 hints[NO_INDEX(a)]) hints[NO_INDEX(a)]",
+                "select /*+ NO_INDEX(a) SKIPPED(foo\") */ a,b,c from xyz where a = 1",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // model with joins
+        assertQuery(
+                "select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) asof join select [timestamp] from quotes q timestamp (timestamp) hints[HINT] where tag = null hints[HINT]) t hints[HINT]",
+                "select /*+ HINT*/ * from trades t ASOF JOIN quotes q WHERE tag = null",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
+                modelOf("quotes").timestamp()
+        );
+
+        // model with sample by - simple
+        assertQuery(
+                "select-group-by timestamp_floor('1d',timestamp,null,'00:00',null) timestamp, count() count from (select [timestamp] from trades timestamp (timestamp) stride 1d hints[HINT]) order by timestamp hints[HINT]",
+                "select /*+ HINT*/ timestamp, count(*) from trades sample by 1d",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL)
+        );
+
+        // model with sample by - with projection
+        // todo: hints currently do not appear in the outer SELECT-CHOOSE, consider adding them?
+        assertQuery(
+                "select-choose tag, count from (select-group-by [tag, count() count, timestamp_floor('1d',timestamp,null,'00:00',null) timestamp] tag, count() count, timestamp_floor('1d',timestamp,null,'00:00',null) timestamp from (select [tag, timestamp] from trades timestamp (timestamp) stride 1d hints[HINT]) order by timestamp hints[HINT])",
+                "select /*+ HINT*/ tag, count(*) from trades sample by 1d",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL)
+        );
+
+        // model with union
+        assertQuery(
+                "select-choose [a, b, c] a, b, c from (select [a, b, c] from xyz where a = 1 hints[HINT_A]) union select-choose [a, b, c] a, b, c from (select [a, b, c] from xyz where a = 2 hints[HINT_A, HINT_B]) hints[HINT_A, HINT_B] hints[HINT_A]",
+                "select /*+ HINT_A*/ a,b,c from xyz where a = 1 union select /*+ HINT_B*/ a,b,c from xyz where a = 2",
+                modelOf("xyz")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+
+        // ending with unclosed hint - it reports missing columns instead of missing closing comment
+        // this behaviour is consistent with a regular block comments unclosed, except for position
+        assertSyntaxError(
+                "select /*+ HINT_A",
+                17,
+                "[distinct] column expected"
+        );
+        // for a comparison: here the same error with regular (non-hint) comments
+        assertSyntaxError(
+                "select /* HINT_A",
+                7,
+                "[distinct] column expected"
+        );
+    }
+
+    @Test
     public void testInnerJoin() throws Exception {
         assertQuery(
                 "select-choose a.x x from (select [x] from a a join select [x] from b on b.x = a.x) a",
