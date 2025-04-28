@@ -19,7 +19,7 @@ jobs:
       testset: "all"
       javadoc_step: ""
       javadoc_profile: ""
-      jdk: "1.11"
+      jdk: "1.17"
       os: Linux
     steps:
       - template: steps.yml
@@ -44,7 +44,7 @@ jobs:
       testset: "all"
       javadoc_step: ""
       javadoc_profile: ""
-      jdk: "1.11"
+      jdk: "1.17"
       os: Linux
     steps:
       - template: steps.yml
