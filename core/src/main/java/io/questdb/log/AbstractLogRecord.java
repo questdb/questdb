@@ -43,6 +43,8 @@ import java.io.File;
 import java.util.Set;
 
 abstract class AbstractLogRecord implements LogRecord, Log {
+    private final static boolean PARANOIA_MODE = false;
+    private static final java.lang.ThreadLocal<RuntimeException> tlRecordLeakHelper = PARANOIA_MODE ? new java.lang.ThreadLocal<>() : null;
     private static final ThreadLocal<ObjHashSet<Throwable>> tlSet = ThreadLocal.withInitial(ObjHashSet::new);
     protected final RingQueue<LogRecordUtf8Sink> advisoryRing;
     protected final Sequence advisorySeq;
@@ -229,6 +231,9 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         sink().putEOL();
         Holder h = tl.get();
         h.seq.done(h.cursor);
+        if (PARANOIA_MODE) {
+            tlRecordLeakHelper.remove();
+        }
     }
 
     @Override
@@ -517,6 +522,14 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         LogRecordUtf8Sink r = ring.get(cursor);
         r.setLevel(level);
         r.clear();
+        if (PARANOIA_MODE) {
+            RuntimeException exception = tlRecordLeakHelper.get();
+            if (exception != null) {
+                exception.printStackTrace();
+                throw exception;
+            }
+            tlRecordLeakHelper.set(new RuntimeException("log record leak"));
+        }
         return this;
     }
 

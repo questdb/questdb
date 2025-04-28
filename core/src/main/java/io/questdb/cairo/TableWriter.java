@@ -4058,7 +4058,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             } else if (noOpRowCount > 0) {
                 LOG.critical()
-                        .$("o3 ignoring write on read-only partition [table=").utf8(tableToken.getTableName())
+                        .$("o3 ignoring write on read-only partition [table=").$(tableToken)
                         .$(", timestamp=").$ts(lastOpenPartitionTs)
                         .$(", numRows=").$(noOpRowCount)
                         .$();
@@ -6991,7 +6991,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         );
                     }
                 } catch (CairoException | CairoError e) {
-                    LOG.error().$((Sinkable) e).$();
+                    try {
+                        Sinkable sinkable = (Sinkable) e;
+                        LOG.error().$(sinkable).$();
+                    } catch (Throwable ignore) {
+                        LOG.error().$(e).$();
+                    }
                     success = false;
                     throw e;
                 }
@@ -9168,7 +9173,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void throwDistressException(Throwable cause) {
-        LOG.critical().$("writer error [table=").utf8(tableToken.getTableName()).$(", e=").$((Sinkable) cause).I$();
+        try {
+            Sinkable sinkable = (Sinkable) cause;
+            LOG.critical().$("writer error [table=").utf8(tableToken.getTableName()).$(", e=").$(sinkable).I$();
+        } catch (Throwable th) {
+            LOG.critical().$("writer error [table=").utf8(tableToken.getTableName()).$(", e=").$(cause).I$();
+        }
         distressed = true;
         throw new CairoError(cause);
     }
