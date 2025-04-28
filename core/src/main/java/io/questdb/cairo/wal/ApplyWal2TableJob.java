@@ -120,6 +120,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         applyWal(tableToken, engine, operationExecutor, Job.RUNNING_STATUS);
     }
 
+    public void applyTableAll(TableToken tableToken) {
+        SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        assert tracker.isInitialised();
+        while (!tracker.isSuspended() && tracker.getWriterTxn() < tracker.getSeqTxn()) {
+            applyTable(tableToken);
+        }
+    }
+
     @Override
     public void close() {
         Misc.free(operationExecutor);
