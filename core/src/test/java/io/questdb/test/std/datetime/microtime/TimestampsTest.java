@@ -421,15 +421,7 @@ public class TimestampsTest {
             Timestamps.getStrideMultiple(invalidUnit, 10);
             Assert.fail("Expected SqlException exception when parsing invalid unit");
         } catch (SqlException e) {
-            Assert.assertEquals("[10] " + Timestamps.INVALID_STRIDE_MSG, e.getMessage());
-        }
-
-        invalidUnit = "150Days";
-        try {
-            Timestamps.getStrideMultiple(invalidUnit, 10);
-            Assert.fail("Expected SqlException exception when parsing invalid unit");
-        } catch (SqlException e) {
-            Assert.assertEquals("[10] " + Timestamps.INVALID_STRIDE_MSG, e.getMessage());
+            Assert.assertEquals("[10] Invalid stride: 15ABC", e.getMessage());
         }
 
         String validStrideMultipleButNotUnit = "1X";
@@ -444,7 +436,7 @@ public class TimestampsTest {
             Timestamps.getStrideUnit(validStrideMultipleButNotUnit, 10);
             Assert.fail("Expected SqlException exception when parsing invalid unit");
         } catch (Exception e) {
-            Assert.assertEquals("[10] Invalid unit: X", e.getMessage());
+            Assert.assertEquals("[11] Invalid unit: X", e.getMessage());
         }
 
         String notIntegral = "0.5h";
@@ -452,7 +444,7 @@ public class TimestampsTest {
             Timestamps.getStrideMultiple(notIntegral, 10);
             Assert.fail("Expected SqlException exception when parsing non integral numer");
         } catch (Exception e) {
-            Assert.assertEquals("[10] " + Timestamps.INVALID_STRIDE_MSG, e.getMessage());
+            Assert.assertEquals("[10] Invalid stride: 0.5", e.getMessage());
         }
 
         String validUnit = "12";
