@@ -2325,7 +2325,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public TableToken getTableToken() {
+    public @NotNull TableToken getTableToken() {
         return tableToken;
     }
 
@@ -6991,12 +6991,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         );
                     }
                 } catch (CairoException | CairoError e) {
-                    try {
-                        Sinkable sinkable = (Sinkable) e;
-                        LOG.error().$(sinkable).$();
-                    } catch (Throwable ignore) {
-                        LOG.error().$(e).$();
-                    }
+                    LOG.error().$((Sinkable) e).$();
                     success = false;
                     throw e;
                 }
@@ -9175,9 +9170,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void throwDistressException(Throwable cause) {
         try {
             Sinkable sinkable = (Sinkable) cause;
-            LOG.critical().$("writer error [table=").utf8(tableToken.getTableName()).$(", e=").$(sinkable).I$();
+            LOG.critical().$("writer error [table=").$(tableToken).$(", e=").$(sinkable).I$();
         } catch (Throwable th) {
-            LOG.critical().$("writer error [table=").utf8(tableToken.getTableName()).$(", e=").$(cause).I$();
+            LOG.critical().$("writer error [table=").$(tableToken).$(", e=").$(cause).I$();
         }
         distressed = true;
         throw new CairoError(cause);

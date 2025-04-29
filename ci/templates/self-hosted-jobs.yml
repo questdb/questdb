@@ -3,7 +3,6 @@ jobs:
     displayName: "on linux-arm64"
     pool:
       name: "arm64"
-      vmImage:
       demands:
         - Agent.Name -equals arm64-$(System.StageName)$(Build.BuildId)
     dependsOn:
@@ -28,7 +27,6 @@ jobs:
     displayName: "on linux-x64-zfs"
     pool:
       name: "amd64-zfs"
-      vmImage:
       demands:
         - Agent.Name -equals amd64-zfs-$(System.StageName)$(Build.BuildId)
     dependsOn:
