@@ -1444,9 +1444,13 @@ public class ExpressionParser {
                                         }
                                     }
                                 }
-                            } else if (SqlKeywords.isDoubleKeyword(last.token) && SqlKeywords.isPrecisionKeyword(tok)) {
-                                // ignore 'precision' keyword after 'double'
-                                continue;
+                            } else if (SqlKeywords.isDoubleKeyword(last.token)) {
+                                if (!SqlKeywords.isPrecisionKeyword(tok)) {
+                                    // no more ignore 'precision' keyword after 'double'
+                                    continue;
+                                } else {
+                                    throw SqlException.$(lastPos, "unsupported cast");
+                                }
                             }
                         }
                         // literal can be at start of input, after a bracket or part of an operator

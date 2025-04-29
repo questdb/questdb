@@ -1332,4 +1332,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
         }
         TestUtils.assertEquals(expectedRpn, rpnBuilder.rpn());
     }
+
+    @Test
+    public void testUnsupportedCastDoublePrecision() {
+        assertFail("cast(1 as DOUBLE PRECISION)",
+                17,
+                "unsupported cast"
+        );
+    }
+
 }
