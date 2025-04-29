@@ -169,7 +169,7 @@ public class SqlParser {
         CharSequence tok;
         int valuePos = lexer.getPosition();
         tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
+        if (tok == null || Chars.equals(tok, ';')) {
             throw SqlException.$(lexer.getPosition(), "missing argument, should be TTL <number> <unit> or <number_with_unit>");
         }
         int tokLength = tok.length();
@@ -184,15 +184,10 @@ public class SqlParser {
                 try {
                     Numbers.parseLong(tok, 0, tokLength - 1);
                 } catch (NumericException e) {
-                    throw SqlException.$(
-                            valuePos,
-                            "invalid argument, should be TTL <number> <unit> or <number_with_unit>"
-                    );
+                    throw SqlException.$(valuePos, "invalid argument, should be TTL <number> <unit> or <number_with_unit>");
                 }
-                throw SqlException.$(
-                        valuePos + tokLength - 1,
-                        "invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was '"
-                ).put(unitChar).put('\'');
+                throw SqlException.$(valuePos + tokLength - 1, "invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was '")
+                        .put(unitChar).put('\'');
             }
         }
         // at this point, unit == -1 means the syntax wasn't of the "1H" form, it can still be of the "1 HOUR" form
@@ -205,27 +200,18 @@ public class SqlParser {
             }
             ttlValue = (int) ttlLong;
         } catch (NumericException e) {
-            throw SqlException.$(
-                    valuePos,
-                    "invalid syntax, should be TTL <number> <unit> but was TTL "
-            ).put(tok);
+            throw SqlException.$(valuePos, "invalid syntax, should be TTL <number> <unit> but was TTL ").put(tok);
         }
         if (unit == -1) {
             unitPos = lexer.getPosition();
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null) {
-                throw SqlException.$(
-                        unitPos,
-                        "missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected"
-                );
+                throw SqlException.$(unitPos, "missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected");
             }
             unit = PartitionBy.ttlUnitFromString(tok, 0, tok.length());
         }
         if (unit == -1) {
-            throw SqlException.$(
-                            unitPos,
-                            "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '"
-                    )
+            throw SqlException.$(unitPos, "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '")
                     .put(tok).put('\'');
         }
         return Timestamps.toHoursOrMonths(ttlValue, unit, valuePos);

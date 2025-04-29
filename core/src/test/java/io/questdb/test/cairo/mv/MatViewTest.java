@@ -99,7 +99,6 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testAlterSymbolCapacity() throws Exception {
         assertMemoryLeak(() -> {
-            // create table and mat view
             execute(
                     "create table base_price (" +
                             "  sym symbol, price double, ts timestamp" +
@@ -154,7 +153,6 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testAlterSymbolCapacityInvalidStatement() throws Exception {
         assertMemoryLeak(() -> {
-            // create table and mat view
             execute(
                     "create table base_price (" +
                             "  sym symbol, price double, ts timestamp" +
@@ -236,6 +234,86 @@ public class MatViewTest extends AbstractCairoTest {
                     "ALTER MATERIALIZED VIEW price_1h ALTER COLUMN sym SYMBOL CAPACITY 42 foobar;",
                     69,
                     "unexpected token [foobar] while trying to change symbol capacity"
+            );
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t-1\t0\n",
+                    "materialized_views",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testAlterTtl() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            execute("create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY;");
+            execute("alter materialized view price_1h set ttl 2d;");
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.310, '2024-09-10T12:05')" +
+                            ",('gbpusd', 1.311, '2024-09-11T13:03')" +
+                            ",('gbpusd', 1.312, '2024-09-12T13:03')" +
+                            ",('gbpusd', 1.313, '2024-09-13T13:03')" +
+                            ",('gbpusd', 1.314, '2024-09-14T13:03')"
+            );
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.312\t2024-09-12T13:00:00.000000Z\n" +
+                            "gbpusd\t1.313\t2024-09-13T13:00:00.000000Z\n" +
+                            "gbpusd\t1.314\t2024-09-14T13:00:00.000000Z\n",
+                    "price_1h order by ts, sym",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testAlterTtlInvalidStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h set",
+                    36,
+                    "'ttl' or 'refresh' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h set ttl",
+                    40,
+                    "missing argument, should be TTL <number> <unit> or <number_with_unit>"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h set ttl;",
+                    41,
+                    "missing argument, should be TTL <number> <unit> or <number_with_unit>"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h set ttl foobar",
+                    41,
+                    "invalid argument, should be TTL <number> <unit> or <number_with_unit>"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h set ttl 1 hour;",
+                    41,
+                    "TTL value must be an integer multiple of partition size"
             );
 
             assertQueryNoLeakCheck(
@@ -1950,7 +2028,6 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testResumeSuspendMatView() throws Exception {
         assertMemoryLeak(() -> {
-            // create table and mat view
             execute(
                     "create table base_price (" +
                             "sym varchar, price double, ts timestamp, extra_col long" +
