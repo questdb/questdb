@@ -31,7 +31,6 @@ public class QueryTrace implements ValueHolder<QueryTrace> {
     public static final ObjectFactory<QueryTrace> ITEM_FACTORY = QueryTrace::new;
 
     public long executionNanos;
-    public boolean isJit;
     public String principal;
     public String queryText;
     public long timestamp;
@@ -39,7 +38,6 @@ public class QueryTrace implements ValueHolder<QueryTrace> {
     @Override
     public void clear() {
         executionNanos = 0;
-        isJit = false;
         principal = null;
         queryText = null;
         timestamp = 0;
@@ -48,7 +46,6 @@ public class QueryTrace implements ValueHolder<QueryTrace> {
     @Override
     public void copyTo(QueryTrace dest) {
         dest.executionNanos = executionNanos;
-        dest.isJit = isJit;
         dest.principal = principal;
         dest.queryText = queryText;
         dest.timestamp = timestamp;
