@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.TestOnly;
@@ -36,9 +35,9 @@ import org.jetbrains.annotations.TestOnly;
  * to be checked. On the other hand, single-reader operations are cheap.
  */
 public class TxnScoreboardV2 implements TxnScoreboard {
-    private static final int RESERVED_ID_COUNT = 16;
-    private static final long UNLOCKED = -1;
     private static final int VIRTUAL_ID_COUNT = 1;
+    private static final int RESERVED_ID_COUNT = VIRTUAL_ID_COUNT + 3;
+    private static final long UNLOCKED = -1;
     private final int entryScanCount;
     private final int pow2EntryCount;
     private long activeReaderCountMem;
@@ -49,15 +48,14 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     // 8 bytes - active reader count
     // 8 bytes - max txn
     // 8 bytes - max id
-    // 12 * 8 - reserved
-    // 8 bytes - slot for CHECKPOINT txn
+    // 8 bytes - slot for CHECKPOINT lock
     // N * 8 bytes - slots for every TableReader
     private long mem;
 
     private TableToken tableToken;
 
     public TxnScoreboardV2(int entryCount) {
-        pow2EntryCount = Numbers.ceilPow2(entryCount + RESERVED_ID_COUNT);
+        pow2EntryCount = entryCount + RESERVED_ID_COUNT;
         entryScanCount = entryCount + VIRTUAL_ID_COUNT;
         mem = Unsafe.malloc((long) pow2EntryCount * Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
         activeReaderCountMem = mem;
@@ -79,12 +77,13 @@ public class TxnScoreboardV2 implements TxnScoreboard {
 
         if (Unsafe.getUnsafe().compareAndSwapLong(null, entriesMem + internalId * Long.BYTES, UNLOCKED, txn)) {
             updateMaxReaderId(internalId);
+            incrementActiveReaderCount();
             if (getMax() > txn) {
                 // Max moved, cannot acquire the txn.
                 Unsafe.getUnsafe().putLongVolatile(null, entriesMem + internalId * Long.BYTES, UNLOCKED);
+                Unsafe.getUnsafe().getAndAddLong(null, activeReaderCountMem, -1);
                 return false;
             }
-            incrementActiveReaderCount();
             return true;
         } else {
             return false;
@@ -167,6 +166,8 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         assert internalId < entryScanCount;
         updateMaxReaderId(internalId);
         if (Unsafe.getUnsafe().compareAndSwapLong(null, entriesMem + internalId * Long.BYTES, UNLOCKED, txn)) {
+            // It's ok to increment readers after CAS
+            // there must be another reader already that holds the same transaction lock.
             incrementActiveReaderCount();
             return true;
         } else {
@@ -215,6 +216,9 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     public long releaseTxn(int id, long txn) {
         long internalId = toInternalId(id);
         assert internalId < entryScanCount;
+        long lockedTxn = Unsafe.getUnsafe().getLongVolatile(null, entriesMem + internalId * Long.BYTES);
+        assert lockedTxn == txn : "Invalid release, expected " + txn + " but got " + lockedTxn;
+
         Unsafe.getUnsafe().putLongVolatile(null, entriesMem + internalId * Long.BYTES, UNLOCKED);
         Unsafe.getUnsafe().getAndAddLong(null, activeReaderCountMem, -1);
         // It's too expensive to count how many readers are left for the txn, caller will have to do additional checks.
@@ -238,6 +242,9 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     }
 
     private long getMaxReaderId() {
+        // Max reader Id does not go down, only up.
+        // This can in rare cases result in performance hit in calls to isRangeAvailable(), hasEarlierTxnLocks()
+        // This problem to be addressed in future PRs
         return Unsafe.getUnsafe().getLongVolatile(null, maxReaderIdMem) + 1;
     }
 
