@@ -43,9 +43,17 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     private final int pow2EntryCount;
     private long activeReaderCountMem;
     private long entriesMem;
-    private long maxIdMem;
     private long maxMem;
+    private long maxReaderIdMem;
+    // Record structure
+    // 8 bytes - active reader count
+    // 8 bytes - max txn
+    // 8 bytes - max id
+    // 12 * 8 - reserved
+    // 8 bytes - slot for CHECKPOINT txn
+    // N * 8 bytes - slots for every TableReader
     private long mem;
+
     private TableToken tableToken;
 
     public TxnScoreboardV2(int entryCount) {
@@ -54,7 +62,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         mem = Unsafe.malloc((long) pow2EntryCount * Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
         activeReaderCountMem = mem;
         maxMem = mem + Long.BYTES;
-        maxIdMem = maxMem + Long.BYTES;
+        maxReaderIdMem = maxMem + Long.BYTES;
         entriesMem = mem + (long) (RESERVED_ID_COUNT - VIRTUAL_ID_COUNT) * Long.BYTES;
         Vect.memset(mem, (long) pow2EntryCount * Long.BYTES, -1);
         // Set max, reader count to 0.
@@ -65,18 +73,17 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     public boolean acquireTxn(int id, long txn) {
         long internalId = toInternalId(id);
         assert internalId < entryScanCount;
-        // Do not check max if it's a special id, like CHECKPOINT_ID.
-        if (id > -1 && !updateMax(txn)) {
+        if (!updateMax(txn)) {
             return false;
         }
 
         if (Unsafe.getUnsafe().compareAndSwapLong(null, entriesMem + internalId * Long.BYTES, UNLOCKED, txn)) {
-            if (id > -1 && !updateMax(txn)) {
+            updateMaxReaderId(internalId);
+            if (getMax() > txn) {
                 // Max moved, cannot acquire the txn.
                 Unsafe.getUnsafe().putLongVolatile(null, entriesMem + internalId * Long.BYTES, UNLOCKED);
                 return false;
             }
-            updateMaxReaderId(internalId);
             incrementActiveReaderCount();
             return true;
         } else {
@@ -89,7 +96,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         mem = Unsafe.free(mem, (long) pow2EntryCount * Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
         entriesMem = 0;
         maxMem = 0;
-        maxIdMem = 0;
+        maxReaderIdMem = 0;
         activeReaderCountMem = 0;
     }
 
@@ -144,7 +151,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
             return false;
         }
 
-        long scanCount = readScanCount();
+        long scanCount = getMaxReaderId();
         for (int i = 0; i < scanCount; i++) {
             long lockedTxn = Unsafe.getUnsafe().getLongVolatile(null, entriesMem + (long) i * Long.BYTES);
             if (lockedTxn > UNLOCKED && lockedTxn < txn) {
@@ -158,8 +165,8 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     public boolean incrementTxn(int id, long txn) {
         long internalId = toInternalId(id);
         assert internalId < entryScanCount;
+        updateMaxReaderId(internalId);
         if (Unsafe.getUnsafe().compareAndSwapLong(null, entriesMem + internalId * Long.BYTES, UNLOCKED, txn)) {
-            updateMaxReaderId(internalId);
             incrementActiveReaderCount();
             return true;
         } else {
@@ -178,7 +185,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
             return true;
         }
 
-        long scanCount = readScanCount();
+        long scanCount = getMaxReaderId();
         for (int i = 0; i < scanCount; i++) {
             long lockedTxn = Unsafe.getUnsafe().getLongVolatile(null, entriesMem + (long) i * Long.BYTES);
             if (lockedTxn > UNLOCKED && lockedTxn >= fromTxn && lockedTxn < toTxn) {
@@ -194,7 +201,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
             return true;
         }
 
-        long scanCount = readScanCount();
+        long scanCount = getMaxReaderId();
         for (int i = 0; i < scanCount; i++) {
             long lockedTxn = Unsafe.getUnsafe().getLongVolatile(null, entriesMem + (long) i * Long.BYTES);
             if (lockedTxn == txn) {
@@ -209,6 +216,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         long internalId = toInternalId(id);
         assert internalId < entryScanCount;
         Unsafe.getUnsafe().putLongVolatile(null, entriesMem + internalId * Long.BYTES, UNLOCKED);
+        Unsafe.getUnsafe().getAndAddLong(null, activeReaderCountMem, -1);
         // It's too expensive to count how many readers are left for the txn, caller will have to do additional checks.
         return 0;
     }
@@ -229,15 +237,12 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         return Unsafe.getUnsafe().getLongVolatile(null, maxMem);
     }
 
-    private void incrementActiveReaderCount() {
-        long val;
-        do {
-            val = Unsafe.getUnsafe().getLong(activeReaderCountMem);
-        } while (!Unsafe.getUnsafe().compareAndSwapLong(null, activeReaderCountMem, val, Math.min(0, val) + 1));
+    private long getMaxReaderId() {
+        return Unsafe.getUnsafe().getLongVolatile(null, maxReaderIdMem) + 1;
     }
 
-    private long readScanCount() {
-        return Unsafe.getUnsafe().getLongVolatile(null, maxIdMem) + 1;
+    private void incrementActiveReaderCount() {
+        Unsafe.getUnsafe().getAndAddLong(null, activeReaderCountMem, 1);
     }
 
     private boolean updateMax(long txn) {
@@ -256,7 +261,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         long val;
         // Update max reader id seen so far.
         do {
-            val = Unsafe.getUnsafe().getLong(maxIdMem);
-        } while (val < internalId && !Unsafe.getUnsafe().compareAndSwapLong(null, maxIdMem, val, internalId));
+            val = Unsafe.getUnsafe().getLongVolatile(null, maxReaderIdMem);
+        } while (val < internalId && !Unsafe.getUnsafe().compareAndSwapLong(null, maxReaderIdMem, val, internalId));
     }
 }

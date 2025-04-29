@@ -324,7 +324,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     if (lightweightCheckpointSupported) {
                                         long txn = reader.getTxn();
                                         TxnScoreboard scoreboard = engine.getTxnScoreboard(tableToken);
-                                        if (!scoreboard.acquireTxn(TxnScoreboard.CHECKPOINT_ID, txn)) {
+                                        if (!scoreboard.incrementTxn(TxnScoreboard.CHECKPOINT_ID, txn)) {
                                             throw CairoException.nonCritical().put("cannot lock table for checkpoint [table=").put(tableToken).put(']');
                                         }
                                         scoreboardTxns.add(txn);
