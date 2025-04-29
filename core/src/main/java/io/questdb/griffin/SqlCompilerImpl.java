@@ -2015,13 +2015,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executor.execute(executionContext, sqlText);
                 // executor might decide that SQL contains secret, otherwise we're logging it
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy **" : sqlText;
-                QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
+                QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos, false);
             } catch (Throwable e) {
                 // Executor is all-in-one, it parses SQL text and executes it right away. The convention is
                 // that before parsing secrets the executor will notify the execution context. In that, even if
                 // executor fails, the secret SQL text must not be logged
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy** " : sqlText;
-                QueryProgress.logError(e, -1, this.sqlText, executionContext, beginNanos);
+                QueryProgress.logError(e, -1, this.sqlText, executionContext, beginNanos, false);
                 throw e;
             }
         } else {
@@ -2206,7 +2206,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw e;
             }
         } catch (Throwable th) {
-            QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
+            QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos, false);
             throw th;
         }
     }
@@ -2479,7 +2479,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     checkMatViewModification(executionModel);
                     copy(executionContext, (CopyModel) executionModel);
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
                 case ExecutionModel.RENAME_TABLE:
                     sqlId = queryRegistry.register(sqlText, executionContext);
@@ -2504,14 +2504,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
                         compiledQuery.ofUpdate(generateUpdate(updateQueryModel, executionContext, metadata));
                     }
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     // update is delayed until operation execution (for non-wal tables) or pushed to wal job completely
                     break;
                 case ExecutionModel.EXPLAIN:
                     sqlId = queryRegistry.register(sqlText, executionContext);
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     compiledQuery.ofExplain(generateExplain((ExplainModel) executionModel, executionContext));
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
                 default:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
@@ -2529,7 +2529,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         // we use SQL Compiler state (reusing objects) to generate InsertOperation
                         compiledQuery.ofInsert(compileInsert(insertModel, executionContext));
                     }
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
             }
 
@@ -2548,7 +2548,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // unregister query on error
             queryRegistry.unregister(sqlId, executionContext);
 
-            QueryProgress.logError(th, sqlId, sqlText, executionContext, beginNanos);
+            QueryProgress.logError(th, sqlId, sqlText, executionContext, beginNanos, false);
             throw th;
         }
     }
@@ -2939,12 +2939,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(createTableOp.getTableNamePosition(), "materialized view requires a SELECT statement");
                 }
             }
-            QueryProgress.logEnd(sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos);
+            QueryProgress.logEnd(sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos, false);
         } catch (Throwable th) {
             if (th instanceof CairoException) {
                 ((CairoException) th).position(createMatViewOp.getTableNamePosition());
             }
-            QueryProgress.logError(th, sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos);
+            QueryProgress.logError(th, sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos, false);
             throw th;
         } finally {
             queryRegistry.unregister(sqlId, executionContext);
@@ -3110,12 +3110,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
             }
-            QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
+            QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
         } catch (Throwable e) {
             if (e instanceof CairoException) {
                 ((CairoException) e).position(createTableOp.getTableNamePosition());
             }
-            QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
+            QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
             throw e;
         } finally {
             executionContext.setUseSimpleCircuitBreaker(false);
