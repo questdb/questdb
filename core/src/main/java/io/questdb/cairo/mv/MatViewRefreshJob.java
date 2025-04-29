@@ -388,7 +388,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         RecordCursorFactory factory = null;
         RecordToRowCopier copier;
         int intervalStep = intervalIterator.getStep();
-        final long refreshTimestamp = microsecondClock.getTicks();
+        final long refreshStartedTimestamp = microsecondClock.getTicks();
+        state.setLastRefreshStartedTimestamp(refreshStartedTimestamp);
         final TableToken viewTableToken = viewDef.getMatViewToken();
         try {
             factory = state.acquireRecordFactory();
@@ -414,7 +415,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                     .$(", attempt=").$(i)
                                     .$(", error=").$(e.getFlyweightMessage())
                                     .I$();
-                            refreshFailState(state, walWriter, refreshTimestamp, e);
+                            refreshFailState(state, walWriter, microsecondClock.getTicks(), e);
                             return false;
                         }
                     }
@@ -471,8 +472,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             }
 
-            walWriter.commitMatView(baseTableTxn, refreshTimestamp);
-            state.refreshSuccess(factory, copier, walWriter.getMetadata().getMetadataVersion(), refreshTimestamp, refreshTriggeredTimestamp, baseTableTxn);
+            long refreshFinishedTimestamp = microsecondClock.getTicks();
+            walWriter.commitMatView(baseTableTxn, refreshFinishedTimestamp);
+            state.refreshSuccess(factory, copier, walWriter.getMetadata().getMetadataVersion(), refreshFinishedTimestamp, refreshTriggeredTimestamp, baseTableTxn);
             state.setLastRefreshBaseTableTxn(baseTableTxn);
         } catch (Throwable th) {
             Misc.free(factory);
@@ -480,7 +482,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$("could not refresh materialized view [view=").$(viewTableToken)
                     .$(", ex=").$(th)
                     .I$();
-            refreshFailState(state, walWriter, refreshTimestamp, th);
+            refreshFailState(state, walWriter, microsecondClock.getTicks(), th);
             return false;
         }
 
@@ -650,7 +652,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private void refreshFailState(MatViewState state, @Nullable WalWriter walWriter, long refreshTimestamp, CharSequence errorMessage) {
         state.refreshFail(refreshTimestamp, errorMessage);
         if (walWriter != null) {
-            walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), true, errorMessage);
+            walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshFinishedTimestamp(), true, errorMessage);
         }
         // Invalidate dependent views recursively.
         enqueueInvalidateDependentViews(state.getViewDefinition().getMatViewToken(), "base materialized view refresh failed");
@@ -772,12 +774,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         state.markAsValid();
         state.setLastRefreshBaseTableTxn(-1);
         state.setLastRefreshTimestamp(Numbers.LONG_NULL);
-        walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), false, null);
+        walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshFinishedTimestamp(), false, null);
     }
 
     private void setInvalidState(MatViewState state, WalWriter walWriter, CharSequence invalidationReason, long invalidationTimestamp) {
         state.markAsInvalid(invalidationReason);
         state.setLastRefreshTimestamp(invalidationTimestamp);
-        walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), true, invalidationReason);
+        walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshFinishedTimestamp(), true, invalidationReason);
     }
 }
