@@ -97,6 +97,47 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterRefreshLimitInvalidStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h set refresh",
+                    44,
+                    "'limit' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h set refresh;",
+                    44,
+                    "'limit' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h set refresh limit;",
+                    51,
+                    "missing argument, should be <number> <unit> or <number_with_unit>"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h set refresh limit foobar;",
+                    51,
+                    "invalid argument, should be <number> <unit> or <number_with_unit>"
+            );
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t-1\t0\n",
+                    "materialized_views",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testAlterSymbolCapacity() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -298,17 +339,17 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h set ttl",
                     40,
-                    "missing argument, should be TTL <number> <unit> or <number_with_unit>"
+                    "missing argument, should be <number> <unit> or <number_with_unit>"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h set ttl;",
                     41,
-                    "missing argument, should be TTL <number> <unit> or <number_with_unit>"
+                    "missing argument, should be <number> <unit> or <number_with_unit>"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h set ttl foobar",
                     41,
-                    "invalid argument, should be TTL <number> <unit> or <number_with_unit>"
+                    "invalid argument, should be <number> <unit> or <number_with_unit>"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h set ttl 1 hour;",

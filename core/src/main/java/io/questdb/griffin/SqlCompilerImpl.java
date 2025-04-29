@@ -1437,8 +1437,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     );
                     compiledQuery.ofAlter(setTtl.build());
                 } else if (isRefreshKeyword(tok)) {
-//                    expectKeyword(lexer, "limit");
-//                    final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+                    expectKeyword(lexer, "limit");
+                    final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
 //                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtlHoursOrMonths(
 //                            matViewNamePosition,
 //                            matViewToken,
