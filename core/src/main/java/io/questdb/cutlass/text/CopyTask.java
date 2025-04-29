@@ -542,6 +542,9 @@ public class CopyTask {
                     if (metadata.isColumnIndexed(i)) {
                         w.addIndex(metadata.getColumnName(i), metadata.getIndexValueBlockCapacity(i));
                     }
+                    if (metadata.isColumnFiltered(i)) {
+                        w.addFilter(metadata.getColumnName(i), metadata.getFilterCapacity(i));
+                    }
                 }
             }
         }

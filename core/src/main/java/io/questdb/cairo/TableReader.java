@@ -25,6 +25,9 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.filter.NullSkipFilterReader;
+import io.questdb.cairo.filter.SkipFilterReader;
+import io.questdb.cairo.filter.SkipFilterReaderImpl;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -91,6 +94,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<MemoryCMR> parquetPartitions;
     private int partitionCount;
     private long rowCount;
+    private ObjList<SkipFilterReader> skipFilters;
     private TableToken tableToken;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
     private long txColumnVersion;
@@ -224,6 +228,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             goPassive();
             freeSymbolMapReaders();
             freeBitmapIndexCache();
+            freeSkipFilterCache();
             Misc.free(metadata);
             Misc.free(txFile);
             Misc.free(todoMem);
@@ -377,6 +382,34 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txFile.getSeqTxn();
     }
 
+    public SkipFilterReader getSkipFilterReader(int partitionIndex, int columnIndex) {
+        int columnBase = getColumnBase(partitionIndex);
+        return getSkipFilterReader(partitionIndex, columnBase, columnIndex);
+    }
+
+    public SkipFilterReader getSkipFilterReader(int partitionIndex, int columnBase, int columnIndex) {
+        final int index = getPrimaryColumnIndex(columnBase, columnIndex);
+        final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
+        final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
+        final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
+
+        SkipFilterReader reader = skipFilters.getQuick(index);
+
+        if (reader != null) {
+            // make sure to reload the reader
+            final String columnName = metadata.getColumnName(columnIndex);
+            final long columnTop = getColumnTop(columnBase, columnIndex);
+            Path path = pathGenNativePartition(partitionIndex);
+            try {
+                reader.of(configuration, path, columnName, columnNameTxn, columnTop);
+            } finally {
+                path.trimTo(rootLen);
+            }
+            return reader;
+        }
+        return createSkipFilterReaderAt(index, columnBase, columnIndex, columnNameTxn, partitionTxn);
+    }
+
     public SymbolMapReader getSymbolMapReader(int columnIndex) {
         return symbolMapReaders.getQuick(columnIndex);
     }
@@ -442,6 +475,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             freeSymbolMapReaders();
             freeBitmapIndexCache();
+            freeSkipFilterCache();
             freeColumns();
             freeParquetPartitions();
             // Don't forget to copy source metadata upfront - we don't need to deal with metadata transition index.
@@ -685,6 +719,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         partitionCount--;
     }
 
+    private void closeFilterReader(int base, int columnIndex) {
+        int index = getPrimaryColumnIndex(base, columnIndex);
+        Misc.free(skipFilters.getAndSetQuick(index, null));
+    }
+
     private void closeIndexReader(int base, int columnIndex) {
         int index = getPrimaryColumnIndex(base, columnIndex);
         Misc.free(bitmapIndexes.getAndSetQuick(index, null));
@@ -696,6 +735,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         int columnBase = getColumnBase(partitionIndex);
         for (int i = 0; i < columnCount; i++) {
             closeIndexReader(columnBase, i);
+            closeFilterReader(columnBase, i);
         }
     }
 
@@ -715,6 +755,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         Misc.free(columns.get(index));
         Misc.free(columns.get(index + 1));
         closeIndexReader(base, columnIndex);
+        closeFilterReader(base, columnIndex);
     }
 
     private void closePartitionColumns(int columnBase) {
@@ -763,6 +804,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             ObjList<MemoryCMR> toColumns,
             LongList toColumnTops,
             ObjList<BitmapIndexReader> toIndexReaders,
+            ObjList<SkipFilterReader> toFilterReaders,
             int toBase,
             int toColumnIndex
     ) {
@@ -774,6 +816,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         toColumnTops.setQuick(toBase / 2 + toColumnIndex, columnTops.getQuick(fromBase / 2 + fromColumnIndex));
         toIndexReaders.setQuick(toIndex, bitmapIndexes.getAndSetQuick(fromIndex, null));
         toIndexReaders.setQuick(toIndex + 1, bitmapIndexes.getAndSetQuick(fromIndex + 1, null));
+        toFilterReaders.setQuick(toIndex, skipFilters.getAndSetQuick(fromIndex, null));
     }
 
     private TableReaderMetadata copyMeta(TableReaderMetadata srcMeta) {
@@ -837,11 +880,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         final ObjList<MemoryCMR> toColumns = new ObjList<>(capacity + 2);
         final LongList toColumnTops = new LongList(capacity / 2);
         final ObjList<BitmapIndexReader> toIndexReaders = new ObjList<>(capacity);
+        final ObjList<SkipFilterReader> toFilterReaders = new ObjList<>(capacity);
         toColumns.setPos(capacity + 2);
         toColumns.setQuick(0, NullMemoryCMR.INSTANCE);
         toColumns.setQuick(1, NullMemoryCMR.INSTANCE);
         toColumnTops.setPos(capacity / 2);
         toIndexReaders.setPos(capacity + 2);
+        toFilterReaders.setPos(capacity + 2);
         int iterateCount = Math.max(columnCount, this.columnCount);
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
@@ -858,11 +903,11 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                         if (transitionIndex.replaceWithNew(i)) {
                             // new instance
-                            reloadColumnAt(partitionIndex, path, toColumns, toColumnTops, toIndexReaders, toBase, i, partitionRowCount);
+                            reloadColumnAt(partitionIndex, path, toColumns, toColumnTops, toIndexReaders, toFilterReaders, toBase, i, partitionRowCount);
                         } else {
                             final int fromColumnIndex = transitionIndex.getCopyFromIndex(i);
                             assert fromColumnIndex < this.columnCount;
-                            copyColumns(fromBase, fromColumnIndex, toColumns, toColumnTops, toIndexReaders, toBase, i);
+                            copyColumns(fromBase, fromColumnIndex, toColumns, toColumnTops, toIndexReaders, toFilterReaders, toBase, i);
                         }
                     }
                 }
@@ -879,6 +924,35 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.columnTops = toColumnTops;
         this.columnCountShl = columnCountShl;
         this.bitmapIndexes = toIndexReaders;
+        this.skipFilters = toFilterReaders;
+    }
+
+    private SkipFilterReader createSkipFilterReaderAt(int globalIndex, int columnBase, int columnIndex, long columnNameTxn, long txn) {
+        SkipFilterReader reader;
+        if (!metadata.isColumnFiltered(columnIndex)) {
+            throw CairoException.critical(0).put("Not skip filtered: ").put(metadata.getColumnName(columnIndex));
+        }
+
+        MemoryR col = columns.getQuick(globalIndex);
+        if (col instanceof NullMemoryCMR) {
+            reader = new NullSkipFilterReader();
+            skipFilters.setQuick(globalIndex, reader);
+        } else {
+            Path path = pathGenNativePartition(getPartitionIndex(columnBase), txn);
+            try {
+                reader = new SkipFilterReaderImpl(
+                        configuration,
+                        path,
+                        metadata.getColumnName(columnIndex),
+                        columnNameTxn,
+                        getColumnTop(columnBase, columnIndex)
+                );
+                skipFilters.setQuick(globalIndex, reader);
+            } finally {
+                path.trimTo(rootLen);
+            }
+        }
+        return reader;
     }
 
     private void formatErrorPartitionDirName(int partitionIndex, Utf16Sink sink) {
@@ -920,6 +994,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         Misc.freeObjList(parquetPartitions);
     }
 
+    private void freeSkipFilterCache() {
+        Misc.freeObjList(skipFilters);
+    }
+
     private void freeSymbolMapReaders() {
         for (int i = 0, n = symbolMapReaders.size(); i < n; i++) {
             Misc.freeIfCloseable(symbolMapReaders.getQuick(i));
@@ -952,6 +1030,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         columns.setQuick(1, NullMemoryCMR.INSTANCE);
         bitmapIndexes = new ObjList<>(capacity + 2);
         bitmapIndexes.setPos(capacity + 2);
+        skipFilters = new ObjList<>(capacity + 2);
+        skipFilters.setPos(capacity + 2);
 
         openPartitionInfo = initOpenPartitionInfo();
         columnTops = new LongList(capacity / 2);
@@ -983,6 +1063,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int idx = getPrimaryColumnIndex(columnBase, 0);
         columns.insert(idx, columnSlotSize, NullMemoryCMR.INSTANCE);
         bitmapIndexes.insert(idx, columnSlotSize, null);
+        skipFilters.insert(idx, columnSlotSize, null);
         parquetPartitions.insert(partitionIndex, 1, NullMemoryCMR.INSTANCE);
 
         final int topBase = columnBase / 2;
@@ -1146,6 +1227,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         columns,
                         columnTops,
                         bitmapIndexes,
+                        skipFilters,
                         columnBase,
                         i,
                         partitionRowCount
@@ -1409,6 +1491,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             ObjList<MemoryCMR> columns,
             LongList columnTops,
             ObjList<BitmapIndexReader> indexReaders,
+            ObjList<SkipFilterReader> filterReaders,
             int columnBase,
             int columnIndex,
             long partitionRowCount
@@ -1494,6 +1577,16 @@ public class TableReader implements Closeable, SymbolTableSource {
                     Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
                     Misc.free(indexReaders.getAndSetQuick(secondaryIndex, null));
                 }
+
+                if (metadata.isColumnFiltered(columnIndex)) {
+                    SkipFilterReader filterReader = filterReaders.getQuick(primaryIndex);
+                    if (filterReader != null) {
+                        filterReader.of(configuration, path.trimTo(plen), name, columnTxn, columnTop);
+                    }
+                } else {
+                    Misc.free(filterReaders.getAndSetQuick(primaryIndex, null));
+                    Misc.free(filterReaders.getAndSetQuick(secondaryIndex, null));
+                }
             } else {
                 Misc.free(columns.getAndSetQuick(primaryIndex, NullMemoryCMR.INSTANCE));
                 Misc.free(columns.getAndSetQuick(secondaryIndex, NullMemoryCMR.INSTANCE));
@@ -1501,6 +1594,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // these indexes have state and may not be always required
                 Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
                 Misc.free(indexReaders.getAndSetQuick(secondaryIndex, null));
+
+                Misc.free(filterReaders.getAndSetQuick(primaryIndex, null));
+                Misc.free(filterReaders.getAndSetQuick(secondaryIndex, null));
 
                 // Column is not present in the partition. Set column top to be the size of the partition.
                 columnTops.setQuick(columnBase / 2 + columnIndex, partitionRowCount);
@@ -1695,13 +1791,14 @@ public class TableReader implements Closeable, SymbolTableSource {
                                             columns,
                                             columnTops,
                                             bitmapIndexes,
+                                            skipFilters,
                                             base,
                                             i,
                                             partitionRowCount
                                     );
                                 }
                             } else if (copyFrom > -1) {
-                                copyColumns(base, copyFrom, columns, columnTops, bitmapIndexes, base, i);
+                                copyColumns(base, copyFrom, columns, columnTops, bitmapIndexes, skipFilters, base, i);
                             } else if (copyFrom != Integer.MIN_VALUE) {
                                 // new instance
                                 reloadColumnAt(
@@ -1710,6 +1807,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                         columns,
                                         columnTops,
                                         bitmapIndexes,
+                                        skipFilters,
                                         base,
                                         i,
                                         partitionRowCount

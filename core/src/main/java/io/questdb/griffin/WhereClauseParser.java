@@ -535,7 +535,12 @@ public final class WhereClauseParser implements Mutable {
                                     value = testValue;
                                 }
 
-                                model.keyColumn = columnName;
+                                if (m.isColumnFiltered(m.getColumnIndex(columnName))) {
+                                    model.otherKeyColumn = columnName;
+                                    model.otherKeyValueFuncs.add(value);
+                                    return false;
+                                }
+
                                 clearKeys();
                                 clearExcludedKeys();
                                 resetNodes();
@@ -1696,7 +1701,8 @@ public final class WhereClauseParser implements Mutable {
         return !latestByMultiColumn &&
                 (
                         Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)
-                                || (preferredKeyColumn == null && m.isColumnIndexed(m.getColumnIndex(columnName)))
+                                || (preferredKeyColumn == null && m.isColumnIndexed(m.getColumnIndex(columnName))
+                                || (preferredKeyColumn == null) && m.isColumnFiltered(m.getColumnIndex(columnName)))
                 );
     }
 

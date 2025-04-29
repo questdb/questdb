@@ -1125,11 +1125,13 @@ public class SqlParser {
         }
 
         while ((tok = optTok(lexer)) != null && Chars.equals(tok, ',')) {
-            tok = tok(lexer, "'index' or 'cast'");
+            tok = tok(lexer, "'index' or 'filter' or 'cast'");
             if (isIndexKeyword(tok)) {
                 parseCreateTableIndexDef(lexer, isDirectCreate);
             } else if (isCastKeyword(tok)) {
                 parseCreateTableCastDef(lexer);
+            } else if (isFilterKeyword(tok)) {
+                parseCreateTableFilterDef(lexer, isDirectCreate);
             } else {
                 throw errUnexpected(lexer, tok);
             }
@@ -1412,7 +1414,7 @@ public class SqlParser {
                 }
                 tok = parseCreateTableInlineIndexDef(lexer, model);
             } else {
-                tok = null;
+                tok = parseCreateTableInlineFilterDef(lexer, model);
             }
 
             if (tok == null) {
@@ -1441,6 +1443,36 @@ public class SqlParser {
                 throw err(lexer, tok, "',' or ')' expected");
             }
         }
+    }
+
+    private void parseCreateTableFilterDef(GenericLexer lexer, boolean isDirectCreate) throws SqlException {
+        expectTok(lexer, '(');
+        final ExpressionNode columnName = expectLiteral(lexer);
+        final int columnNamePosition = lexer.lastTokenPosition();
+
+        CreateTableColumnModel model = getCreateTableColumnModel(columnName.token);
+        if (model == null) {
+            if (isDirectCreate) {
+                throw SqlException.invalidColumn(columnNamePosition, columnName.token);
+            }
+            model = newCreateTableColumnModel(columnName.token, columnName.position);
+        } else if (model.isFiltered()) {
+            throw SqlException.$(columnNamePosition, "duplicate filter clause");
+        }
+
+        int filterCapacity;
+        if (isCapacityKeyword(tok(lexer, "'capacity'"))) {
+            int errorPosition = lexer.getPosition();
+            filterCapacity = expectInt(lexer);
+//            TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
+            filterCapacity = Numbers.ceilPow2(filterCapacity);
+        } else {
+//            indexValueBlockSize = configuration.getIndexValueBlockSize();
+            filterCapacity = configuration.getFilterCapacity(); // todo: review
+            lexer.unparseLast();
+        }
+        model.setFiltered(true, columnNamePosition, filterCapacity); // todo: add tag size
+        expectTok(lexer, ')');
     }
 
     private void parseCreateTableIndexDef(GenericLexer lexer, boolean isDirectCreate) throws SqlException {
@@ -1477,6 +1509,32 @@ public class SqlParser {
         }
         model.setIndexed(true, columnNamePosition, indexValueBlockSize);
         expectTok(lexer, ')');
+    }
+
+    private CharSequence parseCreateTableInlineFilterDef(GenericLexer lexer, CreateTableColumnModel model) throws SqlException {
+        CharSequence tok = tok(lexer, "')', or 'filter'");
+
+        if (isFieldTerm(tok)) {
+            model.setFiltered(false, -1, configuration.getFilterCapacity()); // todo: review
+            return tok;
+        }
+
+        expectTok(lexer, tok, "filter");
+
+        int filterColumnPosition = lexer.lastTokenPosition();
+
+        if (isFieldTerm(tok = tok(lexer, ") | , expected"))) {
+            model.setFiltered(true, filterColumnPosition, configuration.getFilterCapacity()); // todo: review
+            return tok;
+        }
+
+        expectTok(lexer, tok, "capacity");
+        int errorPosition = lexer.getPosition();
+        int filterCapacity = expectInt(lexer);
+
+//            TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
+        model.setFiltered(true, filterColumnPosition, Numbers.ceilPow2(filterCapacity));
+        return null;
     }
 
     private CharSequence parseCreateTableInlineIndexDef(GenericLexer lexer, CreateTableColumnModel model) throws SqlException {

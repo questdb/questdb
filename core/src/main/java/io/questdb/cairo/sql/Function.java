@@ -130,6 +130,10 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     short getGeoShort(Record rec);
 
+    default long getHash(@Nullable Record record) {
+        throw new UnsupportedOperationException();
+    }
+
     int getIPv4(Record rec);
 
     int getInt(Record rec);

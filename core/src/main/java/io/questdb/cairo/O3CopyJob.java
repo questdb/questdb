@@ -25,11 +25,16 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.filter.SkipFilterWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.tasks.O3CopyTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -84,6 +89,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarSize,
             long dstKFd,
             long dstVFd,
+            long dstFFd,
             long dstIndexOffset,
             long dstIndexAdjust,
             int indexBlockCapacity,
@@ -96,7 +102,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long o3SplitPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         final boolean mixedIOFlag = tableWriter.allowMixedIO();
         LOG.debug().$("o3 copy [blockType=").$(blockType)
@@ -214,6 +222,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstVarSize,
                         dstKFd,
                         dstVFd,
+                        dstFFd,
                         tableWriter
                 );
             }
@@ -242,6 +251,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 dstVarSize,
                 dstKFd,
                 dstVFd,
+                dstFFd,
                 dstIndexOffset,
                 dstIndexAdjust,
                 indexBlockCapacity,
@@ -254,7 +264,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 o3SplitPartitionSize,
                 tableWriter,
                 indexWriter,
-                partitionUpdateSinkAddr
+                partitionUpdateSinkAddr,
+                filterWriter,
+                filterCapacity
         );
     }
 
@@ -297,7 +309,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long dstVarAdjust = task.getDstVarAdjust();
         final long dstVarSize = task.getDstVarSize();
         final long dstKFd = task.getDstKFd();
-        final long dskVFd = task.getDstVFd();
+        final long dstVFd = task.getDstVFd();
+        final long dstFFd = task.getDstFFd();
         final long dstIndexOffset = task.getDstIndexOffset();
         final long dstIndexAdjust = task.getDstIndexAdjust();
         final int indexBlockCapacity = task.getIndexBlockCapacity();
@@ -311,6 +324,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final TableWriter tableWriter = task.getTableWriter();
         final BitmapIndexWriter indexWriter = task.getIndexWriter();
         final long partitionUpdateSinkAddr = task.getPartitionUpdateSinkAddr();
+        final SkipFilterWriter filterWriter = task.getFilterWriter();
+        final int filterCapacity = task.getFilterCapacity();
 
         subSeq.done(cursor);
 
@@ -354,7 +369,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     dstVarAdjust,
                     dstVarSize,
                     dstKFd,
-                    dskVFd,
+                    dstVFd,
+                    dstFFd,
                     dstIndexOffset,
                     dstIndexAdjust,
                     indexBlockCapacity,
@@ -367,7 +383,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     o3SplitPartitionSize,
                     tableWriter,
                     indexWriter,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    filterWriter,
+                    filterCapacity
             );
         } catch (Throwable th) {
             LOG.error().$("o3 copy failed [table=").$(tableWriter.getTableToken())
@@ -579,6 +597,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarSize,
             long dstKFd,
             long dstVFd,
+            long dstFFd,
             long dstIndexOffset,
             long dstIndexAdjust,
             int indexBlockCapacity,
@@ -591,7 +610,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long o3SplitPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         if (partCounter == null || partCounter.decrementAndGet() == 0) {
             final FilesFacade ff = tableWriter.getFilesFacade();
@@ -626,6 +647,41 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         tableWriter,
                         indexWriter,
                         indexBlockCapacity
+                );
+            }
+
+            if (filterCapacity > -1) {
+                updateFilter(
+                        columnCounter,
+                        timestampMergeIndexAddr,
+                        timestampMergeIndexSize,
+                        srcDataFixFd,
+                        srcDataFixAddr,
+                        srcDataFixSize,
+                        srcDataVarFd,
+                        srcDataVarAddr,
+                        srcDataVarSize,
+                        dstFixFd,
+                        dstFixAddr,
+                        // Do not use Math.abs(dstFixSize) here, pass negative values indicating that
+                        // the dstFix memory is not mapped and should not be released in case of exception
+                        dstFixSize,
+                        dstVarFd,
+                        dstVarAddr,
+                        // Do not use Math.abs(dstVarSize) here, pass negative values indicating that
+                        // the dstVar memory is not mapped and should not be released in case of exception
+                        dstVarSize,
+                        dstKFd,
+                        dstVFd,
+                        dstFFd,
+                        dstIndexOffset,
+                        dstIndexAdjust,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter,
+                        filterWriter,
+                        filterCapacity
                 );
             }
 
@@ -752,9 +808,94 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     dstVarSize,
                     0,
                     0,
+                    0,
                     tableWriter
             );
             throw e;
+        }
+    }
+
+    private static void updateFilter(
+            AtomicInteger columnCounter,
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
+            long srcDataFixFd,
+            long srcDataFixAddr,
+            long srcDataFixSize,
+            long srcDataVarFd,
+            long srcDataVarAddr,
+            long srcDataVarSize,
+            long dstFixFd,
+            long dstFixAddr,
+            long dstFixSize,
+            long dstVarFd,
+            long dstVarAddr,
+            long dstVarSize,
+            long dstKFd,
+            long dstVFd,
+            long dstFFd,
+            long dstIndexOffset,
+            long dstIndexAdjust,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            TableWriter tableWriter,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
+    ) {
+        try {
+            long row = dstIndexOffset / Long.BYTES;
+            boolean closed = !filterWriter.isOpen();
+            if (closed) {
+                filterWriter.of(tableWriter.getConfiguration(), dstFFd, row == 0, filterCapacity);
+            }
+            try {
+                updateFilter(dstFixAddr, Math.abs(dstFixSize), filterWriter, row, dstIndexAdjust);
+                // review above settings
+                filterWriter.commit();
+            } finally {
+                if (closed) {
+                    Misc.free(filterWriter);
+                }
+            }
+        } catch (Throwable e) {
+            LOG.error()
+                    .$("filter error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    .$(", e=").$(e)
+                    .I$();
+            tableWriter.o3BumpErrorCount(false);
+            unmapAndCloseAllPartsComplete(
+                    columnCounter,
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
+                    srcDataFixFd,
+                    srcDataFixAddr,
+                    srcDataFixSize,
+                    srcDataVarFd,
+                    srcDataVarAddr,
+                    srcDataVarSize,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    dstFixFd,
+                    dstFixAddr,
+                    dstFixSize,
+                    dstVarFd,
+                    dstVarAddr,
+                    dstVarSize,
+                    dstKFd,
+                    dstVFd,
+                    0,
+                    tableWriter
+            );
+            throw e;
+        }
+    }
+
+    private static void updateFilter(long dstFixAddr, long dstFixSize, SkipFilterWriter w, long row, long rowAdjust) {
+        final long count = dstFixSize / Long.BYTES; // review
+        for (; row < count; row++) {
+            w.insert(Unsafe.getUnsafe().getLong(dstFixAddr + row * Long.BYTES));
         }
     }
 
@@ -825,6 +966,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     dstVarFd,
                     dstVarAddr,
                     dstVarSize,
+                    0,
                     0,
                     0,
                     tableWriter
@@ -1037,6 +1179,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampSize,
             long dstKFd,
             long dstVFd,
+            long dstFFd,
             TableWriter tableWriter
     ) {
         if (partCounter == null || partCounter.decrementAndGet() == 0) {
@@ -1062,6 +1205,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     dstVarSize,
                     dstKFd,
                     dstVFd,
+                    dstFFd,
                     tableWriter
             );
         }
@@ -1089,6 +1233,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarSize,
             long dstKFd,
             long dstVFd,
+            long dstFFd,
             TableWriter tableWriter
     ) {
         try {
@@ -1099,6 +1244,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
             O3Utils.close(ff, dstKFd);
             O3Utils.close(ff, dstVFd);
+            O3Utils.close(ff, dstFFd);
         } finally {
             closeColumnIdle(
                     columnCounter,

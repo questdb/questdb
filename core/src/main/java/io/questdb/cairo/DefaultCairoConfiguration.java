@@ -33,6 +33,7 @@ import io.questdb.Metrics;
 import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
+import io.questdb.cairo.filter.SkipFilterUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
@@ -328,6 +329,26 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public @NotNull FilesFacade getFilesFacade() {
         return FilesFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public int getFilterBucketSize() {
+        return SkipFilterUtils.DEFAULT_BUCKET_SIZE;
+    }
+
+    @Override
+    public int getFilterCapacity() {
+        return SkipFilterUtils.DEFAULT_FILTER_CAPACITY;
+    }
+
+    @Override
+    public int getFilterMaxCuckooKicks() {
+        return SkipFilterUtils.DEFAULT_MAX_CUCKOO_KICKS;
+    }
+
+    @Override
+    public int getFilterTagSize() {
+        return SkipFilterUtils.DEFAULT_TAG_SIZE;
     }
 
     @Override

@@ -39,6 +39,8 @@ public class TableColumnMetadata implements Plannable {
     private String columnName;
     private int columnType;
     private boolean dedupKeyFlag;
+    private int filterCapacity;
+    private boolean filteredFlag;
     private int indexValueBlockCapacity;
     private boolean symbolCacheFlag;
     private boolean symbolIndexFlag;
@@ -59,6 +61,8 @@ public class TableColumnMetadata implements Plannable {
                 false,
                 0,
                 true,
+                0,
+                false,
                 0
         );
         // Do not allow using this constructor for symbol types.
@@ -85,6 +89,8 @@ public class TableColumnMetadata implements Plannable {
                 false,
                 0,
                 true,
+                0,
+                false,
                 0
         );
     }
@@ -110,6 +116,8 @@ public class TableColumnMetadata implements Plannable {
                 dedupKeyFlag,
                 0,
                 true,
+                0,
+                false,
                 0
         );
     }
@@ -125,7 +133,9 @@ public class TableColumnMetadata implements Plannable {
             boolean dedupKeyFlag,
             int replacingIndex,
             boolean symbolCacheFlag,
-            int symbolCapacity
+            int symbolCapacity,
+            boolean filteredFlag,
+            int filterCapacity
     ) {
         this.columnName = columnName;
         this.columnType = columnType;
@@ -138,6 +148,8 @@ public class TableColumnMetadata implements Plannable {
         this.replacingIndex = replacingIndex;
         this.symbolCacheFlag = symbolCacheFlag;
         this.symbolCapacity = symbolCapacity;
+        this.filteredFlag = filteredFlag;
+        this.filterCapacity = filterCapacity;
     }
 
     public String getColumnName() {
@@ -146,6 +158,10 @@ public class TableColumnMetadata implements Plannable {
 
     public int getColumnType() {
         return columnType;
+    }
+
+    public int getFilterCapacity() {
+        return filterCapacity;
     }
 
     public int getIndexValueBlockCapacity() {
@@ -177,6 +193,10 @@ public class TableColumnMetadata implements Plannable {
         return columnType < 0;
     }
 
+    public boolean isFilteredFlag() {
+        return filteredFlag;
+    }
+
     public boolean isSymbolCacheFlag() {
         return symbolCacheFlag;
     }
@@ -199,6 +219,14 @@ public class TableColumnMetadata implements Plannable {
 
     public void setDedupKeyFlag(boolean dedupKeyFlag) {
         this.dedupKeyFlag = dedupKeyFlag;
+    }
+
+    public void setFilterCapacity(int filterCapacity) {
+        this.filterCapacity = filterCapacity;
+    }
+
+    public void setFilterFlag(boolean value) {
+        filteredFlag = value;
     }
 
     public void setIndexValueBlockCapacity(int indexValueBlockCapacity) {

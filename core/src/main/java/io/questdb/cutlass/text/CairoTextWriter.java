@@ -477,6 +477,11 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
+        public int getFilterCapacity(int columnIndex) {
+            return configuration.getFilterCapacity();
+        }
+
+        @Override
         public int getIndexBlockCapacity(int columnIndex) {
             return configuration.getIndexValueBlockSize();
         }
@@ -519,6 +524,11 @@ public class CairoTextWriter implements Closeable, Mutable {
         @Override
         public boolean isDedupKey(int columnIndex) {
             return false;
+        }
+
+        @Override
+        public boolean isFiltered(int columnIndex) {
+            return types.getQuick(columnIndex).isFiltered();
         }
 
         @Override

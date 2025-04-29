@@ -98,6 +98,11 @@ public class TableStructureAdapter implements TableStructure {
     }
 
     @Override
+    public int getFilterCapacity(int columnIndex) {
+        return cairoConfiguration.getFilterCapacity(); // todo revisit
+    }
+
+    @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return 0;
     }
@@ -139,6 +144,11 @@ public class TableStructureAdapter implements TableStructure {
 
     @Override
     public boolean isDedupKey(int columnIndex) {
+        return false;
+    }
+
+    @Override
+    public boolean isFiltered(int columnIndex) {
         return false;
     }
 

@@ -66,6 +66,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private final long batchSize;
     private final LowerCaseCharSequenceIntHashMap colNameToCastClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceIntHashMap colNameToDedupClausePos = new LowerCaseCharSequenceIntHashMap();
+    private final LowerCaseCharSequenceIntHashMap colNameToFilterClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceIntHashMap colNameToIndexClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LongList columnBits = new LongList();
     private final ObjList<String> columnNames = new ObjList<>();
@@ -154,7 +155,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     model.getSymbolCapacity(),
                     model.isIndexed(),
                     model.getIndexValueBlockSize(),
-                    model.isDedupKey()
+                    model.isDedupKey(),
+                    model.getFilteredFlag(),
+                    model.getFilterCapacity()
             );
         }
         // this is a vanilla "create table" with fixed columns and fixed timestamp index
@@ -295,6 +298,13 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
+    public int getFilterCapacity(int columnIndex) {
+//        return getHighAt(columnIndex * 2 + 1);
+        // todo: revisit
+        return 4096;
+    }
+
+    @Override
     public int getIndexBlockCapacity(int index) {
         return getHighAt(index * 2 + 1);
     }
@@ -406,6 +416,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
         colNameToDedupClausePos.clear();
         colNameToIndexClausePos.clear();
+        colNameToFilterClausePos.clear();
         colNameToCastClausePos.clear();
         augmentedColumnMetadata.clear();
         final ObjList<CharSequence> colNames = createColumnModelMap.keys();
@@ -426,6 +437,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             if (model.isCast()) {
                 colNameToCastClausePos.put(columnName, model.getColumnNamePos());
             }
+            if (model.isFiltered()) {
+                colNameToFilterClausePos.put(columnName, model.getFilteredColumnPos());
+            }
             final TableColumnMetadata columnMetadata = new TableColumnMetadata(
                     columnNameStr,
                     model.getColumnType(),
@@ -437,7 +451,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     model.isDedupKey(),
                     -1, // replacingIndex is irrelevant here
                     model.getSymbolCacheFlag(),
-                    symbolCapacity
+                    symbolCapacity,
+                    model.getFilteredFlag(),
+                    model.getFilterCapacity()
             );
             augmentedColumnMetadata.put(columnNameStr, columnMetadata);
         }
@@ -446,6 +462,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public boolean isDedupKey(int index) {
         return (getLowAt(index * 2 + 1) & COLUMN_FLAG_DEDUP_KEY) != 0;
+    }
+
+    @Override
+    public boolean isFiltered(int index) {
+        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_FILTERED) != 0;
     }
 
     @Override
@@ -488,7 +509,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     colMeta.getSymbolCapacity(),
                     colMeta.isSymbolIndexFlag(),
                     colMeta.getIndexValueBlockCapacity(),
-                    colMeta.isDedupKeyFlag()
+                    colMeta.isDedupKeyFlag(),
+                    colMeta.isFilteredFlag(),
+                    colMeta.getFilterCapacity()
             );
             columnNames.add(colMeta.getColumnName());
         }
@@ -576,6 +599,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             boolean symbolIndexed;
             boolean isDedupKey;
             int indexBlockCapacity;
+            boolean filteredFlag;
+            int filterCapacity;
             if (augMeta != null) {
                 final int fromType = metadata.getColumnType(i);
                 columnType = augMeta.getColumnType();
@@ -590,6 +615,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 symbolIndexed = augMeta.isSymbolIndexFlag();
                 isDedupKey = augMeta.isDedupKeyFlag();
                 indexBlockCapacity = augMeta.getIndexValueBlockCapacity();
+                filteredFlag = augMeta.isFilteredFlag();
+                filterCapacity = augMeta.getFilterCapacity();
             } else {
                 columnType = metadata.getColumnType(i);
                 if (ColumnType.isNull(columnType)) {
@@ -602,6 +629,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 symbolIndexed = false;
                 isDedupKey = false;
                 indexBlockCapacity = 0;
+                filteredFlag = false;
+                filterCapacity = 0;
             }
 
             if (!ColumnType.isSymbol(columnType) && symbolIndexed) {
@@ -620,7 +649,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     symbolCapacity,
                     symbolIndexed,
                     indexBlockCapacity,
-                    isDedupKey
+                    isDedupKey,
+                    filteredFlag,
+                    filterCapacity
             );
         }
         if (hasDedup && !isTimestampDeduped) {
@@ -643,14 +674,17 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int symbolCapacity,
             boolean indexFlag,
             int indexBlockCapacity,
-            boolean dedupFlag
+            boolean dedupFlag,
+            boolean filteredFlag,
+            int filterCapacity
     ) {
         int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0)
                 | (indexFlag ? COLUMN_FLAG_INDEXED : 0)
-                | (dedupFlag ? COLUMN_FLAG_DEDUP_KEY : 0);
+                | (dedupFlag ? COLUMN_FLAG_DEDUP_KEY : 0)
+                | (filteredFlag ? COLUMN_FLAG_FILTERED : 0);
         columnBits.add(
                 Numbers.encodeLowHighInts(columnType, symbolCapacity),
-                Numbers.encodeLowHighInts(flags, indexBlockCapacity)
+                Numbers.encodeLowHighInts(flags, filteredFlag ? filterCapacity : indexBlockCapacity)
         );
     }
 

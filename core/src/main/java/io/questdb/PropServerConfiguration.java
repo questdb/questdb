@@ -33,6 +33,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.filter.SkipFilterUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -201,6 +202,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean enableTestFactories;
     private final int fileOperationRetryCount;
     private final FilesFacade filesFacade;
+    private final int filterBucketSize;
+    private final int filterCapacity;
+    private final int filterMaxCuckooKicks;
+    private final int filterTagSize;
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration;
     private final ObjList<String> httpContextPathExec = new ObjList<>();
@@ -1286,6 +1291,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.inactiveWriterTTL = getMillis(properties, env, PropertyKey.CAIRO_INACTIVE_WRITER_TTL, 600_000);
             this.inactiveWalWriterTTL = getMillis(properties, env, PropertyKey.CAIRO_WAL_INACTIVE_WRITER_TTL, 120_000);
             this.indexValueBlockSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_INDEX_VALUE_BLOCK_SIZE, 256));
+            this.filterCapacity = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_FILTER_CAPACITY, SkipFilterUtils.DEFAULT_FILTER_CAPACITY));
+            this.filterTagSize = getIntSize(properties, env, PropertyKey.CAIRO_FILTER_TAG_SIZE, SkipFilterUtils.DEFAULT_TAG_SIZE);
+            this.filterBucketSize = getIntSize(properties, env, PropertyKey.CAIRO_FILTER_BUCKET_SIZE, SkipFilterUtils.DEFAULT_BUCKET_SIZE);
+            this.filterMaxCuckooKicks = getIntSize(properties, env, PropertyKey.CAIRO_FILTER_MAX_CUCKOO_KICKS, SkipFilterUtils.DEFAULT_MAX_CUCKOO_KICKS);
             this.maxSwapFileCount = getInt(properties, env, PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 30);
             this.parallelIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_PARALLEL_INDEX_THRESHOLD, 100000);
             this.readerPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS, 10);
@@ -2773,6 +2782,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull FilesFacade getFilesFacade() {
             return filesFacade;
+        }
+
+        @Override
+        public int getFilterBucketSize() {
+            return filterBucketSize;
+        }
+
+        @Override
+        public int getFilterCapacity() {
+            return filterCapacity;
+        }
+
+        @Override
+        public int getFilterMaxCuckooKicks() {
+            return filterMaxCuckooKicks;
+        }
+
+        @Override
+        public int getFilterTagSize() {
+            return filterTagSize;
         }
 
         @Override

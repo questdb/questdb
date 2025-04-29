@@ -297,6 +297,26 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getFilterBucketSize() {
+        return getDelegate().getFilterBucketSize();
+    }
+
+    @Override
+    public int getFilterCapacity() {
+        return getDelegate().getFilterCapacity();
+    }
+
+    @Override
+    public int getFilterMaxCuckooKicks() {
+        return getDelegate().getFilterMaxCuckooKicks();
+    }
+
+    @Override
+    public int getFilterTagSize() {
+        return getDelegate().getFilterTagSize();
+    }
+
+    @Override
     public long getGroupByAllocatorDefaultChunkSize() {
         return getDelegate().getGroupByAllocatorDefaultChunkSize();
     }

@@ -98,7 +98,7 @@ public class DropIndexOperator {
                     }
 
                     // add to cleanup tasks, the index will be removed in due time
-                    purgingOperator.add(columnIndex, columnName, ColumnType.SYMBOL, true, columnVersion, pTimestamp, pVersion);
+                    purgingOperator.add(columnIndex, columnName, ColumnType.SYMBOL, true, columnVersion, pTimestamp, pVersion, false); // todo: review filter flag
                 }
             }
         } catch (Throwable th) {

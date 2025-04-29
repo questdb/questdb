@@ -56,6 +56,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     private final boolean supportsRandomAccess;
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
     private BwdTableReaderPageFrameCursor bwdPageFrameCursor;
+    //    private SkipFilterRecordCursorImpl skipFilterFrameCursor;
     private TimeFrameRecordCursorImpl timeFrameCursor;
 
     public PageFrameRecordCursorFactory(

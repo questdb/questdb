@@ -149,6 +149,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public int getFilterCapacity(int columnIndex) {
+        return getColumnMetadata(columnIndex).getFilterCapacity();
+    }
+
+    @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
     }
@@ -201,6 +206,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getTtlHoursOrMonths() {
         return ttlHoursOrMonths;
+    }
+
+    @Override
+    public boolean isFiltered(int columnIndex) {
+        return getColumnMetadata(columnIndex).isFilteredFlag();
     }
 
     @Override
@@ -330,7 +340,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                                 denseSymbolIndex,
                                 stableIndex,
                                 TableUtils.isSymbolCached(mem, writerIndex),
-                                TableUtils.getSymbolCapacity(mem, writerIndex)
+                                TableUtils.getSymbolCapacity(mem, writerIndex),
+                                TableUtils.isColumnFiltered(mem, writerIndex),
+                                TableUtils.getFilterCapacity(mem, writerIndex)
                         )
                 );
                 int denseIndex = columnMetadata.size() - 1;
@@ -390,6 +402,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             int indexBlockCapacity = TableUtils.getIndexBlockCapacity(metaMem, writerIndex);
             boolean symbolIsCached = TableUtils.isSymbolCached(metaMem, writerIndex);
             int symbolCapacity = TableUtils.getSymbolCapacity(metaMem, writerIndex);
+            boolean isFiltered = TableUtils.isColumnFiltered(metaMem, writerIndex);
+            int filterCapacity = TableUtils.getFilterCapacity(metaMem, writerIndex);
+
             TableReaderMetadataColumn existing = null;
             String newName;
 
@@ -427,6 +442,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         || existing.isDedupKeyFlag() != isDedupKey
                         || existing.getDenseSymbolIndex() != denseSymbolIndex
                         || existing.getStableIndex() != stableIndex
+                        || existing.isFilteredFlag() != isFiltered
+                        || existing.getFilterCapacity() != filterCapacity
                 ) {
                     // new
                     columnMetadata.setQuick(
@@ -443,7 +460,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                                     denseSymbolIndex,
                                     stableIndex,
                                     symbolIsCached,
-                                    symbolCapacity
+                                    symbolCapacity,
+                                    isFiltered,
+                                    filterCapacity
                             )
                     );
                     if (existing != null) {

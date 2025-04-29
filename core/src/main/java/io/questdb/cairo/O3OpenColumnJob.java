@@ -25,6 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.filter.SkipFilterUtils;
+import io.questdb.cairo.filter.SkipFilterWriter;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -81,7 +83,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long columnNameTxn,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         final long dstLen = srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop;
         if (ColumnType.isVarSize(columnType)) {
@@ -110,7 +114,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataOldPartitionSize,
                     o3SplitPartitionSize,
                     tableWriter,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    filterWriter,
+                    filterCapacity
             );
         } else if (ColumnType.isDesignatedTimestamp(columnType)) {
             appendTimestampColumn(
@@ -134,7 +140,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataOldPartitionSize,
                     o3SplitPartitionSize,
                     tableWriter,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    filterWriter,
+                    filterCapacity
             );
         } else {
             appendFixColumn(
@@ -165,7 +173,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     o3SplitPartitionSize,
                     indexWriter,
                     columnNameTxn,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    filterWriter,
+                    filterCapacity
             );
         }
     }
@@ -518,6 +528,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstDataSize,
                     0,
                     0,
+                    0,
                     tableWriter
             );
             throw e;
@@ -571,6 +582,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstDataAppendOffset2,
                 0,
                 0,
+                0,
                 indexBlockCapacity,
                 srcTimestampFd,
                 srcTimestampAddr,
@@ -581,7 +593,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 tableWriter,
                 null,
                 srcDataTopOffset >> 2,
-                partitionUpdateSinkAddr
+                partitionUpdateSinkAddr,
+                null,
+                0
         );
     }
 
@@ -625,6 +639,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long dstVarSize,
             long dstKFd,
             long dstVFd,
+            long dstFFd,
             long dstIndexOffset,
             long dstIndexAdjust,
             int indexBlockCapacity,
@@ -637,7 +652,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long o3SplitPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         long cursor = tableWriter.getO3CopyPubSeq().next();
         if (cursor > -1) {
@@ -681,6 +698,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstVarSize,
                     dstKFd,
                     dstVFd,
+                    dstFFd,
                     dstIndexOffset,
                     dstIndexAdjust,
                     indexBlockCapacity,
@@ -694,7 +712,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     o3SplitPartitionSize,
                     tableWriter,
                     indexWriter,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    filterWriter,
+                    filterCapacity
             );
         } else {
             publishCopyTaskContended(
@@ -738,6 +758,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstVarSize,
                     dstKFd,
                     dstVFd,
+                    dstFFd,
                     dstIndexOffset,
                     dstIndexAdjust,
                     indexBlockCapacity,
@@ -750,7 +771,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     o3SplitPartitionSize,
                     tableWriter,
                     indexWriter,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    filterWriter,
+                    filterCapacity
             );
         }
     }
@@ -801,6 +824,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long dstDataAppendOffset2,
             long dstKFd,
             long dstVFd,
+            long dstFFd,
             int indexBlockCapacity,
             long srcTimestampFd,
             long srcTimestampAddr,
@@ -811,7 +835,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long dstIndexAdjust,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         final boolean partitionMutates = true;
 
@@ -862,6 +888,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             dstVarSize,
                             dstKFd,
                             dstVFd,
+                            dstFFd,
                             0,
                             dstIndexAdjust,
                             indexBlockCapacity,
@@ -874,7 +901,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             o3SplitPartitionSize,
                             tableWriter,
                             indexWriter,
-                            partitionUpdateSinkAddr
+                            partitionUpdateSinkAddr,
+                            filterWriter,
+                            filterCapacity
                     );
                     break;
                 case O3_BLOCK_DATA:
@@ -919,6 +948,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             dstVarSize,
                             dstKFd,
                             dstVFd,
+                            dstFFd,
                             0,
                             dstIndexAdjust,
                             indexBlockCapacity,
@@ -931,7 +961,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             o3SplitPartitionSize,
                             tableWriter,
                             indexWriter,
-                            partitionUpdateSinkAddr
+                            partitionUpdateSinkAddr,
+                            filterWriter,
+                            filterCapacity
                     );
                     break;
                 default:
@@ -981,6 +1013,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             dstVarSize,
                             dstKFd,
                             dstVFd,
+                            dstFFd,
                             0,
                             dstIndexAdjust,
                             indexBlockCapacity,
@@ -993,7 +1026,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             o3SplitPartitionSize,
                             tableWriter,
                             indexWriter,
-                            partitionUpdateSinkAddr
+                            partitionUpdateSinkAddr,
+                            filterWriter,
+                            filterCapacity
                     );
                     break;
                 case O3_BLOCK_DATA:
@@ -1038,6 +1073,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             dstVarSize,
                             dstKFd,
                             dstVFd,
+                            dstFFd,
                             0,
                             dstIndexAdjust,
                             indexBlockCapacity,
@@ -1050,7 +1086,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             o3SplitPartitionSize,
                             tableWriter,
                             indexWriter,
-                            partitionUpdateSinkAddr
+                            partitionUpdateSinkAddr,
+                            filterWriter,
+                            filterCapacity
                     );
                     break;
                 case O3_BLOCK_MERGE:
@@ -1095,6 +1133,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             dstVarSize,
                             dstKFd,
                             dstVFd,
+                            dstFFd,
                             0,
                             dstIndexAdjust,
                             indexBlockCapacity,
@@ -1107,7 +1146,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             o3SplitPartitionSize,
                             tableWriter,
                             indexWriter,
-                            partitionUpdateSinkAddr
+                            partitionUpdateSinkAddr,
+                            filterWriter,
+                            filterCapacity
                     );
                     break;
                 default:
@@ -1157,6 +1198,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             dstVarSize,
                             dstKFd,
                             dstVFd,
+                            dstFFd,
                             0,
                             dstIndexAdjust,
                             indexBlockCapacity,
@@ -1169,7 +1211,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             o3SplitPartitionSize,
                             tableWriter,
                             indexWriter,
-                            partitionUpdateSinkAddr
+                            partitionUpdateSinkAddr,
+                            filterWriter,
+                            filterCapacity
                     );
                     break;
                 case O3_BLOCK_DATA:
@@ -1214,6 +1258,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             dstVarSize,
                             dstKFd,
                             dstVFd,
+                            dstFFd,
                             0,
                             dstIndexAdjust,
                             indexBlockCapacity,
@@ -1226,7 +1271,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             o3SplitPartitionSize,
                             tableWriter,
                             indexWriter,
-                            partitionUpdateSinkAddr
+                            partitionUpdateSinkAddr,
+                            filterWriter,
+                            filterCapacity
                     );
                     break;
                 default:
@@ -1257,6 +1304,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             dstVarSize,
                             dstKFd,
                             dstVFd,
+                            dstFFd,
                             tableWriter
                     );
                 }
@@ -1289,8 +1337,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
             TableWriter tableWriter,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
+        // todo:
         long dstAuxAddr = 0;
         long dstAuxOffset;
         long dstAuxFileOffset;
@@ -1399,6 +1450,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 0,
                 0,
                 0,
+                0,
                 indexBlockCapacity,
                 srcTimestampFd,
                 srcTimestampAddr,
@@ -1409,7 +1461,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 o3SplitPartitionSize,
                 tableWriter,
                 null,
-                partitionUpdateSinkAddr
+                partitionUpdateSinkAddr,
+                filterWriter,
+                filterCapacity
         );
     }
 
@@ -1458,7 +1512,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn
+            long columnNameTxn,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         final long mergeRowCount;
         if (mergeType == O3_BLOCK_MERGE) {
@@ -1507,7 +1563,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         colTopSinkAddr,
                         columnIndex,
                         columnNameTxn,
-                        partitionUpdateSinkAddr
+                        partitionUpdateSinkAddr,
+                        filterWriter,
+                        filterCapacity
                 );
                 break;
             case OPEN_MID_PARTITION_FOR_MERGE:
@@ -1556,7 +1614,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         oldPartitionTimestamp,
                         columnIndex,
                         columnNameTxn,
-                        partitionUpdateSinkAddr
+                        partitionUpdateSinkAddr,
+                        filterWriter,
+                        filterCapacity
                 );
                 break;
             case OPEN_LAST_PARTITION_FOR_MERGE:
@@ -1603,7 +1663,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         indexWriter,
                         colTopSinkAddr,
                         columnNameTxn,
-                        partitionUpdateSinkAddr
+                        partitionUpdateSinkAddr,
+                        filterWriter,
+                        filterCapacity
                 );
                 break;
             case OPEN_NEW_PARTITION_FOR_APPEND:
@@ -1633,7 +1695,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         tableWriter,
                         indexWriter,
                         columnNameTxn,
-                        partitionUpdateSinkAddr
+                        partitionUpdateSinkAddr,
+                        filterWriter,
+                        filterCapacity
                 );
                 break;
             default:
@@ -1687,6 +1751,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long srcDataNewPartitionSize = task.getSrcDataNewPartitionSize();
         final long srcDataOldPartitionSize = task.getSrcDataOldPartitionSize();
         final long o3SplitPartitionSize = task.getO3SplitPartitionSize();
+        final SkipFilterWriter filterWriter = task.getFilterWriter();
+        final int filterCapacity = task.getFilterCapacity();
 
         subSeq.done(cursor);
 
@@ -1735,7 +1801,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 indexWriter,
                 partitionUpdateSinkAddr,
                 columnIndex,
-                columnNameTxn
+                columnNameTxn,
+                filterWriter,
+                filterCapacity
         );
     }
 
@@ -1767,7 +1835,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long o3SplitPartitionSize,
             BitmapIndexWriter indexWriter,
             long columnNameTxn,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         long dstKFd = 0;
         long dstVFd = 0;
@@ -1867,6 +1937,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 0,
                 dstKFd,
                 dstVFd,
+                0,
                 dstIndexOffset,
                 dstIndexAdjust,
                 indexBlockCapacity,
@@ -1879,7 +1950,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 o3SplitPartitionSize,
                 tableWriter,
                 indexWriter,
-                partitionUpdateSinkAddr
+                partitionUpdateSinkAddr,
+                filterWriter,
+                filterCapacity // review
         );
     }
 
@@ -1911,7 +1984,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long colTopSinkAddr,
             int columnIndex,
             long columnNameTxn,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         long dstFixFd = 0;
         long dstVarFd = 0;
@@ -1995,7 +2070,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataOldPartitionSize,
                     o3SplitPartitionSize,
                     tableWriter,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    filterWriter,
+                    filterCapacity
             );
         } else if (ColumnType.isDesignatedTimestamp(columnType)) {
             appendTimestampColumn(
@@ -2019,7 +2096,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataOldPartitionSize,
                     o3SplitPartitionSize,
                     tableWriter,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    filterWriter,
+                    filterCapacity
             );
         } else {
             try {
@@ -2071,7 +2150,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     o3SplitPartitionSize,
                     indexWriter,
                     columnNameTxn,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    filterWriter,
+                    filterCapacity
             );
         }
     }
@@ -2099,7 +2180,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long columnNameTxn,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         long dstFixFd = 0;
         long dstFixAddr = 0;
@@ -2109,6 +2192,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         long dstVarSize = 0;
         long dstKFd = 0;
         long dstVFd = 0;
+        long dstFFd = 0;
         final FilesFacade ff = tableWriter.getFilesFacade();
 
         try {
@@ -2132,6 +2216,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstVFd = openRW(ff, BitmapIndexUtils.valueFileName(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 }
             }
+            if (filterCapacity > -1) {
+                dstFFd = openRW(ff, SkipFilterUtils.bucketFileName(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+            }
         } catch (Throwable e) {
             LOG.error().$("append new partition error [table=").utf8(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
@@ -2142,6 +2229,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             O3Utils.unmapAndClose(ff1, dstVarFd, dstVarAddr, dstVarSize);
             O3Utils.close(ff1, dstKFd);
             O3Utils.close(ff1, dstVFd);
+            O3Utils.close(ff1, dstFFd);
             if (columnCounter.decrementAndGet() == 0) {
                 tableWriter.o3ClockDownPartitionUpdateCount();
                 tableWriter.o3CountDownDoneLatch();
@@ -2190,6 +2278,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstVarSize,
                 dstKFd,
                 dstVFd,
+                dstFFd,
                 0,
                 0,
                 indexBlockCapacity,
@@ -2202,7 +2291,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 o3SplitPartitionSize,
                 tableWriter,
                 indexWriter,
-                partitionUpdateSinkAddr
+                partitionUpdateSinkAddr,
+                filterWriter,
+                filterCapacity
         );
     }
 
@@ -2227,7 +2318,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
             TableWriter tableWriter,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         long dstFixFd = 0;
         long dstFixAddr;
@@ -2309,6 +2402,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 0,
                 0,
                 0,
+                0,
                 indexBlockCapacity,
                 srcTimestampFd,
                 srcTimestampAddr,
@@ -2319,7 +2413,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 o3SplitPartitionSize,
                 tableWriter,
                 null,
-                partitionUpdateSinkAddr
+                partitionUpdateSinkAddr,
+                filterWriter,
+                filterCapacity
         );
     }
 
@@ -2369,7 +2465,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             BitmapIndexWriter indexWriter,
             long colTopSinkAddr,
             long columnNameTxn,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         int partCount = 0;
         long dstFixAppendOffset1;
@@ -2384,6 +2482,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         long dstFixSize = 0;
         long dstKFd = 0;
         long dstVFd = 0;
+        long dstFFd = 0;
         final long srcFixFd = Math.abs(srcDataFixFd);
         final int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
         final FilesFacade ff = tableWriter.getFilesFacade();
@@ -2471,6 +2570,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstVFd = openRW(ff, BitmapIndexUtils.valueFileName(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             }
 
+            if (filterCapacity > -1) {
+                dstFFd = openRW(ff, SkipFilterUtils.bucketFileName(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+            }
+
             if (prefixType != O3_BLOCK_NONE) {
                 partCount++;
             }
@@ -2548,6 +2651,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 0,
                 dstKFd,
                 dstVFd,
+                dstFFd, // todo
                 indexBlockCapacity,
                 srcTimestampFd,
                 srcTimestampAddr,
@@ -2558,7 +2662,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 tableWriter,
                 indexWriter,
                 dstIndexAdjust,
-                partitionUpdateSinkAddr
+                partitionUpdateSinkAddr,
+                filterWriter,
+                filterCapacity
         );
     }
 
@@ -2605,7 +2711,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             BitmapIndexWriter indexWriter,
             long colTopSinkAddr,
             long columnNameTxn,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
 
         if (ColumnType.isVarSize(columnType)) {
@@ -2697,7 +2805,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     indexWriter,
                     colTopSinkAddr,
                     columnNameTxn,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    filterWriter,
+                    filterCapacity
             );
         }
     }
@@ -2747,7 +2857,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long oldPartitionTimestamp,
             int columnIndex,
             long columnNameTxn,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         final FilesFacade ff = tableWriter.getFilesFacade();
         // not set, we need to check file existence and read
@@ -2910,7 +3022,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     indexWriter,
                     colTopSinkAddr,
                     columnNameTxn,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    filterWriter,
+                    filterCapacity
             );
         }
     }
@@ -2956,6 +3070,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long dstVarSize,
             long dstKFd,
             long dstVFd,
+            long dstFFd,
             long dstIndexOffset,
             long dstIndexAdjust,
             int indexBlockCapacity,
@@ -2968,7 +3083,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long o3SplitPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         while (cursor == -2) {
             cursor = tableWriter.getO3CopyPubSeq().next();
@@ -3015,6 +3132,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstVarSize,
                     dstKFd,
                     dstVFd,
+                    dstFFd,
                     dstIndexOffset,
                     dstIndexAdjust,
                     indexBlockCapacity,
@@ -3027,7 +3145,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     o3SplitPartitionSize,
                     tableWriter,
                     indexWriter,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    filterWriter,
+                    filterCapacity
             );
         } else {
             publishCopyTaskHarmonized(
@@ -3070,6 +3190,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstVarSize,
                     dstKFd,
                     dstVFd,
+                    dstFFd,
                     dstIndexOffset,
                     dstIndexAdjust,
                     indexBlockCapacity,
@@ -3083,7 +3204,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     o3SplitPartitionSize,
                     tableWriter,
                     indexWriter,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    filterWriter,
+                    filterCapacity
             );
         }
     }
@@ -3128,6 +3251,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long dstVarSize,
             long dstKFd,
             long dstVFd,
+            long dstFFd,
             long dstIndexOffset,
             long dstIndexAdjust,
             int indexBlockCapacity,
@@ -3141,7 +3265,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long o3SplitPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         final O3CopyTask task = tableWriter.getO3CopyQueue().get(cursor);
         task.of(
@@ -3184,6 +3310,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstVarSize,
                 dstKFd,
                 dstVFd,
+                dstFFd,
                 dstIndexOffset,
                 dstIndexAdjust,
                 indexBlockCapacity,
@@ -3196,7 +3323,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 o3SplitPartitionSize,
                 tableWriter,
                 indexWriter,
-                partitionUpdateSinkAddr
+                partitionUpdateSinkAddr,
+                filterWriter,
+                filterCapacity
         );
         tableWriter.getO3CopyPubSeq().done(cursor);
     }

@@ -99,7 +99,9 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
                 int writerIndex,
                 boolean isDedupKey,
                 boolean symbolIsCached,
-                int symbolCapacity
+                int symbolCapacity,
+                boolean isFiltered,
+                int filterCapacity
         ) {
             if (columnType > -1L) {
                 add(
@@ -114,7 +116,9 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
                                 isDedupKey,
                                 0,
                                 symbolIsCached,
-                                symbolCapacity
+                                symbolCapacity,
+                                isFiltered,
+                                filterCapacity
                         )
                 );
             }

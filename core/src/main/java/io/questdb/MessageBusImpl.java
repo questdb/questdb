@@ -38,6 +38,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.SPSequence;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.tasks.ColumnFiltererTask;
 import io.questdb.tasks.ColumnIndexerTask;
 import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.tasks.ColumnTask;
@@ -61,6 +62,9 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<ColumnTask> columnTaskQueue;
     private final MCSequence columnTaskSubSeq;
     private final CairoConfiguration configuration;
+    private final MPSequence filtererPubSeq;
+    private final RingQueue<ColumnFiltererTask> filtererQueue;
+    private final MCSequence filtererSubSeq;
     private final MPSequence groupByMergeShardPubSeq;
     private final RingQueue<GroupByMergeShardTask> groupByMergeShardQueue;
     private final MCSequence groupByMergeShardSubSeq;
@@ -114,6 +118,11 @@ public class MessageBusImpl implements MessageBus {
             this.indexerPubSeq = new MPSequence(indexerQueue.getCycle());
             this.indexerSubSeq = new MCSequence(indexerQueue.getCycle());
             indexerPubSeq.then(indexerSubSeq).then(indexerPubSeq);
+
+            this.filtererQueue = new RingQueue<>(ColumnFiltererTask::new, configuration.getColumnIndexerQueueCapacity()); // todo: review setting
+            this.filtererPubSeq = new MPSequence(filtererQueue.getCycle());
+            this.filtererSubSeq = new MCSequence(filtererQueue.getCycle());
+            filtererPubSeq.then(filtererSubSeq.then(filtererPubSeq));
 
             this.vectorAggregateQueue = new RingQueue<>(VectorAggregateTask::new, configuration.getVectorAggregateQueueCapacity());
             this.vectorAggregatePubSeq = new MPSequence(vectorAggregateQueue.getCycle());
@@ -298,6 +307,21 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MPSequence getCopyRequestPubSeq() {
         return textImportRequestPubSeq;
+    }
+
+    @Override
+    public MPSequence getFiltererPubSequence() {
+        return filtererPubSeq;
+    }
+
+    @Override
+    public RingQueue<ColumnFiltererTask> getFiltererQueue() {
+        return filtererQueue;
+    }
+
+    @Override
+    public MCSequence getFiltererSubSequence() {
+        return filtererSubSeq;
     }
 
     @Override

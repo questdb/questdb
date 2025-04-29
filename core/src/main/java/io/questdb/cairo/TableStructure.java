@@ -34,6 +34,8 @@ public interface TableStructure {
 
     int getColumnType(int columnIndex);
 
+    int getFilterCapacity(int columnIndex);
+
     int getIndexBlockCapacity(int columnIndex);
 
     default MatViewDefinition getMatViewDefinition() {
@@ -67,6 +69,8 @@ public interface TableStructure {
     }
 
     boolean isDedupKey(int columnIndex);
+
+    boolean isFiltered(int columnIndex);
 
     boolean isIndexed(int columnIndex);
 

@@ -100,23 +100,23 @@ public final class TableUtils {
     public static final String LEGACY_CHECKPOINT_DIRECTORY = "snapshot";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
-    public static final long META_COLUMN_DATA_SIZE = 32;
+    public static final long META_COLUMN_DATA_SIZE = 36;
     public static final String META_FILE_NAME = "_meta";
     public static final short META_FORMAT_MINOR_VERSION_LATEST = 1;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
-    public static final long META_OFFSET_COUNT = 0;
-    public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
-    public static final long META_OFFSET_METADATA_VERSION = 32; // LONG
-    public static final long META_OFFSET_O3_MAX_LAG = 24; // LONG
+    public static final long META_OFFSET_COUNT = 0; // 0, INT
+    public static final long META_OFFSET_PARTITION_BY = META_OFFSET_COUNT + 4; // 4, INT
+    public static final long META_OFFSET_TIMESTAMP_INDEX = META_OFFSET_PARTITION_BY + 4; // 8, INT
+    public static final long META_OFFSET_VERSION = META_OFFSET_TIMESTAMP_INDEX + 4; // 12, INT
+    public static final long META_OFFSET_TABLE_ID = META_OFFSET_VERSION + 4; // 16, INT
+    public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = META_OFFSET_TABLE_ID + 4; // 20, INT
+    public static final long META_OFFSET_O3_MAX_LAG = META_OFFSET_MAX_UNCOMMITTED_ROWS + 4; // 24, LONG
+    public static final long META_OFFSET_METADATA_VERSION = META_OFFSET_O3_MAX_LAG + 8; // 32, LONG
+    public static final long META_OFFSET_WAL_ENABLED = META_OFFSET_METADATA_VERSION + 8; // 40, BOOLEAN
+    public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT, 41
+    public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT, 45
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
-    public static final long META_OFFSET_PARTITION_BY = 4;
-    public static final long META_OFFSET_TABLE_ID = 16;
-    public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
-    public static final long META_OFFSET_VERSION = 12;
-    public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
-    public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
-    public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     /**
      * TXN file structure
@@ -207,6 +207,7 @@ public final class TableUtils {
     static final int META_FLAG_BIT_INDEXED = 1;
     static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 2;
     static final int META_FLAG_BIT_DEDUP_KEY = META_FLAG_BIT_SYMBOL_CACHE << 1;
+    static final int META_FLAG_BIT_FILTERED = META_FLAG_BIT_DEDUP_KEY << 1;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
@@ -266,6 +267,8 @@ public final class TableUtils {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
+            boolean isFiltered,
+            int filterCapacity,
             LowerCaseCharSequenceIntHashMap columnNameIndexMap,
             ObjList<TableColumnMetadata> columnMetadata
     ) {
@@ -287,7 +290,9 @@ public final class TableUtils {
                         false,
                         existingIndex + 1, // replacing column index by convention can be 0 if not in use
                         symbolCacheFlag,
-                        symbolCapacity
+                        symbolCapacity,
+                        isFiltered,
+                        filterCapacity
                 )
         );
         columnMetadata.getQuick(existingIndex).markDeleted();
@@ -721,6 +726,10 @@ public final class TableUtils {
             throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(columnIndex).put(']');
         }
         return type;
+    }
+
+    public static int getFilterCapacity(MemoryR metaMem, int columnIndex) {
+        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 32);
     }
 
     public static int getInt(MemoryR metaMem, long memSize, long offset) {
@@ -1870,11 +1879,18 @@ public final class TableUtils {
                 flags |= META_FLAG_BIT_DEDUP_KEY;
             }
 
+            if (tableStruct.isFiltered(i)) {
+                flags |= META_FLAG_BIT_FILTERED;
+            }
+
             mem.putLong(flags);
             mem.putInt(tableStruct.getIndexBlockCapacity(i));
             mem.putInt(tableStruct.getSymbolCapacity(i));
+
             // reserved
             mem.skip(12);
+
+            mem.putInt(tableStruct.getFilterCapacity(i));
         }
 
         for (int i = 0; i < count; i++) {
@@ -1980,6 +1996,10 @@ public final class TableUtils {
 
     static boolean isColumnDedupKey(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_DEDUP_KEY) != 0;
+    }
+
+    static boolean isColumnFiltered(MemoryR metaMem, int columnIndex) {
+        return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_FILTERED) != 0;
     }
 
     static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {

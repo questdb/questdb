@@ -49,6 +49,8 @@ public class SequencerMetadataService implements MetadataServiceStub {
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
+            boolean isFiltered,
+            int filterCapacity,
             SecurityContext securityContext
     ) {
         metadata.addColumn(
@@ -58,7 +60,9 @@ public class SequencerMetadataService implements MetadataServiceStub {
                 symbolCacheFlag,
                 isIndexed,
                 indexValueBlockCapacity,
-                isDedupKey
+                isDedupKey,
+                isFiltered,
+                filterCapacity
         );
     }
 
@@ -71,6 +75,8 @@ public class SequencerMetadataService implements MetadataServiceStub {
             boolean isIndexed,
             int indexValueBlockCapacity,
             boolean isSequential,
+            boolean isFiltered,
+            int filterCapacity,
             SecurityContext securityContext
     ) {
         metadata.changeColumnType(
@@ -79,7 +85,9 @@ public class SequencerMetadataService implements MetadataServiceStub {
                 symbolCapacity,
                 symbolCacheFlag,
                 isIndexed,
-                indexValueBlockCapacity
+                indexValueBlockCapacity,
+                isFiltered,
+                filterCapacity
         );
     }
 

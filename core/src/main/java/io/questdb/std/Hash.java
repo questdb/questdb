@@ -74,6 +74,16 @@ public final class Hash {
         return fmix64(k);
     }
 
+    public static long hashLong64B(long h) {
+        // moremur
+        h ^= h >>> 27;
+        h *= 0x3C79AC492BA7B653L;
+        h ^= h >>> 33;
+        h *= 0x1C69B3F74AC4AE35L;
+        h ^= h >>> 27;
+        return h;
+    }
+
     /**
      * Calculates integer hash for the given chunk of native memory using a polynomial hash function.
      * Suitable for potentially large sequences of bytes.

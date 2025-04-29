@@ -35,6 +35,11 @@ import org.jetbrains.annotations.NotNull;
 public interface MetadataServiceStub extends MetadataService {
 
     @Override
+    default void addFilter(@NotNull CharSequence columnName, int filterCapacity) {
+        throw CairoException.critical(0).put("add filter does not update sequencer metadata");
+    }
+
+    @Override
     default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize) {
         throw CairoException.critical(0).put("add index does not update sequencer metadata");
     }
@@ -50,6 +55,11 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default void changeSymbolCapacity(CharSequence columnName, int symbolCapacity, SecurityContext securityContext) {
+        throw CairoException.critical(0).put("change symbol capacity does not update sequencer metadata");
+    }
+
+    @Override
     default boolean convertPartitionNativeToParquet(long partitionTimestamp) {
         throw CairoException.critical(0).put("convert native partition to parquet does not update sequencer metadata");
     }
@@ -57,11 +67,6 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default boolean convertPartitionParquetToNative(long partitionTimestamp) {
         throw CairoException.critical(0).put("convert parquet partition to native does not update sequencer metadata");
-    }
-
-    @Override
-    default void changeSymbolCapacity(CharSequence columnName, int symbolCapacity, SecurityContext securityContext) {
-        throw CairoException.critical(0).put("change symbol capacity does not update sequencer metadata");
     }
 
     @Override

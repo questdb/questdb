@@ -32,10 +32,13 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.Hash;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.Nullable;
 
 public abstract class StrFunction implements ScalarFunction {
     private final Utf8StringSink utf8SinkA = new Utf8StringSink();
@@ -99,6 +102,11 @@ public abstract class StrFunction implements ScalarFunction {
     @Override
     public short getGeoShort(Record rec) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getHash(@Nullable Record record) {
+        return Hash.spread(Chars.hashCode(getStrA(record)));
     }
 
     @Override

@@ -26,6 +26,11 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
+import io.questdb.cairo.filter.ColumnFilterer;
+import io.questdb.cairo.filter.LongColumnFilterer;
+import io.questdb.cairo.filter.SkipFilterUtils;
+import io.questdb.cairo.filter.SkipFilterWriter;
+import io.questdb.cairo.filter.SkipFilterWriterImpl;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
@@ -115,6 +120,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.tasks.ColumnFiltererTask;
 import io.questdb.tasks.ColumnIndexerTask;
 import io.questdb.tasks.ColumnTask;
 import io.questdb.tasks.O3CopyTask;
@@ -134,9 +140,10 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.filter.SkipFilterUtils.bucketFileName;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.tasks.TableWriterTask.*;
@@ -189,12 +196,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final long dataAppendPageSize;
     private final DdlListener ddlListener;
     private final MemoryMAR ddlMem;
+    private final ObjList<ColumnFilterer> denseFilterers;
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final ObjList<MapWriter> denseSymbolMapWriters;
     private final int detachedMkDirMode;
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final int fileOperationRetryCount;
+    private final SOCountDownLatch filterLatch = new SOCountDownLatch();
+    private final LongList filterSequences = new LongList();
+    private final ObjList<ColumnFilterer> filterers;
     private final FrameFactory frameFactory;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
@@ -258,6 +269,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long attachMinTimestamp;
     private TxReader attachTxReader;
     private long avgRecordSize;
+    private boolean avoidFilterOnCommit = false;
     private boolean avoidIndexOnCommit = false;
     private int columnCount;
     private long committedMasterRef;
@@ -266,6 +278,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private String designatedTimestampColumnName;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
+    private int filterCount;
     private int indexCount;
     private int lastErrno;
     private boolean lastOpenPartitionIsReadOnly;
@@ -424,6 +437,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.activeColumns = columns;
             this.symbolMapWriters = new ObjList<>(columnCount);
             this.indexers = new ObjList<>(columnCount);
+            this.filterers = new ObjList<>(columnCount);
+            this.denseFilterers = new ObjList<>(columnCount);
             this.denseSymbolMapWriters = new ObjList<>(metadata.getSymbolMapCount());
             this.nullSetters = new ObjList<>(columnCount);
             this.o3NullSetters1 = new ObjList<>(columnCount);
@@ -512,6 +527,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 0,
                 false,
                 false,
+                false,
+                0,
                 securityContext
         );
     }
@@ -535,6 +552,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexValueBlockCapacity,
                 false,
                 isDedupKey,
+                false,
+                0,
                 null
         );
     }
@@ -578,6 +597,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
+            boolean isFiltered,
+            int filterCapacity,
             SecurityContext securityContext
     ) {
         assert txWriter.getLagRowCount() == 0;
@@ -608,6 +629,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 isIndexed,
                 indexValueBlockCapacity,
                 isDedupKey,
+                isFiltered,
+                filterCapacity,
                 columnNameTxn,
                 -1,
                 metadata
@@ -624,7 +647,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // create column files
         if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
             try {
-                openNewColumnFiles(columnName, columnType, isIndexed, indexValueBlockCapacity);
+                openNewColumnFiles(columnName, columnType, isIndexed, indexValueBlockCapacity, isFiltered, filterCapacity);
             } catch (CairoException e) {
                 runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, e);
             }
@@ -656,6 +679,46 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (Throwable th) {
             throwDistressException(th);
         }
+    }
+
+    @Override
+    public void addFilter(@NotNull CharSequence columnName, int filterCapacity) {
+        checkDistressed();
+
+        final int columnIndex = metadata.getColumnIndexQuiet(columnName);
+
+        if (columnIndex == -1) {
+            throw CairoException.invalidMetadataRecoverable("column does not exist", columnName);
+        }
+
+        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
+
+        commit();
+
+        if (columnMetadata.isFilteredFlag()) {
+            throw CairoException.invalidMetadataRecoverable("column is already filtered", columnName);
+        }
+
+        final int existingType = columnMetadata.getColumnType();
+        LOG.info().$("adding filter to '").utf8(columnName).$("' [").$(ColumnType.nameOf(existingType)).$(", path=").$substr(pathRootSize, path).I$();
+
+        final ColumnFilterer filterer = new LongColumnFilterer(configuration);
+        writeFilter(columnName, filterCapacity, columnIndex, filterer);
+
+        columnMetadata.setFilterFlag(true);
+        columnMetadata.setFilterCapacity(filterCapacity);
+
+        // set index flag in metadata and create new _meta.swp
+        rewriteAndSwapMetadata(metadata);
+        clearTodoAndCommitMeta();
+
+        filterers.extendAndSet(columnIndex, filterer);
+        populateDenseFiltererList();
+
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
+        }
+        LOG.info().$("ADDED filter to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$substr(pathRootSize, path).$();
     }
 
     @Override
@@ -933,6 +996,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isIndexed,
             int indexValueBlockCapacity,
             boolean isSequential,
+            boolean isFiltered,
+            int filterCapacity,
             SecurityContext securityContext
     ) {
         int existingColIndex = metadata.getColumnIndexQuiet(name);
@@ -983,7 +1048,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
             }
             boolean existingIsIndexed = metadata.isColumnIndexed(existingColIndex) && existingType == ColumnType.SYMBOL;
-            convertOperator.convertColumn(columnName, existingColIndex, existingType, existingIsIndexed, columnIndex, newType);
+            boolean existingIsFiltered = metadata.isColumnFiltered(existingColIndex);
+            convertOperator.convertColumn(columnName, existingColIndex, existingType, existingIsIndexed, columnIndex, newType, existingIsFiltered);
 
             // Column converted, add new one to _meta file and remove the existing column
             metadata.removeColumn(existingColIndex);
@@ -1002,6 +1068,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     isIndexed,
                     indexValueBlockCapacity,
                     isDedupKey,
+                    isFiltered,
+                    filterCapacity,
                     columnNameTxn,
                     existingColIndex,
                     metadata
@@ -1027,6 +1095,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 populateDenseIndexerList();
             }
 
+            if (isFiltered) {
+                ColumnFilterer filterer = filterers.get(columnIndex);
+                writeFilter(columnName, filterCapacity, columnIndex, filterer);
+                filterers.extendAndSet(columnIndex, filterer);
+                populateDenseFiltererList();
+            }
+
             clearTodoAndCommitMetaStructureVersion();
         } catch (Throwable th) {
             LOG.critical().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").utf8(columnName)
@@ -1045,10 +1120,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void changeSymbolCapacity(
-            CharSequence colName,
-            int newSymbolCapacity,
-            SecurityContext securityContext
+    public void changeSymbolCapacity(  //todo: update for filters
+                                       CharSequence colName,
+                                       int newSymbolCapacity,
+                                       SecurityContext securityContext
     ) {
         int columnIndex = metadata.getColumnIndexQuiet(colName);
         if (columnIndex < 0) {
@@ -1117,7 +1192,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         metadata.isIndexed(columnIndex),
                         columnName,
                         ColumnType.SYMBOL,
-                        true
+                        true,
+                        metadata.isFiltered(columnIndex)
                 );
                 oldSymbolWriter.rebuildCapacity(
                         configuration,
@@ -1204,6 +1280,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.debug().$("closing last partition [table=").utf8(tableToken.getTableName()).I$();
         closeAppendMemoryTruncate(truncate);
         freeIndexers();
+        freeFilterers();
     }
 
     @Override
@@ -1511,6 +1588,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("copying index files to parquet [path=").$substr(pathRootSize, path).I$();
         copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
 
+
+        LOG.info().$("copying filter files to parquet [path=").$substr(pathRootSize, path).I$();
+        copyPartitionFilterFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
+
+
         final long originalSize = txWriter.getPartitionSize(partitionIndex);
         // used to update txn and bump recordStructureVersion
         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
@@ -1690,6 +1772,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         LOG.info().$("copying index files to native [path=").$substr(pathRootSize, path).I$();
         copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
+
+        LOG.info().$("copying filter files to native [path=").$substr(pathRootSize, path).I$();
+        copyPartitionFilterFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
 
         // used to update txn and bump recordStructureVersion
         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
@@ -2878,6 +2963,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int index = getColumnIndex(name);
         final int type = metadata.getColumnType(index);
         final boolean isIndexed = metadata.isIndexed(index);
+        final boolean isFiltered = metadata.isFiltered(index);
         String columnName = metadata.getColumnName(index);
 
         LOG.info().$("removing [column=").utf8(name).$(", path=").$substr(pathRootSize, path).I$();
@@ -2913,7 +2999,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             // remove column files
-            removeColumnFiles(index, columnName, type, isIndexed);
+            removeColumnFiles(index, columnName, type, isIndexed, isFiltered);
             clearTodoAndCommitMetaStructureVersion();
 
             finishColumnPurge();
@@ -2973,6 +3059,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int index = getColumnIndex(name);
         final int type = metadata.getColumnType(index);
         final boolean isIndexed = metadata.isIndexed(index);
+        final boolean isFiltered = metadata.isFiltered(index);
         String columnName = metadata.getColumnName(index);
 
         LOG.info().$("renaming column '").utf8(columnName).$('[').$(ColumnType.nameOf(type)).$("]' to '").utf8(newName).$("' in ").$substr(pathRootSize, path).$();
@@ -2988,7 +3075,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             clearTodoLog();
 
             // rename column files has to be done after _todo is removed
-            hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type, false);
+            hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type, false, isFiltered);
         } catch (CairoException e) {
             throwDistressException(e);
         }
@@ -3362,6 +3449,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isIndexed,
             int indexValueBlockCapacity,
             boolean isDedupKey,
+            boolean isFiltered,
+            int filterCapacity,
             long columnNameTxn,
             int replaceColumnIndex,
             TableWriterMetadata metadata
@@ -3382,7 +3471,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 symbolCapacity,
                 isDedupKey,
                 replaceColumnIndex,
-                symbolCacheFlag
+                symbolCacheFlag,
+                isFiltered,
+                filterCapacity
         );
 
         rewriteAndSwapMetadata(metadata);
@@ -3408,9 +3499,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // add column objects
-        configureColumn(columnType, isIndexed, columnCount);
+        configureColumn(columnType, isIndexed, isFiltered, columnCount);
         if (isIndexed) {
             populateDenseIndexerList();
+        }
+
+        if (isFiltered) {
+            populateDenseFiltererList();
         }
 
         // increment column count
@@ -3519,6 +3614,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
             updateIndexesParallel(initialTransientRowCount, newTransientRowCount);
+        }
+        if (filterCount > 0) {
+            updateFiltersParallel(initialTransientRowCount, txWriter.getTransientRowCount());
         }
         // set append position on columns so that the files are truncated to the correct size
         // if the partition is closed after the commit.
@@ -3798,6 +3896,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 // check column is / was indexed
+                // todo: review for filter
                 if (ColumnType.isSymbol(tableColType)) {
                     boolean isIndexedNow = metadata.isColumnIndexed(colIdx);
                     boolean wasIndexedAtDetached = attachMetadata.isColumnIndexed(detColIdx);
@@ -4082,6 +4181,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void commit00() {
         updateIndexes();
+        updateFilters();
         syncColumns();
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -4121,7 +4221,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         activeNullSetters = nullSetters;
     }
 
-    private void configureColumn(int type, boolean indexFlag, int index) {
+    private void configureColumn(int type, boolean indexFlag, boolean filterFlag, int index) {
         final MemoryMA dataMem;
         final MemoryMA auxMem;
         final MemoryCARW o3DataMem1;
@@ -4162,6 +4262,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (indexFlag && type > 0) {
             indexers.extendAndSet(index, new SymbolColumnIndexer(configuration));
         }
+
+        if (filterFlag && type > 0) {
+            filterers.extendAndSet(index, new LongColumnFilterer(configuration)); // review
+        }
         rowValueIsNotNull.add(0);
     }
 
@@ -4170,7 +4274,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int dedupColCount = 0;
         for (int i = 0; i < columnCount; i++) {
             int type = metadata.getColumnType(i);
-            configureColumn(type, metadata.isColumnIndexed(i), i);
+            configureColumn(type, metadata.isColumnIndexed(i), metadata.isColumnFiltered(i), i);
 
             if (type > -1) {
                 if (ColumnType.isSymbol(type)) {
@@ -4239,6 +4343,49 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return res;
     }
 
+    private void copyPartitionFilterFiles(long partitionTimestamp, int partitionDirLen, int newPartitionDirLen) {
+        try {
+            final int columnCount = metadata.getColumnCount();
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                final String columnName = metadata.getColumnName(columnIndex);
+                if (metadata.isFiltered(columnIndex)) {
+                    final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+
+                    // no data in partition for this column
+                    if (columnTop == -1) {
+                        continue;
+                    }
+
+                    final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
+
+                    SkipFilterUtils.bucketFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
+                    SkipFilterUtils.bucketFileName(other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
+                    if (ff.copy(path.$(), other.$()) < 0) {
+                        throw CairoException.critical(ff.errno())
+                                .put("could not copy filter bucket file [table=")
+                                .put(tableToken.getTableName())
+                                .put(", column=")
+                                .put(columnName)
+                                .put(']');
+                    }
+                }
+            }
+        } catch (CairoException e) {
+            LOG.error().$("could not copy filter files [table=").utf8(tableToken.getTableName())
+                    .$(", partition=").$ts(partitionTimestamp)
+                    .$(", error=").$(e.getMessage()).I$();
+
+            // rollback
+            if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                LOG.error().$("could not remove partition dir [path=").$(other).I$();
+            }
+            throw e;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+    }
+
     private void copyPartitionIndexFiles(long partitionTimestamp, int partitionDirLen, int newPartitionDirLen) {
         try {
             final int columnCount = metadata.getColumnCount();
@@ -4290,6 +4437,50 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
+        }
+    }
+
+    private void createFilterFiles(CharSequence columnName, long columnNameTxn, int filterCapacity, int plen, boolean force) {
+        try {
+            bucketFileName(path.trimTo(plen), columnName, columnNameTxn);
+
+            if (!force && ff.exists(path.$())) {
+                return;
+            } else {
+                ff.removeQuiet(path.$());
+            }
+
+            // reuse memory column object to create index and close it at the end
+            try {
+                ddlMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
+                ddlMem.truncate();
+                SkipFilterWriterImpl.initBucketMemory(ddlMem, filterCapacity, 8); // todo: tag size
+            } catch (CairoException e) {
+                // looks like we could not create bucket file properly
+                // lets not leave half-baked file sitting around
+                LOG.error()
+                        .$("could not create filter [name=").$(path)
+                        .$(", msg=").$(e.getFlyweightMessage())
+                        .$(", errno=").$(e.getErrno())
+                        .I$();
+                if (!ff.removeQuiet(path.$())) {
+                    LOG.critical()
+                            .$("could not remove '").$(path).$("'. Please remove MANUALLY.")
+                            .$("[errno=").$(ff.errno())
+                            .I$();
+                }
+                throw e;
+            } finally {
+                ddlMem.close(false);
+            }
+            if (!ff.touch(bucketFileName(path.trimTo(plen), columnName, columnNameTxn))) {
+                LOG.error().$("could not create filter [name=").$(path)
+                        .$(", errno=").$(ff.errno())
+                        .I$();
+                throw CairoException.critical(ff.errno()).put("could not create filter [name=").put(path).put(']');
+            }
+        } finally {
+            path.trimTo(plen);
         }
     }
 
@@ -5197,6 +5388,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         freeSymbolMapWriters();
         Misc.freeObjList(indexers);
         denseIndexers.clear();
+        Misc.freeObjList(filterers);
+        denseFilterers.clear();
         Misc.free(txWriter);
         Misc.free(ddlMem);
         Misc.free(other);
@@ -5325,6 +5518,154 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return true;
     }
 
+    private void filterHistoricPartitions(ColumnFilterer filterer, CharSequence columnName, int filterCapacity, int columnIndex) {
+        long ts = txWriter.getMaxTimestamp();
+        if (ts > Numbers.LONG_NULL) {
+            try {
+                // Index last partition separately
+                for (int i = 0, n = txWriter.getPartitionCount() - 1; i < n; i++) {
+                    long timestamp = txWriter.getPartitionTimestampByIndex(i);
+                    path.trimTo(pathSize);
+                    setStateForTimestamp(path, timestamp);
+
+                    if (ff.exists(path.$())) {
+                        final int plen = path.size();
+                        final long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, columnIndex);
+                        if (txWriter.isPartitionParquet(i)) {
+                            filterParquetPartition(filterer, columnName, i, columnIndex, columnNameTxn, filterCapacity, plen, timestamp);
+                        } else if (ff.exists(dFile(path.trimTo(plen), columnName, columnNameTxn))) {
+                            filterNativePartition(filterer, columnName, columnIndex, columnNameTxn, filterCapacity, plen, timestamp);
+                        }
+                    }
+                }
+            } finally {
+                filterer.releaseFilterWriter();
+            }
+        }
+    }
+
+    private void filterLastPartition(ColumnFilterer filterer, CharSequence columnName, long columnNameTxn, int columnIndex, int filterCapacity) {
+        final int plen = path.size();
+
+        createFilterFiles(columnName, columnNameTxn, filterCapacity, plen, true);
+
+        final long lastPartitionTs = txWriter.getLastPartitionTimestamp();
+        final long columnTop = columnVersionWriter.getColumnTopQuick(lastPartitionTs, columnIndex);
+
+        // set indexer up to continue functioning as normal
+        filterer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
+        filterer.refreshSourceAndFilter(0, txWriter.getTransientRowCount());
+    }
+
+    private void filterNativePartition(
+            ColumnFilterer filterer,
+            CharSequence columnName,
+            int columnIndex,
+            long columnNameTxn,
+            int filterCapacity,
+            int plen,
+            long timestamp
+    ) {
+        path.trimTo(plen);
+        LOG.info().$("filtering [path=").$substr(pathRootSize, path).I$();
+
+        createFilterFiles(columnName, columnNameTxn, filterCapacity, plen, true);
+        final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
+        final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
+
+        if (columnTop > -1 && partitionSize > columnTop) {
+            long columnDataFd = openRO(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
+            try {
+                filterer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
+                filterer.filter(ff, columnDataFd, columnTop, partitionSize);
+            } finally {
+                ff.close(columnDataFd);
+            }
+        }
+    }
+
+    private void filterParquetPartition(
+            ColumnFilterer filterer,
+            CharSequence columnName,
+            int partitionIndex,
+            int columnIndex,
+            long columnNameTxn,
+            int filterCapacity,
+            int plen,
+            long timestamp
+    ) {
+        // parquet partition
+        path.trimTo(plen);
+        LOG.info().$("filtering parquet [path=").$substr(pathRootSize, path).I$();
+
+        long parquetAddr = 0;
+        long parquetSize = 0;
+        try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_TABLE_WRITER)) {
+            parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+            parquetAddr = mapRO(ff, path.concat(PARQUET_PARTITION_NAME).$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
+
+            int parquetColumnIndex = -1;
+            for (int idx = 0, cnt = parquetMetadata.columnCount(); idx < cnt; idx++) {
+                if (parquetMetadata.columnId(idx) == columnIndex) {
+                    parquetColumnIndex = idx;
+                    break;
+                }
+            }
+            if (parquetColumnIndex == -1) {
+                path.trimTo(plen);
+                LOG.error().$("could not find column for filtering in parquet, skipping [path=").$substr(pathRootSize, path)
+                        .$(", columnIndex=").$(columnIndex)
+                        .I$();
+                return;
+            }
+
+            createFilterFiles(columnName, columnNameTxn, filterCapacity, plen, true);
+            final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
+            final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
+
+            if (columnTop > -1 && partitionSize > columnTop) {
+                filterer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
+
+                parquetColumnIdsAndTypes.clear();
+                parquetColumnIdsAndTypes.add(parquetColumnIndex);
+                parquetColumnIdsAndTypes.add(metadata.getColumnType(columnIndex));
+
+                long rowCount = 0;
+                final int rowGroupCount = parquetMetadata.rowGroupCount();
+                final SkipFilterWriter filterWriter = filterer.getWriter();
+                for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+                    final int rowGroupSize = parquetMetadata.rowGroupSize(rowGroupIndex);
+                    if (rowCount + rowGroupSize <= columnTop) {
+                        rowCount += rowGroupSize;
+                        continue;
+                    }
+
+                    parquetDecoder.decodeRowGroup(
+                            rowGroupBuffers,
+                            parquetColumnIdsAndTypes,
+                            rowGroupIndex,
+                            (int) Math.max(0, columnTop - rowCount),
+                            rowGroupSize
+                    );
+
+                    long rowId = Math.max(rowCount, columnTop);
+                    final long addr = rowGroupBuffers.getChunkDataPtr(0);
+                    final long size = rowGroupBuffers.getChunkDataSize(0);
+                    for (long p = addr, lim = addr + size; p < lim; p += 8, rowId++) { // todo: assuming longs
+                        filterWriter.insert(Unsafe.getUnsafe().getLong(p));
+                    }
+
+                    rowCount += rowGroupSize;
+                }
+            }
+        } finally {
+            ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            Misc.free(parquetDecoder);
+        }
+    }
+
     private long findMinSplitPartitionTimestamp() {
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
             long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
@@ -5355,6 +5696,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (denseIndexers.size() == 0) {
             populateDenseIndexerList();
         }
+        if (denseFilterers.size() == 0) {
+            populateDenseFiltererList();
+        }
         path.trimTo(pathSize);
         // Alright, we finished updating partitions. Now we need to get this writer instance into
         // a consistent state.
@@ -5362,6 +5706,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // We start with ensuring append memory is in ready-to-use state. When max timestamp changes we need to
         // move append memory to new set of files. Otherwise, we stay on the same set but advance to append position.
         avoidIndexOnCommit = o3ErrorCount.get() == 0;
+        avoidFilterOnCommit = o3ErrorCount.get() == 0;
         if (o3LagRowCount == 0) {
             clearO3();
             LOG.debug().$("lag segment is empty").$();
@@ -5424,6 +5769,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Misc.free(indexers.getAndSetQuick(columnIndex, null));
             populateDenseIndexerList();
         }
+        if (columnIndex < filterers.size()) {
+            Misc.free(filterers.getAndSetQuick(columnIndex, null));
+            populateDenseFiltererList();
+        }
     }
 
     private void freeColumns(boolean truncate) {
@@ -5433,6 +5782,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         Misc.freeObjListAndKeepObjects(o3MemColumns1);
         Misc.freeObjListAndKeepObjects(o3MemColumns2);
+    }
+
+    private void freeFilterers() {
+        if (filterers != null) {
+            // Don't change items of indexers, they are re-used
+            for (int i = 0, n = filterers.size(); i < n; i++) {
+                ColumnFilterer filterer = filterers.getQuick(i);
+                if (filterer != null) {
+                    filterer.releaseFilterWriter();
+                }
+            }
+            denseFilterers.clear();
+        }
     }
 
     private void freeIndexers() {
@@ -5568,7 +5930,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, boolean isIndexed, CharSequence newName, int columnType, boolean symbolCapacityChange) {
+    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, boolean isIndexed, CharSequence newName, int columnType, boolean symbolCapacityChange, boolean isFiltered) {
         try {
             PurgingOperator purgingOperator = getPurgingOperator();
             long newColumnNameTxn = getTxn();
@@ -5579,7 +5941,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
                     long partitionNameTxn = txWriter.getPartitionNameTxn(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                    hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, isIndexed, newName, partitionTimestamp, partitionNameTxn, newColumnNameTxn, columnNameTxn);
+                    hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, isIndexed, newName, partitionTimestamp, partitionNameTxn, newColumnNameTxn, columnNameTxn, isFiltered);
                     if (columnVersionWriter.getRecordIndex(partitionTimestamp, columnIndex) > -1L) {
                         long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
                         columnVersionWriter.upsert(partitionTimestamp, columnIndex, newColumnNameTxn, columnTop);
@@ -5587,7 +5949,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             } else {
                 long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
-                hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, isIndexed, newName, txWriter.getLastPartitionTimestamp(), -1L, newColumnNameTxn, columnNameTxn);
+                hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, isIndexed, newName, txWriter.getLastPartitionTimestamp(), -1L, newColumnNameTxn, columnNameTxn, isFiltered);
                 long columnTop = columnVersionWriter.getColumnTop(txWriter.getLastPartitionTimestamp(), columnIndex);
                 columnVersionWriter.upsert(txWriter.getLastPartitionTimestamp(), columnIndex, newColumnNameTxn, columnTop);
             }
@@ -5612,7 +5974,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.removeQuiet(valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                     throw e;
                 }
-                purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultColumnNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
+                purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultColumnNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L, isFiltered);
             }
             long columnAddedPartition = columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex);
             columnVersionWriter.upsertDefaultTxnName(columnIndex, newColumnNameTxn, columnAddedPartition);
@@ -5622,7 +5984,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, int columnType, boolean isIndexed, CharSequence newName, long partitionTimestamp, long partitionNameTxn, long newColumnNameTxn, long columnNameTxn) {
+    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, int columnType, boolean isIndexed, CharSequence newName, long partitionTimestamp, long partitionNameTxn, long newColumnNameTxn, long columnNameTxn, boolean isFiltered) {
         setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
         setPathForNativePartition(other, partitionBy, partitionTimestamp, partitionNameTxn);
         int plen = path.size();
@@ -5635,7 +5997,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         path.trimTo(pathSize);
         other.trimTo(pathSize);
-        purgingOperator.add(columnIndex, columnName, columnType, isIndexed, columnNameTxn, partitionTimestamp, partitionNameTxn);
+        purgingOperator.add(columnIndex, columnName, columnType, isIndexed, columnNameTxn, partitionTimestamp, partitionNameTxn, isFiltered);
     }
 
     /**
@@ -5822,6 +6184,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long ts = repairDataGaps(timestamp);
         openLastPartitionAndSetAppendPosition(ts);
         populateDenseIndexerList();
+        populateDenseFiltererList();
         if (performRecovery) {
             performRecovery();
         }
@@ -6347,6 +6710,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             copyTask.getSrcTimestampSize(),
                             copyTask.getDstKFd(),
                             copyTask.getDstVFd(),
+                            copyTask.getDstFFd(),
                             this
                     );
                     copySubSeq.done(cursor);
@@ -6508,7 +6872,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagRowCount(), false);
     }
 
-    private void openNewColumnFiles(CharSequence name, int columnType, boolean indexFlag, int indexValueBlockCapacity) {
+    private void openNewColumnFiles(CharSequence name, int columnType, boolean indexFlag, int indexValueBlockCapacity, boolean filterFlag, int filterCapacity) {
         try {
             // open column files
             long partitionTimestamp = txWriter.getLastPartitionTimestamp();
@@ -6525,6 +6889,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 createIndexFiles(name, columnNameTxn, indexValueBlockCapacity, plen, true);
             }
 
+            if (filterFlag) {
+                createFilterFiles(name, columnNameTxn, filterCapacity, plen, true);
+            }
+
             openColumnFiles(name, columnNameTxn, columnIndex, plen);
             if (txWriter.getTransientRowCount() > 0) {
                 // write top offset to column version file
@@ -6535,6 +6903,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ColumnIndexer indexer = indexers.getQuick(columnIndex);
                 assert indexer != null;
                 indexers.getQuick(columnIndex).configureFollowerAndWriter(path.trimTo(plen), name, columnNameTxn, getPrimaryColumn(columnIndex), txWriter.getTransientRowCount());
+            }
+
+            if (filterFlag) {
+                ColumnFilterer filterer = filterers.getQuick(columnIndex);
+                assert filterer != null;
+                filterers.getQuick(columnIndex).configureFollowerAndWriter(path.trimTo(plen), name, columnNameTxn, getPrimaryColumn(columnIndex), txWriter.getTransientRowCount());
             }
 
             // configure append position for variable length columns
@@ -6572,6 +6946,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final CharSequence name = metadata.getColumnName(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(lastOpenPartitionTs, i);
                     final ColumnIndexer indexer = metadata.isColumnIndexed(i) ? indexers.getQuick(i) : null;
+                    final ColumnFilterer filterer = metadata.isColumnFiltered(i) ? filterers.getQuick(i) : null;
 
                     // prepare index writer if column requires indexing
                     if (indexer != null) {
@@ -6580,15 +6955,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         createIndexFiles(name, columnNameTxn, metadata.getIndexValueBlockCapacity(i), plen, txWriter.getTransientRowCount() < 1);
                     }
 
+                    if (filterer != null) {
+                        createFilterFiles(name, columnNameTxn, metadata.getFilterCapacity(i), plen, txWriter.getTransientRowCount() < 1);
+                    }
+
                     openColumnFiles(name, columnNameTxn, i, plen);
 
                     if (indexer != null) {
                         final long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, i);
                         indexer.configureFollowerAndWriter(path, name, columnNameTxn, getPrimaryColumn(i), columnTop);
                     }
+
+                    if (filterer != null) {
+                        final long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, i);
+                        filterer.configureFollowerAndWriter(path, name, columnNameTxn, getPrimaryColumn(i), columnTop);
+                    }
                 }
             }
             populateDenseIndexerList();
+            populateDenseFiltererList();
             LOG.info().$("switched partition [path=").$substr(pathRootSize, path).I$();
         } catch (Throwable e) {
             distressed = true;
@@ -6633,6 +7018,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         rollbackIndexes();
         rollbackSymbolTables(false);
         performRecovery = false;
+    }
+
+    private void populateDenseFiltererList() {
+        denseFilterers.clear();
+        for (int i = 0, n = filterers.size(); i < n; i++) {
+            ColumnFilterer filterer = filterers.getQuick(i);
+            if (filterer != null) {
+                denseFilterers.add(filterer);
+            }
+        }
+        filterCount = denseFilterers.size();
     }
 
     private void populateDenseIndexerList() {
@@ -6859,7 +7255,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         continue;
                     }
                     final O3Basket o3Basket = o3BasketPool.next();
-                    o3Basket.checkCapacity(configuration, columnCount, indexCount);
+                    o3Basket.checkCapacity(configuration, columnCount, indexCount, filterCount);
                     AtomicInteger columnCounter = o3ColumnCounters.next();
 
                     // To collect column top values and partition updates
@@ -6904,7 +7300,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final boolean notTheTimestamp = i != timestampIndex;
                             final CharSequence columnName = metadata.getColumnName(i);
                             final int indexBlockCapacity = metadata.isColumnIndexed(i) ? metadata.getIndexValueBlockCapacity(i) : -1;
+                            final int filterCapacity = metadata.isFiltered(i) ? metadata.getFilterCapacity(i) : -1;
                             final BitmapIndexWriter indexWriter = indexBlockCapacity > -1 ? getBitmapIndexWriter(i) : null;
+                            final SkipFilterWriter filterWriter = filterCapacity > -1 ? getSkipFilterWriter(i) : null;
                             final MemoryR oooMem1 = o3Columns.getQuick(colOffset);
                             final MemoryR oooMem2 = o3Columns.getQuick(colOffset + 1);
                             final MemoryMA mem1 = columns.getQuick(colOffset);
@@ -6952,7 +7350,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         this,
                                         indexWriter,
                                         getColumnNameTxn(partitionTimestamp, i),
-                                        partitionUpdateSinkAddr
+                                        partitionUpdateSinkAddr,
+                                        filterWriter,
+                                        filterCapacity
                                 );
                             } catch (Throwable e) {
                                 if (columnCounter.addAndGet(columnsPublished - columnCount) == 0) {
@@ -7109,6 +7509,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (isLastPartitionClosed()) {
             if (isEmptyTable()) {
                 populateDenseIndexerList();
+                populateDenseFiltererList();
             }
         }
 
@@ -8254,7 +8655,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return o3ColumnOverrides;
     }
 
-    private void removeColumnFiles(int columnIndex, String columnName, int columnType, boolean isIndexed) {
+    private void removeColumnFiles(int columnIndex, String columnName, int columnType, boolean isIndexed, boolean isFiltered) {
         PurgingOperator purgingOperator = getPurgingOperator();
         long defaultNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
         if (PartitionBy.isPartitioned(partitionBy)) {
@@ -8263,14 +8664,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
                     long partitionNameTxn = txWriter.getPartitionNameTxn(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                    purgingOperator.add(columnIndex, columnName, columnType, isIndexed, columnNameTxn, partitionTimestamp, partitionNameTxn);
+                    purgingOperator.add(columnIndex, columnName, columnType, isIndexed, columnNameTxn, partitionTimestamp, partitionNameTxn, isFiltered);
                 }
             }
         } else {
-            purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultNameTxn, txWriter.getLastPartitionTimestamp(), -1);
+            purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultNameTxn, txWriter.getLastPartitionTimestamp(), -1, isFiltered);
         }
         if (ColumnType.isSymbol(columnType)) {
-            purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1);
+            purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1, isFiltered);
         }
     }
 
@@ -8652,6 +9053,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     flags |= META_FLAG_BIT_SYMBOL_CACHE;
                 }
 
+                if (metadata.isFiltered(i)) {
+                    flags |= META_FLAG_BIT_FILTERED;
+                }
+
                 ddlMem.putLong(flags);
 
                 ddlMem.putInt(metadata.getIndexBlockCapacity(i));
@@ -8660,6 +9065,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 int replaceColumnIndex = metadata.getReplacingColumnIndex(i);
                 ddlMem.putInt(replaceColumnIndex > -1 ? replaceColumnIndex + 1 : 0);
                 ddlMem.skip(4);
+                ddlMem.putInt(metadata.getFilterCapacity(i));
             }
 
             long nameOffset = getColumnNameOffset(columnCount);
@@ -9120,6 +9526,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // added so far. Index writers will start point to different
         // files after switch.
         updateIndexes();
+        updateFilters();
         txWriter.switchPartitions(timestamp);
         openPartition(timestamp);
         setAppendPosition(0, false);
@@ -9135,6 +9542,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
                 denseSymbolMapWriters.getQuick(i).sync(async);
+            }
+            for (int i = 0, n = denseFilterers.size(); i < n; i++) {
+                denseFilterers.getQuick(i).sync(async);
             }
         }
     }
@@ -9239,6 +9649,124 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ColumnType.getDriver(columnType).configureAuxMemMA(auxMem);
                 }
             }
+        }
+    }
+
+    private void updateFilters() {
+        if (filterCount == 0 || avoidFilterOnCommit) { // todo: review this flag
+            avoidFilterOnCommit = false;
+            return;
+        }
+        updateFiltersSlow();
+    }
+
+    private void updateFiltersParallel(long lo, long hi) {
+        filterSequences.clear();
+        filterLatch.setCount(filterCount);
+        final int nParallelIndexes = filterCount - 1;
+        final Sequence filterPubSequence = this.messageBus.getFiltererPubSequence();
+        final RingQueue<ColumnFiltererTask> filtererQueue = this.messageBus.getFiltererQueue();
+
+        LOG.info().$("parallel filtering [table=").utf8(tableToken.getTableName())
+                .$(", filterCount=").$(filterCount)
+                .$(", rowCount=").$(hi - lo)
+                .I$();
+        int serialIndexCount = 0;
+
+        // we are going to index last column in this thread while other columns are on the queue
+        OUT:
+        for (int i = 0; i < nParallelIndexes; i++) {
+
+            long cursor = filterPubSequence.next();
+            if (cursor == -1) {
+                // queue is full, process index in the current thread
+                filterAndCountDown(denseFilterers.getQuick(i), lo, hi, filterLatch);
+                serialIndexCount++;
+                continue;
+            }
+
+            if (cursor == -2) {
+                // CAS issue, retry
+                do {
+                    Os.pause();
+                    cursor = filterPubSequence.next();
+                    if (cursor == -1) {
+                        filterAndCountDown(denseFilterers.getQuick(i), lo, hi, filterLatch);
+                        serialIndexCount++;
+                        continue OUT;
+                    }
+                } while (cursor < 0);
+            }
+
+            final ColumnFiltererTask queueItem = filtererQueue.get(cursor);
+            final ColumnFilterer filterer = denseFilterers.getQuick(i);
+            final long sequence = filterer.getSequence();
+            queueItem.filterer = filterer;
+            queueItem.lo = lo;
+            queueItem.hi = hi;
+            queueItem.countDownLatch = indexLatch;
+            queueItem.sequence = sequence;
+            filterSequences.add(sequence);
+            filterPubSequence.done(cursor);
+        }
+
+        // index last column while other columns are brewing on the queue
+        filterAndCountDown(denseFilterers.getQuick(filterCount - 1), lo, hi, filterLatch);
+        serialIndexCount++;
+
+        // At this point we have re-indexed our column and if things are flowing nicely
+        // all other columns should have been done by other threads. Instead of actually
+        // waiting we gracefully check latch count.
+        if (!filterLatch.await(configuration.getWorkStealTimeoutNanos())) {
+            // other columns are still in-flight, we must attempt to steal work from other threads
+            for (int i = 0; i < nParallelIndexes; i++) {
+                ColumnFilterer filterer = denseFilterers.getQuick(i);
+                if (filterer.tryLock(filterSequences.getQuick(i))) {
+                    filterAndCountDown(filterer, lo, hi, filterLatch);
+                    serialIndexCount++;
+                }
+            }
+            // wait for the ones we cannot steal
+            filterLatch.await();
+        }
+
+        // reset lock on completed indexers
+        boolean distressed = false;
+        for (int i = 0; i < filterCount; i++) {
+            ColumnFilterer filterer = denseFilterers.getQuick(i);
+            distressed = distressed | filterer.isDistressed();
+        }
+
+        if (distressed) {
+            throwDistressException(null);
+        }
+
+        LOG.info().$("parallel filtering done [serialCount=").$(serialIndexCount).I$();
+    }
+
+    private void updateFiltersSerially(long lo, long hi) {
+        LOG.debug().$("serial filtering [table=").utf8(tableToken.getTableName())
+                .$(", filterCount=").$(denseFilterers.size())
+                .$(", rowCount=").$(hi - lo)
+                .I$();
+        for (int i = 0, n = filterCount; i < n; i++) {
+            try {
+                denseFilterers.getQuick(i).refreshSourceAndFilter(lo, hi);
+            } catch (CairoException e) {
+                // this is pretty severe, we hit some sort of limit
+                throwDistressException(e);
+            }
+        }
+        LOG.debug().$("serial filtering done [table=").utf8(tableToken.getTableName()).I$();
+    }
+
+    private void updateFiltersSlow() {
+        final long hi = txWriter.getTransientRowCount();
+        final long lo = txWriter.getAppendedPartitionCount() == 1 ? hi - txWriter.getLastTxSize() : 0;
+        if (filterCount > 1 && parallelIndexerEnabled && hi - lo > configuration.getParallelIndexThreshold()) { // todo: review configs
+            updateFiltersParallel(lo, hi);
+        } else {
+            updateFiltersSerially(lo, hi);
         }
     }
 
@@ -9353,11 +9881,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void updateIndexesSlow() {
         final long hi = txWriter.getTransientRowCount();
         final long lo = txWriter.getAppendedPartitionCount() == 1 ? hi - txWriter.getLastTxSize() : 0;
-        if (indexCount > 1 && parallelIndexerEnabled && hi - lo > configuration.getParallelIndexThreshold()) {
-            updateIndexesParallel(lo, hi);
-        } else {
-            updateIndexesSerially(lo, hi);
-        }
+//        if (indexCount > 1 && parallelIndexerEnabled && hi - lo > configuration.getParallelIndexThreshold()) {
+//            updateIndexesParallel(lo, hi);
+//        } else {
+        updateIndexesSerially(lo, hi);
+//        }
     }
 
     private void updateMaxTimestamp(long timestamp) {
@@ -9425,6 +9953,41 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void writeFilter(@NotNull CharSequence columnName, int filterCapacity, int columnIndex, ColumnFilterer filterer) {
+        // create filter
+        final long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
+        try {
+            try {
+                // edge cases here are:
+                // column spans only part of table - e.g. it was added after table was created and populated
+                // column has top value, e.g. does not span entire partition
+                // to this end, we have a super-edge case:
+
+                // This piece of code is unbelievably fragile!
+                if (PartitionBy.isPartitioned(partitionBy)) {
+                    // run indexer for the whole table
+                    filterHistoricPartitions(filterer, columnName, filterCapacity, columnIndex);
+                    long timestamp = txWriter.getLastPartitionTimestamp();
+                    if (timestamp != Numbers.LONG_NULL) {
+                        path.trimTo(pathSize);
+                        setStateForTimestamp(path, timestamp);
+                        // create index in last partition
+                        filterLastPartition(filterer, columnName, columnNameTxn, columnIndex, filterCapacity);
+                    }
+                } else {
+                    setStateForTimestamp(path, 0);
+                    // create index in last partition
+                    filterLastPartition(filterer, columnName, columnNameTxn, columnIndex, filterCapacity);
+                }
+            } finally {
+                path.trimTo(pathSize);
+            }
+        } catch (Throwable th) {
+            Misc.free(filterer);
+            throw th;
+        }
+    }
+
     private void writeIndex(@NotNull CharSequence columnName, int indexValueBlockSize, int columnIndex, SymbolColumnIndexer indexer) {
         // create indexer
         final long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
@@ -9486,6 +10049,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             todoMem.sync(false);
         } catch (CairoException e) {
             runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, e);
+        }
+    }
+
+    static void filterAndCountDown(ColumnFilterer filterer, long lo, long hi, SOCountDownLatch latch) {
+        try {
+            filterer.refreshSourceAndFilter(lo, hi);
+        } catch (CairoException e) {
+            filterer.distress();
+            LOG.critical().$("filter error [fd=").$(filterer.getFd()).$("]{").$((Sinkable) e).$('}').$();
+        } finally {
+            latch.countDown();
         }
     }
 
@@ -9552,6 +10126,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     long getPartitionSizeByRawIndex(int index) {
         return txWriter.getPartitionSizeByRawIndex(index);
+    }
+
+    SkipFilterWriter getSkipFilterWriter(int columnIndex) {
+        return filterers.getQuick(columnIndex).getWriter();
     }
 
     TxReader getTxReader() {

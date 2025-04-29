@@ -26,6 +26,7 @@ package io.questdb.tasks;
 
 import io.questdb.cairo.BitmapIndexWriter;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.filter.SkipFilterWriter;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -33,6 +34,7 @@ public class O3CopyTask {
     private int blockType;
     private AtomicInteger columnCounter;
     private int columnType;
+    private long dstFFd;
     private long dstFixAddr;
     private long dstFixFd;
     private long dstFixFileOffset;
@@ -47,6 +49,8 @@ public class O3CopyTask {
     private long dstVarFd;
     private long dstVarOffset;
     private long dstVarSize;
+    private int filterCapacity;
+    private SkipFilterWriter filterWriter;
     private int indexBlockCapacity;
     private BitmapIndexWriter indexWriter;
     private long o3SplitPartitionSize;
@@ -93,6 +97,10 @@ public class O3CopyTask {
 
     public int getColumnType() {
         return columnType;
+    }
+
+    public long getDstFFd() {
+        return dstFFd;
     }
 
     public long getDstFixAddr() {
@@ -149,6 +157,14 @@ public class O3CopyTask {
 
     public long getDstVarSize() {
         return dstVarSize;
+    }
+
+    public int getFilterCapacity() {
+        return filterCapacity;
+    }
+
+    public SkipFilterWriter getFilterWriter() {
+        return filterWriter;
     }
 
     public int getIndexBlockCapacity() {
@@ -331,6 +347,7 @@ public class O3CopyTask {
             long dstVarSize,
             long dstKFd,
             long dstVFd,
+            long dstFFd,
             long dstIndexOffset,
             long dstIndexAdjust,
             int indexBlockCapacity,
@@ -343,7 +360,9 @@ public class O3CopyTask {
             long o3NewPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         this.columnCounter = columnCounter;
         this.partCounter = partCounter;
@@ -384,6 +403,7 @@ public class O3CopyTask {
         this.dstVarSize = dstVarSize;
         this.dstKFd = dstKFd;
         this.dstVFd = dstVFd;
+        this.dstFFd = dstFFd;
         this.dstIndexOffset = dstIndexOffset;
         this.dstIndexAdjust = dstIndexAdjust;
         this.indexBlockCapacity = indexBlockCapacity;
@@ -397,5 +417,7 @@ public class O3CopyTask {
         this.tableWriter = tableWriter;
         this.indexWriter = indexWriter;
         this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;
+        this.filterWriter = filterWriter;
+        this.filterCapacity = filterCapacity;
     }
 }

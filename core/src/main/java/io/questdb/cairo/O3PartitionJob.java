@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.filter.SkipFilterWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -1591,7 +1592,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn
+            long columnNameTxn,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         while (cursor == -2) {
             cursor = tableWriter.getO3OpenColumnPubSeq().next();
@@ -1644,7 +1647,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     indexWriter,
                     partitionUpdateSinkAddr,
                     columnIndex,
-                    columnNameTxn
+                    columnNameTxn,
+                    filterWriter,
+                    filterCapacity
             );
         } else {
             O3OpenColumnJob.openColumn(
@@ -1692,7 +1697,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     indexWriter,
                     partitionUpdateSinkAddr,
                     columnIndex,
-                    columnNameTxn
+                    columnNameTxn,
+                    filterWriter,
+                    filterCapacity
             );
         }
     }
@@ -1743,7 +1750,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn
+            long columnNameTxn,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         final O3OpenColumnTask openColumnTask = tableWriter.getO3OpenColumnQueue().get(cursor);
         openColumnTask.of(
@@ -1791,7 +1800,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 indexWriter,
                 partitionUpdateSinkAddr,
                 columnIndex,
-                columnNameTxn
+                columnNameTxn,
+                filterWriter,
+                filterCapacity
         );
         tableWriter.getO3OpenColumnPubSeq().done(cursor);
     }
@@ -1974,6 +1985,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final CharSequence columnName = metadata.getColumnName(i);
                 final boolean isIndexed = metadata.isColumnIndexed(i);
                 final int indexBlockCapacity = isIndexed ? metadata.getIndexValueBlockCapacity(i) : -1;
+                final boolean isFiltered = metadata.isColumnFiltered(i);
+                final int filterCapacity = isFiltered ? metadata.getFilterCapacity(i) : -1;
+
                 if (openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND || openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE) {
                     srcDataTop = tableWriter.getColumnTop(i);
                 } else {
@@ -1985,6 +1999,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     indexWriter = o3Basket.nextIndexer();
                 } else {
                     indexWriter = null;
+                }
+
+                final SkipFilterWriter filterWriter;
+                if (isFiltered) {
+                    filterWriter = o3Basket.nextFilterer();
+                } else {
+                    filterWriter = null;
                 }
 
                 try {
@@ -2037,7 +2058,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 indexWriter,
                                 partitionUpdateSinkAddr,
                                 i,
-                                columnNameTxn
+                                columnNameTxn,
+                                filterWriter,
+                                filterCapacity
                         );
                     } else {
                         publishOpenColumnTaskContended(
@@ -2086,7 +2109,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 indexWriter,
                                 partitionUpdateSinkAddr,
                                 i,
-                                columnNameTxn
+                                columnNameTxn,
+                                filterWriter,
+                                filterCapacity
                         );
                     }
                 } catch (Throwable e) {
