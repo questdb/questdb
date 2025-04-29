@@ -64,6 +64,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.CustomisableRunnable;
@@ -113,54 +114,56 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDeferredSymbolInFilter() throws Exception {
-        withPool((engine, compiler, sqlExecutionContext) -> {
-            // JIT compiler doesn't support IN operator for symbols.
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            execute(
-                    compiler,
-                    "create table x as (select rnd_symbol('A','B') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour",
-                    sqlExecutionContext
-            );
+        withPool(
+                (engine, compiler, sqlExecutionContext) -> {
+                    // JIT compiler doesn't support IN operator for symbols.
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    execute(
+                            compiler,
+                            "create table x as (select rnd_symbol('A','B') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour",
+                            sqlExecutionContext
+                    );
 
-            snapshotMemoryUsage();
-            final String sql = "select * from x where s in ('C','D') limit 10";
-            try (final RecordCursorFactory factory = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, factory.getBaseFactory().getClass());
+                    snapshotMemoryUsage();
+                    final String sql = "select * from x where s in ('C','D') limit 10";
+                    try (final RecordCursorFactory factory = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
+                        Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, factory.getBaseFactory().getClass());
 
-                assertCursor(
-                        "s\tt\n",
-                        factory,
-                        true,
-                        false,
-                        false,
-                        sqlExecutionContext
-                );
+                        assertCursor(
+                                "s\tt\n",
+                                factory,
+                                true,
+                                false,
+                                false,
+                                sqlExecutionContext
+                        );
 
-                compiler.compile("insert into x select rnd_symbol('C','D') s, timestamp_sequence(100000000000, 100000) from long_sequence(100)", sqlExecutionContext);
+                        compiler.compile("insert into x select rnd_symbol('C','D') s, timestamp_sequence(100000000000, 100000) from long_sequence(100)", sqlExecutionContext);
 
-                // Verify that all symbol tables (original and views) are refreshed to include the new symbols.
-                assertCursor(
-                        "s\tt\n" +
-                                "C\t1970-01-02T03:46:40.000000Z\n" +
-                                "C\t1970-01-02T03:46:40.100000Z\n" +
-                                "D\t1970-01-02T03:46:40.200000Z\n" +
-                                "C\t1970-01-02T03:46:40.300000Z\n" +
-                                "D\t1970-01-02T03:46:40.400000Z\n" +
-                                "C\t1970-01-02T03:46:40.500000Z\n" +
-                                "D\t1970-01-02T03:46:40.600000Z\n" +
-                                "D\t1970-01-02T03:46:40.700000Z\n" +
-                                "C\t1970-01-02T03:46:40.800000Z\n" +
-                                "D\t1970-01-02T03:46:40.900000Z\n",
-                        factory,
-                        true,
-                        false,
-                        false,
-                        sqlExecutionContext
-                );
-            }
+                        // Verify that all symbol tables (original and views) are refreshed to include the new symbols.
+                        assertCursor(
+                                "s\tt\n" +
+                                        "C\t1970-01-02T03:46:40.000000Z\n" +
+                                        "C\t1970-01-02T03:46:40.100000Z\n" +
+                                        "D\t1970-01-02T03:46:40.200000Z\n" +
+                                        "C\t1970-01-02T03:46:40.300000Z\n" +
+                                        "D\t1970-01-02T03:46:40.400000Z\n" +
+                                        "C\t1970-01-02T03:46:40.500000Z\n" +
+                                        "D\t1970-01-02T03:46:40.600000Z\n" +
+                                        "D\t1970-01-02T03:46:40.700000Z\n" +
+                                        "C\t1970-01-02T03:46:40.800000Z\n" +
+                                        "D\t1970-01-02T03:46:40.900000Z\n",
+                                factory,
+                                true,
+                                false,
+                                false,
+                                sqlExecutionContext
+                        );
+                    }
 
-            resetTaskCapacities();
-        }, new AtomicBooleanCircuitBreaker());
+                    resetTaskCapacities();
+                }, new AtomicBooleanCircuitBreaker()
+        );
     }
 
     @Test
@@ -175,186 +178,204 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFaultToleranceImplicitCastException() throws Exception {
-        withPool0((engine, compiler, sqlExecutionContext) -> {
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            execute(
-                    compiler,
-                    "create table x as (" +
-                            " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
-                            " from long_sequence(4)" +
-                            ") timestamp(t) partition by hour",
-                    sqlExecutionContext
-            );
-            final String sql = "select * from x where a > '2022-03-08T18:03:57.609765Z'";
-            try {
-                try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                    try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        //noinspection StatementWithEmptyBody
-                        while (cursor.hasNext()) {
-                        } // drain cursor until exception
-                        Assert.fail();
+        withPool0(
+                (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    execute(
+                            compiler,
+                            "create table x as (" +
+                                    " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
+                                    " from long_sequence(4)" +
+                                    ") timestamp(t) partition by hour",
+                            sqlExecutionContext
+                    );
+                    final String sql = "select * from x where a > '2022-03-08T18:03:57.609765Z'";
+                    try {
+                        try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                            try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                //noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                } // drain cursor until exception
+                                Assert.fail();
+                            }
+                        }
+                    } catch (Throwable e) {
+                        String stringType = ColumnType.nameOf(ColumnType.STRING);
+                        TestUtils.assertContains(e.getMessage(), "inconvertible value: `2022-03-08T18:03:57.609765Z` [" + stringType + " -> DOUBLE]");
                     }
-                }
-            } catch (Throwable e) {
-                String stringType = ColumnType.nameOf(ColumnType.STRING);
-                TestUtils.assertContains(e.getMessage(), "inconvertible value: `2022-03-08T18:03:57.609765Z` [" + stringType + " -> DOUBLE]");
-            }
-        }, 4, 4);
+                }, 4, 4
+        );
     }
 
     @Test
     public void testFaultToleranceNegativeLimitImplicitCastException() throws Exception {
-        withPool0((engine, compiler, sqlExecutionContext) -> {
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            execute(compiler,
-                    "create table x as (" +
-                            " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
-                            " from long_sequence(4)" +
-                            ") timestamp(t) partition by hour",
-                    sqlExecutionContext
-            );
-            final String sql = "select * from x where a > '2022-03-08T18:03:57.609765Z' limit -1";
-            try {
-                try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                    try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        //noinspection StatementWithEmptyBody
-                        while (cursor.hasNext()) {
-                        } // drain cursor until exception
-                        Assert.fail();
+        withPool0(
+                (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    execute(
+                            compiler,
+                            "create table x as (" +
+                                    " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
+                                    " from long_sequence(4)" +
+                                    ") timestamp(t) partition by hour",
+                            sqlExecutionContext
+                    );
+                    final String sql = "select * from x where a > '2022-03-08T18:03:57.609765Z' limit -1";
+                    try {
+                        try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                            try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                //noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                } // drain cursor until exception
+                                Assert.fail();
+                            }
+                        }
+                    } catch (Throwable e) {
+                        String stringType = ColumnType.nameOf(ColumnType.STRING);
+                        TestUtils.assertContains(e.getMessage(), "inconvertible value: `2022-03-08T18:03:57.609765Z` [" + stringType + " -> DOUBLE]");
                     }
-                }
-            } catch (Throwable e) {
-                String stringType = ColumnType.nameOf(ColumnType.STRING);
-                TestUtils.assertContains(e.getMessage(), "inconvertible value: `2022-03-08T18:03:57.609765Z` [" + stringType + " -> DOUBLE]");
-            }
-        }, 4, 4);
+                }, 4, 4
+        );
     }
 
     @Test
     public void testFaultToleranceNegativeLimitNpe() throws Exception {
-        withPool0((engine, compiler, sqlExecutionContext) -> {
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            execute(compiler,
-                    "create table x as (" +
-                            " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
-                            " from long_sequence(4)" +
-                            ") timestamp(t) partition by hour", sqlExecutionContext);
-            final String sql = "select * from x where npe() limit -1";
-            try {
-                try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                    try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        //noinspection StatementWithEmptyBody
-                        while (cursor.hasNext()) {
-                        } // drain cursor until exception
-                        Assert.fail();
+        withPool0(
+                (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    execute(
+                            compiler,
+                            "create table x as (" +
+                                    " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
+                                    " from long_sequence(4)" +
+                                    ") timestamp(t) partition by hour", sqlExecutionContext
+                    );
+                    final String sql = "select * from x where npe() limit -1";
+                    try {
+                        try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                            try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                //noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                } // drain cursor until exception
+                                Assert.fail();
+                            }
+                        }
+                    } catch (Throwable e) {
+                        TestUtils.assertContains(e.getMessage(), "unexpected filter error");
                     }
-                }
-            } catch (Throwable e) {
-                TestUtils.assertContains(e.getMessage(), "unexpected filter error");
-            }
-        }, 4, 4);
+                }, 4, 4
+        );
     }
 
     @Test
     public void testFaultToleranceNpe() throws Exception {
-        withPool0((engine, compiler, sqlExecutionContext) -> {
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            execute(compiler,
-                    "create table x as (" +
-                            " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
-                            " from long_sequence(4)" +
-                            ") timestamp(t) partition by hour",
-                    sqlExecutionContext
-            );
-            final String sql = "select * from x where npe()";
-            try {
-                try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                    try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        //noinspection StatementWithEmptyBody
-                        while (cursor.hasNext()) {
-                        } // drain cursor until exception
-                        Assert.fail();
+        withPool0(
+                (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    execute(
+                            compiler,
+                            "create table x as (" +
+                                    " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
+                                    " from long_sequence(4)" +
+                                    ") timestamp(t) partition by hour",
+                            sqlExecutionContext
+                    );
+                    final String sql = "select * from x where npe()";
+                    try {
+                        try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                            try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                //noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                } // drain cursor until exception
+                                Assert.fail();
+                            }
+                        }
+                    } catch (Throwable e) {
+                        TestUtils.assertContains(e.getMessage(), "unexpected filter error");
                     }
-                }
-            } catch (Throwable e) {
-                TestUtils.assertContains(e.getMessage(), "unexpected filter error");
-            }
-        }, 4, 4);
+                }, 4, 4
+        );
     }
 
     @Test
     public void testFaultToleranceSampleByFilterNpe() throws Exception {
-        withPool0((engine, compiler, sqlExecutionContext) -> {
-            execute(compiler,
-                    "create table x as (" +
-                            "select timestamp_sequence(0, 100000) timestamp," +
-                            " rnd_symbol('ETH_BTC','BTC_ETH') symbol," +
-                            " rnd_float() price," +
-                            " x row_id" +
-                            " from long_sequence(20000)" +
-                            ") timestamp (timestamp) partition by hour", sqlExecutionContext);
-            final String sql = "select timestamp, count() as trades" +
-                    " from x" +
-                    " where symbol like '%_ETH' and (row_id != 100 or npe())" +
-                    " sample by 1h";
-            try {
-                try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                    try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        //noinspection StatementWithEmptyBody
-                        while (cursor.hasNext()) {
-                        } // drain cursor until exception
-                        Assert.fail();
-                    }
-                }
-            } catch (Throwable e) {
-                TestUtils.assertContains(e.getMessage(), "unexpected filter error");
-            }
-
-            assertSql(
-                    "QUERY PLAN\n" +
-                            "Radix sort light\n" +
-                            "  keys: [timestamp]\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [timestamp]\n" +
-                            "      values: [count(*)]\n" +
-                            "      filter: (symbol ~ .*?.ETH [state-shared] and row_id!=100)\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: x\n",
-                    "explain select timestamp, count() as trades" +
+        withPool0(
+                (engine, compiler, sqlExecutionContext) -> {
+                    execute(
+                            compiler,
+                            "create table x as (" +
+                                    "select timestamp_sequence(0, 100000) timestamp," +
+                                    " rnd_symbol('ETH_BTC','BTC_ETH') symbol," +
+                                    " rnd_float() price," +
+                                    " x row_id" +
+                                    " from long_sequence(20000)" +
+                                    ") timestamp (timestamp) partition by hour", sqlExecutionContext
+                    );
+                    final String sql = "select timestamp, count() as trades" +
                             " from x" +
-                            " where symbol like '%_ETH' and (row_id != 100)" +
-                            " sample by 1h"
-            );
-        }, 4, 4);
+                            " where symbol like '%_ETH' and (row_id != 100 or npe())" +
+                            " sample by 1h";
+                    try {
+                        try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                            try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                //noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                } // drain cursor until exception
+                                Assert.fail();
+                            }
+                        }
+                    } catch (Throwable e) {
+                        TestUtils.assertContains(e.getMessage(), "unexpected filter error");
+                    }
+
+                    assertSql(
+                            "QUERY PLAN\n" +
+                                    "Radix sort light\n" +
+                                    "  keys: [timestamp]\n" +
+                                    "    Async Group By workers: 1\n" +
+                                    "      keys: [timestamp]\n" +
+                                    "      values: [count(*)]\n" +
+                                    "      filter: (symbol ~ .*?.ETH [state-shared] and row_id!=100)\n" +
+                                    "        PageFrame\n" +
+                                    "            Row forward scan\n" +
+                                    "            Frame forward scan on: x\n",
+                            "explain select timestamp, count() as trades" +
+                                    " from x" +
+                                    " where symbol like '%_ETH' and (row_id != 100)" +
+                                    " sample by 1h"
+                    );
+                }, 4, 4
+        );
     }
 
     @Test
     public void testFaultToleranceWrongSharedWorkerConfiguration() throws Exception {
-        withPool0((engine, compiler, sqlExecutionContext) -> {
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            execute(
-                    compiler,
-                    "create table x as (select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 100000) t from long_sequence(20000)) timestamp(t) partition by hour",
-                    sqlExecutionContext
-            );
-            final String sql = "select sum(a) from x where s='a'";
-            try {
-                // !!! test depends on thread scheduling
-                // should return the expected result or fail with a CairoException
-                assertQueryNoLeakCheck(
-                        compiler,
-                        "sum\n3354.3807411307785\n",
-                        sql,
-                        null,
-                        false,
-                        sqlExecutionContext,
-                        true
-                );
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "timeout, query aborted");
-            }
-        }, 4, 1); // sharedWorkerCount < workerCount
+        withPool0(
+                (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    execute(
+                            compiler,
+                            "create table x as (select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 100000) t from long_sequence(20000)) timestamp(t) partition by hour",
+                            sqlExecutionContext
+                    );
+                    final String sql = "select sum(a) from x where s='a'";
+                    try {
+                        // !!! test depends on thread scheduling
+                        // should return the expected result or fail with a CairoException
+                        assertQueryNoLeakCheck(
+                                compiler,
+                                "sum\n3354.3807411307785\n",
+                                sql,
+                                null,
+                                false,
+                                sqlExecutionContext,
+                                true
+                        );
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "timeout, query aborted");
+                    }
+                }, 4, 1
+        ); // sharedWorkerCount < workerCount
     }
 
     @Test
@@ -415,110 +436,114 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLimitBinVariable() throws Exception {
-        withPool((engine, compiler, sqlExecutionContext) -> {
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            execute(
-                    compiler,
-                    "create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour",
-                    sqlExecutionContext
-            );
-            final String sql = "x where a > 0.345747032 and a < 0.34575 limit $1";
-            try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
-            }
+        withPool(
+                (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    execute(
+                            compiler,
+                            "create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour",
+                            sqlExecutionContext
+                    );
+                    final String sql = "x where a > 0.345747032 and a < 0.34575 limit $1";
+                    try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
+                        Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
+                    }
 
-            sqlExecutionContext.getBindVariableService().setLong(0, 3);
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "a\tt\n" +
-                            "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
-                            "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
-                            "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n",
-                    sql,
-                    "t",
-                    true,
-                    sqlExecutionContext,
-                    false
-            );
+                    sqlExecutionContext.getBindVariableService().setLong(0, 3);
+                    assertQueryNoLeakCheck(
+                            compiler,
+                            "a\tt\n" +
+                                    "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
+                                    "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
+                                    "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n",
+                            sql,
+                            "t",
+                            true,
+                            sqlExecutionContext,
+                            false
+                    );
 
-            // greater
-            sqlExecutionContext.getBindVariableService().setLong(0, 5);
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "a\tt\n" +
-                            "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
-                            "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
-                            "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
-                            "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
-                    sql,
-                    "t",
-                    true,
-                    sqlExecutionContext,
-                    false
-            );
+                    // greater
+                    sqlExecutionContext.getBindVariableService().setLong(0, 5);
+                    assertQueryNoLeakCheck(
+                            compiler,
+                            "a\tt\n" +
+                                    "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
+                                    "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
+                                    "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
+                                    "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
+                            sql,
+                            "t",
+                            true,
+                            sqlExecutionContext,
+                            false
+                    );
 
-            // lower
-            sqlExecutionContext.getBindVariableService().setLong(0, 2);
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "a\tt\n" +
-                            "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
-                            "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n",
-                    sql,
-                    "t",
-                    true,
-                    sqlExecutionContext,
-                    false
-            );
+                    // lower
+                    sqlExecutionContext.getBindVariableService().setLong(0, 2);
+                    assertQueryNoLeakCheck(
+                            compiler,
+                            "a\tt\n" +
+                                    "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
+                                    "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n",
+                            sql,
+                            "t",
+                            true,
+                            sqlExecutionContext,
+                            false
+                    );
 
-            // negative
-            sqlExecutionContext.getBindVariableService().setLong(0, -2);
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "a\tt\n" +
-                            "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
-                            "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
-                    sql,
-                    "t",
-                    true,
-                    sqlExecutionContext,
-                    true // cursor for negative limit accumulates row ids, so it supports size
-            );
+                    // negative
+                    sqlExecutionContext.getBindVariableService().setLong(0, -2);
+                    assertQueryNoLeakCheck(
+                            compiler,
+                            "a\tt\n" +
+                                    "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
+                                    "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
+                            sql,
+                            "t",
+                            true,
+                            sqlExecutionContext,
+                            true // cursor for negative limit accumulates row ids, so it supports size
+                    );
 
-            resetTaskCapacities();
-        }, new AtomicBooleanCircuitBreaker());
+                    resetTaskCapacities();
+                }, new AtomicBooleanCircuitBreaker()
+        );
     }
 
     @Test
     public void testNegativeLimit() throws Exception {
-        withPool((engine, compiler, sqlExecutionContext) -> {
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            execute(
-                    compiler,
-                    "create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour",
-                    sqlExecutionContext
-            );
-            final String sql = "x where a > 0.345747032 and a < 0.34575 limit -5";
-            try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
-            }
+        withPool(
+                (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    execute(
+                            compiler,
+                            "create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour",
+                            sqlExecutionContext
+                    );
+                    final String sql = "x where a > 0.345747032 and a < 0.34575 limit -5";
+                    try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
+                        Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
+                    }
 
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "a\tt\n" +
-                            "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
-                            "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
-                            "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
-                            "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
-                    sql,
-                    "t",
-                    true,
-                    sqlExecutionContext,
-                    true
-            );
+                    assertQueryNoLeakCheck(
+                            compiler,
+                            "a\tt\n" +
+                                    "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
+                                    "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
+                                    "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
+                                    "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
+                            sql,
+                            "t",
+                            true,
+                            sqlExecutionContext,
+                            true
+                    );
 
-            resetTaskCapacities();
-        }, new AtomicBooleanCircuitBreaker());
+                    resetTaskCapacities();
+                }, new AtomicBooleanCircuitBreaker()
+        );
     }
 
     @Test
@@ -563,32 +588,34 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         final SqlExecutionCircuitBreakerConfiguration configuration = engine.getConfiguration().getCircuitBreakerConfiguration();
         try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(configuration)) {
             wrapper.init(new AtomicBooleanCircuitBreaker());
-            withPool((engine, compiler, sqlExecutionContext) -> {
-                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-                execute(
-                        compiler,
-                        "create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour",
-                        sqlExecutionContext
-                );
-                final String sql = "x where a > 0.345747032 and a < 0.34575 limit 5";
-                try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                    Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
-                }
+            withPool(
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                        execute(
+                                compiler,
+                                "create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour",
+                                sqlExecutionContext
+                        );
+                        final String sql = "x where a > 0.345747032 and a < 0.34575 limit 5";
+                        try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
+                            Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
+                        }
 
-                assertQueryNoLeakCheck(
-                        compiler,
-                        "a\tt\n" +
-                                "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
-                                "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
-                                "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
-                                "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
-                        sql,
-                        "t",
-                        true,
-                        sqlExecutionContext,
-                        false
-                );
-            }, wrapper);
+                        assertQueryNoLeakCheck(
+                                compiler,
+                                "a\tt\n" +
+                                        "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
+                                        "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
+                                        "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
+                                        "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
+                                sql,
+                                "t",
+                                true,
+                                sqlExecutionContext,
+                                false
+                        );
+                    }, wrapper
+            );
         }
     }
 
@@ -597,49 +624,53 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         final SqlExecutionCircuitBreakerConfiguration configuration = engine.getConfiguration().getCircuitBreakerConfiguration();
         try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(configuration)) {
             wrapper.init(new NetworkSqlExecutionCircuitBreaker(configuration, MemoryTag.NATIVE_CB2));
-            withPool((engine, compiler, sqlExecutionContext) -> {
-                execute(
-                        compiler,
-                        "create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour",
-                        sqlExecutionContext
-                );
-                final String sql = "select sum(a) from (x where a > 0.345747032 and a < 0.34575 limit 5)";
+            withPool(
+                    (engine, compiler, sqlExecutionContext) -> {
+                        execute(
+                                compiler,
+                                "create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour",
+                                sqlExecutionContext
+                        );
+                        final String sql = "select sum(a) from (x where a > 0.345747032 and a < 0.34575 limit 5)";
 
-                assertQueryNoLeakCheck(
-                        compiler,
-                        "sum\n" +
-                                "1.382992963766362\n",
-                        sql,
-                        null,
-                        false,
-                        sqlExecutionContext,
-                        true
-                );
-            }, wrapper);
+                        assertQueryNoLeakCheck(
+                                compiler,
+                                "sum\n" +
+                                        "1.382992963766362\n",
+                                sql,
+                                null,
+                                false,
+                                sqlExecutionContext,
+                                true
+                        );
+                    }, wrapper
+            );
         }
     }
 
     @Test
     public void testPreTouchDisabled() throws Exception {
-        withPool((engine, compiler, sqlExecutionContext) -> {
-            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, false);
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        withPool(
+                (engine, compiler, sqlExecutionContext) -> {
+                    node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, false);
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
 
-            execute("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(100000)) timestamp(t) partition by hour", sqlExecutionContext);
-            final String sql = "select 'foobar' as c1, t as c2, a as c3, sqrt(a) as c4 from x where a > 0.345747032 and a < 0.34585 limit 5";
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    sql,
-                    sink,
-                    "c1\tc2\tc3\tc4\n" +
-                            "foobar\t1970-01-01T00:29:28.300000Z\t0.3458428093770707\t0.5880840155769163\n" +
-                            "foobar\t1970-01-01T00:34:42.600000Z\t0.3457731257014821\t0.5880247662313911\n" +
-                            "foobar\t1970-01-01T00:42:39.700000Z\t0.3457641654104435\t0.5880171472078374\n" +
-                            "foobar\t1970-01-01T00:52:14.800000Z\t0.345765350101064\t0.5880181545675813\n" +
-                            "foobar\t1970-01-01T00:58:31.000000Z\t0.34580598176419974\t0.5880527032198728\n"
-            );
-        }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2));
+                    execute("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(100000)) timestamp(t) partition by hour", sqlExecutionContext);
+                    final String sql = "select 'foobar' as c1, t as c2, a as c3, sqrt(a) as c4 from x where a > 0.345747032 and a < 0.34585 limit 5";
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            sql,
+                            sink,
+                            "c1\tc2\tc3\tc4\n" +
+                                    "foobar\t1970-01-01T00:29:28.300000Z\t0.3458428093770707\t0.5880840155769163\n" +
+                                    "foobar\t1970-01-01T00:34:42.600000Z\t0.3457731257014821\t0.5880247662313911\n" +
+                                    "foobar\t1970-01-01T00:42:39.700000Z\t0.3457641654104435\t0.5880171472078374\n" +
+                                    "foobar\t1970-01-01T00:52:14.800000Z\t0.345765350101064\t0.5880181545675813\n" +
+                                    "foobar\t1970-01-01T00:58:31.000000Z\t0.34580598176419974\t0.5880527032198728\n"
+                    );
+                }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
+        );
     }
 
     @Test
@@ -656,45 +687,47 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolRegexBindVariableFilter() throws Exception {
-        withPool((engine, compiler, sqlExecutionContext) -> {
-            // JIT compiler doesn't support ~ operator for symbols.
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            execute(
-                    compiler,
-                    "create table x as (select rnd_symbol('A','B','C') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour",
-                    sqlExecutionContext
-            );
+        withPool(
+                (engine, compiler, sqlExecutionContext) -> {
+                    // JIT compiler doesn't support ~ operator for symbols.
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    execute(
+                            compiler,
+                            "create table x as (select rnd_symbol('A','B','C') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour",
+                            sqlExecutionContext
+                    );
 
-            final String sql = "select * from x where s ~ $1 limit 10";
-            try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
-            }
+                    final String sql = "select * from x where s ~ $1 limit 10";
+                    try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
+                        Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
+                    }
 
-            bindVariableService.clear();
-            bindVariableService.setStr(0, "C");
+                    bindVariableService.clear();
+                    bindVariableService.setStr(0, "C");
 
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "s\tt\n" +
-                            "C\t1970-01-01T00:00:20.300000Z\n" +
-                            "C\t1970-01-01T00:00:20.400000Z\n" +
-                            "C\t1970-01-01T00:00:20.500000Z\n" +
-                            "C\t1970-01-01T00:00:20.600000Z\n" +
-                            "C\t1970-01-01T00:00:21.100000Z\n" +
-                            "C\t1970-01-01T00:00:22.300000Z\n" +
-                            "C\t1970-01-01T00:00:22.600000Z\n" +
-                            "C\t1970-01-01T00:00:23.000000Z\n" +
-                            "C\t1970-01-01T00:00:23.200000Z\n" +
-                            "C\t1970-01-01T00:00:23.300000Z\n",
-                    sql,
-                    "t",
-                    true,
-                    sqlExecutionContext,
-                    false
-            );
+                    assertQueryNoLeakCheck(
+                            compiler,
+                            "s\tt\n" +
+                                    "C\t1970-01-01T00:00:20.300000Z\n" +
+                                    "C\t1970-01-01T00:00:20.400000Z\n" +
+                                    "C\t1970-01-01T00:00:20.500000Z\n" +
+                                    "C\t1970-01-01T00:00:20.600000Z\n" +
+                                    "C\t1970-01-01T00:00:21.100000Z\n" +
+                                    "C\t1970-01-01T00:00:22.300000Z\n" +
+                                    "C\t1970-01-01T00:00:22.600000Z\n" +
+                                    "C\t1970-01-01T00:00:23.000000Z\n" +
+                                    "C\t1970-01-01T00:00:23.200000Z\n" +
+                                    "C\t1970-01-01T00:00:23.300000Z\n",
+                            sql,
+                            "t",
+                            true,
+                            sqlExecutionContext,
+                            false
+                    );
 
-            resetTaskCapacities();
-        }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2));
+                    resetTaskCapacities();
+                }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
+        );
     }
 
     private static Class<?> getClass(SqlExecutionCircuitBreaker circuitBreaker) {
@@ -824,32 +857,34 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     private void testNoLimit(boolean parallelFilterEnabled, int jitMode, Class<?> expectedFactoryClass) throws Exception {
         sqlExecutionContext.setParallelFilterEnabled(parallelFilterEnabled);
         try {
-            withPool((engine, compiler, sqlExecutionContext) -> {
-                sqlExecutionContext.setJitMode(jitMode);
-                execute(
-                        compiler,
-                        "create table x as (select x, rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour",
-                        sqlExecutionContext
-                );
-                final String sql = "x where a > 0.345747032 and a < 0.34575";
-                try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                    Assert.assertEquals(expectedFactoryClass, f.getBaseFactory().getClass());
-                }
+            withPool(
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(jitMode);
+                        execute(
+                                compiler,
+                                "create table x as (select x, rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour",
+                                sqlExecutionContext
+                        );
+                        final String sql = "x where a > 0.345747032 and a < 0.34575";
+                        try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
+                            Assert.assertEquals(expectedFactoryClass, f.getBaseFactory().getClass());
+                        }
 
-                assertQueryNoLeakCheck(
-                        compiler,
-                        "x\ta\tt\n" +
-                                "541806\t0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
-                                "944577\t0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
-                                "1162067\t0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
-                                "1602980\t0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
-                        sql,
-                        "t",
-                        true,
-                        sqlExecutionContext,
-                        false
-                );
-            }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2));
+                        assertQueryNoLeakCheck(
+                                compiler,
+                                "x\ta\tt\n" +
+                                        "541806\t0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
+                                        "944577\t0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
+                                        "1162067\t0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
+                                        "1602980\t0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
+                                sql,
+                                "t",
+                                true,
+                                sqlExecutionContext,
+                                false
+                        );
+                    }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
+            );
         } finally {
             sqlExecutionContext.setParallelFilterEnabled(true);
         }
@@ -892,7 +927,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     private void testSymbolEqualsBindVariableFilter(int jitMode, Class<?> expectedFactoryClass) throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(jitMode);
-            execute(compiler,
+            execute(
+                    compiler,
                     "create table x as (select rnd_symbol('A','B','C') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour",
                     sqlExecutionContext
             );
@@ -952,17 +988,19 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     if (run) {
                         try {
                             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                                runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {
-                                    @Override
-                                    public Rnd getRandom() {
-                                        return rnd;
-                                    }
+                                runnable.run(
+                                        engine, compiler, new DelegatingSqlExecutionContext() {
+                                            @Override
+                                            public Rnd getRandom() {
+                                                return rnd;
+                                            }
 
-                                    @Override
-                                    public int getWorkerCount() {
-                                        return sharedPoolWorkerCount;
-                                    }
-                                });
+                                            @Override
+                                            public int getWorkerCount() {
+                                                return sharedPoolWorkerCount;
+                                            }
+                                        }
+                                );
                             }
                         } catch (Throwable e) {
                             e.printStackTrace(System.out);
@@ -1011,22 +1049,24 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
             try {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {
-                        @Override
-                        public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
-                            return circuitBreaker;
-                        }
+                    runnable.run(
+                            engine, compiler, new DelegatingSqlExecutionContext() {
+                                @Override
+                                public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+                                    return circuitBreaker;
+                                }
 
-                        @Override
-                        public int getSharedWorkerCount() {
-                            return sharedWorkerCount;
-                        }
+                                @Override
+                                public int getSharedWorkerCount() {
+                                    return sharedWorkerCount;
+                                }
 
-                        @Override
-                        public int getWorkerCount() {
-                            return workerCount;
-                        }
-                    });
+                                @Override
+                                public int getWorkerCount() {
+                                    return workerCount;
+                                }
+                            }
+                    );
                 }
 
                 for (int i = 0, n = pageFrameReduceJobs.size(); i < n; i++) {
@@ -1285,6 +1325,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void storeTelemetry(short event, short origin) {
             sqlExecutionContext.storeTelemetry(event, origin);
+        }
+
+        @Override
+        public void toSink(@NotNull CharSink<?> sink) {
+            sqlExecutionContext.toSink(sink);
         }
     }
 }

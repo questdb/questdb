@@ -118,8 +118,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             }
             log.$(" [id=").$(sqlId)
                     .$(", sql=`").utf8(sqlText).$('`')
-                    .$(", principal=").$(principal)
-                    .$(", cache=").$(executionContext.isCacheHit())
+                    .$(", ")
+                    .$(executionContext)
                     .$(", jit=").$(isJit)
                     .$(", time=").$(durationNanos);
 
@@ -188,8 +188,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
                 log.$(" [id=").$(sqlId)
                         .$(", sql=`").utf8(sqlText).$('`')
-                        .$(", principal=").$(principal)
-                        .$(", cache=").$(cacheHit)
+                        .$(", ")
+                        .$(executionContext)
                         .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
                         .$(", time=").$(durationNanos)
                         .$(", msg=").$(message)
@@ -199,8 +199,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 // This is unknown exception, can be OOM that can cause exception in logging.
                 log.$(" [id=").$(sqlId)
                         .$(", sql=`").utf8(sqlText).$('`')
-                        .$(", principal=").$(principal)
-                        .$(", cache=").$(cacheHit)
+                        .$(", ")
+                        .$(executionContext)
                         .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
                         .$(", time=").$(durationNanos)
                         .$(", exception=").$(e);
@@ -229,8 +229,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                     .$("exe")
                     .$(" [id=").$(sqlId)
                     .$(", sql=`").utf8(sqlText).$('`')
-                    .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
-                    .$(", cache=").$(executionContext.isCacheHit())
+                    .$(", ")
+                    .$(executionContext)
                     .$(", jit=").$(jit)
                     .I$();
         }
