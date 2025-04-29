@@ -47,9 +47,9 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     // Record structure
     // 8 bytes - active reader count
     // 8 bytes - max txn
-    // 8 bytes - max id
-    // 8 bytes - slot for CHECKPOINT lock
-    // N * 8 bytes - slots for every TableReader
+    // 8 bytes - max reader id
+    // 8 bytes - slot for CHECKPOINT txn
+    // N * 8 bytes - slots for every TableReader txn
     private long mem;
 
     private TableToken tableToken;
@@ -216,11 +216,15 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     public long releaseTxn(int id, long txn) {
         long internalId = toInternalId(id);
         assert internalId < entryScanCount;
-        long lockedTxn = Unsafe.getUnsafe().getLongVolatile(null, entriesMem + internalId * Long.BYTES);
-        assert lockedTxn == txn : "Invalid release, expected " + txn + " but got " + lockedTxn;
 
-        Unsafe.getUnsafe().putLongVolatile(null, entriesMem + internalId * Long.BYTES, UNLOCKED);
-        Unsafe.getUnsafe().getAndAddLong(null, activeReaderCountMem, -1);
+        if (Unsafe.getUnsafe().compareAndSwapLong(null, entriesMem + internalId * Long.BYTES, txn, UNLOCKED)) {
+            Unsafe.getUnsafe().getAndAddLong(null, activeReaderCountMem, -1);
+        } else {
+            long lockedTxn;
+            //noinspection AssertWithSideEffects
+            assert (lockedTxn = Unsafe.getUnsafe().getLongVolatile(null, entriesMem + internalId * Long.BYTES)) == UNLOCKED
+                    || lockedTxn == txn : "Invalid scoreboard release, expected " + txn + " but got " + lockedTxn;
+        }
         // It's too expensive to count how many readers are left for the txn, caller will have to do additional checks.
         return 0;
     }
