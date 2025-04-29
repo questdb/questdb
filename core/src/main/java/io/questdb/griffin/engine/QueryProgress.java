@@ -84,7 +84,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             long sqlId,
             @NotNull CharSequence sqlText,
             @NotNull SqlExecutionContext executionContext,
-            long beginNanos, boolean jit
+            long beginNanos,
+            boolean jit
     ) {
         logEnd(sqlId, sqlText, executionContext, beginNanos, null, null, jit);
     }
