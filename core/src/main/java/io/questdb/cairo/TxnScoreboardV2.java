@@ -223,7 +223,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
             long lockedTxn;
             //noinspection AssertWithSideEffects
             assert (lockedTxn = Unsafe.getUnsafe().getLongVolatile(null, entriesMem + internalId * Long.BYTES)) == UNLOCKED
-                    || lockedTxn == txn : "Invalid scoreboard release, expected " + txn + " but got " + lockedTxn;
+                    : "Invalid scoreboard release, expected " + txn + " but got " + lockedTxn;
         }
         // It's too expensive to count how many readers are left for the txn, caller will have to do additional checks.
         return 0;
