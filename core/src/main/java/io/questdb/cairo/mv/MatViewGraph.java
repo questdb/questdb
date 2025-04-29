@@ -45,12 +45,12 @@ import java.util.function.Function;
  * This object is always in-use, even when mat views are disabled or the node is a read-only replica.
  */
 public class MatViewGraph implements Mutable {
+    private static final ThreadLocal<LowerCaseCharSequenceHashSet> tlSeen = new ThreadLocal<>(LowerCaseCharSequenceHashSet::new);
+    private static final ThreadLocal<ArrayDeque<CharSequence>> tlStack = new ThreadLocal<>(ArrayDeque::new);
     private final Function<CharSequence, MatViewDependencyList> createDependencyList;
     private final ConcurrentHashMap<MatViewDefinition> definitionByTableDirName = new ConcurrentHashMap<>();
     // Note: this map is grow-only, i.e. keys are never removed.
     private final ConcurrentHashMap<MatViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
-    private static final ThreadLocal<LowerCaseCharSequenceHashSet> tlSeen = new ThreadLocal<>(LowerCaseCharSequenceHashSet::new);
-    private static final ThreadLocal<ArrayDeque<CharSequence>> tlStack = new ThreadLocal<>(ArrayDeque::new);
 
     public MatViewGraph() {
         this.createDependencyList = name -> new MatViewDependencyList();
@@ -66,10 +66,9 @@ public class MatViewGraph implements Mutable {
 
         synchronized (this) {
             if (hasDependencyLoop(viewDefinition.getBaseTableName(), matViewToken)) {
-                throw CairoException.critical(0).put("circular dependency detected for materialized view [view=")
-                        .put(matViewToken.getTableName())
-                        .put(", dependentOn=")
-                        .put(viewDefinition.getBaseTableName())
+                throw CairoException.critical(0)
+                        .put("circular dependency detected for materialized view [view=").put(matViewToken.getTableName())
+                        .put(", baseTable=").put(viewDefinition.getBaseTableName())
                         .put(']');
             }
             final MatViewDependencyList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());

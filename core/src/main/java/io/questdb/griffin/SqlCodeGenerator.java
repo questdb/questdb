@@ -2453,8 +2453,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             );
                                         }
                                     } else {
+                                        boolean binarySearchHinted = SqlHints.hasAsOfJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
                                         boolean created = false;
-                                        if (fastAsOfJoins) {
+                                        if (fastAsOfJoins || binarySearchHinted) {
+                                            // when slave directly supports time frame cursor then it's strictly better to use it, even without any hint
                                             if (slave.supportsTimeFrameCursor()) {
                                                 master = new AsOfJoinNoKeyFastRecordCursorFactory(
                                                         configuration,
@@ -2466,7 +2468,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 created = true;
                                             }
 
-                                            if (!created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                                            // if we have a hint, we can try to steal the filter from the slave.
+                                            // this downgrades to single-threaded Java-level filtering so it's only worth it if
+                                            // the filter selectivity is low. we don't have statistics to tell selectivity, so
+                                            // we rely on the user to provide an explicit hint.
+                                            if (binarySearchHinted && !created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
                                                 RecordCursorFactory slaveBase = slave.getBaseFactory();
                                                 int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
 
@@ -2499,7 +2505,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 created = true;
                                             }
 
-                                            if (!created && slave.isProjection()) {
+                                            if (binarySearchHinted && !created && slave.isProjection()) {
                                                 RecordCursorFactory projectionBase = slave.getBaseFactory();
                                                 // We know projectionBase does not support supportsTimeFrameCursor, because
                                                 // Projections forward this call to its base factory and if we are in this branch
