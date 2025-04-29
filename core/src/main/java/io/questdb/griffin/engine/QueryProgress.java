@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
-import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.ReaderPool;
@@ -87,7 +86,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             @NotNull SqlExecutionContext executionContext,
             long beginNanos, boolean jit
     ) {
-        logEnd(sqlId, sqlText, executionContext, beginNanos, null, null,jit);
+        logEnd(sqlId, sqlText, executionContext, beginNanos, null, null, jit);
     }
 
     public static void logEnd(
@@ -96,7 +95,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             @NotNull SqlExecutionContext executionContext,
             long beginNanos,
             @Nullable ObjList<TableReader> leakedReaders,
-            @Nullable QueryTrace queryTrace,boolean jit
+            @Nullable QueryTrace queryTrace,
+            boolean jit
     ) {
         CairoEngine engine = executionContext.getCairoEngine();
         CairoConfiguration config = engine.getConfiguration();
@@ -148,9 +148,10 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             long sqlId,
             @NotNull CharSequence sqlText,
             @NotNull SqlExecutionContext executionContext,
-            long beginNanos,boolean jit
+            long beginNanos,
+            boolean jit
     ) {
-        logError(e, sqlId, sqlText, executionContext, beginNanos, null,jit);
+        logError(e, sqlId, sqlText, executionContext, beginNanos, null, jit);
     }
 
     public static void logError(
@@ -159,7 +160,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             @NotNull CharSequence sqlText,
             @NotNull SqlExecutionContext executionContext,
             long beginNanos,
-            @Nullable ObjList<TableReader> leakedReaders,boolean jit
+            @Nullable ObjList<TableReader> leakedReaders,
+            boolean jit
     ) {
         int leakedReadersCount = leakedReaders != null ? leakedReaders.size() : 0;
         LogRecord log = null;
@@ -475,9 +477,9 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                     try {
                         String sqlText = queryTrace.queryText;
                         if (th == null) {
-                            logEnd(sqlId, sqlText, executionContext, beginNanos, readers, queryTrace,jit);
+                            logEnd(sqlId, sqlText, executionContext, beginNanos, readers, queryTrace, jit);
                         } else {
-                            logError(th, sqlId, sqlText, executionContext, beginNanos, readers,jit);
+                            logError(th, sqlId, sqlText, executionContext, beginNanos, readers, jit);
                         }
                     } finally {
                         // Unregister must follow the base cursor close call to avoid concurrent access
