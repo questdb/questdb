@@ -388,19 +388,6 @@ public class CharsTest {
     }
 
     @Test
-    public void testIndexOfLowerCase() {
-        Assert.assertEquals(4, Chars.indexOfLowerCase("foo bar baz", 0, 11, "bar"));
-        Assert.assertEquals(4, Chars.indexOfLowerCase("FOO BAR BAZ", 0, 11, "bar"));
-        Assert.assertEquals(4, Chars.indexOfLowerCase("foo bar baz", 0, 11, "ba"));
-        Assert.assertEquals(8, Chars.indexOfLowerCase("foo BAr BAz", 6, 11, "ba"));
-        Assert.assertEquals(1, Chars.indexOfLowerCase("foo bar baz", 0, 7, "oo"));
-        Assert.assertEquals(0, Chars.indexOfLowerCase("foo bar baz", 2, 4, ""));
-        Assert.assertEquals(-1, Chars.indexOfLowerCase("foo bar baz", 2, 4, "y"));
-        Assert.assertEquals(-1, Chars.indexOfLowerCase("", 0, 0, "oo"));
-        Assert.assertEquals(-1, Chars.indexOfLowerCase("", 0, 0, "y"));
-    }
-
-    @Test
     public void testIndexOfIgnoreCase() {
         Assert.assertEquals(4, Chars.indexOfIgnoreCase("foo bar baz", 0, 11, "bar"));
         Assert.assertEquals(4, Chars.indexOfIgnoreCase("foo bar baz", 0, 11, "BAR"));
@@ -424,6 +411,19 @@ public class CharsTest {
         Assert.assertEquals(-1, Chars.indexOfIgnoreCase("", 0, 0, "OO"));
         Assert.assertEquals(-1, Chars.indexOfIgnoreCase("", 0, 0, "y"));
         Assert.assertEquals(-1, Chars.indexOfIgnoreCase("", 0, 0, "y"));
+    }
+
+    @Test
+    public void testIndexOfLowerCase() {
+        Assert.assertEquals(4, Chars.indexOfLowerCase("foo bar baz", 0, 11, "bar"));
+        Assert.assertEquals(4, Chars.indexOfLowerCase("FOO BAR BAZ", 0, 11, "bar"));
+        Assert.assertEquals(4, Chars.indexOfLowerCase("foo bar baz", 0, 11, "ba"));
+        Assert.assertEquals(8, Chars.indexOfLowerCase("foo BAr BAz", 6, 11, "ba"));
+        Assert.assertEquals(1, Chars.indexOfLowerCase("foo bar baz", 0, 7, "oo"));
+        Assert.assertEquals(0, Chars.indexOfLowerCase("foo bar baz", 2, 4, ""));
+        Assert.assertEquals(-1, Chars.indexOfLowerCase("foo bar baz", 2, 4, "y"));
+        Assert.assertEquals(-1, Chars.indexOfLowerCase("", 0, 0, "oo"));
+        Assert.assertEquals(-1, Chars.indexOfLowerCase("", 0, 0, "y"));
     }
 
     @Test
@@ -534,6 +534,122 @@ public class CharsTest {
         // The pattern has to be lower-case.
         Assert.assertFalse(Chars.startsWithLowerCase("abc", "ABC"));
         Assert.assertFalse(Chars.startsWithLowerCase("ABC", "ABC"));
+    }
+
+    @Test
+    public void testUnescape() {
+        final StringSink sink = new StringSink();
+        final char escapeChar = '\'';
+
+        // double escape in the middle
+        final String input1 = "prefix''suffix";
+        final String expected1 = "prefix'suffix";
+        sink.clear();
+        Chars.unescape(input1, 0, input1.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 1 Failed: Double escape in middle",
+                expected1,
+                sink.toString()
+        );
+
+        // double escape at the start
+        final String input2 = "''suffix";
+        final String expected2 = "'suffix";
+        sink.clear();
+        Chars.unescape(input2, 0, input2.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 2 Failed: Double escape at start",
+                expected2,
+                sink.toString()
+        );
+
+        // double escape at the end
+        final String input3 = "prefix''";
+        final String expected3 = "prefix'";
+        sink.clear();
+        Chars.unescape(input3, 0, input3.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 3 Failed: Double escape at end",
+                expected3,
+                sink.toString()
+        );
+
+        // multiple double escapes
+        final String input4 = "a''b''c''";
+        final String expected4 = "a'b'c'";
+        sink.clear();
+        Chars.unescape(input4, 0, input4.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 4 Failed: Multiple double escapes",
+                expected4,
+                sink.toString()
+        );
+
+        // mix of single and double escapes
+        final String input5 = "a'b''c'd";
+        final String expected5 = "a'b'c'd";
+        sink.clear();
+        Chars.unescape(input5, 0, input5.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 5 Failed: Mixed single and double escapes",
+                expected5,
+                sink.toString()
+        );
+
+        // only a double escape
+        final String input6 = "''";
+        final String expected6 = "'";
+        sink.clear();
+        Chars.unescape(input6, 0, input6.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 6 Failed: Only double escape",
+                expected6,
+                sink.toString()
+        );
+
+        // no escapes
+        final String input7 = "plain string";
+        final String expected7 = "plain string";
+        sink.clear();
+        Chars.unescape(input7, 0, input7.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 7 Failed: No escapes",
+                expected7,
+                sink.toString()
+        );
+
+        // single escape not at end
+        final String input8 = "single'escape";
+        final String expected8 = "single'escape";
+        sink.clear();
+        Chars.unescape(input8, 0, input8.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 8 Failed: Single escape internal",
+                expected8,
+                sink.toString()
+        );
+
+        // single escape at end
+        final String input9 = "single'";
+        final String expected9 = "single'";
+        sink.clear();
+        Chars.unescape(input9, 0, input9.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 9 Failed: Single escape at end",
+                expected9,
+                sink.toString()
+        );
+
+        // empty input
+        final String input10 = "";
+        final String expected10 = "";
+        sink.clear();
+        Chars.unescape(input10, 0, input10.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 10 Failed: Empty input",
+                expected10,
+                sink.toString()
+        );
     }
 
     private void assertThat(String expected, ObjList<Path> list) {
