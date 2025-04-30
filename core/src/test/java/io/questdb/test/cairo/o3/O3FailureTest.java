@@ -3799,7 +3799,7 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     protected static void drainWalQueue(CairoEngine engine) {
-        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+        try (final ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
             walApplyJob.drain(0);
             new CheckWalTransactionsJob(engine).run(0);
             // run once again as there might be notifications to handle now
