@@ -122,7 +122,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
     public void applyTableAll(TableToken tableToken) {
         SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-        assert tracker.isInitialised();
         while (!tracker.isSuspended() && tracker.getWriterTxn() < tracker.getSeqTxn()) {
             applyTable(tableToken);
         }
