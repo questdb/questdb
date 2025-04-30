@@ -143,12 +143,9 @@ public class FilesTest {
 
     @Test
     public void testBufferedIOConcurrent() throws Exception {
-        final FilesFacade ff = FilesFacadeImpl.INSTANCE;
-
         // This test aims to follow write pattern in WAL-E files.
-        Assume.assumeTrue(ff.allowMixedIO(temporaryFolder.getRoot().getAbsolutePath()));
 
-        File file = temporaryFolder.newFile();
+        final File file = temporaryFolder.newFile();
         final int fileSize = 1024;
         final long valueInMem = 42;
 
