@@ -175,10 +175,10 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             final long lastAppliedBaseTxn = baseTableToken != null
                                     ? engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn() : -1;
                             final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
-                            final long lastRefreshStartedTimestamp = state != null ? state.getLastRefreshStartTimestamp() : Numbers.LONG_NULL;
+                            final long lastRefreshStartTimestamp = state != null ? state.getLastRefreshStartTimestamp() : Numbers.LONG_NULL;
                             record.of(
                                     matViewDefinition,
-                                    lastRefreshStartedTimestamp,
+                                    lastRefreshStartTimestamp,
                                     lastRefreshTimestamp,
                                     lastRefreshedBaseTxn,
                                     lastAppliedBaseTxn,
@@ -214,22 +214,22 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 private final StringSink invalidationReason = new StringSink();
                 private boolean invalid;
                 private long lastAppliedBaseTxn;
-                private long lastRefreshFinishedTimestamp;
-                private long lastRefreshStartedTimestamp;
+                private long lastRefreshFinishTimestamp;
+                private long lastRefreshStartTimestamp;
                 private long lastRefreshTxn;
                 private MatViewDefinition viewDefinition;
 
                 @Override
                 public long getLong(int col) {
                     switch (col) {
+                        case COLUMN_LAST_REFRESH_START_TIMESTAMP:
+                            return lastRefreshStartTimestamp;
                         case COLUMN_LAST_REFRESH_FINISH_TIMESTAMP:
-                            return lastRefreshFinishedTimestamp;
+                            return lastRefreshFinishTimestamp;
                         case COLUMN_LAST_REFRESH_BASE_TABLE_TXN:
                             return lastRefreshTxn;
                         case COLUMN_LAST_APPLIED_BASE_TABLE_TXN:
                             return lastAppliedBaseTxn;
-                        case COLUMN_LAST_REFRESH_START_TIMESTAMP:
-                            return lastRefreshStartedTimestamp;
                         default:
                             return 0;
                     }
@@ -253,7 +253,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_TABLE_DIR_NAME:
                             return viewDefinition.getMatViewToken().getDirName();
                         case COLUMN_VIEW_STATUS:
-                            return invalid ? "invalid" : "valid";
+                            return lastRefreshStartTimestamp > lastRefreshFinishTimestamp ? "refreshing" : invalid ? "invalid" : "valid";
                         case COLUMN_INVALIDATION_REASON:
                             return invalidationReason.length() > 0 ? invalidationReason : null;
                         default:
@@ -273,16 +273,16 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
                 public void of(
                         MatViewDefinition viewDefinition,
-                        long lastRefreshStartedTimestamp,
-                        long lastRefreshFinishedTimestamp,
+                        long lastRefreshStartTimestamp,
+                        long lastRefreshFinishTimestamp,
                         long lastRefreshTxn,
                         long lastAppliedBaseTxn,
                         CharSequence invalidationReason,
                         boolean invalid
                 ) {
                     this.viewDefinition = viewDefinition;
-                    this.lastRefreshStartedTimestamp = lastRefreshStartedTimestamp;
-                    this.lastRefreshFinishedTimestamp = lastRefreshFinishedTimestamp;
+                    this.lastRefreshStartTimestamp = lastRefreshStartTimestamp;
+                    this.lastRefreshFinishTimestamp = lastRefreshFinishTimestamp;
                     this.lastRefreshTxn = lastRefreshTxn;
                     this.lastAppliedBaseTxn = lastAppliedBaseTxn;
                     this.invalidationReason.clear();

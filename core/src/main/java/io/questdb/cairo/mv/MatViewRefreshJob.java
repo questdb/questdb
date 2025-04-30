@@ -780,6 +780,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private void setInvalidState(MatViewState state, WalWriter walWriter, CharSequence invalidationReason, long invalidationTimestamp) {
         state.markAsInvalid(invalidationReason);
         state.setLastRefreshTimestamp(invalidationTimestamp);
+        state.setLastRefreshStartTimestamp(invalidationTimestamp);
         walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshFinishTimestamp(), true, invalidationReason);
     }
 }
