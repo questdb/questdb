@@ -2041,7 +2041,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void enforceTtl() {
         partitionRemoveCandidates.clear();
-        int ttl = metadata.getTtlHoursOrMonths();
+        final int ttl = metadata.getTtlHoursOrMonths();
         if (ttl == 0) {
             return;
         }
@@ -3075,6 +3075,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
+    public void setMetaMatViewRefreshLimit(int limitHoursOrMonths) {
+        commit();
+        metadata.setMatViewRefreshLimitHoursOrMonths(limitHoursOrMonths);
+        writeMetadataToDisk();
+    }
+
+    @Override
     public void setMetaMaxUncommittedRows(int maxUncommittedRows) {
         commit();
         metadata.setMaxUncommittedRows(maxUncommittedRows);
@@ -3089,9 +3096,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void setMetaTtlHoursOrMonths(int metaTtlHoursOrMonths) {
+    public void setMetaTtl(int ttlHoursOrMonths) {
         commit();
-        metadata.setTtlHoursOrMonths(metaTtlHoursOrMonths);
+        metadata.setTtlHoursOrMonths(ttlHoursOrMonths);
         writeMetadataToDisk();
     }
 
@@ -8633,6 +8640,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putBool(metadata.isWalEnabled());
             ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
+            ddlMem.putInt(metadata.getMatViewRefreshLimitHoursOrMonths());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {

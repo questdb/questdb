@@ -1429,7 +1429,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         assert table != null : "CairoTable == null after we already checked it exists";
                         PartitionBy.validateTtlGranularity(table.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
                     }
-                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtlHoursOrMonths(
+                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
                             matViewNamePosition,
                             matViewToken,
                             tableMetadata.getTableId(),
@@ -1439,13 +1439,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else if (isRefreshKeyword(tok)) {
                     expectKeyword(lexer, "limit");
                     final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
-//                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtlHoursOrMonths(
-//                            matViewNamePosition,
-//                            matViewToken,
-//                            tableMetadata.getTableId(),
-//                            ttlHoursOrMonths
-//                    );
-//                    compiledQuery.ofAlter(setTtl.build());
+                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetMatViewRefreshLimit(
+                            matViewNamePosition,
+                            matViewToken,
+                            tableMetadata.getTableId(),
+                            limitHoursOrMonths
+                    );
+                    compiledQuery.ofAlter(setTtl.build());
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' expected");
                 }
@@ -1677,7 +1677,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         assert table != null : "CairoTable == null after we already checked it exists";
                         PartitionBy.validateTtlGranularity(table.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
                     }
-                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtlHoursOrMonths(
+                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
                             tableNamePosition,
                             tableToken,
                             tableMetadata.getTableId(),
