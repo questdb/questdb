@@ -139,10 +139,10 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     }
 
     private long getTimestamp(int index) {
-        Function fn = getBindVariableService().getFunction(index);
-        if (fn == null || fn.getType() != ColumnType.TIMESTAMP) {
+        final Function func = getBindVariableService().getFunction(index);
+        if (func == null || func.getType() != ColumnType.TIMESTAMP) {
             return Numbers.LONG_NULL;
         }
-        return fn.getTimestamp(null);
+        return func.getTimestamp(null);
     }
 }

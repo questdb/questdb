@@ -175,7 +175,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             final long lastAppliedBaseTxn = baseTableToken != null
                                     ? engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn() : -1;
                             final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
-                            final long lastRefreshStartedTimestamp = state != null ? state.getLastRefreshStartedTimestamp() : Numbers.LONG_NULL;
+                            final long lastRefreshStartedTimestamp = state != null ? state.getLastRefreshStartTimestamp() : Numbers.LONG_NULL;
                             record.of(
                                     matViewDefinition,
                                     lastRefreshStartedTimestamp,
