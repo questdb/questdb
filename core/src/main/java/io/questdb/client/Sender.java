@@ -1027,6 +1027,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
          * <p>
          * In most cases, this method should not be called. Set {@link #PROTOCOL_VERSION_V1} only when connecting to a legacy server.
          * <p>
+         *
          * @param protocolVersion The desired protocol version.
          * @return This instance for method chaining.
          */
