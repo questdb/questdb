@@ -39,7 +39,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     private static final int RESERVED_ID_COUNT = VIRTUAL_ID_COUNT + 3;
     private static final long UNLOCKED = -1;
     private final int entryScanCount;
-    private final int pow2EntryCount;
+    private final int memSize;
     private long activeReaderCountMem;
     private long entriesMem;
     private long maxMem;
@@ -55,14 +55,17 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     private TableToken tableToken;
 
     public TxnScoreboardV2(int entryCount) {
-        pow2EntryCount = entryCount + RESERVED_ID_COUNT;
-        entryScanCount = entryCount + VIRTUAL_ID_COUNT;
-        mem = Unsafe.malloc((long) pow2EntryCount * Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
+        memSize = (entryCount + RESERVED_ID_COUNT) * Long.BYTES;
+        mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_TABLE_READER);
+
         activeReaderCountMem = mem;
         maxMem = mem + Long.BYTES;
         maxReaderIdMem = maxMem + Long.BYTES;
-        entriesMem = mem + (long) (RESERVED_ID_COUNT - VIRTUAL_ID_COUNT) * Long.BYTES;
-        Vect.memset(mem, (long) pow2EntryCount * Long.BYTES, -1);
+
+        entriesMem = maxReaderIdMem + Long.BYTES;
+        entryScanCount = entryCount + VIRTUAL_ID_COUNT;
+
+        Vect.memset(entriesMem, (long) entryScanCount * Long.BYTES, -1);
         // Set max, reader count to 0.
         Vect.memset(mem, 3 * Long.BYTES, 0);
     }
@@ -92,7 +95,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
 
     @Override
     public void close() {
-        mem = Unsafe.free(mem, (long) pow2EntryCount * Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
+        mem = Unsafe.free(mem, memSize , MemoryTag.NATIVE_TABLE_READER);
         entriesMem = 0;
         maxMem = 0;
         maxReaderIdMem = 0;
@@ -182,6 +185,10 @@ public class TxnScoreboardV2 implements TxnScoreboard {
 
     @Override
     public boolean isRangeAvailable(long fromTxn, long toTxn) {
+        // Push max txn to the latest, to avoid races with acquireTxn()
+        // but don't stop checking if it's not the max.
+        updateMax(toTxn);
+
         if (getActiveReaderCount() == 0) {
             return true;
         }
@@ -198,6 +205,13 @@ public class TxnScoreboardV2 implements TxnScoreboard {
 
     @Override
     public boolean isTxnAvailable(long txn) {
+        // This call should only be used from TableReader
+        // when maxTxn is already initialized.
+        // Check that the txn we are scanning for is not the max, to avoid races with acquireTxn()
+        if (getMax() <= txn) {
+            return false;
+        }
+
         if (getActiveReaderCount() == 0) {
             return true;
         }
