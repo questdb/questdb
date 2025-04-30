@@ -61,7 +61,7 @@ stages:
     jobs:
       - job: Release
         pool:
-          vmImage: 'ubuntu-latest'
+          vmImage: 'ubuntu-24.04'
         steps:
           - checkout: self
             fetchDepth: 1
@@ -94,7 +94,6 @@ stages:
 
           - script: |
               sudo apt-get update
-              sudo apt-get install awscli
               cd "$(Build.SourcesDirectory)"/pkg/ami/marketplace
               make install_aws_plugin
               make build_release
