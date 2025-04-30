@@ -253,7 +253,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_TABLE_DIR_NAME:
                             return viewDefinition.getMatViewToken().getDirName();
                         case COLUMN_VIEW_STATUS:
-                            return lastRefreshStartTimestamp > lastRefreshFinishTimestamp ? "refreshing" : invalid ? "invalid" : "valid";
+                            return getViewStatus();
                         case COLUMN_INVALIDATION_REASON:
                             return invalidationReason.length() > 0 ? invalidationReason : null;
                         default:
@@ -288,6 +288,15 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.invalidationReason.clear();
                     this.invalidationReason.put(invalidationReason);
                     this.invalid = invalid;
+                }
+
+                private CharSequence getViewStatus() {
+                    if (invalid) {
+                        return "invalid";
+                    }
+                    return (lastRefreshFinishTimestamp != Numbers.LONG_NULL && lastRefreshStartTimestamp > lastRefreshFinishTimestamp)
+                            ? "refreshing"
+                            : "valid";
                 }
             }
         }
