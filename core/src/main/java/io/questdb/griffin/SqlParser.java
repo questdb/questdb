@@ -3528,57 +3528,57 @@ public class SqlParser {
      */
     private void rewriteJsonExtractCast(ExpressionNode node) {
         if (node.type == ExpressionNode.FUNCTION && isCastKeyword(node.token) && node.lhs != null && node.lhs.token != null) {
-                if (isJsonExtract(node.lhs.token) && node.lhs.paramCount == 2) {
-                    // rewrite cast such as
-                    // json_extract(json,path)::type -> json_extract(json,path,type)
-                    // the ::type is already rewritten as
-                    // cast(json_extract(json,path) as type)
-                    //
+            if (isJsonExtract(node.lhs.token) && node.lhs.paramCount == 2) {
+                // rewrite cast such as
+                // json_extract(json,path)::type -> json_extract(json,path,type)
+                // the ::type is already rewritten as
+                // cast(json_extract(json,path) as type)
+                //
 
-                    // we remove the outer cast and let json_extract() do the cast
-                    ExpressionNode jsonExtractNode = node.lhs;
-                    // check if the type is a valid symbol
-                    ExpressionNode typeNode = node.rhs;
-                    if (typeNode != null) {
-                        int castType = ColumnType.typeOf(typeNode.token);
-                        if (castType == ColumnType.VARCHAR) {
-                            // redundant cast to varchar, just remove it
-                            node.token = jsonExtractNode.token;
-                            node.paramCount = jsonExtractNode.paramCount;
-                            node.type = jsonExtractNode.type;
-                            node.position = jsonExtractNode.position;
-                            node.lhs = jsonExtractNode.lhs;
-                            node.rhs = jsonExtractNode.rhs;
-                            node.args.clear();
-                        } else if (JsonExtractTypedFunctionFactory.isIntrusivelyOptimized(castType)) {
-                            int type = ColumnType.typeOf(typeNode.token);
-                            node.token = jsonExtractNode.token;
-                            node.paramCount = 3;
-                            node.type = jsonExtractNode.type;
-                            node.position = jsonExtractNode.position;
-                            node.lhs = null;
-                            node.rhs = null;
-                            node.args.clear();
+                // we remove the outer cast and let json_extract() do the cast
+                ExpressionNode jsonExtractNode = node.lhs;
+                // check if the type is a valid symbol
+                ExpressionNode typeNode = node.rhs;
+                if (typeNode != null) {
+                    int castType = ColumnType.typeOf(typeNode.token);
+                    if (castType == ColumnType.VARCHAR) {
+                        // redundant cast to varchar, just remove it
+                        node.token = jsonExtractNode.token;
+                        node.paramCount = jsonExtractNode.paramCount;
+                        node.type = jsonExtractNode.type;
+                        node.position = jsonExtractNode.position;
+                        node.lhs = jsonExtractNode.lhs;
+                        node.rhs = jsonExtractNode.rhs;
+                        node.args.clear();
+                    } else if (JsonExtractTypedFunctionFactory.isIntrusivelyOptimized(castType)) {
+                        int type = ColumnType.typeOf(typeNode.token);
+                        node.token = jsonExtractNode.token;
+                        node.paramCount = 3;
+                        node.type = jsonExtractNode.type;
+                        node.position = jsonExtractNode.position;
+                        node.lhs = null;
+                        node.rhs = null;
+                        node.args.clear();
 
-                            // args are added in reverse order
+                        // args are added in reverse order
 
-                            // type integer
-                            CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
-                            characterStoreEntry.put(type);
-                            node.args.add(
-                                    expressionNodePool.next().of(
-                                            ExpressionNode.CONSTANT,
-                                            characterStoreEntry.toImmutable(),
-                                            typeNode.precedence,
-                                            typeNode.position
-                                    )
-                            );
-                            node.args.add(jsonExtractNode.rhs);
-                            node.args.add(jsonExtractNode.lhs);
-                        }
+                        // type integer
+                        CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
+                        characterStoreEntry.put(type);
+                        node.args.add(
+                                expressionNodePool.next().of(
+                                        ExpressionNode.CONSTANT,
+                                        characterStoreEntry.toImmutable(),
+                                        typeNode.precedence,
+                                        typeNode.position
+                                )
+                        );
+                        node.args.add(jsonExtractNode.rhs);
+                        node.args.add(jsonExtractNode.lhs);
                     }
                 }
             }
+        }
 
     }
 
