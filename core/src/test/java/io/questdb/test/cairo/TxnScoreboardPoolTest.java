@@ -195,13 +195,17 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
             TableToken token2 = engine.verifyTableName("x");
 
             TxnScoreboard sc2 = engine.getTxnScoreboard(token2);
-            Assert.assertTrue(sc2.isRangeAvailable(0, 100));
-            Assert.assertTrue(sc2.acquireTxn(0, 1));
+            Assert.assertTrue(sc2.isRangeAvailable(0, 10));
+            Assert.assertTrue(sc2.acquireTxn(0, 10));
+            Assert.assertTrue(sc2.acquireTxn(1, 11));
 
             Assert.assertFalse(sc1.isRangeAvailable(0, 11));
             try (TxnScoreboard sc3 = engine.getTxnScoreboard(token)) {
                 Assert.assertFalse(sc3.isRangeAvailable(0, 11));
+                sc3.releaseTxn(0, 10);
             }
+            Assert.assertTrue(sc1.isRangeAvailable(0, 11));
+
 
             sc1.close();
             sc2.close();

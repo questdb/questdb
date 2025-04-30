@@ -1024,6 +1024,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     try (TxnScoreboard txnScoreboard = engine.getTxnScoreboard(tableToken)) {
                         long min = getMin(txnScoreboard);
                         Assert.assertTrue(2 == min || min == -1);
+                        Assert.assertTrue(txnScoreboard.acquireTxn(10, 3));
                         Assert.assertTrue(txnScoreboard.isTxnAvailable(2));
                     }
                 });

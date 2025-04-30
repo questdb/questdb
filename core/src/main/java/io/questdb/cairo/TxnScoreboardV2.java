@@ -35,9 +35,9 @@ import org.jetbrains.annotations.TestOnly;
  * to be checked. On the other hand, single-reader operations are cheap.
  */
 public class TxnScoreboardV2 implements TxnScoreboard {
+    private static final long UNLOCKED = -1;
     private static final int VIRTUAL_ID_COUNT = 1;
     private static final int RESERVED_ID_COUNT = VIRTUAL_ID_COUNT + 3;
-    private static final long UNLOCKED = -1;
     private final int entryScanCount;
     private final int memSize;
     private long activeReaderCountMem;
@@ -95,7 +95,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
 
     @Override
     public void close() {
-        mem = Unsafe.free(mem, memSize , MemoryTag.NATIVE_TABLE_READER);
+        mem = Unsafe.free(mem, memSize, MemoryTag.NATIVE_TABLE_READER);
         entriesMem = 0;
         maxMem = 0;
         maxReaderIdMem = 0;
