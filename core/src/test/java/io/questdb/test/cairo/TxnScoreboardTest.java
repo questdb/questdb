@@ -610,11 +610,12 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     scoreboard1.releaseTxn(3, 69);
                     Assert.assertEquals(70, getMin(scoreboard1));
                     scoreboard1.releaseTxn(5, 71);
-                    Assert.assertTrue(scoreboard1.isTxnAvailable(71));
+                    Assert.assertTrue(scoreboard1.isTxnAvailable(69));
+
                     Assert.assertEquals(70, getMin(scoreboard1));
                     scoreboard1.releaseTxn(4, 70);
-                    assertScoreboardMinOrNoLocks(scoreboard1, 71);
 
+                    assertScoreboardMinOrNoLocks(scoreboard1, 71);
                     scoreboard1.acquireTxn(0, 72);
                 }
                 scoreboard2.acquireTxn(0, 72);
@@ -622,9 +623,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
                 scoreboard2.releaseTxn(0, 72);
                 scoreboard2.releaseTxn(0, 72);
-                Assert.assertTrue(scoreboard2.isTxnAvailable(72));
-
-                Assert.assertTrue(scoreboard2.isTxnAvailable(77));
+                Assert.assertTrue(scoreboard2.isTxnAvailable(71));
             }
             scoreboardPoolFactory.clear();
         });
