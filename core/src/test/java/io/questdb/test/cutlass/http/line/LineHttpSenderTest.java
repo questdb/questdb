@@ -167,7 +167,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address("localhost:" + port)
-                        .protocolVersion(PROTOCOL_VERSION_V2)
                         .autoFlushRows(Integer.MAX_VALUE) // we'll flush manually
                         .retryTimeoutMillis(0)
                         .build()

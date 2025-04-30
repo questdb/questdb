@@ -40,6 +40,7 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
@@ -171,7 +172,11 @@ public abstract class AbstractLineHttpSender implements Sender {
             int protocolVersion
     ) {
         HttpClient cli = null;
-        if (protocolVersion == PROTOCOL_VERSION_NOT_SET_EXPLICIT) {
+        if (clientConfiguration.isLineProtoValidateDisabled()) {
+            if (protocolVersion == PROTOCOL_VERSION_NOT_SET_EXPLICIT) {
+                protocolVersion = PROTOCOL_VERSION_V2;
+            }
+        } else {
             if (tlsConfig != null) {
                 cli = HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig);
             } else {
@@ -183,18 +188,31 @@ public abstract class AbstractLineHttpSender implements Sender {
                 responseHeaders.await();
                 if (Utf8s.equalsNcAscii("200", responseHeaders.getStatusCode())) {
                     try (JsonSettingsParser parser = new JsonSettingsParser()) {
-                        protocolVersion = parser.parse(responseHeaders.getResponse());
+                        parser.parse(responseHeaders.getResponse());
+                        if (protocolVersion == PROTOCOL_VERSION_NOT_SET_EXPLICIT) {
+                            protocolVersion = parser.getDefaultProtocolVersion();
+                        } else if (!parser.isSupportVersion(protocolVersion)) {
+                            throw new LineSenderException("Server not support line protocol version: ")
+                                    .put(protocolVersion);
+                        }
                     }
-                } else {
+                } else if (Utf8s.equalsNcAscii("404", responseHeaders.getStatusCode())) {
                     // The client is unable to differentiate between a server shutdown and connecting to an older version.
                     // So, the protocol is set to PROTOCOL_VERSION_V1 here for both scenarios.
                     protocolVersion = PROTOCOL_VERSION_V1;
+                } else {
+                    throw new LineSenderException("Failed to detect server line protocol version, http status code: ")
+                            .put(responseHeaders.getStatusCode());
                 }
+            } catch (LineSenderException e) {
+                Misc.free(cli);
+                throw e;
             } catch (Throwable e) {
                 Misc.free(cli);
                 throw new LineSenderException("Failed to detect server line protocol version", e);
             }
         }
+
         if (protocolVersion == PROTOCOL_VERSION_V1) {
             return new LineHttpSenderV1(
                     host, port, path, clientConfiguration, tlsConfig, cli, autoFlushRows,
@@ -808,43 +826,64 @@ public abstract class AbstractLineHttpSender implements Sender {
     }
 
     private static class JsonSettingsParser implements JsonParser, Closeable {
+        private final static byte LINE_PROTO_DEFAULT_VERSION = 1;
+        private final static byte LINE_PROTO_SUPPORT_VERSIONS = 2;
         private final JsonLexer lexer = new JsonLexer(1024, 1024);
-        private boolean nextIsIlpProtoVer = false;
-        private int protocolVersion = 1;
+        IntList supportVersions = new IntList(8);
+        private int defaultProtocolVersion = PROTOCOL_VERSION_V1;
+        private byte nextJsonValueFlag = 0;
 
         @Override
         public void close() {
             Misc.free(lexer);
         }
 
+        public int getDefaultProtocolVersion() {
+            return defaultProtocolVersion;
+        }
+
+        public boolean isSupportVersion(int protocolVersion) {
+            for (int i = 0, size = supportVersions.size(); i < size; i++) {
+                if (protocolVersion == supportVersions.getQuick(i)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         @Override
         public void onEvent(int code, CharSequence tag, int position) {
-            if (protocolVersion != 1) {
-                return;
-            }
-            if (code == JsonLexer.EVT_NAME && tag.equals("ilp.proto.version")) {
-                nextIsIlpProtoVer = true;
-            } else if (code == JsonLexer.EVT_VALUE && nextIsIlpProtoVer) {
-                try {
-                    Numbers.parseInt(tag);
-                } catch (NumericException e) {
-                    protocolVersion = 2;
+            if (code == JsonLexer.EVT_NAME) {
+                if (tag.equals("line.proto.default.version")) {
+                    nextJsonValueFlag = LINE_PROTO_DEFAULT_VERSION;
+                } else if (tag.equals("line.proto.support.versions")) {
+                    nextJsonValueFlag = LINE_PROTO_SUPPORT_VERSIONS;
+                } else {
+                    nextJsonValueFlag = 0;
+                }
+            } else if (code == JsonLexer.EVT_VALUE) {
+                if (nextJsonValueFlag == LINE_PROTO_DEFAULT_VERSION) {
+                    try {
+                        defaultProtocolVersion = Numbers.parseInt(tag);
+                    } catch (NumericException e) {
+                        defaultProtocolVersion = 2;
+                    }
+                }
+            } else if (code == JsonLexer.EVT_ARRAY_VALUE) {
+                if (nextJsonValueFlag == LINE_PROTO_SUPPORT_VERSIONS) {
+                    try {
+                        supportVersions.add(Numbers.parseInt(tag));
+                    } catch (NumericException e) {
+                    }
                 }
             }
         }
 
-        public int parse(Response chunkedRsp) {
+        public void parse(Response chunkedRsp) throws JsonException {
             Fragment fragment;
             while ((fragment = chunkedRsp.recv()) != null) {
-                try {
-                    lexer.parse(fragment.lo(), fragment.hi(), this);
-                } catch (JsonException e) {
-                    protocolVersion = PROTOCOL_VERSION_V2;
-                    break;
-                }
+                lexer.parse(fragment.lo(), fragment.hi(), this);
             }
-
-            return protocolVersion;
         }
     }
 }

@@ -138,9 +138,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
     public static final String TMP_DIRECTORY = "tmp";
+    private static final String ILP_PROTO_DEFAULT_VERSION = "2";
+    private static final String ILP_PROTO_DEFAULT_VERSION_NAME = "line.proto.default.version";
+    private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2]";
+    private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
-    private static final String ILP_PROTO_VERSION = "2";
-    private static final String ILP_PROTO_VERSION_NAME = "ilp.proto.version";
     private static final String RELEASE_TYPE = "release.type";
     private static final String RELEASE_VERSION = "release.version";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
@@ -3825,7 +3827,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             settings.put(RELEASE_TYPE, str(getReleaseType()));
             settings.put(RELEASE_VERSION, str(getBuildInformation().getSwVersion()));
             settings.put(ACL_ENABLED, Boolean.toString(!Chars.empty(httpUsername)));
-            settings.put(ILP_PROTO_VERSION_NAME, ILP_PROTO_VERSION);
+            settings.put(ILP_PROTO_DEFAULT_VERSION_NAME, ILP_PROTO_DEFAULT_VERSION);
+            settings.put(ILP_PROTO_SUPPORT_VERSIONS_NAME, ILP_PROTO_SUPPORT_VERSIONS);
             settings.put(ILP_PROTO_TRANSPORTS, ilpProtoTransports);
         }
 

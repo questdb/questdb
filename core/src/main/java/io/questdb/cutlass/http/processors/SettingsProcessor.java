@@ -58,6 +58,11 @@ public class SettingsProcessor implements HttpRequestProcessor {
     }
 
     @Override
+    public boolean IgnoreConnectionLimitCheck() {
+        return true;
+    }
+
+    @Override
     public byte getRequiredAuthType() {
         return SecurityContext.AUTH_TYPE_NONE;
     }

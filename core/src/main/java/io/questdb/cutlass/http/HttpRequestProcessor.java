@@ -33,6 +33,10 @@ import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 
 public interface HttpRequestProcessor {
+    default boolean IgnoreConnectionLimitCheck() {
+        return false;
+    }
+
     default AtomicLongGauge connectionCountGauge(Metrics metrics) {
         return metrics.jsonQueryMetrics().connectionCountGauge();
     }

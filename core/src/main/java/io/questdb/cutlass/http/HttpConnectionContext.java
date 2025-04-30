@@ -402,6 +402,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return responseSink.simpleResponse();
     }
 
+    @Override
     public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, PeerIsSlowToWriteException, ServerDisconnectException {
         if (pendingRetry) {
             pendingRetry = false;
@@ -962,7 +963,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         multipartProcessor
                 );
 
-                if (!connectionCounted) {
+                if (!connectionCounted && !processor.IgnoreConnectionLimitCheck()) {
                     processor = checkConnectionLimit(processor);
                     connectionCounted = true;
                 }

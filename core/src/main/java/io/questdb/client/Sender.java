@@ -431,6 +431,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private int autoFlushIntervalMillis = PARAMETER_NOT_SET_EXPLICITLY;
         private int autoFlushRows = PARAMETER_NOT_SET_EXPLICITLY;
         private int bufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
+        private boolean disableLineProtoValidate = false;
         private String host;
         private String httpPath;
         private String httpSettingsPath;
@@ -457,6 +458,11 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             @Override
             public int getTimeout() {
                 return httpTimeout == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_HTTP_TIMEOUT : httpTimeout;
+            }
+
+            @Override
+            public boolean isLineProtoValidateDisabled() {
+                return disableLineProtoValidate;
             }
         };
         private long minRequestThroughput = PARAMETER_NOT_SET_EXPLICITLY;
@@ -751,6 +757,33 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         }
 
         /**
+         * Disables automatic server protocol version detection.
+         *
+         * <p>Use with caution: By default, the client performs an initial HTTP request
+         * to auto-detect the server's supported line protocol version. Disabling this validation
+         * eliminates the handshake round-trip but introduces version compatibility risks.</p>
+         *
+         * <p>
+         * When using this method, you must either:
+         * <ul>
+         * <li>Explicitly set the protocol version via {@link #protocolVersion(int)}, or
+         * <li>Ensure the client's default version ({@link #PROTOCOL_VERSION_V2}) exactly matches the server's expected version
+         * </ul>
+         * <p>
+         * Improper use may cause protocol version mismatches resulting in ingestion
+         * failures or data corruption.
+         *
+         * @return this builder instance for method chaining
+         */
+        public LineSenderBuilder disableLineProtoValidate() {
+            if (this.protocol == PROTOCOL_TCP) {
+                throw new LineSenderException("TCP transport does not support disable line protocol validation");
+            }
+            this.disableLineProtoValidate = true;
+            return this;
+        }
+
+        /**
          * Configure authentication. This is needed when QuestDB server required clients to authenticate.
          * <br>
          * This is only used when communicating over TCP transport, and it's illegal to call this method when
@@ -994,8 +1027,6 @@ public interface Sender extends Closeable, ArraySender<Sender> {
          * <p>
          * In most cases, this method should not be called. Set {@link #PROTOCOL_VERSION_V1} only when connecting to a legacy server.
          * <p>
-         * TODO: Implement automatic protocol version detection to eliminate the need for explicit setting.
-         *
          * @param protocolVersion The desired protocol version.
          * @return This instance for method chaining.
          */
@@ -1309,6 +1340,13 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                     pos = getValue(configurationString, pos, sink, "protocol_version");
                     int protocolVersion = parseIntValue(sink, "protocol_version");
                     protocolVersion(protocolVersion);
+                } else if (Chars.equals("disable_line_protocol_validate", sink)) {
+                    pos = getValue(configurationString, pos, sink, "auto_flush");
+                    if (Chars.equalsIgnoreCase("on", sink)) {
+                        disableLineProtoValidate();
+                    } else if (!Chars.equalsIgnoreCase("off", sink)) {
+                        throw new LineSenderException("invalid disable_line_protocol_validate [value=").put(sink).put(", allowed-values=[on, off]]");
+                    }
                 } else {
                     // ignore unknown keys, unless they are malformed
                     if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {

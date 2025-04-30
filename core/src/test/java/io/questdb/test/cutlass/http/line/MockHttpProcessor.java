@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.http.line;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpMultipartContentListener;
@@ -38,6 +39,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.tools.TestUtils;
 
+import java.net.HttpURLConnection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Queue;
@@ -257,4 +259,39 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
         private int responseStatusCode;
     }
 
+}
+
+class MockSettingsProcessor implements HttpRequestProcessor {
+    @Override
+    public byte getRequiredAuthType() {
+        return SecurityContext.AUTH_TYPE_NONE;
+    }
+
+    @Override
+    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpChunkedResponse r = context.getChunkedResponse();
+        r.status(HttpURLConnection.HTTP_OK, "application/json");
+        r.sendHeader();
+        r.put("{\"release.type\":\"OSS\",\"release.version\":\"[DEVELOPMENT]\",\"acl.enabled\":false," +
+                "\"line.proto.default.version\":2,\"line.proto.support.versions\":[1,2]," +
+                "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
+                "\"posthog.enabled\":false,\"posthog.api.key\":null}");
+        r.sendChunk(true);
+    }
+}
+
+class MockSettingsProcessorOldServer implements HttpRequestProcessor {
+    @Override
+    public byte getRequiredAuthType() {
+        return SecurityContext.AUTH_TYPE_NONE;
+    }
+
+    @Override
+    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpChunkedResponse r = context.getChunkedResponse();
+        r.status(HttpURLConnection.HTTP_OK, "application/json");
+        r.sendHeader();
+        r.put("{ \"release.type\": \"OSS\", \"release.version\": \"[DEVELOPMENT]\", \"acl.enabled\": false, \"posthog.enabled\": false, \"posthog.api.key\": null }");
+        r.sendChunk(true);
+    }
 }

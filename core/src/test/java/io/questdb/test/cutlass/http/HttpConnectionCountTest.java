@@ -77,6 +77,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
     private static final String ILP_TEST_PATH = "/write-test";
     private static final String PING_PATH = "/ping";
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -219,7 +220,6 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                         try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                                 .address("localhost:" + serverMain.getHttpServerPort())
                                 .httpPath(ILP_TEST_PATH)
-                                .protocolVersion(Sender.PROTOCOL_VERSION_V2)
                                 .build()
                         ) {
                             sender.table("tab").longColumn("col", 1).atNow();

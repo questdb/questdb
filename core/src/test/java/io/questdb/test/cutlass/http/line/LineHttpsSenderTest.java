@@ -53,6 +53,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
     @Rule
     public TlsProxyRule tlsProxy = TlsProxyRule.toHostAndPort("localhost", HTTP_PORT);
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -262,7 +263,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         .address(address)
                         .enableTls()
                         .retryTimeoutMillis(1000)
-                        .protocolVersion(Sender.PROTOCOL_VERSION_V2)
+                        .disableLineProtoValidate()
                         .build()
                 ) {
                     try {

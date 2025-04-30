@@ -56,10 +56,12 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "\"release.type\":\"OSS\"," +
             "\"release.version\":\"[DEVELOPMENT]\"," +
             "\"acl.enabled\":false," +
-            "\"ilp.proto.version\":2," +
+            "\"line.proto.default.version\":2," +
+            "\"line.proto.support.versions\":[1,2]," +
             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
             "\"posthog.enabled\":false," +
-            "\"posthog.api.key\":null}";
+            "\"posthog.api.key\":null" +
+            "}";
 
     private static final String TEST_PAYLOAD = "{" +
             "\"cairo.snapshot.instance.id\":\"db\"," +
@@ -69,6 +71,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "\"posthog.api.key\":null" +
             "}";
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();

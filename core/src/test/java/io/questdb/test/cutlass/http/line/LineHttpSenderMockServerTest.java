@@ -62,8 +62,9 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     @Test
     public void testAutoFlushInterval() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor().keepReplyingWithStatus(204);
+        MockHttpProcessor processor = new MockHttpProcessor();
 
-        testWithMock(mockHttpProcessor, sender -> {
+        testWithMock(mockHttpProcessor, processor, sender -> {
             for (int i = 0; i < 20; i++) {
                 sender.table("test")
                         .symbol("sym", "bol")
@@ -140,7 +141,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         testWithMock(mockHttpProcessor, sender -> sender.table("test")
                 .symbol("sym", "bol")
                 .doubleColumn("x", 1.0)
-                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";protocol_version=1;username=Aladdin;password=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";username=Aladdin;protocol_version=1;password=;;Open;;Sesame;;;;;")); // escaped semicolons in password
     }
 
     @Test
@@ -152,7 +153,19 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         testWithMock(mockHttpProcessor, sender -> sender.table("test")
                 .symbol("sym", "bol")
                 .doubleColumn("x", 1.0)
-                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";protocol_version=1;user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";username=Aladdin;protocol_version=1;password=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+    }
+
+    @Test
+    public void testDefaultProtocolVersionToOldServer() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .withExpectedContent("test,sym=bol x=1.0\n")
+                .replyWithStatus(204);
+        MockSettingsProcessorOldServer settingsProcessor = new MockSettingsProcessorOldServer();
+        testWithMock(mockHttpProcessor, settingsProcessor, sender -> sender.table("test")
+                .symbol("sym", "bol")
+                .doubleColumn("x", 1.0)
+                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";"));
     }
 
     @Test
@@ -165,7 +178,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                         .doubleColumn("x", 1.0)
                         .atNow();
             }
-        }, port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush=off;protocol_version=2;"));
+        }, port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush=off;"));
     }
 
     @Test
@@ -181,7 +194,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                         Os.sleep(10);
                     }
                 },
-                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_interval=off;protocol_version=2;"));
+                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_interval=off;"));
     }
 
     @Test
@@ -215,7 +228,21 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                                 .atNow();
                     }
                 },
-                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_rows=off;auto_flush_interval=100000;protocol_version=2;"));
+                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_rows=off;auto_flush_interval=100000;"));
+    }
+
+    @Test
+    public void testInvalidProtocolVersion() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
+        MockSettingsProcessorOldServer settingsProcessor = new MockSettingsProcessorOldServer();
+        try {
+            testWithMock(mockHttpProcessor, settingsProcessor, sender -> sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";protocol_version=2;"));
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "Server not support line protocol version: 2");
+        }
     }
 
     @Test
@@ -236,7 +263,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testMaxRequestBufferSizeExceeded() {
         try (Sender sender = Sender.builder(Sender.Transport.HTTP).address("localhost:1")
                 .maxBufferCapacity(65536)
-                .protocolVersion(Sender.PROTOCOL_VERSION_V2)
+                .disableLineProtoValidate()
                 .autoFlushRows(Integer.MAX_VALUE)
                 .build()
         ) {
@@ -280,7 +307,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                             .atNow();
 
                     sender.flush();
-                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=1;request_min_throughput=1;retry_timeout=0;protocol_version=2;") // 1ms base timeout and 1 byte per second to extend the timeout
+                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=1;request_min_throughput=1;retry_timeout=0;") // 1ms base timeout and 1 byte per second to extend the timeout
         );
     }
 
@@ -289,7 +316,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                 .address("127.0.0.1:1")
                 .retryTimeoutMillis(1000)
-                .protocolVersion(Sender.PROTOCOL_VERSION_V2)
+                .disableLineProtoValidate()
                 .build()) {
             sender.table("test")
                     .symbol("sym", "bol")
@@ -430,7 +457,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                     } finally {
                         delayLatch.countDown();
                     }
-                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=100;retry_timeout=0;protocol_version=2;")
+                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=100;retry_timeout=0;")
         );
     }
 
@@ -523,13 +550,17 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory) throws Exception {
-        testWithMock(mockHttpProcessor, senderConsumer, senderBuilderFactory, false);
+        MockHttpProcessor settingProcessor = new MockHttpProcessor();
+        testWithMock(mockHttpProcessor, settingProcessor, senderConsumer, senderBuilderFactory, false);
     }
 
-    private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory, boolean verifyBeforeClose) throws Exception {
+    private void testWithMock(MockHttpProcessor mockHttpProcessor, HttpRequestProcessor settingsProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory) throws Exception {
+        testWithMock(mockHttpProcessor, settingsProcessor, senderConsumer, senderBuilderFactory, false);
+    }
+
+    private void testWithMock(MockHttpProcessor mockHttpProcessor, HttpRequestProcessor settingsProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory, boolean verifyBeforeClose) throws Exception {
         assertMemoryLeak(() -> {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(new DefaultCairoConfiguration(root));
-
             try (WorkerPool workerPool = new TestWorkerPool(1);
                  HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -541,6 +572,17 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return mockHttpProcessor;
+                    }
+                });
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public ObjList<String> getUrls() {
+                        return new ObjList<>("/settings");
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return settingsProcessor;
                     }
                 });
                 workerPool.start(LOG);
