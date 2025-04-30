@@ -98,13 +98,13 @@ public class CharsTest {
         final TestBinarySequence testBinarySequence = new TestBinarySequence();
         sink.clear();
         Chars.base64Encode(testBinarySequence.of("this is a test".getBytes()), 100, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcyBpcyBhIHRlc3Q=");
+        Assert.assertEquals("dGhpcyBpcyBhIHRlc3Q=", sink.toString());
         sink.clear();
         Chars.base64Encode(testBinarySequence.of("this is a test".getBytes()), 4, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcw==");
+        Assert.assertEquals("dGhpcw==", sink.toString());
         // ignore the null
         Chars.base64Encode(null, 4, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcw==");
+        Assert.assertEquals("dGhpcw==", sink.toString());
 
         // random part
         Random rand = new Random(System.currentTimeMillis());
@@ -258,13 +258,13 @@ public class CharsTest {
         final TestBinarySequence testBinarySequence = new TestBinarySequence();
         sink.clear();
         Chars.base64UrlEncode(testBinarySequence.of("this is a test".getBytes()), 100, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcyBpcyBhIHRlc3Q");
+        Assert.assertEquals("dGhpcyBpcyBhIHRlc3Q", sink.toString());
         sink.clear();
         Chars.base64UrlEncode(testBinarySequence.of("this is a test".getBytes()), 4, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcw");
+        Assert.assertEquals("dGhpcw", sink.toString());
         // ignore the null
         Chars.base64UrlEncode(null, 4, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcw");
+        Assert.assertEquals("dGhpcw", sink.toString());
 
         // random part
         Random rand = new Random(System.currentTimeMillis());
