@@ -263,7 +263,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testMaxRequestBufferSizeExceeded() {
         try (Sender sender = Sender.builder(Sender.Transport.HTTP).address("localhost:1")
                 .maxBufferCapacity(65536)
-                .disableLineProtoValidate()
+                .disableLineProtoValidation()
                 .autoFlushRows(Integer.MAX_VALUE)
                 .build()
         ) {
@@ -291,7 +291,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                             .atNow();
 
                     sender.flush();
-                }, DEFAULT_FACTORY.andThen(b -> b.httpTimeoutMillis(1).minRequestThroughput(1).retryTimeoutMillis(0)) // 1ms base timeout and 1 byte per second to extend the timeout
+                }, DEFAULT_FACTORY.andThen(b -> b.httpTimeoutMillis(1).minRequestThroughput(1).retryTimeoutMillis(0).disableLineProtoValidation()) // 1ms base timeout and 1 byte per second to extend the timeout
         );
     }
 
@@ -307,7 +307,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                             .atNow();
 
                     sender.flush();
-                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=1;request_min_throughput=1;retry_timeout=0;") // 1ms base timeout and 1 byte per second to extend the timeout
+                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=1;request_min_throughput=1;retry_timeout=0;disable_line_protocol_validation=on;") // 1ms base timeout and 1 byte per second to extend the timeout
         );
     }
 
@@ -316,7 +316,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                 .address("127.0.0.1:1")
                 .retryTimeoutMillis(1000)
-                .disableLineProtoValidate()
+                .disableLineProtoValidation()
                 .build()) {
             sender.table("test")
                     .symbol("sym", "bol")
@@ -550,7 +550,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory) throws Exception {
-        MockHttpProcessor settingProcessor = new MockHttpProcessor();
+        MockSettingsProcessor settingProcessor = new MockSettingsProcessor();
         testWithMock(mockHttpProcessor, settingProcessor, senderConsumer, senderBuilderFactory, false);
     }
 

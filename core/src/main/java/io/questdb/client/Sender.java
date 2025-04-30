@@ -775,7 +775,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
          *
          * @return this builder instance for method chaining
          */
-        public LineSenderBuilder disableLineProtoValidate() {
+        public LineSenderBuilder disableLineProtoValidation() {
             if (this.protocol == PROTOCOL_TCP) {
                 throw new LineSenderException("TCP transport does not support disable line protocol validation");
             }
@@ -1341,12 +1341,12 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                     pos = getValue(configurationString, pos, sink, "protocol_version");
                     int protocolVersion = parseIntValue(sink, "protocol_version");
                     protocolVersion(protocolVersion);
-                } else if (Chars.equals("disable_line_protocol_validate", sink)) {
+                } else if (Chars.equals("disable_line_protocol_validation", sink)) {
                     pos = getValue(configurationString, pos, sink, "auto_flush");
                     if (Chars.equalsIgnoreCase("on", sink)) {
-                        disableLineProtoValidate();
+                        disableLineProtoValidation();
                     } else if (!Chars.equalsIgnoreCase("off", sink)) {
-                        throw new LineSenderException("invalid disable_line_protocol_validate [value=").put(sink).put(", allowed-values=[on, off]]");
+                        throw new LineSenderException("invalid disable_line_protocol_validation [value=").put(sink).put(", allowed-values=[on, off]]");
                     }
                 } else {
                     // ignore unknown keys, unless they are malformed

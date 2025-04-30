@@ -277,10 +277,10 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("http::addr=localhost:48884;auto_flush=off;protocol_version=1;", "Failed to detect server line protocol version");
             assertConfStrError("http::addr=localhost:48884;auto_flush=off;", "Failed to detect server line protocol version");
 
-            assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100", "protocol_version=1", "disable_line_protocol_validate=on");
-            assertConfStrOk("addr=localhost:8080", "auto_flush=on", "auto_flush_rows=100", "protocol_version=2", "disable_line_protocol_validate=on");
-            assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100", "auto_flush=on", "protocol_version=2", "disable_line_protocol_validate=on");
-            assertConfStrOk("addr=localhost", "auto_flush=on", "protocol_version=2", "disable_line_protocol_validate=on");
+            assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100", "protocol_version=1", "disable_line_protocol_validation=on");
+            assertConfStrOk("addr=localhost:8080", "auto_flush=on", "auto_flush_rows=100", "protocol_version=2", "disable_line_protocol_validation=on");
+            assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100", "auto_flush=on", "protocol_version=2", "disable_line_protocol_validation=on");
+            assertConfStrOk("addr=localhost", "auto_flush=on", "protocol_version=2", "disable_line_protocol_validation=on");
 
             runInContext(r -> {
                 String tcpAddr = "tcp::addr=localhost:" + bindPort;
@@ -306,25 +306,25 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("tcp::addr=localhost;auto_flush_bytes=1024;init_buf_size=2048;", "TCP transport requires init_buf_size and auto_flush_bytes to be set to the same value [init_buf_size=2048, auto_flush_bytes=1024]");
             assertConfStrError("tcp::addr=localhost;init_buf_size=1024;auto_flush_bytes=2048;", "TCP transport requires init_buf_size and auto_flush_bytes to be set to the same value [init_buf_size=1024, auto_flush_bytes=2048]");
             assertConfStrError("tcp::addr=localhost;auto_flush_bytes=off;", "TCP transport must have auto_flush_bytes enabled");
-            assertConfStrError("tcp::addr=localhost;disable_line_protocol_validate=on", "TCP transport does not support disable line protocol validation");
+            assertConfStrError("tcp::addr=localhost;disable_line_protocol_validation=on", "TCP transport does not support disable line protocol validation");
 
-            assertConfStrOk("http::addr=localhost;auto_flush=off;protocol_version=2;disable_line_protocol_validate=on;");
-            assertConfStrOk("http::addr=localhost;protocol_version=2;disable_line_protocol_validate=on;");
-            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;protocol_version=2;disable_line_protocol_validate=on;");
-            assertConfStrOk("http::addr=localhost;auto_flush_rows=off;protocol_version=2;disable_line_protocol_validate=on;");
-            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;auto_flush_rows=off;protocol_version=1;disable_line_protocol_validate=on;");
-            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;auto_flush_rows=1;protocol_version=2;disable_line_protocol_validate=on;");
-            assertConfStrOk("http::addr=localhost;auto_flush_rows=off;auto_flush_interval=1;protocol_version=2;disable_line_protocol_validate=on;");
-            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;auto_flush_rows=off;auto_flush=off;protocol_version=2;disable_line_protocol_validate=on;");
-            assertConfStrOk("http::addr=localhost;auto_flush=off;auto_flush_interval=off;auto_flush_rows=off;protocol_version=1;disable_line_protocol_validate=on;");
-            assertConfStrOk("http::addr=localhost:8080;protocol_version=2;disable_line_protocol_validate=on;");
-            assertConfStrOk("http::addr=localhost:8080;token=foo;protocol_version=2;disable_line_protocol_validate=on;");
-            assertConfStrOk("http::addr=localhost:8080;token=foo=bar;protocol_version=2;disable_line_protocol_validate=on;");
-            assertConfStrOk("addr=localhost:8080", "token=foo", "retry_timeout=1000", "max_buf_size=1000000", "protocol_version=2", "disable_line_protocol_validate=on");
-            assertConfStrOk("addr=localhost:8080", "token=foo", "retry_timeout=1000", "max_buf_size=1000000", "protocol_version=1", "disable_line_protocol_validate=on");
-            assertConfStrOk("http::addr=localhost:8080;token=foo;max_buf_size=1000000;retry_timeout=1000;protocol_version=2;disable_line_protocol_validate=on;");
-            assertConfStrOk("https::addr=localhost:8080;tls_verify=unsafe_off;auto_flush_rows=100;protocol_version=2;disable_line_protocol_validate=on;");
-            assertConfStrOk("https::addr=localhost:8080;tls_verify=on;protocol_version=2;disable_line_protocol_validate=on;");
+            assertConfStrOk("http::addr=localhost;auto_flush=off;protocol_version=2;disable_line_protocol_validation=on;");
+            assertConfStrOk("http::addr=localhost;protocol_version=2;disable_line_protocol_validation=on;");
+            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;protocol_version=2;disable_line_protocol_validation=on;");
+            assertConfStrOk("http::addr=localhost;auto_flush_rows=off;protocol_version=2;disable_line_protocol_validation=on;");
+            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;auto_flush_rows=off;protocol_version=1;disable_line_protocol_validation=on;");
+            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;auto_flush_rows=1;protocol_version=2;disable_line_protocol_validation=on;");
+            assertConfStrOk("http::addr=localhost;auto_flush_rows=off;auto_flush_interval=1;protocol_version=2;disable_line_protocol_validation=on;");
+            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;auto_flush_rows=off;auto_flush=off;protocol_version=2;disable_line_protocol_validation=on;");
+            assertConfStrOk("http::addr=localhost;auto_flush=off;auto_flush_interval=off;auto_flush_rows=off;protocol_version=1;disable_line_protocol_validation=on;");
+            assertConfStrOk("http::addr=localhost:8080;protocol_version=2;disable_line_protocol_validation=on;");
+            assertConfStrOk("http::addr=localhost:8080;token=foo;protocol_version=2;disable_line_protocol_validation=on;");
+            assertConfStrOk("http::addr=localhost:8080;token=foo=bar;protocol_version=2;disable_line_protocol_validation=on;");
+            assertConfStrOk("addr=localhost:8080", "token=foo", "retry_timeout=1000", "max_buf_size=1000000", "protocol_version=2", "disable_line_protocol_validation=on");
+            assertConfStrOk("addr=localhost:8080", "token=foo", "retry_timeout=1000", "max_buf_size=1000000", "protocol_version=1", "disable_line_protocol_validation=on");
+            assertConfStrOk("http::addr=localhost:8080;token=foo;max_buf_size=1000000;retry_timeout=1000;protocol_version=2;disable_line_protocol_validation=on;");
+            assertConfStrOk("https::addr=localhost:8080;tls_verify=unsafe_off;auto_flush_rows=100;protocol_version=2;disable_line_protocol_validation=on;");
+            assertConfStrOk("https::addr=localhost:8080;tls_verify=on;protocol_version=2;disable_line_protocol_validation=on;");
             assertConfStrError("https::addr=2001:0db8:85a3:0000:0000:8a2e:0370:7334;tls_verify=on;", "cannot parse a port from the address, use IPv4 address or a domain name [address=2001:0db8:85a3:0000:0000:8a2e:0370:7334]");
             assertConfStrError("https::addr=[2001:0db8:85a3:0000:0000:8a2e:0370:7334]:9000;tls_verify=on;", "cannot parse a port from the address, use IPv4 address or a domain name [address=[2001:0db8:85a3:0000:0000:8a2e:0370:7334]:9000]");
         });

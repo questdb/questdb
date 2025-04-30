@@ -263,7 +263,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         .address(address)
                         .enableTls()
                         .retryTimeoutMillis(1000)
-                        .disableLineProtoValidate()
+                        .disableLineProtoValidation()
                         .build()
                 ) {
                     try {
