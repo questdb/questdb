@@ -1332,5 +1332,4 @@ public class ExpressionParserTest extends AbstractCairoTest {
         }
         TestUtils.assertEquals(expectedRpn, rpnBuilder.rpn());
     }
-
 }
