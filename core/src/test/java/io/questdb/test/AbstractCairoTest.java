@@ -38,6 +38,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -54,7 +55,6 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -1330,42 +1330,36 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return false;  // Could not obtain lock.
     }
 
+    protected static MatViewRefreshJob createMatViewRefreshJob() {
+        return createMatViewRefreshJob(engine);
+    }
+
     protected static TableToken createTable(TableModel model) {
         return TestUtils.createTable(engine, model);
     }
 
     protected static ApplyWal2TableJob createWalApplyJob(QuestDBTestNode node) {
-        return new ApplyWal2TableJob(node.getEngine(), 1, 1);
+        return createWalApplyJob(node.getEngine());
     }
 
     protected static ApplyWal2TableJob createWalApplyJob() {
-        return new ApplyWal2TableJob(engine, 1, 1);
+        return createWalApplyJob(engine);
+    }
+
+    protected static void drainWalAndMatViewQueues() {
+        drainWalAndMatViewQueues(engine);
     }
 
     protected static void drainWalQueue(QuestDBTestNode node) {
-        try (ApplyWal2TableJob walApplyJob = createWalApplyJob(node)) {
-            drainWalQueue(walApplyJob, node.getEngine());
-        }
+        drainWalQueue(node.getEngine());
     }
 
     protected static void drainWalQueue(ApplyWal2TableJob walApplyJob) {
         drainWalQueue(walApplyJob, engine);
     }
 
-    protected static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
-        CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-        //noinspection StatementWithEmptyBody
-        while (walApplyJob.run(0)) ;
-        if (checkWalTransactionsJob.run(0)) {
-            //noinspection StatementWithEmptyBody
-            while (walApplyJob.run(0)) ;
-        }
-    }
-
     protected static void drainWalQueue() {
-        try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-            drainWalQueue(walApplyJob);
-        }
+        drainWalQueue(engine);
     }
 
     protected static void dumpMemoryUsage() {

@@ -4009,7 +4009,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withQueryTimeout(100)
                 .run((engine, sqlExecutionContext) -> testHttpClient.assertGetRegexp(
                         "/query",
-                        "\\{\"query\":\"select \\* from test_data_unavailable\\(1, 10\\)\",\"error\":\"timeout, query aborted \\[fd=\\d+, runtime=\\d+us, timeout=\\d+us\\]\",\"position\":0\\}",
+                        "\\{\"query\":\"select \\* from test_data_unavailable\\(1, 10\\)\",\"error\":\"timeout, query aborted \\[fd=\\d+, runtime=\\d+ms, timeout=\\d+ms\\]\",\"position\":0\\}",
                         "select * from test_data_unavailable(1, 10)",
                         null, null, null, null,
                         "400" // Request Timeout
@@ -5146,7 +5146,7 @@ public class IODispatcherTest extends AbstractTest {
                         // we use regexp, because the fd is different every time
                         testHttpClient.assertGetRegexp(
                                 "/query",
-                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"timeout, query aborted \\[fd=\\d+, runtime=\\d+us, timeout=-100us\\]\",\"position\":0\\}",
+                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"timeout, query aborted \\[fd=\\d+, runtime=\\d+ms, timeout=-100ms\\]\",\"position\":0\\}",
                                 "select i, avg(l), max(l) from t group by i order by i asc limit 3",
                                 null, null, null, null,
                                 "400"
@@ -7913,7 +7913,7 @@ public class IODispatcherTest extends AbstractTest {
                         engine.execute(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         testHttpClient.assertGetRegexp(
                                 "/exp",
-                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"\\[-1\\] timeout, query aborted \\[fd=\\d+, runtime=\\d+us, timeout=-100us\\]\",\"position\":0\\}",
+                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"\\[-1\\] timeout, query aborted \\[fd=\\d+, runtime=\\d+ms, timeout=-100ms\\]\",\"position\":0\\}",
                                 QUERY_TIMEOUT_SELECT,
                                 null, null, null, null,
                                 "400"
@@ -8388,7 +8388,7 @@ public class IODispatcherTest extends AbstractTest {
                                 () -> {
                                     started.countDown();
 
-                                    try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                                    try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
                                         while (queryError.get() == null) {
                                             walApplyJob.drain(0);
                                             new CheckWalTransactionsJob(engine).run(0);
@@ -8533,7 +8533,7 @@ public class IODispatcherTest extends AbstractTest {
                             () -> {
                                 started.countDown();
 
-                                try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                                try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
                                     while (queryError.get() == null) {
                                         walApplyJob.drain(0);
                                         new CheckWalTransactionsJob(engine).run(0);

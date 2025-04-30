@@ -22,20 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.mv;
+package io.questdb.griffin;
 
-import org.jetbrains.annotations.Nullable;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.Chars;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import org.jetbrains.annotations.NotNull;
 
-/**
- * Describes materialized view refresh state fields.
- */
-public interface ReadableMatViewState {
+public final class SqlHints {
+    public static final String ASOF_JOIN_BINARY_SEARCH_HINT = "use_asof_binary_search";
+    public static final char HINTS_PARAMS_DELIMITER = ' ';
 
-    @Nullable String getInvalidationReason();
-
-    long getLastRefreshBaseTxn();
-
-    long getLastRefreshTimestamp();
-
-    boolean isInvalid();
+    public static boolean hasAsOfJoinBinarySearchHint(@NotNull QueryModel queryModel, CharSequence tableNameA, CharSequence tableNameB) {
+        LowerCaseCharSequenceObjHashMap<CharSequence> hints = queryModel.getHints();
+        CharSequence params = hints.get(SqlHints.ASOF_JOIN_BINARY_SEARCH_HINT);
+        return Chars.containsWordIgnoreCase(params, tableNameA, HINTS_PARAMS_DELIMITER) &&
+                Chars.containsWordIgnoreCase(params, tableNameB, HINTS_PARAMS_DELIMITER);
+    }
 }

@@ -651,45 +651,43 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     true
             );
 
-            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                execute("drop table " + tableName);
-                SharedRandom.RANDOM.get().reset();
-                execute(createSql + " WAL");
-                drainWalQueue(walApplyJob);
-                assertQueryNoLeakCheck(
-                        "x\tsym\tsym2\tts\n" +
-                                "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n",
-                        tableName,
-                        "ts",
-                        true,
-                        true
-                );
+            execute("drop table " + tableName);
+            SharedRandom.RANDOM.get().reset();
+            execute(createSql + " WAL");
+            drainWalQueue();
+            assertQueryNoLeakCheck(
+                    "x\tsym\tsym2\tts\n" +
+                            "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n",
+                    tableName,
+                    "ts",
+                    true,
+                    true
+            );
 
-                execute("drop table " + tableName);
-                SharedRandom.RANDOM.get().reset();
-                execute(createSql);
-                assertQueryNoLeakCheck(
-                        "x\tsym\tsym2\tts\n" +
-                                "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n",
-                        tableName,
-                        "ts",
-                        true,
-                        true
-                );
+            execute("drop table " + tableName);
+            SharedRandom.RANDOM.get().reset();
+            execute(createSql);
+            assertQueryNoLeakCheck(
+                    "x\tsym\tsym2\tts\n" +
+                            "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n",
+                    tableName,
+                    "ts",
+                    true,
+                    true
+            );
 
-                execute("drop table " + tableName);
-                SharedRandom.RANDOM.get().reset();
-                execute(createSql + " WAL");
-                drainWalQueue(walApplyJob);
-                assertQueryNoLeakCheck(
-                        "x\tsym\tsym2\tts\n" +
-                                "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n",
-                        tableName,
-                        "ts",
-                        true,
-                        true
-                );
-            }
+            execute("drop table " + tableName);
+            SharedRandom.RANDOM.get().reset();
+            execute(createSql + " WAL");
+            drainWalQueue();
+            assertQueryNoLeakCheck(
+                    "x\tsym\tsym2\tts\n" +
+                            "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n",
+                    tableName,
+                    "ts",
+                    true,
+                    true
+            );
         });
     }
 
@@ -1114,25 +1112,23 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                drainWalQueue(walApplyJob);
-                TableToken sysTableName1 = engine.verifyTableName(tableName);
+            drainWalQueue();
+            TableToken sysTableName1 = engine.verifyTableName(tableName);
 
-                try (TableReader ignore = sqlExecutionContext.getReader(sysTableName1)) {
-                    execute("drop table " + tableName);
-                    drainWalQueue(walApplyJob);
-                    checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", true);
-                }
-
-                if (Os.type == Os.WINDOWS) {
-                    // Release WAL writers
-                    engine.releaseInactive();
-                }
-                drainWalQueue(walApplyJob);
-
-                checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
-                checkWalFilesRemoved(sysTableName1);
+            try (TableReader ignore = sqlExecutionContext.getReader(sysTableName1)) {
+                execute("drop table " + tableName);
+                drainWalQueue();
+                checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", true);
             }
+
+            if (Os.type == Os.WINDOWS) {
+                // Release WAL writers
+                engine.releaseInactive();
+            }
+            drainWalQueue();
+
+            checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
+            checkWalFilesRemoved(sysTableName1);
         });
     }
 
@@ -1319,20 +1315,18 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                drainWalQueue(walApplyJob);
+            drainWalQueue();
 
-                for (int i = 0; i < configuration.getWalTxnNotificationQueueCapacity(); i++) {
-                    execute("insert into " + tableName + "1 values (101, 'a1a1', '2022-02-24T01')");
-                }
-
-                TableToken table2directoryName = engine.verifyTableName(tableName + "2");
-                execute("drop table " + tableName + "2");
-
-                drainWalQueue(walApplyJob);
-
-                checkTableFilesExist(table2directoryName, "2022-02-24", "x.d", false);
+            for (int i = 0; i < configuration.getWalTxnNotificationQueueCapacity(); i++) {
+                execute("insert into " + tableName + "1 values (101, 'a1a1', '2022-02-24T01')");
             }
+
+            TableToken table2directoryName = engine.verifyTableName(tableName + "2");
+            execute("drop table " + tableName + "2");
+
+            drainWalQueue();
+
+            checkTableFilesExist(table2directoryName, "2022-02-24", "x.d", false);
         });
     }
 
@@ -1359,18 +1353,16 @@ public class WalTableSqlTest extends AbstractCairoTest {
             );
             TableToken sysTableName1 = engine.verifyTableName(tableName);
 
-            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                drainWalQueue(walApplyJob);
+            drainWalQueue();
 
-                if (Os.type == Os.WINDOWS) {
-                    // Release WAL writers
-                    engine.releaseInactive();
-                    drainWalQueue(walApplyJob);
-                }
-
-                checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
-                checkWalFilesRemoved(sysTableName1);
+            if (Os.type == Os.WINDOWS) {
+                // Release WAL writers
+                engine.releaseInactive();
+                drainWalQueue();
             }
+
+            checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
+            checkWalFilesRemoved(sysTableName1);
         });
     }
 
@@ -2186,7 +2178,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         var control = engine.getTableSequencerAPI().getTxnTracker(token).getMemPressureControl();
         control.setMaxBlockRowCount(1);
 
-        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+        try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
             walApplyJob.run(0);
         }
     }
@@ -2267,28 +2259,26 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                drainWalQueue();
+            drainWalQueue();
 
-                TableToken sysTableName1 = engine.verifyTableName(tableName);
-                execute("drop table " + tableName);
+            TableToken sysTableName1 = engine.verifyTableName(tableName);
+            execute("drop table " + tableName);
 
-                latch.set(true);
-                drainWalQueue(walApplyJob);
+            latch.set(true);
+            drainWalQueue();
 
-                latch.set(false);
-                if (Os.type == Os.WINDOWS) {
-                    // Release WAL writers
-                    engine.releaseInactive();
-                }
-
-                drainWalQueue(walApplyJob);
-
-                checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
-                checkWalFilesRemoved(sysTableName1);
-
-                assertException(tableName, 0, "does not exist");
+            latch.set(false);
+            if (Os.type == Os.WINDOWS) {
+                // Release WAL writers
+                engine.releaseInactive();
             }
+
+            drainWalQueue();
+
+            checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
+            checkWalFilesRemoved(sysTableName1);
+
+            assertException(tableName, 0, "does not exist");
         });
     }
 
