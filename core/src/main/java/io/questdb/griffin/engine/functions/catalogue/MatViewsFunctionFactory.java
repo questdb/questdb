@@ -84,14 +84,14 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_VIEW_NAME = 0;
         private static final int COLUMN_REFRESH_TYPE = COLUMN_VIEW_NAME + 1;
         private static final int COLUMN_BASE_TABLE_NAME = COLUMN_REFRESH_TYPE + 1;
-        private static final int COLUMN_LAST_REFRESH_FINISHED_TIMESTAMP = COLUMN_BASE_TABLE_NAME + 1;
-        private static final int COLUMN_VIEW_SQL = COLUMN_LAST_REFRESH_FINISHED_TIMESTAMP + 1;
+        private static final int COLUMN_LAST_REFRESH_START_TIMESTAMP = COLUMN_BASE_TABLE_NAME + 1;
+        private static final int COLUMN_LAST_REFRESH_FINISH_TIMESTAMP = COLUMN_LAST_REFRESH_START_TIMESTAMP + 1;
+        private static final int COLUMN_VIEW_SQL = COLUMN_LAST_REFRESH_FINISH_TIMESTAMP + 1;
         private static final int COLUMN_TABLE_DIR_NAME = COLUMN_VIEW_SQL + 1;
         private static final int COLUMN_INVALIDATION_REASON = COLUMN_TABLE_DIR_NAME + 1;
         private static final int COLUMN_VIEW_STATUS = COLUMN_INVALIDATION_REASON + 1;
         private static final int COLUMN_LAST_REFRESH_BASE_TABLE_TXN = COLUMN_VIEW_STATUS + 1;
         private static final int COLUMN_LAST_APPLIED_BASE_TABLE_TXN = COLUMN_LAST_REFRESH_BASE_TABLE_TXN + 1;
-        private static final int COLUMN_LAST_REFRESH_STARTED_TIMESTAMP = COLUMN_LAST_APPLIED_BASE_TABLE_TXN + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor = new ViewsListCursor();
 
@@ -222,13 +222,13 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 @Override
                 public long getLong(int col) {
                     switch (col) {
-                        case COLUMN_LAST_REFRESH_FINISHED_TIMESTAMP:
+                        case COLUMN_LAST_REFRESH_FINISH_TIMESTAMP:
                             return lastRefreshFinishedTimestamp;
                         case COLUMN_LAST_REFRESH_BASE_TABLE_TXN:
                             return lastRefreshTxn;
                         case COLUMN_LAST_APPLIED_BASE_TABLE_TXN:
                             return lastAppliedBaseTxn;
-                        case COLUMN_LAST_REFRESH_STARTED_TIMESTAMP:
+                        case COLUMN_LAST_REFRESH_START_TIMESTAMP:
                             return lastRefreshStartedTimestamp;
                         default:
                             return 0;
@@ -297,14 +297,14 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("view_name", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("refresh_type", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("base_table_name", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("last_refresh_finished_timestamp", ColumnType.TIMESTAMP));
+            metadata.add(new TableColumnMetadata("last_refresh_start_timestamp", ColumnType.TIMESTAMP));
+            metadata.add(new TableColumnMetadata("last_refresh_finish_timestamp", ColumnType.TIMESTAMP));
             metadata.add(new TableColumnMetadata("view_sql", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("view_table_dir_name", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("invalidation_reason", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("view_status", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("refresh_base_table_txn", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("base_table_txn", ColumnType.LONG));
-            metadata.add(new TableColumnMetadata("last_refresh_started_timestamp", ColumnType.TIMESTAMP));
             METADATA = metadata;
         }
     }
