@@ -60,6 +60,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
@@ -138,6 +139,73 @@ public class FilesTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testBufferedIOConcurrent() throws Exception {
+        final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+
+        // This test aims to follow write pattern in WAL-E files.
+        Assume.assumeTrue(ff.allowMixedIO(temporaryFolder.getRoot().getAbsolutePath()));
+
+        File file = temporaryFolder.newFile();
+        final int fileSize = 1024;
+        final long valueInMem = 42;
+
+        AtomicInteger errors = new AtomicInteger();
+        AtomicLong writtenOffset = new AtomicLong(-1);
+
+        long srcMem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.getUnsafe().putLong(srcMem, valueInMem);
+
+        long fd = -1;
+        try (Path dstPath = new Path().of(file.getAbsolutePath())) {
+            Assert.assertTrue(Files.exists(dstPath.$()));
+            fd = Files.openRW(dstPath.$());
+
+            final long finalFd = fd;
+            Thread th1 = new Thread(() -> {
+                for (long offset = 0; offset < fileSize; offset += Long.BYTES) {
+                    long written = Files.append(finalFd, srcMem, Long.BYTES);
+                    if (written != Long.BYTES) {
+                        errors.incrementAndGet();
+                        break;
+                    }
+                    writtenOffset.setRelease(offset);
+                    long valueOnDisk = Files.readNonNegativeLong(finalFd, offset);
+                    if (valueInMem != valueOnDisk) {
+                        errors.incrementAndGet();
+                        break;
+                    }
+                }
+                // signal other thread to finish
+                writtenOffset.setRelease(fileSize);
+            });
+            Thread th2 = new Thread(() -> {
+                long offset;
+                while ((offset = writtenOffset.getAcquire()) < fileSize) {
+                    if (offset == -1) {
+                        Os.pause();
+                        continue;
+                    }
+                    long valueOnDisk = Files.readNonNegativeLong(finalFd, offset);
+                    if (valueInMem != valueOnDisk) {
+                        errors.incrementAndGet();
+                        break;
+                    }
+                }
+            });
+
+            th1.start();
+            th2.start();
+            th1.join();
+            th2.join();
+
+            Assert.assertEquals(0, errors.get());
+        } finally {
+            Files.close(fd);
+            Unsafe.free(srcMem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
