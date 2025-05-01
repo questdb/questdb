@@ -203,7 +203,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                         String stringType = ColumnType.nameOf(ColumnType.STRING);
                         TestUtils.assertContains(e.getMessage(), "inconvertible value: `2022-03-08T18:03:57.609765Z` [" + stringType + " -> DOUBLE]");
                     }
-                }, 4, 4
+                }, 3, 3
         );
     }
 
