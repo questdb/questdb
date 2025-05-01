@@ -646,7 +646,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void checkSchedulePurgeO3Partitions() {
         // In scoreboard V2, it is cheap to check that the txn released is not the max txn,
         // do it as a first step before more expensive checks.
-        if (!txnScoreboard.isMax(txn)) {
+        if (txnScoreboard.isOutdated(txn)) {
             long partitionTableVersion = txFile.getPartitionTableVersion();
             // In scoreboard V2 isTxnAvailable(txn) can be relatively expensive. We do this check at the end.
             if (txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion && txnScoreboard.isTxnAvailable(txn)) {

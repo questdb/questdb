@@ -276,7 +276,7 @@ public class VacuumColumnVersions implements Closeable {
             try {
                 partitionTimestamp = getPartitionDirFormatMethod(partitionBy).parse(fileNameSink.asAsciiCharSequence(), 0, dotIndex, DateFormatUtils.EN_LOCALE);
             } catch (NumericException ex) {
-                // Directory is invalid partition name, continue
+                // Directory is an invalid partition name, continue
                 LOG.error().$("skipping column version purge VACUUM, invalid partition directory name [name=").$(fileNameSink)
                         .$(", path=").$(path2).I$();
                 return;

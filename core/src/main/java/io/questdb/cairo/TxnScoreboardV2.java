@@ -32,7 +32,7 @@ import org.jetbrains.annotations.TestOnly;
 /**
  * In-memory transaction scoreboard. Each table reader mutates its own
  * slot based on the assigned id. Cross-reader operations require all slots
- * to be checked. On the other hand, single-reader operations are cheap.
+ * to be checked. On the other hand, single-reader operations are inexpensive.
  */
 public class TxnScoreboardV2 implements TxnScoreboard {
     private static final long UNLOCKED = -1;
@@ -179,8 +179,8 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     }
 
     @Override
-    public boolean isMax(long txn) {
-        return txn >= getMax();
+    public boolean isOutdated(long txn) {
+        return txn < getMax();
     }
 
     @Override
@@ -260,7 +260,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     }
 
     private long getMaxReaderId() {
-        // Max reader Id does not go down, only up.
+        // Max reader ID does not go down, only up.
         // This can in rare cases result in performance hit in calls to isRangeAvailable(), hasEarlierTxnLocks()
         // This problem to be addressed in future PRs
         return Unsafe.getUnsafe().getLongVolatile(null, maxReaderIdMem) + 1;

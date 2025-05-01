@@ -372,7 +372,7 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("create table test (ts timestamp, name symbol, val int)");
             execute("checkpoint create", sqlExecutionContext);
 
-            // The test file should be deleted by checkpoint create.
+            // The test file should be deleted by checkpoint-create.
             Assert.assertFalse(ff.exists(path.$()));
 
             execute("checkpoint release");
@@ -1269,7 +1269,7 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("alter table " + tableName + " add column kkk int");
             execute("insert into " + tableName + " values (103, 'dfd', '2022-02-24T03', 'xyz', 41, 42, 43)");
 
-            // updates above should apply to WAL, not table
+            // the updates above should apply to WAL, not table
             execute("checkpoint create");
 
             // these updates are lost during the snapshotting

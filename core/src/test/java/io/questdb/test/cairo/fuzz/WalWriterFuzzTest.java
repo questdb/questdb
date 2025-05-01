@@ -41,7 +41,7 @@ import org.junit.Test;
 import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
 
 /**
- * These tests are designed to produce unstable runs, e.g. random generator is created
+ * These tests are designed to produce unstable runs, e.g., random generator is created
  * using current execution time.
  * This improves coverage. To debug failures in CI find the line logging random seeds
  * and change line
@@ -50,11 +50,11 @@ import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE
  * {@code Rnd rnd = new Rnd(A, B);}
  * where A, B are seeds in the failed run log.
  * <p>
- * When the same timestamp is used in multiple transactions
+ * When the same timestamp is used in multiple transactions,
  * the order of records when executed in parallel WAL writing is not guaranteed.
- * The creates failures in tests that assume that the order of records is preserved.
+ * That creates failures in tests that assume that the order of records is preserved.
  * There are already measures to prevent invalid data generation, but it still can happen.
- * In order to verify that the test is not broken we check that there are no duplicate
+ * In order to verify that the test is not broken, we check that there are no duplicate
  * timestamps for the record where the comparison fails.
  */
 public class WalWriterFuzzTest extends AbstractFuzzTest {

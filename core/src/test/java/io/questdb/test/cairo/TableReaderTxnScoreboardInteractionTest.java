@@ -87,7 +87,7 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                         txnScoreboard.acquireTxn(5, 4);
                         txnScoreboard.releaseTxn(5, 4);
 
-                        // expect 0, writer is released
+                        // expect 0, the writer is released
                         Assert.assertTrue(txnScoreboard.isTxnAvailable(3));
                     }
 

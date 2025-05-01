@@ -1207,8 +1207,8 @@ public class CopyTask {
 
                 final long len = ff.length(fd);
                 if (len == -1) {
-                    throw CairoException.critical(ff.errno()).put(
-                                    "could not get length of file [path=").put(tmpPath)
+                    throw CairoException.critical(ff.errno())
+                            .put("could not get length of file [path=").put(tmpPath)
                             .put(']');
                 }
 
@@ -1385,7 +1385,9 @@ public class CopyTask {
                 if (i == timestampIndex || dus.size() == 0) {
                     continue;
                 }
-                if (onField(offset, dus, w, i)) return;
+                if (onField(offset, dus, w, i)) {
+                    return;
+                }
             }
             w.append();
         }

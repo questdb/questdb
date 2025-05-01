@@ -146,9 +146,9 @@ public class TxnScoreboardV1 implements TxnScoreboard {
     }
 
     @Override
-    public boolean isMax(long txn) {
+    public boolean isOutdated(long txn) {
         // Unknown, return false as default
-        return false;
+        return true;
     }
 
     @Override
@@ -167,8 +167,8 @@ public class TxnScoreboardV1 implements TxnScoreboard {
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME);
         this.fd = openCleanRW(ff, root.$(), size);
 
-        // truncate is required to give file a size
-        // allocate above does not seem to update file system's size entry
+        // truncate is required to give the file a size
+        // allocate above does not seem to update the file system's size entry
         try {
             if (ff.length(fd) != size) {
                 ff.truncate(fd, size);

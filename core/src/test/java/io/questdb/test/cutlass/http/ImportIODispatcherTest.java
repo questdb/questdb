@@ -61,7 +61,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.test.tools.TestUtils.*;
+import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
 
 public class ImportIODispatcherTest extends AbstractTest {
     private static final Log LOG = LogFactory.getLog(ImportIODispatcherTest.class);
@@ -450,8 +450,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                         Assert.fail();
                     }
 
-                    TableToken tableToken = new TableToken("syms", "syms", 0, false, false, false);
-                    try (TableReader reader = new TableReader(0, engine.getConfiguration(), tableToken, engine.getTxnScoreboardPool())) {
+                    try (TableReader reader = newOffPoolReader(engine.getConfiguration(), "syms", engine)) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
                         Assert.assertEquals(2, meta.getTimestampIndex());
@@ -503,8 +502,8 @@ public class ImportIODispatcherTest extends AbstractTest {
 
                     executor.execute(request2, ValidImportResponse2);
 
-                    // This will try to hit same execution plan as the first SELECT query
-                    // but because table metadata changes, old query plan is not valid anymore
+                    // This will try to hit the same execution plan as the first SELECT query
+                    // but because table metadata changes, the old query plan is not valid anymore
                     // and produces NPE if used
                     executor.executeWithStandardHeaders(
                             "GET /query?query=select+*+from+trips HTTP/1.1\r\n",
@@ -565,8 +564,8 @@ public class ImportIODispatcherTest extends AbstractTest {
                                 .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&timestamp=Pickup_DateTime&overwrite=true HTTP");
                         executor.execute(request2, ValidImportResponse2);
 
-                        // This will try to hit same execution plan as the first SELECT query
-                        // but because table metadata changes, old query plan is not valid anymore
+                        // This will try to hit the same execution plan as the first SELECT query
+                        // but because table metadata changes, the old query plan is not valid anymore
                         // and produces NPE if used
                         executor.execute(
                                 "GET /exp?query=select+*+from+trips HTTP/1.1\r\n"
@@ -755,8 +754,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                         Assert.fail();
                     }
 
-                    TableToken tableToken = new TableToken("syms", "syms", 0, false, false, false);
-                    try (TableReader reader = new TableReader(0, engine.getConfiguration(), tableToken, engine.getTxnScoreboardPool())) {
+                    try (TableReader reader = newOffPoolReader(engine.getConfiguration(), "syms", engine)) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
                         Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("col1"));
@@ -803,7 +801,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .run((engine, sqlExecutionContext) -> {
                     new SendAndReceiveRequestBuilder().execute(ImportCreateParamRequestTrue, ImportCreateParamResponse);
                     drainWalQueue(engine);
-                    assertSql(
+                    TestUtils.assertSql(
                             engine,
                             sqlExecutionContext,
                             "select count() from trips",
@@ -846,7 +844,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     new SendAndReceiveRequestBuilder().execute(request, response);
 
                     drainWalQueue(engine);
-                    assertSql(
+                    TestUtils.assertSql(
                             engine,
                             sqlExecutionContext,
                             "select count() from trips",
@@ -861,7 +859,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     drainWalQueue(engine);
 
                     // check deduplication worked
-                    assertSql(
+                    TestUtils.assertSql(
                             engine,
                             sqlExecutionContext,
                             "select count() from trips",
@@ -972,7 +970,7 @@ public class ImportIODispatcherTest extends AbstractTest {
 
     @Test
     public void testPartitionDeletedUnlocksTxn() throws Exception {
-        // Simulate file not found on partition reopen on reader reload
+        // Simulate file-not-found on partition re-open on reader reload
         // so that JsonQueryProcessor gets error like here
 
         // I i.q.c.h.p.QueryCache hit [thread=questdb-worker-2, sql=select count(*) from xyz where x > 0;]
@@ -1019,7 +1017,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                                     "{\"query\":\"select count(*) from xyz where x > 0;\",\"error\":\"File not found: "
                     );
 
-                    // Check that txn_scoreboard is fully unlocked, e.g. no reader scoreboard leaks after the failure
+                    // Check that txn_scoreboard is fully unlocked, e.g., no reader scoreboard leaks after the failure
                     TableToken tableToken = engine.verifyTableName("xyz");
                     try (TxnScoreboard txnScoreboard = engine.getTxnScoreboard(tableToken)) {
                         long min = getMin(txnScoreboard);

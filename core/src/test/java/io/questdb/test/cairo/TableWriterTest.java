@@ -1893,7 +1893,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIndexIsAddedToTable() throws NumericException {
+    public void testIndexIsAddedToTable() throws Exception {
         int partitionBy = PartitionBy.DAY;
         int N = 1000;
         TableToken tableToken;
@@ -3094,17 +3094,17 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTruncateMidO3Transaction() throws NumericException {
+    public void testTruncateMidO3Transaction() throws Exception {
         testTruncate(TableWriterTest::danglingO3TransactionModifier);
     }
 
     @Test
-    public void testTruncateMidRowAppend() throws NumericException {
+    public void testTruncateMidRowAppend() throws Exception {
         testTruncate(TableWriterTest::danglingRowModifier);
     }
 
     @Test
-    public void testTruncateMidTransaction() throws NumericException {
+    public void testTruncateMidTransaction() throws Exception {
         testTruncate(TableWriterTest::danglingTransactionModifier);
     }
 

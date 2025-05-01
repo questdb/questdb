@@ -337,7 +337,7 @@ public class RecordArrayTest extends AbstractCairoTest {
             final int N = 10000;
             Rnd rnd = new Rnd();
 
-            // in a spirit of using only what's available in this package
+            // in the spirit of using only what's available in this package
             // we create temporary table the hard way
 
             CreateTableTestUtils.createTestTable(N, rnd, new TestRecord.ArrayBinarySequence());

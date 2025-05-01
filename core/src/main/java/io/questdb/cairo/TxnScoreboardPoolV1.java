@@ -49,6 +49,7 @@ public class TxnScoreboardPoolV1 implements TxnScoreboardPool {
             // Don't use .remove() here to keep the TL around.
             // Static analysis warning is irrelevant as our threads
             // have the same lifetime as the server instance.
+            //noinspection ThreadLocalSetWithNull
             tlScoreboardPoolV1.set(null);
         }
         Path path = Path.getThreadLocal(configuration.getDbRoot());

@@ -51,7 +51,7 @@ public interface TxnScoreboard extends QuietCloseable {
      */
     boolean incrementTxn(int id, long txn);
 
-    boolean isMax(long txn);
+    boolean isOutdated(long txn);
 
     boolean isRangeAvailable(long fromTxn, long toTxn);
 

@@ -466,7 +466,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             TxnScoreboard scoreboard = scoreboards.getQuick(i);
             scoreboard.releaseTxn(TxnScoreboard.CHECKPOINT_ID, txn);
 
-            if (schedulePartitionPurge && !scoreboard.isMax(txn)) {
+            if (schedulePartitionPurge && scoreboard.isOutdated(txn)) {
                 int partitionBy = (int) scoreboardTxns.getQuick(2 * i + 1);
                 TableUtils.schedulePurgeO3Partitions(messageBus, scoreboard.getTableToken(), partitionBy);
             }

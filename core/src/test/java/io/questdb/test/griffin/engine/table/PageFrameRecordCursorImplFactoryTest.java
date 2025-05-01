@@ -64,7 +64,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
     public void testFactory() throws Exception {
         assertMemoryLeak(() -> {
             final int N = 100;
-            // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
+            // Separate two symbol columns with primitive. It will make problems apparent if the index does not shift correctly
             TableToken tableToken;
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
                     col("a", ColumnType.STRING).

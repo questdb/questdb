@@ -597,7 +597,7 @@ public class OrderedMapTest extends AbstractCairoTest {
 
             valueTypes.add(ColumnType.LONG);
 
-            // These used to be default FastMap configuration for a join
+            // These used to be the default FastMap configuration for a join
             try (OrderedMap map = new OrderedMap(4194304, keyTypes, valueTypes, 2097152 / 4, 0.5, 2147483647)) {
                 for (int i = 0; i < 40_000_000; i++) {
                     MapKey key = map.withKey();
@@ -1378,7 +1378,7 @@ public class OrderedMapTest extends AbstractCairoTest {
         });
     }
 
-    // This test crashes CircleCI, probably due to amount of memory it needs to run
+    // This test crashes CircleCI, probably due to the amount of memory it needs to run
     // I'm going to find out how to deal with that
     @Test
     public void testMemoryStretch() throws Exception {
@@ -1475,7 +1475,7 @@ public class OrderedMapTest extends AbstractCairoTest {
     @Test
     public void testMergeStressTest() throws Exception {
         // Here we aim to resize both map A's hash table and heap as many times as possible
-        // to catch possible bugs with append address initialization.
+        // to catch possible bugs with append-address initialization.
         TestUtils.assertMemoryLeak(() -> {
             SingleColumnType keyTypes = new SingleColumnType(ColumnType.STRING);
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);

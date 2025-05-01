@@ -67,8 +67,8 @@ public class EmptyTxnScoreboardPool implements TxnScoreboardPool {
             }
 
             @Override
-            public boolean isMax(long txn) {
-                return false;
+            public boolean isOutdated(long txn) {
+                return true;
             }
 
             @Override

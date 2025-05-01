@@ -38,7 +38,6 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
-import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.LineHourTimestampAdapter;
 import io.questdb.cutlass.line.LineMicroTimestampAdapter;
 import io.questdb.cutlass.line.LineMilliTimestampAdapter;
@@ -60,7 +59,6 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -93,6 +91,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.function.Function;
 
+@SuppressWarnings("ClassEscapesDefinedScope")
 public class PropServerConfigurationTest {
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
@@ -1525,7 +1524,7 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testWebConsolePathChangeUpdatesDefaultDependencies() throws JsonException, ServerConfigurationException {
+    public void testWebConsolePathChangeUpdatesDefaultDependencies() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("http.context.web.console", "/new-path");
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
@@ -1571,7 +1570,7 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testWebConsolePathChangeUpdatesDefaultDependenciesFuzz() throws JsonException, ServerConfigurationException {
+    public void testWebConsolePathChangeUpdatesDefaultDependenciesFuzz() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
 
         final ObjList<FuzzItem> pathsThatCanBePinned = new ObjList<>();
@@ -1628,7 +1627,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(webConsolePath + "/index.html", redirectMap.get(new Utf8String(webConsolePath + "/")).toString());
     }
 
-    private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws JsonException {
+    private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws Exception {
         try {
             properties.setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT.getPropertyPath(), value);
             properties.setProperty(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath(), value);
@@ -1645,7 +1644,7 @@ public class PropServerConfigurationTest {
             String locale,
             String format,
             String timestamp
-    ) throws NumericException, ServerConfigurationException, JsonException {
+    ) throws Exception {
         sink.clear();
         Properties properties = new Properties();
         properties.setProperty("log.timestamp.timezone", timezone);
@@ -1880,11 +1879,11 @@ public class PropServerConfigurationTest {
             Properties properties,
             Map<String, String> env,
             BuildInformation buildInformation
-    ) throws ServerConfigurationException, JsonException {
+    ) throws Exception {
         return new PropServerConfiguration(root, properties, env, PropServerConfigurationTest.LOG, buildInformation);
     }
 
-    protected PropServerConfiguration newPropServerConfiguration(Properties properties) throws ServerConfigurationException, JsonException {
+    protected PropServerConfiguration newPropServerConfiguration(Properties properties) throws Exception {
         return new PropServerConfiguration(root, properties, null, PropServerConfigurationTest.LOG, new BuildInformationHolder());
     }
 

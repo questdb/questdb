@@ -30,7 +30,6 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
@@ -86,7 +85,7 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExplosion() throws SqlException {
+    public void testExplosion() throws Exception {
         final String tableName = "exploding";
         TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).timestamp();
         AbstractCairoTest.create(model);

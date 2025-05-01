@@ -260,7 +260,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                         sender.flush();
                     }
 
-                    try (TableReader reader = new TableReader(0, configuration, engine.verifyTableName(tableName), engine.getTxnScoreboardPool())) {
+                    try (TableReader reader = newOffPoolReader(configuration, tableName, engine)) {
                         int count = 1000000;
                         while (true) {
                             if (count-- > 0 && reader.size() < 10) {

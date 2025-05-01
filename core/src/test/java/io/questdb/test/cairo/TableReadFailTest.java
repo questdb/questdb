@@ -162,7 +162,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 mem.close();
                 mem.close();
 
-                // make sure reload functions correctly. Txn changed from 1 to 3, reload should return true
+                // Make sure reload functions correctly. Txn changed from 1 to 3, reload should return true
                 Assert.assertTrue(reader.reload());
 
                 try (TableWriter writer = newOffPoolWriter(configuration, x)) {
@@ -179,7 +179,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 // does positive reload work?
                 Assert.assertTrue(reader.reload());
 
-                // can reader still see correct data?
+                // can reader still see the correct data?
                 cursor.toTop();
                 rnd.reset();
                 count = 0;
