@@ -33,9 +33,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoKeywords;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
@@ -57,6 +59,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -120,8 +123,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         applyWal(tableToken, engine, operationExecutor, Job.RUNNING_STATUS);
     }
 
+    // this method is supposed to be called from the CairoEngine.start() method
     public void applyTableAll(TableToken tableToken) {
-        SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        TableSequencerAPI sequencerAPI = engine.getTableSequencerAPI();
+        SeqTxnTracker tracker = sequencerAPI.getTxnTracker(tableToken);
+        if (!tracker.isInitialised()) {
+            LPSZ txnPath = Path.getThreadLocal(config.getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+            FilesFacade ff = config.getFilesFacade();
+            try (TxReader txReader = new TxReader(ff).ofRO(txnPath, PartitionBy.NONE)) {
+                TableUtils.safeReadTxn(txReader, config.getMillisecondClock(), config.getSpinLockTimeout());
+                sequencerAPI.initTxnTracker(tableToken, txReader.getSeqTxn(), sequencerAPI.lastTxn(tableToken));
+            }
+        }
         while (!tracker.isSuspended() && tracker.getWriterTxn() < tracker.getSeqTxn()) {
             applyTable(tableToken);
         }
