@@ -506,8 +506,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             if (!multipartProcessor) {
                 if (multipartRequest) {
                     return rejectProcessor.reject(HTTP_NOT_FOUND, "Method (multipart POST) not supported");
-                } else {
-                    return rejectProcessor.reject(HTTP_NOT_FOUND, "Method not supported");
+                } else if (!(processor instanceof HttpContentListener)) {
+                    return rejectProcessor.reject(HTTP_NOT_FOUND, "Method (POST/PUT) not supported");
                 }
             }
             if (chunked && contentLength > 0) {
@@ -630,7 +630,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             int read,
             boolean newRequest
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, PeerIsSlowToWriteException {
-        HttpMultipartContentListener contentProcessor = (HttpMultipartContentListener) processor;
+        HttpContentListener contentListener = (HttpContentListener) processor;
         if (!newRequest) {
             processor.resumeRecv(this);
         }
@@ -655,7 +655,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
                 }
 
-                contentProcessor.onChunk(lo, recvBuffer + read);
+                contentListener.onContent(lo, recvBuffer + read);
                 totalReceived += read;
 
                 if (totalReceived == contentLength) {

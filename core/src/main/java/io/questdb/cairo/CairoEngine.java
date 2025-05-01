@@ -74,6 +74,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.config.ConfigStore;
 import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactory;
@@ -138,6 +139,7 @@ public class CairoEngine implements Closeable, WriterSource {
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final DatabaseCheckpointAgent checkpointAgent;
+    private final ConfigStore configStore;
     private final CopyContext copyContext;
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final EngineMaintenanceJob engineMaintenanceJob;
@@ -198,6 +200,9 @@ public class CairoEngine implements Closeable, WriterSource {
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = createRootExecutionContext();
+
+            configStore = new ConfigStore(configuration);
+            configStore.init();
 
             tableIdGenerator.open();
             checkpointRecover();
@@ -488,6 +493,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(tableNameRegistry);
         Misc.free(checkpointAgent);
         Misc.free(metadataCache);
+        Misc.free(configStore);
     }
 
     @TestOnly
@@ -648,6 +654,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public @NotNull ConfigReloader getConfigReloader() {
         return configReloader;
+    }
+
+    public @NotNull ConfigStore getConfigStore() {
+        return configStore;
     }
 
     public CairoConfiguration getConfiguration() {

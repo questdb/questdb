@@ -28,28 +28,21 @@ import io.questdb.std.Mutable;
 import io.questdb.std.str.DirectUtf8Sink;
 
 import java.io.Closeable;
+import java.io.IOException;
 
 class ConfigProcessorState implements Mutable, Closeable {
     final DirectUtf8Sink sink = new DirectUtf8Sink(4096);
-    CharSequence errorMessage;
-    long hi;
-    long lo;
-    int messagePart = ConfigProcessor.MESSAGE_UNKNOWN;
-    int responseState = ConfigProcessor.RESPONSE_JSON;
 
     ConfigProcessorState() {
     }
 
     @Override
     public void clear() {
-        responseState = ConfigProcessor.RESPONSE_JSON;
-        messagePart = ConfigProcessor.MESSAGE_UNKNOWN;
         sink.clear();
-        errorMessage = null;
     }
 
     @Override
-    public void close() {
-        clear();
+    public void close() throws IOException {
+        sink.close();
     }
 }

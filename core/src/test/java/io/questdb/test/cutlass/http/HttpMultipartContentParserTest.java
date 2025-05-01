@@ -24,7 +24,11 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpHeaderParser;
+import io.questdb.cutlass.http.HttpMultipartContentListener;
+import io.questdb.cutlass.http.HttpMultipartContentParser;
+import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -309,7 +313,7 @@ public class HttpMultipartContentParserTest {
         }
 
         @Override
-        public void onChunk(long lo, long hi) {
+        public void onContent(long lo, long hi) {
             onChunkCount++;
             for (long p = lo; p < hi; p++) {
                 sink.put((char) Unsafe.getUnsafe().getByte(p));

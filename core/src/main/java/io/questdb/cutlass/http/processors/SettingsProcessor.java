@@ -26,6 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.config.ConfigStore;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestProcessor;
@@ -33,17 +34,25 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.Utf8StringSink;
 
 import java.net.HttpURLConnection;
 
 public class SettingsProcessor implements HttpRequestProcessor {
-    private final Utf8StringSink sink = new Utf8StringSink();
+    // TODO: create a state class and use that instead of thread locals?
+    private static final ThreadLocal<CharSequenceObjHashMap<CharSequence>> tlSettings = new ThreadLocal<>(CharSequenceObjHashMap::new);
+    private static final ThreadLocal<Utf8StringSink> tlSink = new ThreadLocal<>(Utf8StringSink::new);
+    private final ConfigStore configStore;
+    private final ServerConfiguration serverConfiguration;
 
-    public SettingsProcessor(ServerConfiguration serverConfiguration) {
-        final CharSequenceObjHashMap<CharSequence> settings = new CharSequenceObjHashMap<>();
-        serverConfiguration.getCairoConfiguration().populateSettings(settings);
-        serverConfiguration.getPublicPassthroughConfiguration().populateSettings(settings);
+    public SettingsProcessor(ServerConfiguration serverConfiguration, ConfigStore configStore) {
+        this.serverConfiguration = serverConfiguration;
+        this.configStore = configStore;
+    }
+
+    // TODO: move it into a util class?
+    public static void convertMapToJson(CharSequenceObjHashMap<CharSequence> settings, Utf8StringSink sink) {
         sink.putAscii('{');
         final ObjList<CharSequence> keys = settings.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
@@ -64,6 +73,15 @@ public class SettingsProcessor implements HttpRequestProcessor {
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final CharSequenceObjHashMap<CharSequence> settings = tlSettings.get();
+        final Utf8StringSink sink = tlSink.get();
+
+        serverConfiguration.getCairoConfiguration().populateSettings(settings);
+        serverConfiguration.getPublicPassthroughConfiguration().populateSettings(settings);
+        configStore.populateSettings(settings);
+
+        convertMapToJson(settings, sink);
+
         final HttpChunkedResponse r = context.getChunkedResponse();
         r.status(HttpURLConnection.HTTP_OK, "application/json");
         r.sendHeader();

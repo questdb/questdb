@@ -185,7 +185,7 @@ public class HttpServer implements Closeable {
             });
         }
 
-        final SettingsProcessor settingsProcessor = new SettingsProcessor(serverConfiguration);
+        final SettingsProcessor settingsProcessor = new SettingsProcessor(serverConfiguration, cairoEngine.getConfigStore());
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public ObjList<String> getUrls() {

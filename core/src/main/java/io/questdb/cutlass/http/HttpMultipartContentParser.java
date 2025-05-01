@@ -152,7 +152,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                             state = DONE;
                             return true;
                         default:
-                            listener.onChunk(boundary.lo(), boundary.hi());
+                            listener.onContent(boundary.lo(), boundary.hi());
                             _lo = ptr;
                             state = BODY;
                             break;
@@ -264,7 +264,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
         RetryOperationException needsRetry = null;
         try {
-            listener.onChunk(lo, hi);
+            listener.onContent(lo, hi);
         } catch (RetryOperationException e) {
             // Request re-try.
             needsRetry = e;

@@ -63,16 +63,16 @@ public class LineHttpProcessorImpl implements LineHttpProcessor, HttpMultipartCo
     }
 
     @Override
-    public void onChunk(long lo, long hi) {
-        this.state.parse(lo, hi);
-    }
-
-    @Override
     public void onConnectionClosed(HttpConnectionContext context) {
         state = LV.get(context);
         if (state != null) {
             state.onDisconnected();
         }
+    }
+
+    @Override
+    public void onContent(long lo, long hi) {
+        this.state.parse(lo, hi);
     }
 
     public void onHeadersReady(HttpConnectionContext context) {
