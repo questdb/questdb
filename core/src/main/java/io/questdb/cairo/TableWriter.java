@@ -1271,6 +1271,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     seqTxn += blockSize - 1;
                 } catch (CairoException e) {
                     if (e.isBlockApplyError()) {
+                        if (configuration.getDebugWalApplyBlockFailureNoRetry()) {
+                            // Do not re-try the application as 1 by 1 in tests.
+                            throw e;
+                        }
                         pressureControl.onBlockApplyError();
                         pressureControl.updateInflightTxnBlockLength(
                                 1,
