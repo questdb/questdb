@@ -29,6 +29,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -146,7 +147,7 @@ public class FilesTest {
         // This test aims to follow write pattern in WAL-E files.
 
         final File file = temporaryFolder.newFile();
-        final int fileSize = 1024;
+        final int fileSize = 2048;
         final long valueInMem = 42;
 
         AtomicInteger errors = new AtomicInteger();
@@ -154,53 +155,117 @@ public class FilesTest {
 
         long srcMem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().putLong(srcMem, valueInMem);
+        SOCountDownLatch latch = new SOCountDownLatch(3);
 
-        long fd = -1;
+        Rnd rnd = TestUtils.generateRandom(LOG);
+
         try (Path dstPath = new Path().of(file.getAbsolutePath())) {
             Assert.assertTrue(Files.exists(dstPath.$()));
-            fd = Files.openRW(dstPath.$());
 
-            final long finalFd = fd;
             Thread th1 = new Thread(() -> {
-                for (long offset = 0; offset < fileSize; offset += Long.BYTES) {
-                    long written = Files.append(finalFd, srcMem, Long.BYTES);
-                    if (written != Long.BYTES) {
-                        errors.incrementAndGet();
-                        break;
+                long finalFd = Files.openRW(dstPath.$());
+                latch.countDown();
+
+                try {
+                    for (long offset = 0; offset < fileSize; offset += Long.BYTES) {
+                        long written = Files.append(finalFd, srcMem, Long.BYTES);
+                        if (written != Long.BYTES) {
+                            errors.incrementAndGet();
+                            break;
+                        }
+                        writtenOffset.setRelease(offset);
                     }
-                    writtenOffset.setRelease(offset);
-                    long valueOnDisk = Files.readNonNegativeLong(finalFd, offset);
-                    if (valueInMem != valueOnDisk) {
-                        errors.incrementAndGet();
-                        break;
+                    // signal other thread to finish
+                    writtenOffset.setRelease(fileSize);
+                } finally {
+                    Files.close(finalFd);
+                }
+            });
+
+            Thread th2 = new Thread(() -> {
+                latch.countDown();
+                long offset;
+                long fd = -1;
+                try {
+                    while ((offset = writtenOffset.getAcquire()) < fileSize) {
+                        if (fd < 0) {
+                            fd = Files.openRO(dstPath.$());
+                        }
+                        if (offset == -1) {
+                            Os.pause();
+                            continue;
+                        }
+                        long valueOnDisk = Files.readNonNegativeLong(fd, offset);
+                        if (valueInMem != valueOnDisk) {
+                            errors.incrementAndGet();
+                            break;
+                        }
+                        if (rnd.nextInt(5) < 1) {
+                            Files.close(fd);
+                            fd = -1;
+                        }
+                    }
+                } finally {
+                    if (fd > 0) {
+                        Files.close(fd);
                     }
                 }
-                // signal other thread to finish
-                writtenOffset.setRelease(fileSize);
             });
-            Thread th2 = new Thread(() -> {
-                long offset;
-                while ((offset = writtenOffset.getAcquire()) < fileSize) {
-                    if (offset == -1) {
-                        Os.pause();
-                        continue;
+
+            Thread th3 = new Thread(() -> {
+                latch.countDown();
+                long offset = -1;
+                long fd = -1;
+                long mmap = 0;
+                long mmapSize = 0;
+
+                try {
+                    while ((offset = writtenOffset.getAcquire()) < fileSize) {
+                        if (offset == -1) {
+                            Os.pause();
+                            continue;
+                        }
+                        if (mmapSize > 0) {
+                            Files.munmap(mmap, mmapSize, MemoryTag.MMAP_O3);
+                            mmapSize = 0;
+                        }
+
+                        if (fd < 0) {
+                            fd = Files.openRO(dstPath.$());
+                        }
+                        mmapSize = offset + Long.BYTES;
+                        mmap = Files.mmap(fd, mmapSize, 0, Files.MAP_RO, MemoryTag.MMAP_O3);
+
+                        long valueOnDisk = Unsafe.getUnsafe().getLong(mmap + offset);
+                        if (valueInMem != valueOnDisk) {
+                            errors.incrementAndGet();
+                            break;
+                        }
+                        if (rnd.nextInt(5) < 1) {
+                            Files.close(fd);
+                            fd = -1;
+                        }
                     }
-                    long valueOnDisk = Files.readNonNegativeLong(finalFd, offset);
-                    if (valueInMem != valueOnDisk) {
-                        errors.incrementAndGet();
-                        break;
+                } finally {
+                    if (mmap > 0) {
+                        Files.munmap(mmap, mmapSize, MemoryTag.MMAP_O3);
+                    }
+                    if (fd > 0) {
+                        Files.close(fd);
                     }
                 }
             });
 
             th1.start();
             th2.start();
+            th3.start();
+
             th1.join();
             th2.join();
+            th3.join();
 
             Assert.assertEquals(0, errors.get());
         } finally {
-            Files.close(fd);
             Unsafe.free(srcMem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
     }
