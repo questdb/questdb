@@ -41,7 +41,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cairo.vm.Vm.PARANOIA_MODE;
+import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 
 public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
     private final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
@@ -107,7 +107,7 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                         Assert.assertEquals(-1, memoryROffset.getFd());
                     } catch (AssertionError ex) {
                         // expected in PARANOIA_MODE == true
-                        Assert.assertTrue(PARANOIA_MODE);
+                        Assert.assertTrue(VM_PARANOIA_MODE);
                     }
 
                     // Failed to remap
@@ -143,7 +143,7 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                         TestUtils.assertContains(ex.getFlyweightMessage(), "could not get length");
                     } catch (AssertionError ex) {
                         // expected in PARANOIA_MODE == true
-                        Assert.assertTrue(PARANOIA_MODE);
+                        Assert.assertTrue(VM_PARANOIA_MODE);
                     }
                 }
             });

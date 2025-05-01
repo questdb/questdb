@@ -42,9 +42,10 @@ import org.jetbrains.annotations.Nullable;
 import java.io.File;
 import java.util.Set;
 
+import static io.questdb.ParanoiaState.LOG_PARANOIA_MODE;
+
 abstract class AbstractLogRecord implements LogRecord, Log {
-    private final static boolean PARANOIA_MODE = false;
-    private static final java.lang.ThreadLocal<RuntimeException> tlRecordLeakHelper = PARANOIA_MODE ? new java.lang.ThreadLocal<>() : null;
+    private static final java.lang.ThreadLocal<RuntimeException> tlRecordLeakHelper = LOG_PARANOIA_MODE ? new java.lang.ThreadLocal<>() : null;
     private static final ThreadLocal<ObjHashSet<Throwable>> tlSet = ThreadLocal.withInitial(ObjHashSet::new);
     protected final RingQueue<LogRecordUtf8Sink> advisoryRing;
     protected final Sequence advisorySeq;
@@ -231,8 +232,8 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         sink().putEOL();
         Holder h = tl.get();
         h.seq.done(h.cursor);
-        if (PARANOIA_MODE) {
-            tlRecordLeakHelper.remove();
+        if (LOG_PARANOIA_MODE) {
+            clearLogRecordLeakTrap();
         }
     }
 
@@ -425,23 +426,17 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         return nextWaiting(infoSeq, infoRing, LogLevel.INFO);
     }
 
-    private static void put(Utf8Sink sink, StackTraceElement e) {
-        sink.putAscii("\tat ");
-        sink.putAscii(e.getClassName());
-        sink.putAscii('.');
-        sink.putAscii(e.getMethodName());
-        if (e.isNativeMethod()) {
-            sink.putAscii("(Native Method)");
-        } else {
-            if (e.getFileName() != null && e.getLineNumber() > -1) {
-                sink.putAscii('(').put(e.getFileName()).putAscii(':').put(e.getLineNumber()).putAscii(')');
-            } else if (e.getFileName() != null) {
-                sink.putAscii('(').put(e.getFileName()).putAscii(')');
-            } else {
-                sink.putAscii("(Unknown Source)");
-            }
+    private static void checkLogRecordLeakTrap() {
+        RuntimeException exception = tlRecordLeakHelper.get();
+        if (exception != null) {
+            exception.printStackTrace(System.out);
+            throw exception;
         }
-        sink.put(Misc.EOL);
+        tlRecordLeakHelper.set(new RuntimeException("Log record leak"));
+    }
+
+    private static void clearLogRecordLeakTrap() {
+        tlRecordLeakHelper.remove();
     }
 
     private static void put(
@@ -495,6 +490,25 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         }
     }
 
+    private static void put(Utf8Sink sink, StackTraceElement e) {
+        sink.putAscii("\tat ");
+        sink.putAscii(e.getClassName());
+        sink.putAscii('.');
+        sink.putAscii(e.getMethodName());
+        if (e.isNativeMethod()) {
+            sink.putAscii("(Native Method)");
+        } else {
+            if (e.getFileName() != null && e.getLineNumber() > -1) {
+                sink.putAscii('(').put(e.getFileName()).putAscii(':').put(e.getLineNumber()).putAscii(')');
+            } else if (e.getFileName() != null) {
+                sink.putAscii('(').put(e.getFileName()).putAscii(')');
+            } else {
+                sink.putAscii("(Unknown Source)");
+            }
+        }
+        sink.put(Misc.EOL);
+    }
+
     private static void put0(Utf8Sink sink, Throwable e) {
         sink.putAscii(e.getClass().getName());
         if (e.getMessage() != null) {
@@ -522,13 +536,8 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         LogRecordUtf8Sink r = ring.get(cursor);
         r.setLevel(level);
         r.clear();
-        if (PARANOIA_MODE) {
-            RuntimeException exception = tlRecordLeakHelper.get();
-            if (exception != null) {
-                exception.printStackTrace();
-                throw exception;
-            }
-            tlRecordLeakHelper.set(new RuntimeException("log record leak"));
+        if (LOG_PARANOIA_MODE) {
+            checkLogRecordLeakTrap();
         }
         return this;
     }
