@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -130,6 +131,7 @@ public class O3FailureTest extends AbstractO3Test {
         }
     };
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -3320,7 +3322,9 @@ public class O3FailureTest extends AbstractO3Test {
                                 try {
                                     toRun = false;
                                     barrier.await();
-                                    compiler2.compile("insert atomic into x1 select * from y1", executionContext);
+                                    try (InsertOperation op = compiler2.compile("insert atomic into x1 select * from y1", executionContext).popInsertOperation()) {
+                                        op.execute(executionContext);
+                                    }
                                 } catch (Throwable e) {
                                     //noinspection CallToPrintStackTrace
                                     e.printStackTrace();

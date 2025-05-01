@@ -88,6 +88,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     private static final Rnd rnd = new Rnd();
     private static final String stringTypeName = ColumnType.nameOf(ColumnType.VARCHAR);
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -1523,7 +1524,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
                     execute(compiler, "create table tab52 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by day;", sqlExecutionContext);
-                    compiler.compile("insert into tab52 select cast(x as timestamp), 'a', x, x from long_sequence(10);", sqlExecutionContext);
+                    execute(compiler, "insert into tab52 select cast(x as timestamp), 'a', x, x from long_sequence(10);", sqlExecutionContext);
 
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                         importer.of("tab52", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
