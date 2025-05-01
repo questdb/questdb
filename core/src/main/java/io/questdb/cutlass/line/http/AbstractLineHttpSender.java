@@ -843,12 +843,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
 
         public boolean isSupportVersion(int protocolVersion) {
-            for (int i = 0, size = supportVersions.size(); i < size; i++) {
-                if (protocolVersion == supportVersions.getQuick(i)) {
-                    return true;
-                }
-            }
-            return false;
+            return (supportVersions.size() == 0 && protocolVersion == PROTOCOL_VERSION_V1) || supportVersions.contains(protocolVersion);
         }
 
         @Override
