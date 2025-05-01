@@ -27,11 +27,9 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -45,6 +43,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -177,12 +176,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             final long lastAppliedBaseTxn = baseTableToken != null
                                     ? engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn() : -1;
 
-                            int refreshLimitHoursOrMonths = 0;
-                            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
-                                final CairoTable table = metadataRO.getTable(viewToken);
-                                if (table != null) {
-                                    refreshLimitHoursOrMonths = table.getMatViewRefreshLimitHoursOrMonths();
-                                }
+                            final int refreshLimitHoursOrMonths;
+                            try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
+                                refreshLimitHoursOrMonths = matViewMeta.getMatViewRefreshLimitHoursOrMonths();
                             }
 
                             record.of(
