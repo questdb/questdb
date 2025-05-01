@@ -250,7 +250,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
                                 // For mat views, copy view definition and state before copying the underlying table.
                                 // This way, the state copy will never hold a txn number that is newer than what's
-                                // in the table copy (otherwise, such situation may lead to lost view refresh data).
+                                // in the table copy (otherwise, such a situation may lead to lost view refresh data).
                                 if (tableToken.isMatView()) {
                                     final MatViewGraph graph = engine.getMatViewGraph();
                                     final MatViewDefinition matViewDefinition = graph.getViewDefinition(tableToken);
@@ -435,7 +435,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath.$());
             columnVersionReader.readUnsafe();
 
-            // Symbols are not append only data structures, they can be corrupt
+            // Symbols are not append-only data structures, they can be corrupt
             // when symbol files are copied while written to. We need to rebuild them.
             rebuildSymbolFiles(tablePath, recoveredSymbolFiles, pathTableLen);
 
@@ -443,7 +443,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 LOG.info().$("resetting WAL lag [table=").$(tablePath)
                         .$(", walLagRowCount=").$(txWriter.getLagRowCount())
                         .I$();
-                // WAL Lag values is not strictly append only data structures, it can be overwritten
+                // WAL Lag values is not strictly append-only data structures, it can be overwritten
                 // while the snapshot was copied. Resetting it will re-apply data from copied WAL files
                 txWriter.resetLagAppliedRows();
             }
@@ -573,7 +573,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 }
             }
 
-            // reset checkpoint in-flight flag.
+            // reset checkpoint-in-flight flag.
             startedAtTimestamp.set(Numbers.LONG_NULL);
         } finally {
             lock.unlock();
@@ -603,7 +603,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             if (!ff.exists(srcPath.$())) {
                 srcPath.of(legacyCheckpointRoot);
 
-                // check if legacy path exists, in case it doesn't
+                // check if a legacy path exists, in case it doesn't,
                 // we should report errors against the current checkpoint root
                 if (!ff.exists(srcPath.$())) {
                     srcPath.of(checkpointRoot);
@@ -629,7 +629,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             srcPath.trimTo(checkpointRootLen).concat(TableUtils.CHECKPOINT_LEGACY_META_FILE_NAME);
 
             if (!ff.exists(srcPath.$())) {
-                // now current metadata file
+                // now the current metadata file
                 srcPath.trimTo(checkpointRootLen).concat(TableUtils.CHECKPOINT_META_FILE_NAME);
             }
 

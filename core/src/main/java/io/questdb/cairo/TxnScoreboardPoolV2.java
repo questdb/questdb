@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 
 import io.questdb.std.ConcurrentHashMap;
+import org.jetbrains.annotations.NonNls;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
@@ -62,7 +63,7 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
     }
 
     @Override
-    public TxnScoreboard getTxnScoreboard(TableToken token) {
+    public TxnScoreboard getTxnScoreboard(@NonNls TableToken token) {
         ScoreboardPoolTenant val = pool.compute(token.getDirName(), getOrCreateScoreboard);
         val.setTableToken(token);
         return val;

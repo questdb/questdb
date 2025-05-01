@@ -239,7 +239,7 @@ public interface CairoConfiguration {
     int getInsertModelPoolCapacity();
 
     /**
-     * Installation root, i.e. the directory that usually contains the "conf", "db", etc directories.
+     * Installation root, i.e., the directory that usually contains the "conf", "db", etc. directories.
      */
     @NotNull
     String getInstallRoot();
@@ -412,7 +412,7 @@ public interface CairoConfiguration {
 
     /**
      * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
-     * on database start the id is compared with the id stored in the checkpoint, if any. If the ids
+     * on database start the id is compared with the ID stored in the checkpoint, if any. If the ids
      * are different, snapshot recovery is being triggered.
      *
      * @return instance id.
@@ -434,7 +434,7 @@ public interface CairoConfiguration {
 
     int getSqlCopyBufferSize();
 
-    // null or empty input root disables "copy" sql
+    // null or empty input root disables "copy" SQL
     CharSequence getSqlCopyInputRoot();
 
     CharSequence getSqlCopyInputWorkRoot();
@@ -643,7 +643,7 @@ public interface CairoConfiguration {
     /**
      * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.
      *
-     * @return enable/disable flag for recovering from the checkpoint
+     * @return enable/disable a flag for recovering from the checkpoint
      */
     boolean isCheckpointRecoveryEnabled();
 

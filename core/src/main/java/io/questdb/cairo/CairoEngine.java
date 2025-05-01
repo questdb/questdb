@@ -982,7 +982,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return telemetryWal;
     }
 
-    public TxnScoreboard getTxnScoreboard(TableToken tableToken) {
+    public TxnScoreboard getTxnScoreboard(@NotNull TableToken tableToken) {
         return scoreboardPool.getTxnScoreboard(tableToken);
     }
 

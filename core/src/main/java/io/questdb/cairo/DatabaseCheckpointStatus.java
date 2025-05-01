@@ -48,7 +48,7 @@ public interface DatabaseCheckpointStatus {
     }
 
     /**
-     * Returns a non-negative number when database is in "checkpoint" mode.
+     * Returns a non-negative number when the database is in "checkpoint" mode.
      * Checkpoint mode is entered when CHECKPOINT CREATE SQL is called
      * and exited after CHECKPOINT RELEASE is called.
      * The value is an epoch timestamp in micros for the time when CHECKPOINT CREATE was run.

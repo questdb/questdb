@@ -159,7 +159,7 @@ public class ColumnPurgeOperator implements Closeable {
             return true;
         }
 
-        // file did not exist, we don't care of the error
+        // the file did not exist, we don't care of the error
         return false;
     }
 
@@ -192,8 +192,8 @@ public class ColumnPurgeOperator implements Closeable {
             txnScoreboard = engine.getTxnScoreboard(task.getTableName());
         }
 
-        // In exclusive mode we still need to check that purge will delete column in correct table,
-        // e.g. table is not truncated after the update happened
+        // In exclusive mode, we still need to check that purge will delete column in the correct table,
+        // e.g., table is not truncated after the update happened
         if (scoreboardUseMode == ScoreboardUseMode.INTERNAL || scoreboardUseMode == ScoreboardUseMode.EXCLUSIVE) {
             int tableId = readTableId(path);
             if (tableId != task.getTableId()) {
@@ -230,8 +230,8 @@ public class ColumnPurgeOperator implements Closeable {
                 final long updateRowId = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_UPDATE_ROW_ID);
                 int columnTypeRaw = task.getColumnType();
                 int columnType = Math.abs(columnTypeRaw);
-                // We don't know the type of the column, the files are found on the disk but column
-                // does not exist in the table metadata (e.g. column was dropped)
+                // We don't know the type of the column, the files are found on the disk, but column
+                // does not exist in the table metadata (e.g., column was dropped)
                 boolean columnTypeRogue = columnTypeRaw == ColumnType.UNDEFINED;
                 boolean isSymbolRootFiles = (ColumnType.isSymbol(columnType) || columnTypeRogue)
                         && partitionTimestamp == PurgingOperator.TABLE_ROOT_PARTITION;
@@ -257,8 +257,8 @@ public class ColumnPurgeOperator implements Closeable {
                             continue;
                         }
                     } else if (ColumnType.isSymbol(columnType)) {
-                        // In case of symbol root files, we need to check if .k and .v files exist in table root
-                        // In case of symbol files in partition, we need to check if .k and .v files exist in partition
+                        // In the case of symbol root files, we need to check if .k and .v files exist in table root.
+                        // In the case of symbol files in partition, we need to check if .k and .v files exist in partition
                         // that can be index files after index drop SQL.
                         if (!ff.exists(TableUtils.offsetFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
                             if (!ff.exists(BitmapIndexUtils.keyFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
@@ -281,13 +281,13 @@ public class ColumnPurgeOperator implements Closeable {
                     // scoreboard ahead of checking file existence would fail in those
                     // cases.
                     if (!openScoreboardAndTxn(task, scoreboardMode)) {
-                        // current table state precludes us from purging its columns
+                        // the current table state precludes us from purging its columns
                         // nothing to do here
                         completedRowIds.add(updateRowId);
                         continue;
                     }
-                    // we would have mutated the path by checking state of the table
-                    // we will have to re-setup that
+                    // we would have mutated the path by checking the state of the table
+                    // we will have to re-set up that
                     if (!isSymbolRootFiles) {
                         setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
                     } else {
@@ -299,7 +299,7 @@ public class ColumnPurgeOperator implements Closeable {
                 }
 
                 if (txReader.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
-                    // txReader is either open because scoreboardMode == ScoreboardUseMode.EXTERNAL
+                    // txReader is either open because scoreboardMode == ScoreboardUseMode.EXTERNAL,
                     // or it was open by openScoreboardAndTxn
                     LOG.info().$("skipping purge of read-only partition [path=").$(path.$())
                             .$(", column=").utf8(columnName)
@@ -337,7 +337,7 @@ public class ColumnPurgeOperator implements Closeable {
                     }
                 }
 
-                // Check if it's symbol, try remove .k and .v files in the partition
+                // Check if it's a symbol, try to remove .k and .v files in the partition
                 if (ColumnType.isSymbol(columnType) || columnTypeRogue) {
                     if (isSymbolRootFiles) {
                         path.trimTo(pathTrimToPartition);
@@ -415,16 +415,16 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private void setCompletionTimestamp(LongList completedRecordIds, long timeMicro) {
-        // This is in-place update for known record ids of completed column in column version cleanup log table
+        // This is an in-place update for known record ids of completed column in column version cleanup log table
         try {
             Unsafe.getUnsafe().putLong(longBytes, timeMicro);
             for (int rec = 0, n = completedRecordIds.size(); rec < n; rec++) {
                 long recordId = completedRecordIds.getQuick(rec);
                 int partitionIndex = Rows.toPartitionIndex(recordId);
                 if (rec == 0) {
-                    // Assumption is that all records belong to same partition
-                    // this is how the records are added to the table in ColumnPurgeJob
-                    // e.g. all records about the same column updated have identical timestamp
+                    // The assumption is that all records belong to the same partition
+                    // this is how the records are added to the table in ColumnPurgeJob,
+                    // e.g., all records about the same column updated have identical timestamp
                     final long partitionTimestamp = purgeLogWriter.getPartitionTimestamp(partitionIndex);
                     if (purgeLogPartitionTimestamp != partitionTimestamp) {
                         reopenPurgeLogPartition(partitionIndex, partitionTimestamp);

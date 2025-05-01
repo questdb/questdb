@@ -100,7 +100,11 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long txn = TableUtils.INITIAL_TXN;
     private boolean txnAcquired = false;
 
-    public TableReader(int id, CairoConfiguration configuration, TableToken tableToken, TxnScoreboardPool scoreboardFactory) {
+    public TableReader(
+            int id,
+            CairoConfiguration configuration,
+            @NotNull TableToken tableToken,
+            TxnScoreboardPool scoreboardFactory) {
         this(id, configuration, tableToken, scoreboardFactory, null, null);
     }
 
@@ -108,7 +112,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     public TableReader(
             int id,
             CairoConfiguration configuration,
-            TableToken tableToken,
+            @NotNull TableToken tableToken,
             TxnScoreboardPool scoreboardPool,
             @Nullable MessageBus messageBus,
             @Nullable PartitionOverwriteControl partitionOverwriteControl
@@ -480,8 +484,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             partitionOverwriteControl.releasePartitions(this);
         }
         if (releaseTxn() && PartitionBy.isPartitioned(partitionBy)) {
-            // check if reader unlocks a transaction in scoreboard
-            // to house keep the partition versions
+            // check if the reader unlocks a transaction in the scoreboard to
+            // house-keep the partition versions
             checkSchedulePurgeO3Partitions();
         }
         // close all but N latest partitions
@@ -591,10 +595,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // Extend data memory
                 long dataSize = columnTypeDriver.getDataVectorSizeAt(mem2.addressOf(0), rowCount - 1);
                 if (mem1 != null) {
-                    // because of dedup, size of var data can grow or shrink
+                    // because of dedup, the size of var data can grow or shrink
                     return mem1.tryChangeSize(dataSize);
                 } else {
-                    // dataSize can be 0 in case when it's varchar column and all the values are inlined
+                    // dataSize can be 0 in case when it's a varchar column and all the values are inlined
                     // The data memory was not open, but now we need to open it. Mark the partition as not reloaded by returning false
                     return dataSize == 0;
                 }
@@ -630,8 +634,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         // txFile can also be reloaded in goPassive->checkSchedulePurgeO3Partitions
         // if txFile txn doesn't match reader txn, reader has to be slow reloaded
         if (txn == txFile.getTxn()) {
-            // We have to be sure last txn is acquired in Scoreboard
-            // otherwise writer can delete partition version files
+            // We have to be sure the last txn is acquired in Scoreboard
+            // otherwise the writer can delete partition version files
             // between reading txn file and acquiring txn in the Scoreboard.
             Unsafe.getUnsafe().loadFence();
             return txFile.getVersion() == txFile.unsafeReadVersion();
@@ -640,13 +644,13 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void checkSchedulePurgeO3Partitions() {
-        // In scoreboard V2 it is cheap to check that the txn released is not the max txn,
+        // In scoreboard V2, it is cheap to check that the txn released is not the max txn,
         // do it as a first step before more expensive checks.
         if (!txnScoreboard.isMax(txn)) {
             long partitionTableVersion = txFile.getPartitionTableVersion();
-            // In scoreboard V2 isTxnAvailable(txn) can be relatively expensive, do this check at the end.
+            // In scoreboard V2 isTxnAvailable(txn) can be relatively expensive. We do this check at the end.
             if (txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion && txnScoreboard.isTxnAvailable(txn)) {
-                // Last lock for this txn is released and this is not latest txn number
+                // The last lock for this txn is released, and this is not the latest txn number
                 // Schedule a job to clean up partition versions this reader may hold
                 if (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, partitionBy)) {
                     return;
@@ -1012,7 +1016,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     // this method is not thread safe
     @NotNull
     private SymbolMapReaderImpl newSymbolMapReader(int symbolColumnIndex, int columnIndex) {
-        // symbol column index is the index of symbol column in dense array of symbol columns, e.g.
+        // symbol column index is the index of symbol column in a dense array of symbol columns, e.g.,
         // if table has only one symbol columns, the symbolColumnIndex is 0 regardless of column position
         // in the metadata.
         return new SymbolMapReaderImpl(
@@ -1248,8 +1252,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
 
                         if (openPartitionNameTxn == txPartitionNameTxn) {
-                            // We used to skip reloading partition size if the row count is the same and name txn is the same
-                            // But in case of dedup the row count can be same but the data can be overwritten by splitting and squashing the partition back
+                            // We used to skip reloading partition size if the row count is the same and name txn is the same.
+                            // But in case of dedup, the row count can be same, but the data can be overwritten by splitting and squashing the partition back
                             // This is ok for fixed size columns but var length columns have to be re-mapped to the bigger / smaller sizes
                             final byte format = getPartitionFormat(partitionIndex);
                             assert format != -1;
@@ -1317,8 +1321,8 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                 if (!forceTruncate) {
                     if (openPartitionNameTxn == txPartitionNameTxn && openPartitionColumnVersion == columnVersionReader.getMaxPartitionVersion(txPartTs)) {
-                        // We used to skip reloading partition size if the row count is the same and name txn is the same
-                        // But in case of dedup the row count can be same but the data can be overwritten by splitting and squashing the partition back
+                        // We used to skip reloading partition size if the row count is the same and name txn is the same.
+                        // But in case of dedup, the row count can be same, but the data can be overwritten by splitting and squashing the partition back
                         // This is ok for fixed size columns but var length columns have to be re-mapped to the bigger / smaller sizes
                         if (openPartitionSize > -1) {
                             final byte format = getPartitionFormat(partitionIndex);
@@ -1354,14 +1358,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
 
         // if while finished on txPartitionIndex == txPartitionCount condition
-        // remove deleted opened partitions
+        // removes deleted opened partitions
         while (partitionIndex < partitionCount) {
             closeDeletedPartition(partitionIndex);
             changed = true;
         }
 
         // if while finished on partitionIndex == partitionCount condition
-        // insert new partitions at the end
+        // inserts new partitions at the end
         for (; partitionIndex < txPartitionCount; partitionIndex++) {
             insertPartition(partitionIndex, txFile.getPartitionTimestampByIndex(partitionIndex));
             changed = true;
@@ -1433,13 +1437,13 @@ public class TableReader implements Closeable, SymbolTableSource {
             final long columnTop = versionRecordIndex > -1 ? columnVersionReader.getColumnTopByIndex(versionRecordIndex) : 0;
             long columnTxn = versionRecordIndex > -1 ? columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex) : -1;
             if (columnTxn == -1) {
-                // When column is added, column version will have txn number for the partition
+                // When a column is added, a column version will have txn number for the partition
                 // where it's added. It will also have the txn number in the [default] partition
                 columnTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
             }
             final long columnRowCount = partitionRowCount - columnTop;
 
-            // When column is added mid-table existence the top record is only
+            // When column is added mid-table existence, the top record is only
             // created in the current partition. Older partitions would simply have no
             // column file. This makes it necessary to check the partition timestamp in Column Version file
             // of when the column was added.
@@ -1448,8 +1452,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                     final int columnType = metadata.getColumnType(columnIndex);
 
                     final MemoryCMR dataMem = columns.getQuick(primaryIndex);
-                    // We intend to keep file handle open only for the last partition. All other
-                    // partitions will have file handle closed after memory is mapped. The potential knock-on
+                    // We intend to keep the file handle open only for the last partition. All other
+                    // partitions will have the file handle closed after memory is mapped. The potential knock-on
                     // effect of that is when user workload is such that it involved appending to non-last partition,
                     // the reader will incur file-reopen and re-map instead of "realloc" call
                     boolean lastPartition = partitionIndex == partitionCount - 1;
@@ -1506,7 +1510,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 Misc.free(columns.getAndSetQuick(primaryIndex, NullMemoryCMR.INSTANCE));
                 Misc.free(columns.getAndSetQuick(secondaryIndex, NullMemoryCMR.INSTANCE));
                 // the appropriate index for NUllColumn will be created lazily when requested
-                // these indexes have state and may not be always required
+                // these indexes have state and may not always be required
                 Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
                 Misc.free(indexReaders.getAndSetQuick(secondaryIndex, null));
 
@@ -1566,7 +1570,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     throw CairoException.critical(0).put("Metadata read timeout [src=reader, timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
                 }
             } catch (CairoException ex) {
-                // This is temporary solution until we can get multiple version of metadata not overwriting each other
+                // This is a temporary solution until we can get multiple versions of metadata not overwriting each other
                 TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
                 continue;
             }
@@ -1608,11 +1612,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         do {
             // Reload txn
             readTxnSlow(deadline);
-            // Reload _meta if structure version updated, reload _cv if column version updated
+            // Reload _meta if the structure version updated, reload _cv if column version updated
         } while (
             // Reload column versions, column version used in metadata reload column shuffle
                 !reloadColumnVersion(txFile.getColumnVersion(), deadline)
-                        // Start again if _meta with matching structure version cannot be loaded
+                        // Start again if _meta with the matching structure version cannot be loaded
                         || !reloadMetadata(txFile.getMetadataVersion(), deadline, reshuffle)
         );
     }
@@ -1653,8 +1657,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int columnCount = metadata.getColumnCount();
 
         int columnCountShl = getColumnBits(columnCount);
-        // when a column is added we cannot easily reshuffle columns in-place
-        // the reason is that we'd have to create gaps in columns list between
+        // when a column is added, we cannot easily reshuffle columns in-place,
+        // the reason is that we'd have to create gaps in the column list between
         // partitions. It is possible in theory, but this could be an algo for
         // another day.
         if (columnCountShl > this.columnCountShl) {
@@ -1690,11 +1694,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                         // And we should not attempt to reload columns, which have no matches in the metadata
                         if (i < columnCount) {
                             if (copyFrom == i) {
-                                // It appears that column hasn't changed its position. There are three possibilities here:
-                                // 1. Column has been forced out of the reader via closeColumnForRemove(). This is required
-                                //    on Windows before column can be deleted. In this case we must check for marker
+                                // It appears that the column hasn't changed its position. There are three possibilities here:
+                                // 1. The column has been forced out of the reader via closeColumnForRemove(). This is required
+                                //    on Windows before column can be deleted. In this case, we must check for marker
                                 //    instance and the column from disk
-                                // 2. Column hasn't been altered, and we can skip to next column.
+                                // 2. The column hasn't been altered, and we can skip to the next column.
                                 MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
                                 if (col instanceof NullMemoryCMR || (col != null && !col.isOpen())) {
                                     reloadColumnAt(

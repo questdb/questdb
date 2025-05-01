@@ -102,10 +102,10 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         try {
             if (index < len) {
                 long partitionVersion = Numbers.parseLong(fileNameSink, index + 1, len);
-                // When reader locks transaction 100 it opens partition version .99 or lower.
+                // When reader locks transaction 100 it opens a partition version .99 or lower.
                 // Also, when there is no transaction version in the name, it is counted as -1.
                 // By adding +1 here we kill 2 birds in with one stone, partition versions are aligned with
-                // txn scoreboard reader locks and no need to add -1 which allows us to use 128bit
+                // txn scoreboard reader locks and no need to add -1 that allows us to use 128bit
                 // sort to sort 2 x 64bit unsigned integers
                 partitionList.add(partitionVersion + 1);
             } else {
@@ -215,11 +215,11 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 );
             }
         } catch (TableReferenceOutOfDateException e) {
-            // table is dropped and recreated since we started processing it.
+            // the table is dropped and recreated since we started processing it.
             // abort the table processing
             LOG.info().$("table reference out of date, aborting [table=").$(tableToken.getDirName()).I$();
         } catch (CairoException ex) {
-            // It is possible that table is dropped while this async job was in the queue.
+            // It is possible that the table is dropped while this async job was in the queue.
             // so it can be not too bad. Log error and continue work on the queue
             LOG.error()
                     .$("could not purge partition open [table=`").utf8(tableToken.getDirName())
@@ -253,8 +253,8 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         for (int i = hi - 2, n = lo - 1; i > n; i -= 2) {
             long nameTxn = partitionList.get(i);
 
-            // If last committed transaction number is 4, TableWriter can write partition with ending .4 and .3
-            // If the version on disk is .2 (nameTxn == 3) can remove it if the lastTxn > 3, e.g. when nameTxn < lastTxn
+            // If the last committed transaction number is 4, TableWriter can write partition with ending .4 and .3
+            // If the version on disk is .2 (nameTxn == 3) can remove it if the lastTxn > 3, e.g., when nameTxn < lastTxn
             boolean rangeUnlocked = nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
 
             path.trimTo(tableRootLen);
@@ -263,7 +263,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
             if (rangeUnlocked) {
                 // nameTxn can be deleted
-                // -1 here is to compensate +1 added when partition version parsed from folder name
+                // -1 here being to compensate +1 added when a partition version parsed from folder name
                 // See comments of why +1 added there in parsePartitionDateVersion()
                 purgePartition(tableToken, ff, path, tableRootLen - tableToken.getDirNameUtf8().size() - 1, "purging dropped partition directory [path=");
                 lastTxn = nameTxn;
@@ -351,7 +351,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
                 if (rangeUnlocked) {
                     // previousNameVersion can be deleted
-                    // -1 here is to compensate +1 added when partition version parsed from folder name
+                    // -1 here is to compensate +1 added when a partition version parsed from folder name
                     // See comments of why +1 added there in parsePartitionDateVersion()
                     engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, partitionTimestamp, previousNameVersion - 1, 0);
                     purgePartition(tableToken, ff, path, tableRootLen - tableToken.getDirNameUtf8().size() - 1, "purging overwritten partition directory [path=");
@@ -370,7 +370,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     LOG.info().$(message).$substr(pathFrom, path).I$();
                     ff.unlinkOrRemove(path, LOG);
                 } else {
-                    // table is dropped and recreated since we started processing it.
+                    // the table is dropped and recreated since we started processing it.
                     // abort the table processing
                     throw new TableReferenceOutOfDateException();
                 }
@@ -378,7 +378,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 engine.unlockTableCreate(tableToken);
             }
         } else {
-            // table is dropped and recreated since we started processing it.
+            // the table is dropped and recreated since we started processing it.
             // abort the table processing
             throw new TableReferenceOutOfDateException();
         }
@@ -386,7 +386,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
     @Override
     protected boolean canRun() {
-        // disable purge job while database checkpoint is in progress
+        // disable the purge job while database checkpoint is in progress
         return !engine.getCheckpointStatus().partitionsLocked();
     }
 
