@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -38,24 +39,27 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.openRO;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalEventReader implements Closeable {
     private final Log LOG = LogFactory.getLog(WalEventReader.class);
     private final WalEventCursor eventCursor;
+    private final MemoryCMR eventIndexMem;
     private final MemoryCMR eventMem;
     private final FilesFacade ff;
 
     public WalEventReader(FilesFacade ff) {
         this.ff = ff;
+        eventIndexMem = Vm.getCMRInstance();
         eventMem = Vm.getCMRInstance();
         eventCursor = new WalEventCursor(eventMem);
     }
 
     @Override
     public void close() {
-        // WalEventReader is re-usable after close, don't assign nulls
+        // WalEventReader is re-usable after close, don't assign nulls.
+        // Closing is also idempotent.
+        Misc.free(eventIndexMem);
         Misc.free(eventMem);
     }
 
@@ -77,21 +81,29 @@ public class WalEventReader implements Closeable {
 
             if (segmentTxn > -1) {
                 // Read record offset and size
-                long fdi = openRO(ff, path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(), LOG);
+                eventIndexMem.of(
+                        ff,
+                        path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(),
+                        ff.getPageSize(),
+                        -1,
+                        MemoryTag.MMAP_TABLE_WAL_READER,
+                        CairoConfiguration.O_NONE,
+                        Files.POSIX_MADV_RANDOM
+                );
                 try {
-                    int maxTxn = eventMem.getInt(WALE_MAX_TXN_OFFSET_32);
-                    long offset = ff.readNonNegativeLong(fdi, segmentTxn << 3);
-                    long size = ff.readNonNegativeLong(fdi, (maxTxn + 1L) << 3);
+                    final int maxTxn = eventMem.getInt(WALE_MAX_TXN_OFFSET_32);
+                    final long offset = readNonNegativeLong(eventIndexMem, segmentTxn << 3);
+                    long size = readNonNegativeLong(eventIndexMem, (maxTxn + 1L) << 3);
 
                     if (offset > -1 && size < WALE_HEADER_SIZE + Integer.BYTES) {
                         // index file may not contain all records from data file, but it should contain
                         // the transaction we need to read, e.g. segmentTxn
-                        size = ff.readNonNegativeLong(fdi, (segmentTxn + 1L) << 3);
+                        size = readNonNegativeLong(eventIndexMem, (segmentTxn + 1L) << 3);
                     }
 
                     if (offset < 0 || size < WALE_HEADER_SIZE + Integer.BYTES || offset >= size) {
-                        int errno = offset < 0 || size < 0 ? ff.errno() : 0;
-                        long fileSize = ff.length(fdi);
+                        final int errno = offset < 0 || size < 0 ? ff.errno() : 0;
+                        final long fileSize = ff.length(eventMem.getFd());
 
                         throw CairoException.critical(errno).put("segment ")
                                 .put(path).put(" does not have txn with id ").put(segmentTxn)
@@ -106,7 +118,7 @@ public class WalEventReader implements Closeable {
                     eventMem.extend(size + Integer.BYTES);
                     eventCursor.openOffset(offset);
                 } finally {
-                    ff.close(fdi);
+                    Misc.free(eventIndexMem);
                 }
             } else {
                 eventCursor.openOffset(-1);
@@ -127,5 +139,15 @@ public class WalEventReader implements Closeable {
         } finally {
             path.trimTo(trimTo);
         }
+    }
+
+    /**
+     * Read a non-negative long at the specified offset, or return -1 if out of bounds.
+     */
+    private static long readNonNegativeLong(MemoryCMR eventIndexMem, long offset) {
+        if ((offset < 0) || (eventIndexMem.addressOf(offset + Long.BYTES) < 0)) {
+            return -1;
+        }
+        return eventIndexMem.getLong(offset);
     }
 }
