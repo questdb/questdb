@@ -177,6 +177,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // Used to disable column pre-touch without affecting the explain plan
     boolean isColumnPreTouchEnabledOverride();
 
+    boolean isMatView();
+
     // Returns true when where intrinsics are overridden, i.e. by a materialized view refresh
     default boolean isOverriddenIntrinsics(TableToken tableToken) {
         return false;
@@ -220,6 +222,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride);
 
     void setJitMode(int jitMode);
+
+    void setMatView(boolean value);
 
     void setNowAndFixClock(long now);
 

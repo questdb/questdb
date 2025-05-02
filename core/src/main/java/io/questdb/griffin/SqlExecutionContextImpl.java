@@ -60,14 +60,15 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final WindowContextImpl windowContext = new WindowContextImpl();
     private final int workerCount;
     private BindVariableService bindVariableService;
-    private boolean cacheHit = false;
+    private boolean cacheHit;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private MicrosecondClock clock;
-    private boolean cloneSymbolTables = false;
+    private boolean cloneSymbolTables;
     private boolean columnPreTouchEnabled = true;
     private boolean columnPreTouchEnabledOverride = true;
     private boolean containsSecret;
     private int jitMode;
+    private boolean matView;
     private long now;
     private final MicrosecondClock nowClock = () -> now;
     private boolean parallelFilterEnabled;
@@ -258,6 +259,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isMatView() {
+        return matView;
+    }
+
+    @Override
     public boolean isParallelFilterEnabled() {
         return parallelFilterEnabled;
     }
@@ -299,6 +305,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cacheHit = false;
         this.columnPreTouchEnabled = true;
         this.columnPreTouchEnabledOverride = true;
+        this.matView = false;
     }
 
     @Override
@@ -330,6 +337,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
+    }
+
+    @Override
+    public void setMatView(boolean value) {
+        this.matView = value;
     }
 
     @Override

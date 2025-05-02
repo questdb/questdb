@@ -2198,12 +2198,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw e;
             }
             createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
-            queryModel.setIsMatView(true);
+            executionContext.setMatView(true);
             try {
                 compiledQuery.ofSelect(generateSelectWithRetries(queryModel, executionContext, false));
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
+            } finally {
+                executionContext.setMatView(false);
             }
         } catch (Throwable th) {
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);

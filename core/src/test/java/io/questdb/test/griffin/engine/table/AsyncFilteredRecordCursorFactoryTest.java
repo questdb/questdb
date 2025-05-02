@@ -1223,6 +1223,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isMatView() {
+            return sqlExecutionContext.isMatView();
+        }
+
+        @Override
         public boolean isParallelFilterEnabled() {
             return sqlExecutionContext.isParallelFilterEnabled();
         }
@@ -1290,6 +1295,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setJitMode(int jitMode) {
             sqlExecutionContext.setJitMode(jitMode);
+        }
+
+        @Override
+        public void setMatView(boolean value) {
+            sqlExecutionContext.setMatView(value);
         }
 
         @Override

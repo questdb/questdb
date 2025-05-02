@@ -105,6 +105,11 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     }
 
     @Override
+    public boolean isMatView() {
+        return true;
+    }
+
+    @Override
     public boolean isOverriddenIntrinsics(TableToken tableToken) {
         return tableToken == baseTableReader.getTableToken();
     }
@@ -123,6 +128,11 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
         // and then can be re-used in another execution context.
         intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, ColumnType.TIMESTAMP, 0));
         intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, ColumnType.TIMESTAMP, 0));
+    }
+
+    @Override
+    public void setMatView(boolean value) {
+        // no-op
     }
 
     // tsLo is inclusive, tsHi is exclusive

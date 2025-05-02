@@ -163,6 +163,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isMatView() {
+        return false;
+    }
+
+    @Override
     public boolean isParallelFilterEnabled() {
         return false;
     }
@@ -221,6 +226,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setJitMode(int jitMode) {
+    }
+
+    @Override
+    public void setMatView(boolean value) {
     }
 
     @Override
