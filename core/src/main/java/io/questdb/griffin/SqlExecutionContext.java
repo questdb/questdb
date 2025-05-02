@@ -41,14 +41,16 @@ import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public interface SqlExecutionContext extends Closeable {
+public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void clearWindowContext();
 
@@ -232,5 +234,8 @@ public interface SqlExecutionContext extends Closeable {
     void setUseSimpleCircuitBreaker(boolean value);
 
     default void storeTelemetry(short event, short origin) {
+    }
+
+    default void toSink(@NotNull CharSink<?> sink) {
     }
 }
