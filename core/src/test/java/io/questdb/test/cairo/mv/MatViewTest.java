@@ -97,6 +97,79 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterMixed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute("insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-10T12:01')");
+            // set refresh limit
+            execute("alter materialized view price_1h set refresh limit 2 hours;");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T16:00:00.000000Z");
+            drainQueues();
+
+            // expect new limit
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\trefresh_limit_value\trefresh_limit_unit\n" +
+                            "price_1h\tincremental\tbase_price\t2024-09-10T16:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\t2\tHOUR\n",
+                    "materialized_views",
+                    null,
+                    false
+            );
+
+            // insert a few old timestamps
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-01T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-01T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-01T12:02')"
+            );
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T16:00:00.000000Z");
+            drainQueues();
+
+            // all old timestamps should be ignored
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.32\t2024-09-10T12:00:00.000000Z\n",
+                    "price_1h order by sym, ts"
+            );
+
+            // change symbol capacity
+            execute("alter materialized view price_1h alter column sym symbol capacity 1000;");
+            drainQueues();
+
+            // expect new capacity
+            assertSql(
+                    "column\tsymbolCapacity\nsym\t1024\n",
+                    "select \"column\", symbolCapacity from (show columns from price_1h) where type = 'SYMBOL'"
+            );
+
+            // change TTL
+            execute("alter materialized view price_1h set TTL 2 DAYS;");
+            drainQueues();
+
+            // insert future timestamps
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-30T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-30T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-30T12:02')"
+            );
+            drainQueues();
+
+            // older partition should be dropped due to TTL
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-30T12:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-30T12:00:00.000000Z\n",
+                    "price_1h order by sym, ts"
+            );
+        });
+    }
+
+    @Test
     public void testAlterRefreshLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute(
