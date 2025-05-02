@@ -1663,7 +1663,7 @@ public class MatViewTest extends AbstractCairoTest {
             final String viewSql = "with starting_point as ( " +
                     "  select ts from aux_start_date " +
                     "  union " +
-                    "  select interval_start(yesterday()) " +
+                    "  select '2024-09-10' " +
                     "), " +
                     "latest_query as ( " +
                     "  select * " +
