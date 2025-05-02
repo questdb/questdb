@@ -8843,7 +8843,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Sets path member variable to partition directory for the given timestamp and
      * partitionLo and partitionHi to the partition interval in millis. These values are
      * determined based on input timestamp and value of partitionBy. For any given
-     *  timestamp, this method will determine either day, month or year interval timestamp falls to.
+     * timestamp, this method will determine either day, month or year interval timestamp falls to.
      * Partition directory name is ISO string of interval start.
      * <p>
      * Because this method modifies "path" member variable, be a sure path trimmed to original
