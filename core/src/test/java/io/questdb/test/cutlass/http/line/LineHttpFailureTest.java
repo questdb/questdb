@@ -268,19 +268,6 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                     super.msync(addr, len, async);
                 }
 
-//                @Override
-//                public long append(long fd, long buf, long len) {
-//                    if (fd == this.fd && counter.decrementAndGet() == 0) {
-//                        ping.await();
-//                        httpClientRef.get().disconnect();
-//                        pong.countDown();
-//                        // The longer is the sleep the more likely
-//                        // the disconnect happens during sending the response. But it also makes the test slower.
-//                        Os.sleep(10);
-//                    }
-//                    return Files.append(fd, buf, len);
-//                }
-
                 @Override
                 public long openRW(LPSZ name, long opts) {
                     long fd = super.openRW(name, opts);
