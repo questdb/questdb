@@ -42,6 +42,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Collection;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 
@@ -131,30 +132,37 @@ public class PGCommitFailureTest extends BasePGTest {
     @Test
     public void testImplicitPipelineCommitFailure() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        final AtomicLong mmapAddr = new AtomicLong();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            System.err.println("testImplicitPipelineCommitFailure :: (A) TEST TEST TEST");
+
             execute("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
             FilesFacade ffTmp = ff;
             try {
                 AtomicInteger counter = new AtomicInteger(2);
                 ff = new FilesFacadeImpl() {
-                    long addr = 0;
                     long fd = 0;
 
                     @Override
                     public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                        System.err.println("testImplicitPipelineCommitFailure :: (B) mmap(fd=" + fd + ", len=" + len + ", offset=" + offset + ", flags=" + flags + ")");
                         final long addr = super.mmap(fd, len, offset, flags, memoryTag);
                         if (fd == this.fd) {
-                            if (this.addr != 0) {
-                                throw new RuntimeException("Bad test logic, expecting to `this.addr = addr;` just once");
-                            }
-                            this.addr = addr;
+                            System.err.println("testImplicitPipelineCommitFailure :: (C) addr=" + Long.toHexString(addr));
+                            mmapAddr.set(addr);
                         }
                         return addr;
                     }
 
                     @Override
                     public void msync(long addr, long len, boolean async) {
-                        if ((addr == this.addr) && (counter.decrementAndGet() == 0)) {
+                        System.err.println("testImplicitPipelineCommitFailure :: (D) msync(addr=" + Long.toHexString(addr) + ", len=" + len + ", async=" + async + ")");
+                        if (addr == mmapAddr.get()) {
+                        for (var frame : Thread.currentThread().getStackTrace()) {
+                            System.err.println("    " + frame);
+                        }
+                        if ((addr == mmapAddr.get()) && (counter.decrementAndGet() == 0)) {
+                            System.err.println("testImplicitPipelineCommitFailure :: (E) raising cairo exc");
                             throw CairoException.critical(errno()).put("could not append WAL event index value");
                         }
                         super.msync(addr, len, async);
@@ -162,12 +170,11 @@ public class PGCommitFailureTest extends BasePGTest {
 
                     @Override
                     public long openRW(LPSZ name, long opts) {
+                        System.err.println("testImplicitPipelineCommitFailure :: (F) openRw(name=" + name.asAsciiCharSequence() + ")");
                         long fd = super.openRW(name, opts);
                         if (Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_INDEX_FILE_NAME)
                                 && Utf8s.containsAscii(name, Files.SEPARATOR + "x~")) {
-                            if (this.fd != 0) {
-                                throw new RuntimeException("Bad test logic, expecting to `this.fd = fd;` just once");
-                            }
+                            System.err.println("testImplicitPipelineCommitFailure :: (G) fd = " + fd);
                             this.fd = fd;
                         }
                         return fd;

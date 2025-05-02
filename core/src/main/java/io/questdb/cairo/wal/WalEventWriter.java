@@ -203,6 +203,10 @@ class WalEventWriter implements Closeable {
 
     private void appendIndex(long value) {
         eventIndexMem.putLong(value);
+        System.err.println("WalEventWriter.appendIndex :: value=" + value + ", _event.i's fd: " + eventIndexMem.getFd() + ", & addr: " + Long.toHexString(eventIndexMem.addressOf(0)));
+        for (var frame : Thread.currentThread().getStackTrace()) {
+            System.err.println("    " + frame);
+        }
     }
 
     private void init() {
@@ -352,6 +356,7 @@ class WalEventWriter implements Closeable {
     void sync() {
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
+            System.err.println("WalEventWriter.sync :: _event.i's fd: " + eventIndexMem.getFd() + ", & addr: " + Long.toHexString(eventIndexMem.addressOf(0)));
             eventMem.sync(commitMode == CommitMode.ASYNC);
             eventIndexMem.sync(commitMode == CommitMode.ASYNC);
         }
