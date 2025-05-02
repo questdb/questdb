@@ -50,6 +50,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -243,9 +244,20 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
             AtomicInteger counter = new AtomicInteger(2);
             final FilesFacade filesFacade = new TestFilesFacadeImpl() {
 
+                long addr = 0;
+
                 @Override
-                public long append(long fd, long buf, long len) {
-                    if (fd == this.fd && counter.decrementAndGet() == 0) {
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                    final long addr = super.mmap(fd, len, offset, flags, memoryTag);
+                    if (fd == this.fd) {
+                        this.addr = addr;
+                    }
+                    return addr;
+                }
+
+                @Override
+                public void msync(long addr, long len, boolean async) {
+                    if ((addr == this.addr) && (counter.decrementAndGet() == 0)) {
                         ping.await();
                         httpClientRef.get().disconnect();
                         pong.countDown();
@@ -253,8 +265,21 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                         // the disconnect happens during sending the response. But it also makes the test slower.
                         Os.sleep(10);
                     }
-                    return Files.append(fd, buf, len);
+                    super.msync(addr, len, async);
                 }
+
+//                @Override
+//                public long append(long fd, long buf, long len) {
+//                    if (fd == this.fd && counter.decrementAndGet() == 0) {
+//                        ping.await();
+//                        httpClientRef.get().disconnect();
+//                        pong.countDown();
+//                        // The longer is the sleep the more likely
+//                        // the disconnect happens during sending the response. But it also makes the test slower.
+//                        Os.sleep(10);
+//                    }
+//                    return Files.append(fd, buf, len);
+//                }
 
                 @Override
                 public long openRW(LPSZ name, long opts) {
@@ -267,7 +292,15 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                 }
             };
 
+            final Map<String, String> env = new HashMap<>(System.getenv());
+            env.put("QDB_CAIRO_COMMIT_MODE", "sync");
+
             final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
+                @Override
+                public Map<String, String> getEnv() {
+                    return env;
+                }
+
                 @Override
                 public FilesFacade getFilesFacade() {
                     return filesFacade;
