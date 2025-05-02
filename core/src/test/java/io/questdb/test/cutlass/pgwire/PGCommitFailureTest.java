@@ -42,7 +42,6 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Collection;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 
@@ -62,17 +61,40 @@ public class PGCommitFailureTest extends BasePGTest {
     public void testExplicitCommitFailure() throws Exception {
         skipInLegacyMode();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
             execute("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
             FilesFacade ffTmp = ff;
             try {
                 AtomicInteger counter = new AtomicInteger(2);
                 ff = new FilesFacadeImpl() {
+                    long addr = 0;
+                    long fd = 0;
+
                     @Override
-                    public long append(long fd, long buf, long len) {
-                        if (counter.decrementAndGet() == 0) {
-                            return -1;
+                    public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                        final long addr = super.mmap(fd, len, offset, flags, memoryTag);
+                        if (fd == this.fd) {
+                            this.addr = addr;
                         }
-                        return super.append(fd, buf, len);
+                        return addr;
+                    }
+
+                    @Override
+                    public void msync(long addr, long len, boolean async) {
+                        if ((addr == this.addr) && (counter.decrementAndGet() == 0)) {
+                            throw CairoException.critical(errno()).put("could not append WAL event index value");
+                        }
+                        super.msync(addr, len, async);
+                    }
+
+                    @Override
+                    public long openRW(LPSZ name, long opts) {
+                        long fd = super.openRW(name, opts);
+                        if (Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_INDEX_FILE_NAME)
+                                && Utf8s.containsAscii(name, Files.SEPARATOR + "x~")) {
+                            this.fd = fd;
+                        }
+                        return fd;
                     }
                 };
                 connection.setAutoCommit(false);
@@ -98,12 +120,41 @@ public class PGCommitFailureTest extends BasePGTest {
     @Test
     public void testImplicitCommitFailure() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
             execute("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
             FilesFacade ffTmp = ff;
             try {
                 AtomicInteger counter = new AtomicInteger(2);
                 ff = new FilesFacadeImpl() {
+                    long addr = 0;
+                    long fd = 0;
 
+                    @Override
+                    public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                        final long addr = super.mmap(fd, len, offset, flags, memoryTag);
+                        if (fd == this.fd) {
+                            this.addr = addr;
+                        }
+                        return addr;
+                    }
+
+                    @Override
+                    public void msync(long addr, long len, boolean async) {
+                        if ((addr == this.addr) && (counter.decrementAndGet() == 0)) {
+                            throw CairoException.critical(errno()).put("could not append WAL event index value");
+                        }
+                        super.msync(addr, len, async);
+                    }
+
+                    @Override
+                    public long openRW(LPSZ name, long opts) {
+                        long fd = super.openRW(name, opts);
+                        if (Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_INDEX_FILE_NAME)
+                                && Utf8s.containsAscii(name, Files.SEPARATOR + "x~")) {
+                            this.fd = fd;
+                        }
+                        return fd;
+                    }
                 };
                 try {
                     connection.prepareStatement("insert into x values (1, '2021-01-01T00:00:00.000Z')").execute();
@@ -132,8 +183,8 @@ public class PGCommitFailureTest extends BasePGTest {
             try {
                 AtomicInteger counter = new AtomicInteger(2);
                 ff = new FilesFacadeImpl() {
-                    long fd = 0;
                     long addr = 0;
+                    long fd = 0;
 
                     @Override
                     public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
@@ -154,11 +205,9 @@ public class PGCommitFailureTest extends BasePGTest {
 
                     @Override
                     public long openRW(LPSZ name, long opts) {
-                        System.err.println("testImplicitPipelineCommitFailure :: (F) openRw(name=" + name.asAsciiCharSequence() + ")");
                         long fd = super.openRW(name, opts);
                         if (Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_INDEX_FILE_NAME)
                                 && Utf8s.containsAscii(name, Files.SEPARATOR + "x~")) {
-                            System.err.println("testImplicitPipelineCommitFailure :: (G) fd = " + fd);
                             this.fd = fd;
                         }
                         return fd;
