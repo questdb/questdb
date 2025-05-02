@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -38,6 +37,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import static io.questdb.ParanoiaState.FD_PARANOIA_MODE;
 import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
 
 /**
@@ -70,8 +70,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         fsAllowsMixedIO = FilesFacadeImpl.INSTANCE.allowMixedIO(root);
         node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, fsAllowsMixedIO);
         setFuzzProperties(100, 1000, 2);
-        existingFilesParanoia = Files.PARANOIA_FD_MODE;
-        Files.PARANOIA_FD_MODE = true;
+        existingFilesParanoia = FD_PARANOIA_MODE;
+        FD_PARANOIA_MODE = true;
     }
 
     @BeforeClass
@@ -83,7 +83,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @After
     public void tearDown() throws Exception {
         super.tearDown();
-        Files.PARANOIA_FD_MODE = existingFilesParanoia;
+        FD_PARANOIA_MODE = existingFilesParanoia;
     }
 
     @Test

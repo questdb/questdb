@@ -22,29 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb;
 
-import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Sinkable;
-import org.jetbrains.annotations.NotNull;
-
-public class CairoError extends Error implements FlyweightMessageContainer, Sinkable {
-    public CairoError(Throwable cause) {
-        super(cause);
-    }
-
-    public CairoError(String message) {
-        super(message);
-    }
-
-    @Override
-    public CharSequence getFlyweightMessage() {
-        return getMessage();
-    }
-
-    @Override
-    public void toSink(@NotNull CharSink<?> sink) {
-        sink.put(getFlyweightMessage());
-    }
+// This is useful to enable during debugging to catch leaks, double closes, etc.
+public class ParanoiaState {
+    // Set to true to enable log record leaks where $() is not called for the record.
+    public final static boolean LOG_PARANOIA_MODE = false;
+    // Set to true to enable stricter boundary checks on Vm memories implementations.
+    public static final boolean VM_PARANOIA_MODE = false;
+    // Set to true to enable stricter File Descriptor double close checks, trace closed usages.
+    public static boolean FD_PARANOIA_MODE = false;
 }
