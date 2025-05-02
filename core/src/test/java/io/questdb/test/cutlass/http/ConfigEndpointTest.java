@@ -38,6 +38,8 @@ import io.questdb.test.AbstractBootstrapTest;
 import org.junit.Before;
 import org.junit.Test;
 
+import static io.questdb.config.ConfigStore.Mode.MERGE;
+import static io.questdb.config.ConfigStore.Mode.OVERWRITE;
 import static io.questdb.test.tools.TestUtils.*;
 import static java.net.HttpURLConnection.HTTP_OK;
 
@@ -51,14 +53,48 @@ public class ConfigEndpointTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testConfig() throws Exception {
+    public void testMerge() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    final String config1 = "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}";
+                    saveConfig(httpClient, config1, MERGE);
+                    final String config2 = "{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}";
+                    saveConfig(httpClient, config2, MERGE);
+
+                    final ConfigStore configStore = serverMain.getEngine().getConfigStore();
+                    final Utf8StringSink sink = new Utf8StringSink();
+                    sink.putAscii('{');
+                    configStore.populateSettings(sink);
+                    sink.clear(sink.size() - 1);
+                    sink.putAscii('}');
+                    assertEquals("{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}", sink);
+
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null," +
+                            "\"instance_name\":\"instance1\"," +
+                            "\"instance_desc\":\"desc222\"," +
+                            "\"key1\":\"value1\"" +
+                            "}");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOverwrite() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root)) {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     final String config = "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}";
-                    saveConfig(httpClient, config);
+                    saveConfig(httpClient, config, OVERWRITE);
 
                     try (ConfigStore configStore = new ConfigStore(serverMain.getEngine().getConfiguration())) {
                         configStore.init();
@@ -105,10 +141,10 @@ public class ConfigEndpointTest extends AbstractBootstrapTest {
         }
     }
 
-    private void saveConfig(HttpClient httpClient, String config) {
+    private void saveConfig(HttpClient httpClient, String config, ConfigStore.Mode mode) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
         request.POST()
-                .url("/config?mode=overwrite")
+                .url("/config?mode=" + mode.name().toLowerCase())
                 .withContent().put(config);
 
         HttpClient.ResponseHeaders response = request.send();

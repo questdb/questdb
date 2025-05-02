@@ -5,8 +5,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
-import io.questdb.cairo.file.ReadableBlock;
-import io.questdb.cairo.vm.Vm;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
@@ -24,33 +22,37 @@ import java.io.IOException;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
 
+// TODO: add versioning
 public class ConfigStore implements Closeable {
     private static final String CONFIG_FILE_NAME = "_config~store";
-    private static final int CONFIG_FORMAT_MSG_TYPE = 0;
     private static final Utf8String MERGE_STR = new Utf8String("merge");
     private static final Utf8String OVERWRITE_STR = new Utf8String("overwrite");
+    private final BlockFileReader blockFileReader;
     private final BlockFileWriter blockFileWriter;
-    private final CharSequenceObjHashMap<CharSequence> configMap = new CharSequenceObjHashMap<>();
-    // TODO: add versioning
+    private final ConfigMap configMap;
     private final ConfigParser configParser;
     private final CairoConfiguration configuration;
-    private final CharSequenceObjHashMap<CharSequence> parserMap = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<CharSequence> parserMap;
     private final Path path = new Path();
     private final int rootLen;
 
     public ConfigStore(CairoConfiguration configuration) {
         this.configuration = configuration;
 
+        configMap = new ConfigMap(configuration);
+        parserMap = new CharSequenceObjHashMap<>();
         configParser = new ConfigParser(configuration, parserMap);
 
         path.of(configuration.getDbRoot());
         rootLen = path.size();
         blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
+        blockFileReader = new BlockFileReader(configuration);
     }
 
     @Override
     public void close() throws IOException {
         Misc.free(configParser);
+        Misc.free(blockFileReader);
         Misc.free(blockFileWriter);
         Misc.free(path);
     }
@@ -58,7 +60,7 @@ public class ConfigStore implements Closeable {
     public synchronized void init() {
         final LPSZ configPath = configFilePath();
         if (configuration.getFilesFacade().exists(configPath)) {
-            read(configPath);
+            load(configPath, configMap);
         }
     }
 
@@ -91,61 +93,32 @@ public class ConfigStore implements Closeable {
         return path.trimTo(rootLen).concat(CONFIG_FILE_NAME).$();
     }
 
+    private void load(LPSZ configPath, ConfigMap map) {
+        map.clear();
+        try (BlockFileReader reader = blockFileReader) {
+            reader.of(configPath);
+
+            final BlockFileReader.BlockCursor cursor = reader.getCursor();
+            map.readFromBlock(cursor);
+        }
+    }
+
     private void merge() {
-        // TODO: Implement MERGE mode
-        throw CairoException.nonCritical().put("Unsupported mode [mode=").put(Mode.MERGE.name()).put(']');
+        configMap.putAll(parserMap);
+        persist(configMap);
     }
 
     private void overwrite() {
-        // save file
+        configMap.clear();
+        merge();
+    }
+
+    private void persist(ConfigMap map) {
         try (BlockFileWriter writer = blockFileWriter) {
             writer.of(configFilePath());
             final AppendableBlock block = writer.append();
-
-            // process map
-            block.putInt(parserMap.size());
-            final ObjList<CharSequence> keys = parserMap.keys();
-            for (int i = 0, n = keys.size(); i < n; i++) {
-                final CharSequence key = keys.getQuick(i);
-                final CharSequence value = parserMap.get(key);
-                block.putStr(key);
-                block.putStr(value);
-            }
-
-            block.commit(CONFIG_FORMAT_MSG_TYPE);
+            map.writeToBlock(block);
             writer.commit();
-        }
-
-        configMap.clear();
-        configMap.putAll(parserMap);
-    }
-
-    private void read(LPSZ configPath) {
-        configMap.clear();
-        try (BlockFileReader reader = new BlockFileReader(configuration)) {
-            reader.of(configPath);
-
-            long offset = 0;
-
-            final BlockFileReader.BlockCursor cursor = reader.getCursor();
-            while (cursor.hasNext()) {
-                final ReadableBlock block = cursor.next();
-                if (block.type() != CONFIG_FORMAT_MSG_TYPE) {
-                    // ignore unknown block
-                    continue;
-                }
-
-                final int size = block.getInt(offset);
-                offset += Integer.BYTES;
-                for (int i = 0; i < size; i++) {
-                    // TODO: ok to use toString() on initial load?
-                    final CharSequence key = block.getStr(offset).toString();
-                    offset += Vm.getStorageLength(key);
-                    final CharSequence value = block.getStr(offset).toString();
-                    offset += Vm.getStorageLength(value);
-                    configMap.put(key, value);
-                }
-            }
         }
     }
 
