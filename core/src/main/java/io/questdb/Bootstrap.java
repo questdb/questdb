@@ -198,12 +198,7 @@ public class Bootstrap {
                             buildInformation,
                             ffOverride,
                             MicrosecondClockImpl.INSTANCE,
-                            new FactoryProviderFactory() {
-                                @Override
-                                public @NotNull FactoryProvider getInstance(ServerConfiguration configuration, CairoEngine engine, FreeOnExit freeOnExit) {
-                                    return DefaultFactoryProvider.INSTANCE;
-                                }
-                            },
+                            (configuration1, engine, freeOnExit) -> DefaultFactoryProvider.INSTANCE,
                             true
                     );
                 }
