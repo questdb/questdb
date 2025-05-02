@@ -1259,6 +1259,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     seqTxn += blockSize - 1;
                 } catch (CairoException e) {
                     if (e.isBlockApplyError()) {
+                        if (configuration.getDebugWalApplyBlockFailureNoRetry()) {
+                            // Do not re-try the application as 1 by 1 in tests.
+                            throw e;
+                        }
                         pressureControl.onBlockApplyError();
                         pressureControl.updateInflightTxnBlockLength(
                                 1,
@@ -2325,7 +2329,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public TableToken getTableToken() {
+    public @NotNull TableToken getTableToken() {
         return tableToken;
     }
 
@@ -4058,7 +4062,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             } else if (noOpRowCount > 0) {
                 LOG.critical()
-                        .$("o3 ignoring write on read-only partition [table=").utf8(tableToken.getTableName())
+                        .$("o3 ignoring write on read-only partition [table=").$(tableToken)
                         .$(", timestamp=").$ts(lastOpenPartitionTs)
                         .$(", numRows=").$(noOpRowCount)
                         .$();
@@ -9168,7 +9172,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void throwDistressException(Throwable cause) {
-        LOG.critical().$("writer error [table=").utf8(tableToken.getTableName()).$(", e=").$((Sinkable) cause).I$();
+        try {
+            Sinkable sinkable = (Sinkable) cause;
+            LOG.critical().$("writer error [table=").$(tableToken).$(", e=").$(sinkable).I$();
+        } catch (Throwable th) {
+            LOG.critical().$("writer error [table=").$(tableToken).$(", e=").$(cause).I$();
+        }
         distressed = true;
         throw new CairoError(cause);
     }
