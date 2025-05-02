@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
@@ -37,6 +38,8 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.std.Numbers;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
@@ -122,8 +125,24 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
         intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, ColumnType.TIMESTAMP, 0));
     }
 
-    public void setRange(long minTs, long maxTs) throws SqlException {
-        getBindVariableService().setTimestamp(1, minTs);
-        getBindVariableService().setTimestamp(2, maxTs - 1);
+    // tsLo is inclusive, tsHi is exclusive
+    public void setRange(long tsLo, long tsHi) throws SqlException {
+        getBindVariableService().setTimestamp(1, tsLo);
+        getBindVariableService().setTimestamp(2, tsHi - 1);
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        super.toSink(sink);
+        sink.putAscii(", refreshMinTs=").putISODate(getTimestamp(1));
+        sink.putAscii(", refreshMaxTs=").putISODate(getTimestamp(2));
+    }
+
+    private long getTimestamp(int index) {
+        final Function func = getBindVariableService().getFunction(index);
+        if (func == null || func.getType() != ColumnType.TIMESTAMP) {
+            return Numbers.LONG_NULL;
+        }
+        return func.getTimestamp(null);
     }
 }

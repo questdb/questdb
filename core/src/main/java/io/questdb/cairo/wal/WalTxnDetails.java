@@ -65,7 +65,9 @@ public class WalTxnDetails implements QuietCloseable {
     private static final int WAL_TXN_ROW_HI_OFFSET = WAL_TXN_ROW_LO_OFFSET + 1;
     private static final int WAL_TXN_ROW_IN_ORDER_DATA_TYPE = WAL_TXN_ROW_HI_OFFSET + 1;
     private static final int WAL_TXN_SYMBOL_DIFF_OFFSET = WAL_TXN_ROW_IN_ORDER_DATA_TYPE + 1;
-    public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_SYMBOL_DIFF_OFFSET + 1;
+    private static final int WAL_TXN_MAT_VIEW_REFRESH_TXN = WAL_TXN_SYMBOL_DIFF_OFFSET + 1;
+    private static final int WAL_TXN_MAT_VIEW_REFRESH_TS = WAL_TXN_MAT_VIEW_REFRESH_TXN + 1;
+    public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_MAT_VIEW_REFRESH_TS + 1;
     private static final int SYMBOL_MAP_COLUMN_RECORD_HEADER_INTS = 6;
     private static final int SYMBOL_MAP_RECORD_HEADER_INTS = 4;
     private final CairoConfiguration config;
@@ -100,6 +102,17 @@ public class WalTxnDetails implements QuietCloseable {
         walEventReader = new WalEventReader(ff);
         this.config = configuration;
         this.maxLookaheadRows = maxLookaheadRows;
+    }
+
+    public static WalEventCursor openWalEFile(Path tempPath, WalEventReader eventReader, int segmentTxn, long seqTxn) {
+        WalEventCursor walEventCursor;
+        try {
+            walEventCursor = eventReader.of(tempPath, segmentTxn);
+        } catch (CairoException ex) {
+            throw CairoException.critical(ex.getErrno()).put("cannot read WAL even file for seqTxn=").put(seqTxn)
+                    .put(", ").put(ex.getFlyweightMessage()).put(']');
+        }
+        return walEventCursor;
     }
 
     /**
@@ -195,7 +208,7 @@ public class WalTxnDetails implements QuietCloseable {
             }
         }
 
-        // Return true if there are any sumbol maps created, e.g. mapping is not identical transformation
+        // Return true if there are any symbol maps created, e.g. mapping is not identical transformation
         return outMem.getAppendOffset() > (txnCount << 3);
     }
 
@@ -211,21 +224,20 @@ public class WalTxnDetails implements QuietCloseable {
     public int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl, long maxBlockRecordCount) {
         int blockSize = 1;
         long lastSeqTxn = getLastSeqTxn();
-        long totalRowCount = 0;
+        long totalRowCount = getSegmentRowHi(seqTxn) - getSegmentRowLo(seqTxn);
         maxBlockRecordCount = Math.min(maxBlockRecordCount, pressureControl.getMaxBlockRowCount() - 1);
 
         long lastWalSegment = getWalSegment(seqTxn);
-        boolean allInOrder = true;
+        boolean allInOrder = getTxnInOrder(seqTxn);
         long minTs = Long.MAX_VALUE;
         long maxTs = Long.MIN_VALUE;
 
-        for (long nextTxn = seqTxn; nextTxn < lastSeqTxn; nextTxn++) {
+        for (long nextTxn = seqTxn + 1; nextTxn <= lastSeqTxn; nextTxn++) {
             long currentWalSegment = getWalSegment(nextTxn);
             if (allInOrder) {
                 if (currentWalSegment != lastWalSegment) {
                     if (totalRowCount >= maxBlockRecordCount / 10) {
                         // Big enough chunk of all in order data in same segment
-                        blockSize--;
                         break;
                     }
                     allInOrder = false;
@@ -235,8 +247,7 @@ public class WalTxnDetails implements QuietCloseable {
                     maxTs = Math.max(maxTs, getMaxTimestamp(nextTxn));
                 }
             }
-            long txnRowCount = getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
-            totalRowCount += txnRowCount;
+            totalRowCount += getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
             lastWalSegment = currentWalSegment;
 
             if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT || totalRowCount > maxBlockRecordCount) {
@@ -297,6 +308,14 @@ public class WalTxnDetails implements QuietCloseable {
         return startSeqTxn + transactionMeta.size() / TXN_METADATA_LONGS_SIZE - 1;
     }
 
+    public long getMatViewRefreshTimestamp(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MAT_VIEW_REFRESH_TS);
+    }
+
+    public long getMatViewRefreshTxn(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MAT_VIEW_REFRESH_TXN);
+    }
+
     public long getMaxTimestamp(long seqTxn) {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MAX_TIMESTAMP_OFFSET);
     }
@@ -342,10 +361,6 @@ public class WalTxnDetails implements QuietCloseable {
 
     public byte getWalTxnType(long seqTxn) {
         return (byte) Numbers.decodeHighInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
-    }
-
-    public boolean hasRecord(long seqTxn) {
-        return (seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE < transactionMeta.size();
     }
 
     public boolean isLastSegmentUsage(long seqTxn) {
@@ -516,17 +531,6 @@ public class WalTxnDetails implements QuietCloseable {
         assert totalRowsLoadedToApply >= 0;
     }
 
-    private static WalEventCursor openWalEFile(Path tempPath, WalEventReader eventReader, int segmentTxn, long seqTxn) {
-        WalEventCursor walEventCursor;
-        try {
-            walEventCursor = eventReader.of(tempPath, segmentTxn);
-        } catch (CairoException ex) {
-            throw CairoException.critical(ex.getErrno()).put("cannot read WAL even file for seqTxn=").put(seqTxn)
-                    .put(", ").put(ex.getFlyweightMessage()).put(']');
-        }
-        return walEventCursor;
-    }
-
     private long findFirstSymbolStringMemOffset(long symbolsOffset) {
         int i = (int) (symbolsOffset - currentSymbolIndexesStartOffset), n = (int) symbolIndexes.size();
         if (i < n) {
@@ -579,7 +583,6 @@ public class WalTxnDetails implements QuietCloseable {
         long totalRowsLoaded = 0;
 
         try (WalEventReader eventReader = walEventReader) {
-
             WalEventCursor walEventCursor = null;
 
             txnOrder.clear();
@@ -600,7 +603,7 @@ public class WalTxnDetails implements QuietCloseable {
                 txnsToLoad = txn;
 
                 // We specify min as 0, so we expect the highest bit to be 0
-                Vect.radixSortLongIndexAscInPlaceBounded(
+                Vect.radixSortLongIndexAscChecked(
                         txnOrder.getAddress(),
                         txnsToLoad,
                         txnOrder.getAddress() + txnsToLoad * 2L * Long.BYTES,
@@ -672,6 +675,14 @@ public class WalTxnDetails implements QuietCloseable {
                             }
                             transactionMeta.set(txnMetaOffset + WAL_TXN_ROW_IN_ORDER_DATA_TYPE, Numbers.encodeLowHighInts(flags, walTxnType));
                             transactionMeta.set(txnMetaOffset + WAL_TXN_SYMBOL_DIFF_OFFSET, saveSymbols(commitInfo, seqTxn));
+                            if (walTxnType == WalTxnType.MAT_VIEW_DATA) {
+                                WalEventCursor.MatViewDataInfo matViewDataInfo = walEventCursor.getMatViewDataInfo();
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, matViewDataInfo.getLastRefreshBaseTableTxn());
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, matViewDataInfo.getLastRefreshTimestamp());
+                            } else {
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, -1);
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, -1);
+                            }
                             continue;
                         }
                     } else {
@@ -687,6 +698,8 @@ public class WalTxnDetails implements QuietCloseable {
                     transactionMeta.set(txnMetaOffset + WAL_TXN_ROW_HI_OFFSET, -1); // end row id
                     transactionMeta.set(txnMetaOffset + WAL_TXN_ROW_IN_ORDER_DATA_TYPE, Numbers.encodeLowHighInts(0, walTxnType));
                     transactionMeta.set(txnMetaOffset + WAL_TXN_SYMBOL_DIFF_OFFSET, -1); // symbols diff offset
+                    transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, -1); // mat view refresh txn
+                    transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, -1); // mat view refresh timestamp
                 }
             }
         } finally {
@@ -924,7 +937,7 @@ public class WalTxnDetails implements QuietCloseable {
 
         public WalTxnDetailsSlice of(long lo, int count) {
             txnOrder.clear();
-            // Rserve double capacity to use with radix sort
+            // Reserve double capacity to use with radix sort
             txnOrder.setCapacity(count * 4L);
 
             long min = Long.MAX_VALUE, max = Long.MIN_VALUE;
@@ -936,7 +949,7 @@ public class WalTxnDetails implements QuietCloseable {
                 txnOrder.add(i);
             }
 
-            Vect.radixSortLongIndexAscInPlaceBounded(
+            Vect.radixSortLongIndexAscChecked(
                     txnOrder.getAddress(),
                     count,
                     txnOrder.getAddress() + count * 2L * Long.BYTES,

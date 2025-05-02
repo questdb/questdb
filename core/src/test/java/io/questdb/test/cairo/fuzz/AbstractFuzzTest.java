@@ -274,6 +274,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     protected void setFuzzProperties(Rnd rnd) {
+        // Force non-handleable errors to be thrown if block application fails
+        node1.setProperty(PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, true);
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, getRndO3PartitionSplit(rnd));
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, getRndO3PartitionSplitMaxCount(rnd));
@@ -297,6 +299,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     protected void setRandomAppendPageSize(Rnd rnd) {
         int minPage = 18;
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1L << (minPage + rnd.nextInt(22 - minPage))); // MAX page size 4Mb
-        LOG.info().$("dataAppendPageSize=").$(configuration.getDataAppendPageSize()).$();
+        long dataAppendPageSize = configuration.getDataAppendPageSize();
+        LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
     }
 }

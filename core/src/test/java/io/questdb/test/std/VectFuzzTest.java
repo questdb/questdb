@@ -1311,7 +1311,29 @@ public class VectFuzzTest {
                     rowsPerCommit,
                     commits,
                     segmentCount,
-                    false
+                    false,
+                    0
+            );
+        });
+    }
+
+    @Test
+    public void testSort1Segment1CommitSameTimestamp() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(null);
+        TestUtils.assertMemoryLeak(() -> {
+            int segmentCount = 1;
+            int rowsPerCommit = 1 + rnd.nextInt(1000);
+            int commits = 1;
+            long increment = 0;
+
+            testSortManySegments(
+                    rnd.nextLong(123124512354523L),
+                    increment,
+                    rowsPerCommit,
+                    commits,
+                    segmentCount,
+                    false,
+                    -1
             );
         });
     }
@@ -1321,18 +1343,104 @@ public class VectFuzzTest {
         TestUtils.assertMemoryLeak(() -> {
             rnd = TestUtils.generateRandom(null);
             int split = rnd.nextInt(10_000_000);
-            testSortAB(10_000_000 - split, split);
+            testSortAB(
+                    10_000_000 - split,
+                    split,
+                    -rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
+                    rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
+                    0
+            );
+        });
+    }
+
+    @Test
+    public void testSortABEquals() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            rnd = TestUtils.generateRandom(null);
+            int split = rnd.nextInt(100);
+            long min = rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10);
+            testSortAB(
+                    100 - split,
+                    split,
+                    min,
+                    // Set min == max, e.g. all timestamp to be equal
+                    min,
+                    0
+            );
+        });
+    }
+
+    @Test
+    public void testSortABMinGreaterThanMax() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            rnd = TestUtils.generateRandom(null);
+            int split = 10;
+            testSortAB(
+                    50 - split,
+                    split,
+                    101,
+                    100,
+                    -1
+            );
+        });
+    }
+
+    @Test
+    public void testSortABMinMaxDifferenceOverflow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            rnd = TestUtils.generateRandom(null);
+            int split = 10;
+            testSortAB(
+                    50 - split,
+                    split,
+                    -100,
+                    Long.MAX_VALUE - 80,
+                    -2
+            );
+        });
+    }
+
+    @Test
+    public void testSortABSmallDifferenceEqual() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            rnd = TestUtils.generateRandom(null);
+            int split = rnd.nextInt(100);
+            long min = rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10);
+            long max = min + rnd.nextInt(260);
+            testSortAB(
+                    100 - split,
+                    split,
+                    min,
+                    max,
+                    0
+            );
         });
     }
 
     @Test
     public void testSortAEmptyA() throws Exception {
-        TestUtils.assertMemoryLeak(() -> testSortAB(10_000, 0));
+        TestUtils.assertMemoryLeak(() ->
+                testSortAB(
+                        10_000,
+                        0,
+                        -rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
+                        rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
+                        0
+                )
+        );
     }
 
     @Test
     public void testSortAEmptyB() throws Exception {
-        TestUtils.assertMemoryLeak(() -> testSortAB(1_000, 0));
+        TestUtils.assertMemoryLeak(() ->
+                testSortAB(
+                        1_000,
+                        0,
+                        -rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
+                        rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
+                        0
+                )
+        );
     }
 
     @Test
@@ -1359,7 +1467,8 @@ public class VectFuzzTest {
                     rowsPerCommit,
                     commits,
                     segmentCount,
-                    false
+                    false,
+                    0
             );
         });
     }
@@ -1379,7 +1488,8 @@ public class VectFuzzTest {
                     rowsPerCommit,
                     commits,
                     segmentCount,
-                    false
+                    false,
+                    0
             );
         });
     }
@@ -1400,7 +1510,8 @@ public class VectFuzzTest {
                     rowsPerCommit,
                     commits,
                     segmentCount,
-                    true
+                    true,
+                    0
             );
         });
     }
@@ -1456,11 +1567,13 @@ public class VectFuzzTest {
         }
     }
 
-    private void assertIndexAsc(int count, long indexAddr, long initialAddrA, long initialAddrB) {
+    private void assertIndexAsc(int count, long indexAddr, long initialAddrA, long initialAddrB, long min, long max) {
         long v = Unsafe.getUnsafe().getLong(indexAddr);
+        Assert.assertTrue(v >= min && v <= max);
         for (int i = 1; i < count; i++) {
             long ts = Unsafe.getUnsafe().getLong(indexAddr + i * 2L * Long.BYTES);
             long idx = Unsafe.getUnsafe().getLong(indexAddr + i * 2L * Long.BYTES + Long.BYTES);
+            Assert.assertTrue(ts >= min && ts <= max);
             Assert.assertTrue(ts >= v);
             if (idx < 0) {
                 Assert.assertEquals(ts, Unsafe.getUnsafe().getLong(initialAddrA + idx * Long.BYTES));
@@ -1518,7 +1631,7 @@ public class VectFuzzTest {
 
     private void seedMem1Long(int count, long p, long min, long max) {
         for (int i = 0; i < count; i++) {
-            final long z = min + rnd.nextLong(max - min);
+            final long z = min + (max > min ? rnd.nextLong(max - min) : 0);
             Unsafe.getUnsafe().putLong(p + (long) i * Long.BYTES, z);
         }
     }
@@ -1533,7 +1646,7 @@ public class VectFuzzTest {
 
     private void seedMem2Longs(int count, long p, long min, long max) {
         for (int i = 0; i < count; i++) {
-            final long z = min + rnd.nextLong(max);
+            final long z = min + (max > min ? rnd.nextLong(max - min) : 0);
             Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES, z);
             Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES + 8, i);
         }
@@ -1572,7 +1685,7 @@ public class VectFuzzTest {
         }
     }
 
-    private void testSortAB(int aCount, int bCount) {
+    private void testSortAB(int aCount, int bCount, long min, long max, long errorResult) {
         final int sizeA = aCount * 2 * Long.BYTES;
         final int sizeB = bCount * 2 * Long.BYTES;
 
@@ -1580,12 +1693,6 @@ public class VectFuzzTest {
         final long aAddr = Unsafe.malloc(resultSize, MemoryTag.NATIVE_DEFAULT);
         final long bAddr = Unsafe.malloc(sizeB, MemoryTag.NATIVE_DEFAULT);
         final long cpyAddr = Unsafe.malloc(resultSize, MemoryTag.NATIVE_DEFAULT);
-
-        long r1 = rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10);
-        long r2 = -rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10);
-
-        long min = Math.min(r1, r2);
-        long max = Math.max(r1, r2);
 
         final long aAddrCopy = Unsafe.malloc(sizeA, MemoryTag.NATIVE_DEFAULT);
         final long bAddrCopy = Unsafe.malloc(sizeB, MemoryTag.NATIVE_DEFAULT);
@@ -1597,8 +1704,15 @@ public class VectFuzzTest {
             Vect.memcpy(aAddrCopy, aAddr, sizeA);
             Vect.memcpy(bAddrCopy, bAddr, sizeB);
 
-            Vect.radixSortABLongIndexAsc(aAddr, aCount, bAddr, bCount, aAddr, cpyAddr, min, max);
-            assertIndexAsc(aCount + bCount, aAddr, aAddrCopy, bAddrCopy);
+            long rowCount = Vect.radixSortABLongIndexAsc(aAddr, aCount, bAddr, bCount, aAddr, cpyAddr, min, max);
+            if (errorResult < 0) {
+                // The test expects an error
+                Assert.assertEquals(errorResult, rowCount);
+                return;
+            }
+
+            Assert.assertEquals(aCount + bCount, rowCount);
+            assertIndexAsc(aCount + bCount, aAddr, aAddrCopy, bAddrCopy, min, max);
         } finally {
             Unsafe.free(aAddr, resultSize, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(bAddr, sizeB, MemoryTag.NATIVE_DEFAULT);
@@ -1608,7 +1722,7 @@ public class VectFuzzTest {
         }
     }
 
-    private void testSortManySegments(long startTs, long tsIncrement, long rowsPerCommit, long commits, int segmentCount, boolean withLag) {
+    private void testSortManySegments(long startTs, long tsIncrement, long rowsPerCommit, long commits, int segmentCount, boolean withLag, int expectedFailure) {
         // To simplify assertion, make lag rows same as very other segment
         long lagRows = withLag ? commits * rowsPerCommit : 0;
         long maxTs = startTs + tsIncrement * rowsPerCommit * commits;
@@ -1669,6 +1783,10 @@ public class VectFuzzTest {
                         Vect.SHUFFLE_INDEX_FORMAT
                 );
 
+                if (expectedFailure < 0) {
+                    Assert.assertEquals(indexFormat, expectedFailure);
+                    return;
+                }
                 Assert.assertTrue("Internal sort failure: " + indexFormat, Vect.isIndexSuccess(indexFormat));
 
                 // Assert the data

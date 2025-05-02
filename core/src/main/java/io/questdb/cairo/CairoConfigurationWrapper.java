@@ -247,6 +247,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getDebugWalApplyBlockFailureNoRetry() {
+        return getDelegate().getDebugWalApplyBlockFailureNoRetry();
+    }
+
+    @Override
     public @NotNull DateLocale getDefaultDateLocale() {
         return getDelegate().getDefaultDateLocale();
     }
@@ -272,11 +277,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getDoubleToStrCastScale() {
-        return getDelegate().getDoubleToStrCastScale();
-    }
-
-    @Override
     public int getExplainPoolCapacity() {
         return getDelegate().getExplainPoolCapacity();
     }
@@ -294,11 +294,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public @NotNull FilesFacade getFilesFacade() {
         return getDelegate().getFilesFacade();
-    }
-
-    @Override
-    public int getFloatToStrCastScale() {
-        return getDelegate().getFloatToStrCastScale();
     }
 
     @Override
@@ -437,8 +432,23 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getMatViewMaxRecompileAttempts() {
-        return getDelegate().getMatViewMaxRecompileAttempts();
+    public int getMatViewMaxRefreshRetries() {
+        return getDelegate().getMatViewMaxRefreshRetries();
+    }
+
+    @Override
+    public long getMatViewMinRefreshInterval() {
+        return getDelegate().getMatViewMinRefreshInterval();
+    }
+
+    @Override
+    public long getMatViewRefreshOomRetryTimeout() {
+        return getDelegate().getMatViewRefreshOomRetryTimeout();
+    }
+
+    @Override
+    public int getMatViewRowsPerQueryEstimate() {
+        return getDelegate().getMatViewRowsPerQueryEstimate();
     }
 
     @Override
@@ -659,6 +669,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return getDelegate().getSampleByIndexSearchPageSize();
+    }
+
+    @Override
+    public int getScoreboardFormat() {
+        return getDelegate().getScoreboardFormat();
     }
 
     @Override
@@ -1127,6 +1142,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getWriteBackOffTimeoutOnMemPressureMs() {
+        return getDelegate().getWriteBackOffTimeoutOnMemPressureMs();
+    }
+
+    @Override
     public long getWriterAsyncCommandBusyWaitTimeout() {
         return getDelegate().getWriterAsyncCommandBusyWaitTimeout();
     }
@@ -1297,11 +1317,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean useFastAsOfJoin() {
         return getDelegate().useFastAsOfJoin();
-    }
-
-    @Override
-    public long getWriteBackOffTimeoutOnMemPressureMs() {
-        return getDelegate().getWriteBackOffTimeoutOnMemPressureMs();
     }
 
     protected CairoConfiguration getDelegate() {

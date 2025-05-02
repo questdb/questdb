@@ -553,40 +553,44 @@ public class Bootstrap {
 
         log.advisoryW().$("Config:").$();
         log.advisoryW().$(" - http.enabled : ").$(httpEnabled).$(httpReadOnlyHint).$();
-        log.advisoryW().$(" - tcp.enabled  : ").$(config.getLineTcpReceiverConfiguration().isEnabled()).$();
+        boolean enabled = config.getLineTcpReceiverConfiguration().isEnabled();
+        log.advisoryW().$(" - tcp.enabled  : ").$(enabled).$();
         log.advisoryW().$(" - pg.enabled   : ").$(pgEnabled).$(pgReadOnlyHint).$();
-        log.advisoryW().$(" - attach partition suffix: ").$(config.getCairoConfiguration().getAttachPartitionSuffix()).$();
-        log.advisoryW().$(" - open database [").$uuid(cairoConfig.getDatabaseIdLo(), cairoConfig.getDatabaseIdHi()).I$();
-        if (cairoConfig.isReadOnlyInstance()) {
-            log.advisoryW().$(" - THIS IS READ ONLY INSTANCE").$();
-        }
-        try (Path path = new Path()) {
-            verifyFileSystem(path, cairoConfig.getDbRoot(), "db", true);
-            verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup", true);
-            verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true);
-            verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, true);
-            verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false);
-            verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true);
-            verifyFileOpts(path, cairoConfig);
-            cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']', true));
-        }
-        if (JitUtil.isJitSupported()) {
-            final int jitMode = cairoConfig.getSqlJitMode();
-            switch (jitMode) {
-                case SqlJitMode.JIT_MODE_ENABLED:
-                    log.advisoryW().$(" - SQL JIT compiler mode: on").$();
-                    break;
-                case SqlJitMode.JIT_MODE_FORCE_SCALAR:
-                    log.advisoryW().$(" - SQL JIT compiler mode: scalar").$();
-                    break;
-                case SqlJitMode.JIT_MODE_DISABLED:
-                    log.advisoryW().$(" - SQL JIT compiler mode: off").$();
-                    break;
-                default:
-                    log.errorW().$(" - Unknown SQL JIT compiler mode: ").$(jitMode).$();
-                    break;
+        if (cairoConfig != null) {
+            log.advisoryW().$(" - attach partition suffix: ").$(cairoConfig.getAttachPartitionSuffix()).$();
+            log.advisoryW().$(" - open database [").$uuid(cairoConfig.getDatabaseIdLo(), cairoConfig.getDatabaseIdHi()).I$();
+            if (cairoConfig.isReadOnlyInstance()) {
+                log.advisoryW().$(" - THIS IS READ ONLY INSTANCE").$();
+            }
+            try (Path path = new Path()) {
+                verifyFileSystem(path, cairoConfig.getDbRoot(), "db", true);
+                verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup", true);
+                verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true);
+                verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, true);
+                verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false);
+                verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true);
+                verifyFileOpts(path, cairoConfig);
+                cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']', true));
+            }
+            if (JitUtil.isJitSupported()) {
+                final int jitMode = cairoConfig.getSqlJitMode();
+                switch (jitMode) {
+                    case SqlJitMode.JIT_MODE_ENABLED:
+                        log.advisoryW().$(" - SQL JIT compiler mode: on").$();
+                        break;
+                    case SqlJitMode.JIT_MODE_FORCE_SCALAR:
+                        log.advisoryW().$(" - SQL JIT compiler mode: scalar").$();
+                        break;
+                    case SqlJitMode.JIT_MODE_DISABLED:
+                        log.advisoryW().$(" - SQL JIT compiler mode: off").$();
+                        break;
+                    default:
+                        log.errorW().$(" - Unknown SQL JIT compiler mode: ").$(jitMode).$();
+                        break;
+                }
             }
         }
+
         MemoryConfiguration ramConfig = config.getMemoryConfiguration();
         long ramUsageLimitBytes = ramConfig.getRamUsageLimitBytes();
         long ramUsageLimitPercent = ramConfig.getRamUsageLimitPercent();

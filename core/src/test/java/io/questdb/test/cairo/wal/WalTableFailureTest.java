@@ -39,7 +39,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.cairo.wal.WalWriter;
@@ -66,7 +65,6 @@ import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -989,24 +987,22 @@ public class WalTableFailureTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(ffOverride, () -> {
-            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                String tableName = testName.getMethodName();
-                createStandardWalTable(tableName);
+            String tableName = testName.getMethodName();
+            createStandardWalTable(tableName);
 
-                execute("alter table " + tableName + " add column new_column int");
+            execute("alter table " + tableName + " add column new_column int");
 
-                execute("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 123)");
-                drainWalQueue(walApplyJob);
-                assertSql("x\tsym\tts\tsym2\n" +
-                        "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableName);
+            execute("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 123)");
+            drainWalQueue();
+            assertSql("x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableName);
 
-                fail.set(false);
+            fail.set(false);
 
-                execute("insert into " + tableName + " values (102, 'dfd', '2022-02-24T01', 'asd', 123)");
-                drainWalQueue(walApplyJob);
-                assertSql("x\tsym\tts\tsym2\n" +
-                        "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableName);
-            }
+            execute("insert into " + tableName + " values (102, 'dfd', '2022-02-24T01', 'asd', 123)");
+            drainWalQueue();
+            assertSql("x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableName);
         });
     }
 

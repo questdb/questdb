@@ -174,6 +174,34 @@ public final class Chars {
         return indexOfLowerCase(sequence, 0, sequence.length(), termLC) != -1;
     }
 
+    public static boolean containsWordIgnoreCase(CharSequence seq, CharSequence term, char separator) {
+        if (Chars.isBlank(seq)) {
+            return false;
+        }
+        if (Chars.isBlank(term)) {
+            return false;
+        }
+
+        int seqLen = seq.length();
+        int i = Chars.indexOfIgnoreCase(seq, 0, seqLen, term);
+
+        if (i < 0) {
+            return false;
+        }
+
+        if (i > 0) {
+            if (seq.charAt(i - 1) != separator) {
+                return false;
+            }
+        }
+
+        int termLen = term.length();
+        if (i + termLen < seqLen) {
+            return seq.charAt(i + termLen) == separator;
+        }
+        return true;
+    }
+
     public static void copyStrChars(CharSequence value, int pos, int len, long address) {
         for (int i = 0; i < len; i++) {
             char c = value.charAt(i + pos);
@@ -647,6 +675,37 @@ public final class Chars {
         return -1;
     }
 
+    public static int indexOfIgnoreCase(@NotNull CharSequence seq, int seqLo, int seqHi, @NotNull CharSequence term) {
+        int termLen = term.length();
+        if (termLen == 0) {
+            return 0;
+        }
+
+        char first = Character.toLowerCase(term.charAt(0));
+        int max = seqHi - termLen;
+
+        for (int i = seqLo; i <= max; ++i) {
+            if (Character.toLowerCase(seq.charAt(i)) != first) {
+                do {
+                    ++i;
+                } while (i <= max && Character.toLowerCase(seq.charAt(i)) != first);
+            }
+
+            if (i <= max) {
+                int j = i + 1;
+                int end = j + termLen - 1;
+                for (int k = 1; j < end && Character.toLowerCase(seq.charAt(j)) == Character.toLowerCase(term.charAt(k)); ++k) {
+                    ++j;
+                }
+                if (j == end) {
+                    return i;
+                }
+            }
+        }
+
+        return -1;
+    }
+
     // Term has to be lower-case.
     public static int indexOfLowerCase(@NotNull CharSequence seq, int seqLo, int seqHi, @NotNull CharSequence termLC) {
         int termLen = termLC.length();
@@ -1086,14 +1145,7 @@ public final class Chars {
 
     public static String toString(@NotNull CharSequence cs, int start, int end, char unescape) {
         final Utf16Sink b = Misc.getThreadLocalSink();
-        final int lastChar = end - 1;
-        for (int i = start; i < end; i++) {
-            char c = cs.charAt(i);
-            b.put(c);
-            if (c == unescape && i < lastChar && cs.charAt(i + 1) == unescape) {
-                i++;
-            }
-        }
+        unescape(cs, start, end, unescape, b);
         return b.toString();
     }
 
@@ -1125,6 +1177,17 @@ public final class Chars {
         sink.clear();
         if (startIdx != endIdx) {
             sink.put(str, startIdx, endIdx + 1);
+        }
+    }
+
+    public static void unescape(@NotNull CharSequence cs, int start, int end, char unescape, @NotNull Utf16Sink sink) {
+        final int lastChar = end - 1;
+        for (int i = start; i < end; i++) {
+            char c = cs.charAt(i);
+            sink.put(c);
+            if (c == unescape && i < lastChar && cs.charAt(i + 1) == unescape) {
+                i++;
+            }
         }
     }
 

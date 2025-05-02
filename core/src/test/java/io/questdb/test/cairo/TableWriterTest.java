@@ -575,7 +575,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnSwpFileDelete() throws Exception {
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             populateTable();
             // simulate existence of _meta.swp
 
@@ -694,7 +694,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddUnsupportedIndex() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                     .col("a", ColumnType.SYMBOL).cached(true)
                     .col("b", ColumnType.STRING)
@@ -735,7 +735,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddUnsupportedIndexCapacity() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                     .col("a", ColumnType.SYMBOL).cached(true)
                     .col("b", ColumnType.STRING)
@@ -791,7 +791,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAutoCancelFirstRowNonPartitioned() throws Exception {
         int N = 10000;
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             create(FF, PartitionBy.NONE, N);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
 
@@ -811,7 +811,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCancelFailureFollowedByTableClose() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 47;
             create(FF, PartitionBy.DAY, N);
             Rnd rnd = new Rnd();
@@ -852,7 +852,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCancelFirstRowFailurePartitioned() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             class X extends FilesFacadeImpl {
                 boolean fail = false;
 
@@ -912,7 +912,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCancelFirstRowNonPartitioned() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 10000;
             create(FF, PartitionBy.NONE, N);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
@@ -950,7 +950,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
         };
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             create(FF, PartitionBy.DAY, 4);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                 long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
@@ -965,7 +965,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCancelFirstRowPartitioned2() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final long increment = 60 * 60000 * 1000L;
             Rnd rnd = new Rnd();
             int N = 94;
@@ -997,7 +997,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCancelFirstRowSecondPartition() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             create(FF, PartitionBy.DAY, 4);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                 writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-01T00:00:00.000Z")).append();
@@ -1026,7 +1026,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCancelMidPartition() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final Rnd rnd = new Rnd();
             final int N = 10000;
             create(FF, PartitionBy.DAY, N);
@@ -1068,7 +1068,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCancelMidRowNonPartitioned() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 10000;
             create(FF, PartitionBy.NONE, N);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
@@ -1139,7 +1139,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCancelRowOutOfOrder() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 47;
             create(FF, PartitionBy.DAY, N);
             Rnd rnd = new Rnd();
@@ -1190,7 +1190,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCancelRowRecoveryFromAppendPosErrors() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final Rnd rnd = new Rnd();
 
             class X extends FilesFacadeImpl {
@@ -1263,7 +1263,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCancelSecondRowNonPartitioned() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 10000;
             create(FF, PartitionBy.NONE, N);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
@@ -1308,7 +1308,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testCannotLock() throws Exception {
         create(FF, PartitionBy.NONE, 4);
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             TestFilesFacade ff = new TestFilesFacade() {
                 boolean ran = false;
 
@@ -1639,7 +1639,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
         };
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
                     create(ff, PartitionBy.DAY, 10000);
                     try {
                         populateTable0(ff, 10000);
@@ -1653,7 +1653,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testDayPartition() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 10000;
             create(FF, PartitionBy.DAY, N);
 
@@ -1671,7 +1671,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testDayPartitionTruncate() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 10000;
             create(FF, PartitionBy.DAY, N);
             Rnd rnd = new Rnd();
@@ -1705,7 +1705,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testDayPartitionTruncatePurgeSymbolTables() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 10000;
             create(FF, PartitionBy.DAY, N);
             Rnd rnd = new Rnd();
@@ -1744,7 +1744,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testFrequentCommit() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 100000;
             create(FF, PartitionBy.NONE, N);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
@@ -1775,17 +1775,17 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHashAsStringLongerThanType() throws Exception {
-        TestUtils.assertMemoryLeak(() -> assertGeoStr("g912j", 15, 15649));
+        assertMemoryLeak(() -> assertGeoStr("g912j", 15, 15649));
     }
 
     @Test
     public void testGeoHashAsStringLongerThanTypeUneven() throws Exception {
-        TestUtils.assertMemoryLeak(() -> assertGeoStr("g912j", 11, 978));
+        assertMemoryLeak(() -> assertGeoStr("g912j", 11, 978));
     }
 
     @Test
     public void testGeoHashAsStringNull() throws Exception {
-        TestUtils.assertMemoryLeak(() -> assertGeoStr(null, 15, GeoHashes.NULL));
+        assertMemoryLeak(() -> assertGeoStr(null, 15, GeoHashes.NULL));
     }
 
     @Test
@@ -1803,7 +1803,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHashAsStringVanilla() throws Exception {
-        TestUtils.assertMemoryLeak(() -> assertGeoStr("g9", 10, 489));
+        assertMemoryLeak(() -> assertGeoStr("g9", 10, 489));
     }
 
     @Test
@@ -1821,17 +1821,17 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHashAsVarcharLongerThanType() throws Exception {
-        TestUtils.assertMemoryLeak(() -> assertGeoVarchar("g912j", 15, 15649));
+        assertMemoryLeak(() -> assertGeoVarchar("g912j", 15, 15649));
     }
 
     @Test
     public void testGeoHashAsVarcharLongerThanTypeUneven() throws Exception {
-        TestUtils.assertMemoryLeak(() -> assertGeoVarchar("g912j", 11, 978));
+        assertMemoryLeak(() -> assertGeoVarchar("g912j", 11, 978));
     }
 
     @Test
     public void testGeoHashAsVarcharNull() throws Exception {
-        TestUtils.assertMemoryLeak(() -> assertGeoVarchar(null, 15, GeoHashes.NULL));
+        assertMemoryLeak(() -> assertGeoVarchar(null, 15, GeoHashes.NULL));
     }
 
     @Test
@@ -1849,7 +1849,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHashAsVarcharVanilla() throws Exception {
-        TestUtils.assertMemoryLeak(() -> assertGeoVarchar("g9", 10, 489));
+        assertMemoryLeak(() -> assertGeoVarchar("g9", 10, 489));
     }
 
     @Test
@@ -1867,7 +1867,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testIncorrectTodoCode() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
             String all = "all";
             TableToken tableToken = engine.verifyTableName(all);
@@ -1893,7 +1893,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIndexIsAddedToTable() throws NumericException {
+    public void testIndexIsAddedToTable() throws Exception {
         int partitionBy = PartitionBy.DAY;
         int N = 1000;
         TableToken tableToken;
@@ -1984,7 +1984,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testNulls() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
             Rnd rnd = new Rnd();
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
@@ -1995,7 +1995,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testO3AfterReopen() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTableWithTimestamp(engine, PartitionBy.NONE);
             Rnd rnd = new Rnd();
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
@@ -2010,7 +2010,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testO3AfterRowCancel() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "weather", PartitionBy.DAY)
                     .col("windspeed", ColumnType.DOUBLE)
                     .timestamp();
@@ -2116,7 +2116,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testO3WithCancelRow() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "weather", PartitionBy.DAY)
                     .col("windspeed", ColumnType.DOUBLE)
                     .timestamp();
@@ -2169,7 +2169,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testOpenUnsupportedIndex() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                     .col("a", ColumnType.SYMBOL).cached(true)
                     .col("b", ColumnType.STRING)
@@ -2188,7 +2188,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testOpenWriterMissingTxFile() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
             try (Path path = new Path()) {
                 String all = "all";
@@ -2870,7 +2870,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testSinglePartitionTruncate() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             create(FF, PartitionBy.YEAR, 4);
 
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
@@ -2886,7 +2886,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testSkipOverSpuriousDir() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             create(FF, PartitionBy.DAY, 10);
 
             try (Path path = new Path()) {
@@ -2930,7 +2930,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testSkipOverSpuriousDirNonPartitioned() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             create(FF, PartitionBy.NONE, 10);
 
             try (Path path = new Path()) {
@@ -2974,7 +2974,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testTableDoesNotExist() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try {
                 newOffPoolWriter(configuration, PRODUCT).close();
                 Assert.fail();
@@ -2986,7 +2986,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testTableExtensionCallback() throws Exception {
-        TestUtils.assertMemoryLeak(
+        assertMemoryLeak(
                 () -> {
                     TableToken tableToken;
                     TableModel model = new TableModel(configuration, "xyz", PartitionBy.HOUR).col("x", ColumnType.LONG).timestamp();
@@ -3056,7 +3056,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testTableWriterCustomPageSize() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             create(FF, PartitionBy.DAY, 10000);
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
@@ -3085,7 +3085,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testToString() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             create(FF, PartitionBy.NONE, 4);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                 Assert.assertEquals("TableWriter{name=product}", writer.toString());
@@ -3094,17 +3094,17 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTruncateMidO3Transaction() throws NumericException {
+    public void testTruncateMidO3Transaction() throws Exception {
         testTruncate(TableWriterTest::danglingO3TransactionModifier);
     }
 
     @Test
-    public void testTruncateMidRowAppend() throws NumericException {
+    public void testTruncateMidRowAppend() throws Exception {
         testTruncate(TableWriterTest::danglingRowModifier);
     }
 
     @Test
-    public void testTruncateMidTransaction() throws NumericException {
+    public void testTruncateMidTransaction() throws Exception {
         testTruncate(TableWriterTest::danglingTransactionModifier);
     }
 
@@ -3144,7 +3144,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testTxCannotMap() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             class X extends CountingFilesFacade {
                 @Override
                 public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
@@ -3546,7 +3546,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void removeColumn(TestFilesFacade ff) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             String name = "ABC";
             TableModel model = new TableModel(configuration, name, PartitionBy.NONE)
                     .col("productId", ColumnType.INT)
@@ -3591,7 +3591,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void renameColumn(TestFilesFacade ff) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             String name = "ABC";
             TableModel model = new TableModel(configuration, name, PartitionBy.NONE)
                     .col("productId", ColumnType.INT)
@@ -3636,7 +3636,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testAddColumnAndOpenWriter(int partitionBy, int N) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
 
@@ -3662,7 +3662,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testAddColumnErrorFollowedByRepairFail(FilesFacade ff) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public @NotNull FilesFacade getFilesFacade() {
@@ -3692,7 +3692,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testAddColumnRecoverableNoFault(FilesFacade ff) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             long ts = populateTable();
             Rnd rnd = new Rnd();
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
@@ -3722,7 +3722,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testAddColumnUnrecoverableFault(FilesFacade ff) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             long ts = populateTable();
             Rnd rnd = new Rnd();
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
@@ -3765,7 +3765,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testAddIndexAndFailToIndexHalfWay(CairoConfiguration configuration, int partitionBy, int N) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
 
@@ -3869,7 +3869,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testConstructor(FilesFacade ff, boolean create) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             if (create) {
                 create(ff, PartitionBy.NONE, 4);
             }
@@ -3901,7 +3901,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testO3RecordsFail(int N) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
 
                 long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
@@ -3947,7 +3947,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testO3RecordsNewerThanOlder(int N, CairoConfiguration configuration) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
 
                 long ts;
@@ -3985,7 +3985,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testRemoveColumn(TableModel model) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             AbstractCairoTest.create(model);
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
@@ -4028,7 +4028,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testRemoveColumnRecoverableFailure(TestFilesFacade ff) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             create(FF, PartitionBy.DAY, 10000);
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
@@ -4140,7 +4140,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testRenameColumnRecoverableFailure(TestFilesFacade ff) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             create(FF, PartitionBy.DAY, 10000);
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
@@ -4201,7 +4201,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testSetAppendPositionFailure() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
 
             class X extends FilesFacadeImpl {
@@ -4390,7 +4390,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testTruncateOnClose(TestFilesFacade ff, int N) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
                 public @NotNull FilesFacade getFilesFacade() {
@@ -4408,7 +4408,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testUnrecoverableAddColumn(FilesFacade ff) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             long ts = populateTable();
             Rnd rnd = new Rnd();
             try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
@@ -4433,7 +4433,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testUnrecoverableRemoveColumn(FilesFacade ff) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public @NotNull FilesFacade getFilesFacade() {
@@ -4464,7 +4464,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testUnrecoverableRenameColumn(FilesFacade ff) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public @NotNull FilesFacade getFilesFacade() {
@@ -4515,6 +4515,7 @@ public class TableWriterTest extends AbstractCairoTest {
         create(ff, partitionBy, N);
         long ts = populateTable0(ff, N);
         Path.clearThreadLocals();
+        engine.getTxnScoreboardPool().clear();
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(fileCount, ff.getOpenFileCount());
         return ts;

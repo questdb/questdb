@@ -1969,13 +1969,12 @@ public class SqlKeywords {
     }
 
     public static boolean isUTC(CharSequence tok) {
-        return
-                tok.length() == 5
-                        && (tok.charAt(0)) == '\''
-                        && (tok.charAt(1) | 32) == 'u'
-                        && (tok.charAt(2) | 32) == 't'
-                        && (tok.charAt(3) | 32) == 'c'
-                        && (tok.charAt(4)) == '\'';
+        return tok.length() == 5
+                && (tok.charAt(0)) == '\''
+                && (tok.charAt(1) | 32) == 'u'
+                && (tok.charAt(2) | 32) == 't'
+                && (tok.charAt(3) | 32) == 'c'
+                && (tok.charAt(4)) == '\'';
     }
 
     public static boolean isUnboundedKeyword(CharSequence tok) {

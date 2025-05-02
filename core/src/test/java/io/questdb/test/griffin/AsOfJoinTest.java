@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.jit.JitUtil;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -78,6 +79,91 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "900.0\t700.0\t200.0\n";
 
             printSqlResult(expected, query, null, false, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinBinarySearchHint() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table orders as (\n" +
+                    "  select \n" +
+                    "    concat('sym_', rnd_int(0, 10, 0))::symbol as order_symbol,\n" +
+                    "    rnd_double() price,\n" +
+                    "    rnd_double() volume,\n" +
+                    "    ('2025'::timestamp + x * 200_000_000L + rnd_int(0, 10_000, 0))::timestamp as ts,\n" +
+                    "  from long_sequence(5)\n" +
+                    ") timestamp(ts) partition by day;\n");
+
+            execute("create table market_data as (\n" +
+                    "  select \n" +
+                    "    concat('sym_', rnd_int(0, 10, 0))::symbol as market_data_symbol,\n" +
+                    "    rnd_double() bid,\n" +
+                    "    rnd_double() ask,\n" +
+                    "    ('2025'::timestamp + x * 100_000L + rnd_int(0, 10_000, 0))::timestamp as ts,\n" +
+                    "  from long_sequence(10_000)\n" +
+                    ") timestamp(ts) partition by day;");
+
+            String queryWithoutHint = "select * from (\n" +
+                    "  select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from oRdERS\n" +
+                    "  asof join (\n" +
+                    "    select ts as md_ts, market_Data_symbol, bid from market_data\n" +
+                    "    where market_data_symbol = 'sym_1' \n" +
+                    "  ) MD  \n" +
+                    "  where orders.ts > '2025-01-01T00:00:00.000000000Z' \n" +
+                    "  and bid > price\n" +
+                    ");";
+
+            // the same query with hint
+            String queryWithHint = "select /*+ use_asof_binary_search(orders md) */ * from (\n" +
+                    "  select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from oRdERS\n" +
+                    "  asof join (\n" +
+                    "    select ts as md_ts, market_Data_symbol, bid from market_data\n" +
+                    "    where market_data_symbol = 'sym_1' \n" +
+                    "  ) MD  \n" +
+                    "  where orders.ts > '2025-01-01T00:00:00.000000000Z' \n" +
+                    "  and bid > price\n" +
+                    ");";
+
+            // plan without the hint should not use the FAST ASOF
+            assertQuery("QUERY PLAN\n" +
+                            "SelectedRecord\n" +
+                            "    Filter filter: oRdERS.price<MD.bid\n" +
+                            "        AsOf Join\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: orders\n" +
+                            "                  intervals: [(\"2025-01-01T00:00:00.000001Z\",\"MAX\")]\n" +
+                            "            SelectedRecord\n" +
+                            "                Async " + (JitUtil.isJitSupported() ? "JIT " : "") + "Filter workers: 1\n" +
+                            "                  filter: market_Data_symbol='sym_1'\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: market_data\n",
+                    "EXPLAIN " + queryWithoutHint, null, false, true);
+
+            // with hint it generates a plan with the fast asof join
+            assertQuery("QUERY PLAN\n" +
+                            "SelectedRecord\n" +
+                            "    Filter filter: oRdERS.price<MD.bid\n" +
+                            "        Filtered AsOf Join Fast Scan\n" +
+                            "          filter: oRdERS.order_symbol='sym_1'\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: orders\n" +
+                            "                  intervals: [(\"2025-01-01T00:00:00.000001Z\",\"MAX\")]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: market_data\n",
+                    "EXPLAIN " + queryWithHint, null, false, true);
+
+            // both queries must return the same result
+            String expectedResult = "ts\tbid\tmarket_data_symbol\torder_symbol\torder_ts\tprice\n" +
+                    "2025-01-01T00:03:20.003570Z\t0.18646912884414946\tsym_1\tsym_4\t2025-01-01T00:03:19.407091Z\t0.08486964232560668\n" +
+                    "2025-01-01T00:06:40.006304Z\t0.9130994629783138\tsym_1\tsym_2\t2025-01-01T00:06:37.303610Z\t0.8423410920883345\n" +
+                    "2025-01-01T00:13:20.002056Z\t0.24872951622414008\tsym_1\tsym_4\t2025-01-01T00:13:19.909382Z\t0.0367581207471136\n" +
+                    "2025-01-01T00:16:40.009947Z\t0.5071618579762882\tsym_1\tsym_6\t2025-01-01T00:16:39.800653Z\t0.3100545983862456\n";
+            assertQuery(expectedResult, queryWithHint, "ts", false, false);
+            assertQuery(expectedResult, queryWithoutHint, "ts", false, false);
         });
     }
 
@@ -1717,6 +1803,44 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "BTC-USD\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2\n" +
                     "BTC-USD\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\t2002-01-01T00:00:03.000000Z\t3\n";
             assertQueryNoLeakCheck(expected, query, null, false, false);
+        });
+    }
+
+    @Test
+    public void testWithIntrisifiedTimestampFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY YEAR");
+
+            execute(
+                    "INSERT INTO trades VALUES " +
+                            "('BTC-USD', '2000-01-01T00:00:00.000000Z', 1)," +
+                            "('BTC-USD', '2000-02-01T00:00:00.000000Z', 2)," +
+                            "('BTC-USD', '2000-03-01T00:00:00.000000Z', 3)," +
+                            "('BTC-USD', '2000-04-01T00:00:00.000000Z', 4)," +
+                            "('BTC-USD', '2000-05-01T00:00:00.000000Z', 5)," +
+                            "('BTC-USD', '2000-06-01T00:00:00.000000Z', 6)"
+            );
+
+            assertQuery("pair\tts\tprice\tpair1\tts1\tprice1\n" +
+                            "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\t\t\tnull\n" +
+                            "BTC-USD\t2000-02-01T00:00:00.000000Z\t2\t\t\tnull\n" +
+                            "BTC-USD\t2000-03-01T00:00:00.000000Z\t3\tBTC-USD\t2000-03-01T00:00:00.000000Z\t3\n" +
+                            "BTC-USD\t2000-04-01T00:00:00.000000Z\t4\tBTC-USD\t2000-03-01T00:00:00.000000Z\t3\n" +
+                            "BTC-USD\t2000-05-01T00:00:00.000000Z\t5\tBTC-USD\t2000-03-01T00:00:00.000000Z\t3\n" +
+                            "BTC-USD\t2000-06-01T00:00:00.000000Z\t6\tBTC-USD\t2000-03-01T00:00:00.000000Z\t3\n",
+                    "select * from trades\n" +
+                            "asof join (\n" +
+                            "  select * from trades\n" +
+                            "  where ts in '2000-03'\n" +
+                            ") t;",
+                    null,
+                    "ts",
+                    null,
+                    null,
+                    false,
+                    true,
+                    false
+            );
         });
     }
 
