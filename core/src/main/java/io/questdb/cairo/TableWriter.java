@@ -6609,7 +6609,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     // We're appending onto the last (active) partition.
-                    final boolean append = last && (srcDataMax == 0 || (isDeduplicationEnabled() && o3Timestamp > maxTimestamp) || (!isDeduplicationEnabled() && o3Timestamp >= maxTimestamp));
+                    final boolean append = last && (srcDataMax == 0 || (isDeduplicationEnabled() && o3Timestamp > maxTimestamp) || (!isDeduplicationEnabled() && o3Timestamp >= maxTimestamp))
+                            // If it's replace commit, the append is only possible if the last partition data is
+                            // before the replace range.
+                            && (!isCommitReplaceMode() || o3TimestampMin > txWriter.getMaxTimestamp());
 
                     // Number of rows to insert from the O3 segment into this partition.
                     final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
@@ -7911,6 +7914,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int walRootPathLen = walPath.size();
         boolean success = true;
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+
+        if (isLastPartitionClosed()) {
+            if (isEmptyTable()) {
+                populateDenseIndexerList();
+            }
+        }
 
         try {
             segmentFileCache.mmapSegments(metadata, walPath, walIdSegmentId, rowLo, rowHi);

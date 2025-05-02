@@ -52,6 +52,12 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceRangeLastPartitionAppendReplacesFullPartition() throws Exception {
+        testReplaceRangeCommit("2022-02-25T16:25", "2022-02-25T00:00", "2022-02-25T23:59");
+    }
+
+
+    @Test
     public void testReplaceBetweenExisting() throws Exception {
         testReplaceRangeCommit("2022-02-24T16:25", "2022-02-24T16:25", "2022-02-24T16:26");
     }

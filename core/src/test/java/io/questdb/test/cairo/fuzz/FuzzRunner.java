@@ -781,6 +781,7 @@ public class FuzzRunner {
                                         transaction.getReplaceHiTs(),
                                         WAL_DEDUP_MODE_REPLACE_RANGE
                                 );
+                                increment = true;
                             } else {
                                 walWriter.commit();
                             }
@@ -813,7 +814,7 @@ public class FuzzRunner {
         intervals.add(replaceHiTs);
 
         if (intervals.size() > 2) {
-            IntervalUtils.unionInplace(intervals, intervals.size() - 2);
+            IntervalUtils.unionInPlace(intervals, intervals.size() - 2);
         }
 
         return intervals;

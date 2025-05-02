@@ -751,7 +751,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             );
 
                             if (mergeO3Lo > mergeO3Hi) {
-                                mergeType = O3_BLOCK_DATA;
+                                if (!tableWriter.isCommitReplaceMode()) {
+                                    mergeType = O3_BLOCK_DATA;
+                                } else {
+                                    mergeType = O3_BLOCK_NONE;
+                                }
                             } else {
                                 mergeType = O3_BLOCK_MERGE;
                             }

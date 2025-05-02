@@ -227,9 +227,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    @Ignore
     public void testMultipleQueryExecutionsPerRefreshDSTShiftForward() throws Exception {
-        final Rnd rnd = fuzzer.generateRandom(LOG, 373083041851000L, 1745427243395L);
+        final Rnd rnd = fuzzer.generateRandom(LOG);
         final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         final String tableName = testName.getMethodName();

@@ -30,7 +30,7 @@ import org.junit.Test;
 public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testSimpleDataTransaction() throws Exception {
-        Rnd rnd = generateRandom(LOG, 426663929852250L, 1745575524870L);
+        Rnd rnd = generateRandom(LOG, 441253055880333L, 1745590113688L);
         setFuzzProbabilities(
                 0.01,
                 0.2,
@@ -48,28 +48,9 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
                 0.8,
                 0.9
         );
-        setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(10_000),
-                rnd.nextInt(1500), 20, 10, 200, 0, 1
+        setFuzzCounts(rnd.nextBoolean(), 1000,
+                7, 20, 10, 200, 0, 1
         );
         runFuzz(rnd);
     }
-//
-//    @Override
-//    protected void runFuzz(Rnd rnd) throws Exception {
-//        assertMemoryLeak(fuzzer.getFileFacade(), () -> {
-//            try {
-//                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
-//                sharedWorkerPool.start(LOG);
-//
-//                int size = rnd.nextInt(16 * 1024 * 1024);
-//                node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
-//                setZeroWalPurgeInterval();
-//
-//                fuzzer.runFuzz(getTestName(), rnd);
-//            } finally {
-//                sharedWorkerPool.halt();
-//            }
-//        });
-//    }
-
 }

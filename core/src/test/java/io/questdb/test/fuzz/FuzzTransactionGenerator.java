@@ -474,7 +474,7 @@ public class FuzzTransactionGenerator {
         transaction.waitBarrierVersion = waitBarrierVersion;
         transactionList.add(transaction);
 
-        if (replaceInsert) {
+        if (replaceInsert && !transaction.rollback) {
             // Add up to 2 partition to the range from each side to make things more interesting
             minTs = minTs - rnd.nextLong(2 * DAY_MICROS);
             maxTs = maxTs + rnd.nextLong(2 * DAY_MICROS);
