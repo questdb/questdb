@@ -24,38 +24,13 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.QuietCloseable;
+public class TxnScoreboardPoolFactory {
 
-/**
- * Per-table transaction scoreboard. Used as a MVCC building block:
- * table readers acquire a transaction number lock in the scoreboard when
- * going active. This way table writers and purge jobs (GC) can check
- * if files associated with an older transaction can be deleted.
- */
-public interface TxnScoreboard extends QuietCloseable {
-    int CHECKPOINT_ID = -1;
-
-    boolean acquireTxn(int id, long txn);
-
-    int getEntryCount();
-
-    TableToken getTableToken();
-
-    boolean hasEarlierTxnLocks(long maxTxn);
-
-    /**
-     * Ignores min/max txn values and increments the counter. Must be called only when there is
-     * an active reader that already acquired this txn.
-     * <p>
-     * Used by {@link io.questdb.cairo.pool.ReaderPool#getCopyOf(TableReader)}.
-     */
-    boolean incrementTxn(int id, long txn);
-
-    boolean isOutdated(long txn);
-
-    boolean isRangeAvailable(long fromTxn, long toTxn);
-
-    boolean isTxnAvailable(long txn);
-
-    long releaseTxn(int id, long txn);
+    public static TxnScoreboardPool createPool(CairoConfiguration configuration) {
+        if (configuration.getScoreboardFormat() == 1) {
+            return new TxnScoreboardPoolV1(configuration);
+        } else {
+            return new TxnScoreboardPoolV2(configuration);
+        }
+    }
 }
