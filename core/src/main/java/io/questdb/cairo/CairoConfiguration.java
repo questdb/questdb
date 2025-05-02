@@ -408,6 +408,8 @@ public interface CairoConfiguration {
 
     int getSampleByIndexSearchPageSize();
 
+    int getScoreboardFormat();
+
     long getSequencerCheckInterval();
 
     /**
@@ -643,7 +645,7 @@ public interface CairoConfiguration {
     /**
      * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.
      *
-     * @return enable/disable a flag for recovering from the checkpoint
+     * @return enable/disable flag for recovering from the checkpoint
      */
     boolean isCheckpointRecoveryEnabled();
 
@@ -731,6 +733,4 @@ public interface CairoConfiguration {
     }
 
     boolean useFastAsOfJoin();
-
-    int getScoreboardFormat();
 }
