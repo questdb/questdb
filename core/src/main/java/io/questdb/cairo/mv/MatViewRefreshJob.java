@@ -272,7 +272,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private boolean fullRefresh(MatViewRefreshTask refreshTask) {
         final TableToken viewToken = refreshTask.matViewToken;
         assert viewToken != null;
-        final long refreshTriggeredTimestamp = refreshTask.refreshTriggeredTimestamp;
+        final long refreshTriggerTimestamp = refreshTask.refreshTriggerTimestamp;
 
         final MatViewState state = stateStore.getViewState(viewToken);
         if (state == null || state.isDropped()) {
@@ -299,12 +299,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         .$(", errno=").$(e.getErrno())
                         .$(", errorMsg=").$(e.getFlyweightMessage())
                         .I$();
-                refreshFailState(state, walWriter, microsecondClock.getTicks(), e);
+                refreshFailState(state, walWriter, e);
                 return false;
             }
 
             if (!baseTableToken.isWal()) {
-                refreshFailState(state, walWriter, microsecondClock.getTicks(), "base table is not a WAL table");
+                refreshFailState(state, walWriter, "base table is not a WAL table");
                 return false;
             }
 
@@ -329,7 +329,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     // Specify -1 as the last refresh txn, so that we scan all partitions.
                     final SampleByIntervalIterator intervalIterator = findSampleByIntervals(baseTableReader, viewDef, -1);
                     if (intervalIterator != null) {
-                        insertAsSelect(state, viewDef, walWriter, intervalIterator, toBaseTxn, refreshTriggeredTimestamp);
+                        insertAsSelect(state, viewDef, walWriter, intervalIterator, toBaseTxn, refreshTriggerTimestamp);
                     }
                 } finally {
                     refreshExecutionContext.clearReader();
@@ -341,7 +341,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         .$(", baseTable=").$(baseTableToken)
                         .$(", ex=").$(th)
                         .I$();
-                refreshFailState(state, walWriter, microsecondClock.getTicks(), th);
+                refreshFailState(state, walWriter, th);
                 return false;
             }
         } catch (Throwable th) {
@@ -351,7 +351,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$("could not perform incremental refresh, unexpected error [view=").$(viewToken)
                     .$(", ex=").$(th)
                     .I$();
-            refreshFailState(state, null, microsecondClock.getTicks(), th);
+            refreshFailState(state, null, th);
             return false;
         } finally {
             state.unlock();
@@ -376,11 +376,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private boolean incrementalRefresh(MatViewRefreshTask refreshTask) {
         final TableToken baseTableToken = refreshTask.baseTableToken;
         final TableToken matViewToken = refreshTask.matViewToken;
-        final long refreshTriggeredTimestamp = refreshTask.refreshTriggeredTimestamp;
+        final long refreshTriggerTimestamp = refreshTask.refreshTriggerTimestamp;
         if (matViewToken == null) {
-            return refreshDependentViewsIncremental(baseTableToken, graph, stateStore, refreshTriggeredTimestamp);
+            return refreshDependentViewsIncremental(baseTableToken, graph, stateStore, refreshTriggerTimestamp);
         } else {
-            return refreshIncremental(matViewToken, stateStore, refreshTriggeredTimestamp);
+            return refreshIncremental(matViewToken, stateStore, refreshTriggerTimestamp);
         }
     }
 
@@ -390,7 +390,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             WalWriter walWriter,
             SampleByIntervalIterator intervalIterator,
             long baseTableTxn,
-            long refreshTriggeredTimestamp
+            long refreshTriggerTimestamp
     ) {
         assert state.isLocked();
 
@@ -401,7 +401,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         RecordCursorFactory factory = null;
         RecordToRowCopier copier;
         int intervalStep = intervalIterator.getStep();
-        final long refreshTimestamp = microsecondClock.getTicks();
+        final long refreshStartTimestamp = microsecondClock.getTicks();
+        state.setLastRefreshStartTimestamp(refreshStartTimestamp);
         final TableToken viewTableToken = viewDef.getMatViewToken();
         try {
             factory = state.acquireRecordFactory();
@@ -427,7 +428,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                     .$(", attempt=").$(i)
                                     .$(", error=").$(e.getFlyweightMessage())
                                     .I$();
-                            refreshFailState(state, walWriter, refreshTimestamp, e);
+                            refreshFailState(state, walWriter, e);
                             return false;
                         }
                     }
@@ -484,8 +485,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             }
 
-            walWriter.commitMatView(baseTableTxn, refreshTimestamp);
-            state.refreshSuccess(factory, copier, walWriter.getMetadata().getMetadataVersion(), refreshTimestamp, refreshTriggeredTimestamp, baseTableTxn);
+            final long refreshFinishTimestamp = microsecondClock.getTicks();
+            walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp);
+            state.refreshSuccess(factory, copier, walWriter.getMetadata().getMetadataVersion(), refreshFinishTimestamp, refreshTriggerTimestamp, baseTableTxn);
             state.setLastRefreshBaseTableTxn(baseTableTxn);
         } catch (Throwable th) {
             Misc.free(factory);
@@ -493,7 +495,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$("could not refresh materialized view [view=").$(viewTableToken)
                     .$(", ex=").$(th)
                     .I$();
-            refreshFailState(state, walWriter, refreshTimestamp, th);
+            refreshFailState(state, walWriter, th);
             return false;
         }
 
@@ -610,7 +612,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             TableToken baseTableToken,
             MatViewGraph graph,
             MatViewStateStore stateStore,
-            long refreshTriggeredTimestamp
+            long refreshTriggerTimestamp
     ) {
         assert baseTableToken.isWal();
 
@@ -631,9 +633,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
                 try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
                     try {
-                        refreshed |= refreshIncremental0(state, baseTableToken, walWriter, refreshTriggeredTimestamp);
+                        refreshed |= refreshIncremental0(state, baseTableToken, walWriter, refreshTriggerTimestamp);
                     } catch (Throwable th) {
-                        refreshFailState(state, walWriter, microsecondClock.getTicks(), th);
+                        refreshFailState(state, walWriter, th);
                     }
                 } catch (Throwable th) {
                     // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
@@ -642,7 +644,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             .$("could not get table writer for view [view=").$(viewToken)
                             .$(", ex=").$(th)
                             .I$();
-                    refreshFailState(state, null, microsecondClock.getTicks(), th);
+                    refreshFailState(state, null, th);
                 } finally {
                     state.unlock();
                     state.tryCloseIfDropped();
@@ -660,26 +662,26 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return refreshed;
     }
 
-    private void refreshFailState(MatViewState state, @Nullable WalWriter walWriter, long refreshTimestamp, CharSequence errorMessage) {
-        state.refreshFail(refreshTimestamp, errorMessage);
+    private void refreshFailState(MatViewState state, @Nullable WalWriter walWriter, CharSequence errorMessage) {
+        state.refreshFail(microsecondClock.getTicks(), errorMessage);
         if (walWriter != null) {
-            walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), true, errorMessage);
+            walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshFinishTimestamp(), true, errorMessage);
         }
         // Invalidate dependent views recursively.
         enqueueInvalidateDependentViews(state.getViewDefinition().getMatViewToken(), "base materialized view refresh failed");
     }
 
-    private void refreshFailState(MatViewState state, @Nullable WalWriter walWriter, long refreshTimestamp, Throwable th) {
+    private void refreshFailState(MatViewState state, @Nullable WalWriter walWriter, Throwable th) {
         errorMsgSink.clear();
         if (th instanceof Sinkable) {
             ((Sinkable) th).toSink(errorMsgSink);
         } else {
             errorMsgSink.put(th.getMessage());
         }
-        refreshFailState(state, walWriter, refreshTimestamp, errorMsgSink);
+        refreshFailState(state, walWriter, errorMsgSink);
     }
 
-    private boolean refreshIncremental(@NotNull TableToken viewToken, MatViewStateStore stateStore, long refreshTriggeredTimestamp) {
+    private boolean refreshIncremental(@NotNull TableToken viewToken, MatViewStateStore stateStore, long refreshTriggerTimestamp) {
         final MatViewState state = stateStore.getViewState(viewToken);
         if (state == null || state.isPendingInvalidation() || state.isInvalid() || state.isDropped()) {
             return false;
@@ -703,24 +705,24 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         .$(", errno=").$(e.getErrno())
                         .$(", errorMsg=").$(e.getFlyweightMessage())
                         .I$();
-                refreshFailState(state, walWriter, microsecondClock.getTicks(), e);
+                refreshFailState(state, walWriter, e);
                 return false;
             }
 
             if (!baseTableToken.isWal()) {
-                refreshFailState(state, walWriter, microsecondClock.getTicks(), "base table is not a WAL table");
+                refreshFailState(state, walWriter, "base table is not a WAL table");
                 return false;
             }
 
             try {
-                return refreshIncremental0(state, baseTableToken, walWriter, refreshTriggeredTimestamp);
+                return refreshIncremental0(state, baseTableToken, walWriter, refreshTriggerTimestamp);
             } catch (Throwable th) {
                 LOG.error()
                         .$("could not perform incremental refresh [view=").$(viewToken)
                         .$(", baseTableToken=").$(baseTableToken)
                         .$(", ex=").$(th)
                         .I$();
-                refreshFailState(state, walWriter, microsecondClock.getTicks(), th);
+                refreshFailState(state, walWriter, th);
                 return false;
             }
         } catch (Throwable th) {
@@ -730,7 +732,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$("could not perform incremental refresh, unexpected error [view=").$(viewToken)
                     .$(", ex=").$(th)
                     .I$();
-            refreshFailState(state, null, microsecondClock.getTicks(), th);
+            refreshFailState(state, null, th);
             return false;
         } finally {
             state.unlock();
@@ -742,7 +744,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull MatViewState state,
             @NotNull TableToken baseTableToken,
             @NotNull WalWriter walWriter,
-            long refreshTriggeredTimestamp
+            long refreshTriggerTimestamp
     ) throws SqlException {
         assert state.isLocked();
 
@@ -771,7 +773,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 final MatViewDefinition viewDef = state.getViewDefinition();
                 final SampleByIntervalIterator intervalIterator = findSampleByIntervals(baseTableReader, viewDef, fromBaseTxn);
                 if (intervalIterator != null) {
-                    return insertAsSelect(state, viewDef, walWriter, intervalIterator, baseTableReader.getSeqTxn(), refreshTriggeredTimestamp);
+                    return insertAsSelect(state, viewDef, walWriter, intervalIterator, baseTableReader.getSeqTxn(), refreshTriggerTimestamp);
                 }
             } finally {
                 refreshExecutionContext.clearReader();
@@ -785,12 +787,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         state.markAsValid();
         state.setLastRefreshBaseTableTxn(-1);
         state.setLastRefreshTimestamp(Numbers.LONG_NULL);
-        walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), false, null);
+        walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshFinishTimestamp(), false, null);
     }
 
     private void setInvalidState(MatViewState state, WalWriter walWriter, CharSequence invalidationReason, long invalidationTimestamp) {
         state.markAsInvalid(invalidationReason);
         state.setLastRefreshTimestamp(invalidationTimestamp);
-        walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), true, invalidationReason);
+        state.setLastRefreshStartTimestamp(invalidationTimestamp);
+        walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshFinishTimestamp(), true, invalidationReason);
     }
 }

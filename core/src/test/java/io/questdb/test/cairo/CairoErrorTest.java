@@ -22,29 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.test.cairo;
 
-import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Sinkable;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.CairoError;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Test;
 
-public class CairoError extends Error implements FlyweightMessageContainer, Sinkable {
-    public CairoError(Throwable cause) {
-        super(cause);
+public class CairoErrorTest {
+    @Test
+    public void testSinkable() {
+        var ce = new CairoError("Test error");
+        var sink = new StringSink();
+        ce.toSink(sink);
+        TestUtils.assertEquals("Test error", sink);
     }
 
-    public CairoError(String message) {
-        super(message);
+    @Test
+    public void testSinkableWithCause() {
+        var ce = new CairoError(new AssertionError());
+        var sink = new StringSink();
+        ce.toSink(sink);
+        TestUtils.assertEquals("java.lang.AssertionError", sink);
     }
 
-    @Override
-    public CharSequence getFlyweightMessage() {
-        return getMessage();
-    }
-
-    @Override
-    public void toSink(@NotNull CharSink<?> sink) {
-        sink.put(getFlyweightMessage());
+    @Test
+    public void testSinkableWithCauseWithMessage() {
+        var ce = new CairoError(new AssertionError("massive fail"));
+        var sink = new StringSink();
+        ce.toSink(sink);
+        TestUtils.assertEquals("java.lang.AssertionError: massive fail", sink);
     }
 }

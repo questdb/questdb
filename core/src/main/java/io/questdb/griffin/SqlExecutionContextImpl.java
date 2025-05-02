@@ -42,6 +42,7 @@ import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.CharSink;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -365,6 +366,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void storeTelemetry(short event, short origin) {
         telemetryFacade.store(event, origin);
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.putAscii("principal=").put(securityContext.getPrincipal()).putAscii(", cache=").put(isCacheHit());
     }
 
     public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext, @Nullable BindVariableService bindVariableService, @Nullable Rnd rnd) {
