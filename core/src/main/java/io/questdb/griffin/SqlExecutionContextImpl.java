@@ -67,8 +67,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean columnPreTouchEnabled = true;
     private boolean columnPreTouchEnabledOverride = true;
     private boolean containsSecret;
+    private boolean deterministic;
     private int jitMode;
-    private boolean matView;
     private long now;
     private final MicrosecondClock nowClock = () -> now;
     private boolean parallelFilterEnabled;
@@ -259,8 +259,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public boolean isMatView() {
-        return matView;
+    public boolean isDeterministic() {
+        return deterministic;
     }
 
     @Override
@@ -305,7 +305,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cacheHit = false;
         this.columnPreTouchEnabled = true;
         this.columnPreTouchEnabledOverride = true;
-        this.matView = false;
+        this.deterministic = false;
     }
 
     @Override
@@ -335,13 +335,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void setJitMode(int jitMode) {
-        this.jitMode = jitMode;
+    public void setDeterministic(boolean value) {
+        this.deterministic = value;
     }
 
     @Override
-    public void setMatView(boolean value) {
-        this.matView = value;
+    public void setJitMode(int jitMode) {
+        this.jitMode = jitMode;
     }
 
     @Override

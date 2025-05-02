@@ -1223,8 +1223,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean isMatView() {
-            return sqlExecutionContext.isMatView();
+        public boolean isDeterministic() {
+            return sqlExecutionContext.isDeterministic();
         }
 
         @Override
@@ -1293,13 +1293,13 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void setJitMode(int jitMode) {
-            sqlExecutionContext.setJitMode(jitMode);
+        public void setDeterministic(boolean value) {
+            sqlExecutionContext.setDeterministic(value);
         }
 
         @Override
-        public void setMatView(boolean value) {
-            sqlExecutionContext.setMatView(value);
+        public void setJitMode(int jitMode) {
+            sqlExecutionContext.setJitMode(jitMode);
         }
 
         @Override

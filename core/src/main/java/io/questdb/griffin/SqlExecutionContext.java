@@ -177,7 +177,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // Used to disable column pre-touch without affecting the explain plan
     boolean isColumnPreTouchEnabledOverride();
 
-    boolean isMatView();
+    // Returns true when the context requires all SQL functions to be deterministic,
+    // e.g. when we're compiling a mat view.
+    boolean isDeterministic();
 
     // Returns true when where intrinsics are overridden, i.e. by a materialized view refresh
     default boolean isOverriddenIntrinsics(TableToken tableToken) {
@@ -221,9 +223,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // Used to disable column pre-touch without affecting the explain plan
     void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride);
 
-    void setJitMode(int jitMode);
+    void setDeterministic(boolean value);
 
-    void setMatView(boolean value);
+    void setJitMode(int jitMode);
 
     void setNowAndFixClock(long now);
 

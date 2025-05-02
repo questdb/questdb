@@ -163,7 +163,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public boolean isMatView() {
+    public boolean isDeterministic() {
         return false;
     }
 
@@ -225,11 +225,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void setJitMode(int jitMode) {
+    public void setDeterministic(boolean value) {
     }
 
     @Override
-    public void setMatView(boolean value) {
+    public void setJitMode(int jitMode) {
     }
 
     @Override

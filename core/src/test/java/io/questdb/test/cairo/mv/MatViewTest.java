@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
@@ -825,6 +826,46 @@ public class MatViewTest extends AbstractCairoTest {
             // mat view table should be dropped
             TableToken token = engine.getTableTokenIfExists("a");
             Assert.assertNull(token);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewNonDeterministicFunctionCompatibility() throws Exception {
+        // Verifies that even if someone was able to create a mat view with non-deterministic function
+        // on an older version, it'll be marked as invalid on the next refresh.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            try (var ctx = new SqlExecutionContextImpl(engine, 1) {
+                @Override
+                public boolean isDeterministic() {
+                    return false;
+                }
+            }) {
+                ctx.with(sqlExecutionContext.getSecurityContext(), bindVariableService, sqlExecutionContext.getRandom(), sqlExecutionContext.getRequestFd(), circuitBreaker);
+                execute("create materialized view price_1h as select sym, last(price) as price, ts from base_price where ts in today() sample by 42h", ctx);
+            }
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            currentMicros = parseFloorPartialTimestamp("2023-01-01T01:01:01.123456Z");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2023-01-01T01:01:01.123456Z\t2023-01-01T01:01:01.123456Z\tselect sym, last(price) as price, ts from base_price where ts in today() sample by 42h\tprice_1h~2\t[65]: non-deterministic function cannot be used in materialized view: today\tinvalid\t-1\t1\n",
+                    "materialized_views",
+                    null,
+                    false
+            );
         });
     }
 

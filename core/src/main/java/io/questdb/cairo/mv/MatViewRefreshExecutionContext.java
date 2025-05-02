@@ -105,7 +105,7 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     }
 
     @Override
-    public boolean isMatView() {
+    public boolean isDeterministic() {
         return true;
     }
 
@@ -131,7 +131,7 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     }
 
     @Override
-    public void setMatView(boolean value) {
+    public void setDeterministic(boolean value) {
         // no-op
     }
 
