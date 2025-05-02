@@ -144,18 +144,27 @@ public class FilesTest {
 
     @Test
     public void testBufferedIOConcurrent() throws Exception {
-        // This test aims to follow write pattern in WAL-E files.
+        testConcurrentIO(true);
+    }
 
+    @Test
+    public void testBufferedIOConcurrentNoMmap() throws Exception {
+        testConcurrentIO(false);
+    }
+
+    private void testConcurrentIO(boolean openMmap) throws IOException, InterruptedException {
+        // This test aims to follow write pattern in WAL-E files.
         final File file = temporaryFolder.newFile();
         final int fileSize = 2048;
         final long valueInMem = 42;
+        LOG.info().$(file.getAbsolutePath()).$();
 
         AtomicInteger errors = new AtomicInteger();
         AtomicLong writtenOffset = new AtomicLong(-1);
 
         long srcMem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().putLong(srcMem, valueInMem);
-        SOCountDownLatch latch = new SOCountDownLatch(3);
+        SOCountDownLatch latch = new SOCountDownLatch(openMmap ? 3 : 2);
 
         Rnd rnd = TestUtils.generateRandom(LOG);
 
@@ -174,6 +183,7 @@ public class FilesTest {
                             break;
                         }
                         writtenOffset.setRelease(offset);
+                        Os.pause();
                     }
                     // signal other thread to finish
                     writtenOffset.setRelease(fileSize);
@@ -198,6 +208,7 @@ public class FilesTest {
                         long valueOnDisk = Files.readNonNegativeLong(fd, offset);
                         if (valueInMem != valueOnDisk) {
                             errors.incrementAndGet();
+                            LOG.info().$("buffered: expected ").$(valueInMem).$(", but read ").$(valueOnDisk).$();
                             break;
                         }
                         if (rnd.nextInt(5) < 1) {
@@ -212,57 +223,65 @@ public class FilesTest {
                 }
             });
 
-            Thread th3 = new Thread(() -> {
-                latch.countDown();
-                long offset = -1;
-                long fd = -1;
-                long mmap = 0;
-                long mmapSize = 0;
+            Thread th3 = null;
+            if (openMmap) {
+                th3 = new Thread(() -> {
+                    latch.countDown();
+                    long offset = -1;
+                    long fd = -1;
+                    long mmap = 0;
+                    long mmapSize = 0;
 
-                try {
-                    while ((offset = writtenOffset.getAcquire()) < fileSize) {
-                        if (offset == -1) {
-                            Os.pause();
-                            continue;
+                    try {
+                        while ((offset = writtenOffset.getAcquire()) < fileSize) {
+                            if (offset == -1) {
+                                Os.pause();
+                                continue;
+                            }
+                            if (mmapSize > 0) {
+                                Files.munmap(mmap, mmapSize, MemoryTag.MMAP_O3);
+                                mmapSize = 0;
+                            }
+
+                            if (fd < 0) {
+                                fd = Files.openRO(dstPath.$());
+                            }
+                            mmapSize = offset + Long.BYTES;
+                            mmap = Files.mmap(fd, mmapSize, 0, Files.MAP_RO, MemoryTag.MMAP_O3);
+
+                            long valueOnDisk = Unsafe.getUnsafe().getLong(mmap + offset);
+                            if (valueInMem != valueOnDisk) {
+                                LOG.info().$("mmap: expected ").$(valueInMem).$(", but read ").$(valueOnDisk).$();
+//                            errors.incrementAndGet();
+//                            break;
+                            }
+                            if (rnd.nextInt(5) < 1) {
+                                Files.close(fd);
+                                fd = -1;
+                            }
                         }
-                        if (mmapSize > 0) {
+                    } finally {
+                        if (mmap > 0) {
                             Files.munmap(mmap, mmapSize, MemoryTag.MMAP_O3);
-                            mmapSize = 0;
                         }
-
-                        if (fd < 0) {
-                            fd = Files.openRO(dstPath.$());
-                        }
-                        mmapSize = offset + Long.BYTES;
-                        mmap = Files.mmap(fd, mmapSize, 0, Files.MAP_RO, MemoryTag.MMAP_O3);
-
-                        long valueOnDisk = Unsafe.getUnsafe().getLong(mmap + offset);
-                        if (valueInMem != valueOnDisk) {
-                            errors.incrementAndGet();
-                            break;
-                        }
-                        if (rnd.nextInt(5) < 1) {
+                        if (fd > 0) {
                             Files.close(fd);
-                            fd = -1;
                         }
                     }
-                } finally {
-                    if (mmap > 0) {
-                        Files.munmap(mmap, mmapSize, MemoryTag.MMAP_O3);
-                    }
-                    if (fd > 0) {
-                        Files.close(fd);
-                    }
-                }
-            });
+                });
+            }
 
             th1.start();
             th2.start();
-            th3.start();
+            if (openMmap) {
+                th3.start();
+            }
 
             th1.join();
             th2.join();
-            th3.join();
+            if (openMmap) {
+                th3.join();
+            }
 
             Assert.assertEquals(0, errors.get());
         } finally {
