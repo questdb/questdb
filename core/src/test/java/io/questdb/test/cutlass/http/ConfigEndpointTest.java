@@ -31,8 +31,6 @@ import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
-import io.questdb.cutlass.http.processors.SettingsProcessor;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -59,26 +57,27 @@ public class ConfigEndpointTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    final String config = "{\"instance_name\":\"instance1\"}";
+                    final String config = "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}";
                     saveConfig(httpClient, config);
 
                     try (ConfigStore configStore = new ConfigStore(serverMain.getEngine().getConfiguration())) {
                         configStore.init();
 
-                        final CharSequenceObjHashMap<CharSequence> settings = new CharSequenceObjHashMap<>();
                         final Utf8StringSink sink = new Utf8StringSink();
-                        configStore.populateSettings(settings);
-                        SettingsProcessor.convertMapToJson(settings, sink);
+                        sink.putAscii('{');
+                        configStore.populateSettings(sink);
+                        sink.clear(sink.size() - 1);
+                        sink.putAscii('}');
                         assertEquals(config, sink);
                     }
 
                     assertSettingsRequest(httpClient, "{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
-                            "\"acl.enabled\":false," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
-                            "\"instance_name\":\"instance1\"" +
+                            "\"instance_name\":\"instance1\"," +
+                            "\"instance_desc\":\"desc1\"" +
                             "}");
                 }
             }

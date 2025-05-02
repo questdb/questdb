@@ -77,7 +77,6 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.SelectFacade;
 import io.questdb.network.SelectFacadeImpl;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Files;
@@ -115,6 +114,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -130,6 +130,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
+import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.bool;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
 
 public class PropServerConfiguration implements ServerConfiguration {
@@ -2189,16 +2190,22 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public static class JsonPropertyValueFormatter {
-        public static String bool(boolean value) {
-            return Boolean.toString(value);
+        public static void bool(CharSequence key, boolean value, Utf8StringSink sink) {
+            sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
         }
 
-        public static String integer(int value) {
-            return Integer.toString(value);
+        public static void integer(CharSequence key, int value, Utf8StringSink sink) {
+            sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
         }
 
-        public static String str(String value) {
-            return value != null ? '"' + value + '"' : "null";
+        public static void str(CharSequence key, CharSequence value, Utf8StringSink sink) {
+            sink.putQuoted(key).putAscii(':');
+            if (value != null) {
+                sink.putQuoted(value);
+            } else {
+                sink.put("null");
+            }
+            sink.putAscii(',');
         }
     }
 
@@ -3778,10 +3785,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-            settings.put(RELEASE_TYPE, str(getReleaseType()));
-            settings.put(RELEASE_VERSION, str(getBuildInformation().getSwVersion()));
-            settings.put(ACL_ENABLED, Boolean.toString(!Chars.empty(httpUsername)));
+        public void populateSettings(Utf8StringSink sink) {
+            str(RELEASE_TYPE, getReleaseType(), sink);
+            str(RELEASE_VERSION, getBuildInformation().getSwVersion(), sink);
+            if (!Chars.empty(httpUsername)) {
+                bool(ACL_ENABLED, true, sink);
+            }
         }
 
         @Override
@@ -5226,9 +5235,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             return posthogEnabled;
         }
 
-        public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-            settings.put(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), JsonPropertyValueFormatter.bool(isPosthogEnabled()));
-            settings.put(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), str(getPosthogApiKey()));
+        @Override
+        public void populateSettings(Utf8StringSink sink) {
+            bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), isPosthogEnabled(), sink);
+            str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), getPosthogApiKey(), sink);
         }
     }
 

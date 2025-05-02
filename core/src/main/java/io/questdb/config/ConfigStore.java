@@ -16,6 +16,7 @@ import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
@@ -54,22 +55,19 @@ public class ConfigStore implements Closeable {
         Misc.free(path);
     }
 
-    public void init() {
+    public synchronized void init() {
         final LPSZ configPath = configFilePath();
-
-        configMap.clear();
         if (configuration.getFilesFacade().exists(configPath)) {
             read(configPath);
         }
     }
 
-    public synchronized void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
+    public synchronized void populateSettings(Utf8StringSink sink) {
         final ObjList<CharSequence> keys = configMap.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final CharSequence key = keys.getQuick(i);
             final CharSequence value = configMap.get(key);
-            // TODO: fix toString()
-            settings.put(key, str(value.toString()));
+            str(key, value, sink);
         }
     }
 
@@ -105,6 +103,7 @@ public class ConfigStore implements Closeable {
             final AppendableBlock block = writer.append();
 
             // process map
+            block.putInt(parserMap.size());
             final ObjList<CharSequence> keys = parserMap.keys();
             for (int i = 0, n = keys.size(); i < n; i++) {
                 final CharSequence key = keys.getQuick(i);
@@ -118,7 +117,6 @@ public class ConfigStore implements Closeable {
         }
 
         configMap.clear();
-        // TODO: need a csPool and copy in a loop here
         configMap.putAll(parserMap);
     }
 
@@ -137,13 +135,16 @@ public class ConfigStore implements Closeable {
                     continue;
                 }
 
-                // TODO: need a csPool and copy instead of toString()
-                final CharSequence key = block.getStr(offset).toString();
-                offset += Vm.getStorageLength(key);
-                final CharSequence value = block.getStr(offset).toString();
-                offset += Vm.getStorageLength(value);
-
-                configMap.put(key, value);
+                final int size = block.getInt(offset);
+                offset += Integer.BYTES;
+                for (int i = 0; i < size; i++) {
+                    // TODO: ok to use toString() on initial load?
+                    final CharSequence key = block.getStr(offset).toString();
+                    offset += Vm.getStorageLength(key);
+                    final CharSequence value = block.getStr(offset).toString();
+                    offset += Vm.getStorageLength(value);
+                    configMap.put(key, value);
+                }
             }
         }
     }

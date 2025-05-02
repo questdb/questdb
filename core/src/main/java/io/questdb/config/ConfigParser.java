@@ -11,20 +11,20 @@ public final class ConfigParser extends AbstractJsonParser {
 
     private static final int STATE_ROOT = 1;
     private static final int STATE_START = 0;
-    private final CharSequenceObjHashMap<CharSequence> configMap;
+    private final CharSequenceObjHashMap<CharSequence> parserMap;
     private CharSequence key;
     private int state = STATE_START;
 
-    public ConfigParser(CairoConfiguration configuration, CharSequenceObjHashMap<CharSequence> configMap) {
-        //TODO: move these settings into config
+    public ConfigParser(CairoConfiguration configuration, CharSequenceObjHashMap<CharSequence> parserMap) {
+        // TODO: move these settings into config
         super(256, Numbers.SIZE_1MB, 4096);
-        this.configMap = configMap;
+        this.parserMap = parserMap;
     }
 
     @Override
     public void clear() {
         super.clear();
-        configMap.clear();
+        parserMap.clear();
         state = STATE_START;
     }
 
@@ -56,7 +56,7 @@ public final class ConfigParser extends AbstractJsonParser {
                 }
                 break;
             case JsonLexer.EVT_VALUE:
-                configMap.put(key, copy(tag));
+                parserMap.put(key, copy(tag));
         }
     }
 }

@@ -524,6 +524,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 return rejectProcessor.reject(HTTP_NOT_FOUND, "Method GET not supported");
             }
         } else {
+            LOG.error().$("rejecting method [method=").$(method).I$();
             return rejectProcessor.reject(HTTP_BAD_REQUEST, "Method not supported");
         }
 

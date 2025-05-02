@@ -24,7 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.str.Utf8StringSink;
 
 public interface PublicPassthroughConfiguration {
 
@@ -32,7 +32,7 @@ public interface PublicPassthroughConfiguration {
 
     boolean isPosthogEnabled();
 
-    default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
+    default void populateSettings(Utf8StringSink sink) {
         // no-op
     }
 }

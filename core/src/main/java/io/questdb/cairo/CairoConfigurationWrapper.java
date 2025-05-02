@@ -33,7 +33,6 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.datetime.DateFormat;
@@ -41,6 +40,7 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -1301,8 +1301,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-        getDelegate().populateSettings(settings);
+    public void populateSettings(Utf8StringSink sink) {
+        getDelegate().populateSettings(sink);
     }
 
     public void setDelegate(CairoConfiguration delegate) {

@@ -33,7 +33,6 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IOURingFacade;
 import io.questdb.std.IOURingFacadeImpl;
@@ -50,6 +49,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -727,7 +727,7 @@ public interface CairoConfiguration {
      */
     boolean mangleTableDirNames();
 
-    default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
+    default void populateSettings(Utf8StringSink sink) {
     }
 
     boolean useFastAsOfJoin();

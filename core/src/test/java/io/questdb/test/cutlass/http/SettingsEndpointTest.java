@@ -24,14 +24,22 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.*;
+import io.questdb.Bootstrap;
+import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.DefaultPublicPassthroughConfiguration;
+import io.questdb.FactoryProviderImpl;
+import io.questdb.PropBootstrapConfiguration;
+import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
+import io.questdb.PublicPassthroughConfiguration;
+import io.questdb.ServerConfiguration;
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -99,11 +107,11 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             public CairoConfiguration getCairoConfiguration() {
                                 return new DefaultCairoConfiguration(bootstrap.getRootDirectory()) {
                                     @Override
-                                    public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
+                                    public void populateSettings(Utf8StringSink sink) {
                                         final CairoConfiguration config = getCairoConfiguration();
-                                        settings.put(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID.getPropertyPath(), str(config.getDbDirectory().toString()));
-                                        settings.put(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.getPropertyPath(), integer(config.getMaxFileNameLength()));
-                                        settings.put(PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath(), bool(config.isWalSupported()));
+                                        str(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID.getPropertyPath(), config.getDbDirectory(), sink);
+                                        integer(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.getPropertyPath(), config.getMaxFileNameLength(), sink);
+                                        bool(PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath(), config.isWalSupported(), sink);
                                     }
                                 };
                             }
@@ -112,10 +120,10 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
                                 return new DefaultPublicPassthroughConfiguration() {
                                     @Override
-                                    public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
+                                    public void populateSettings(Utf8StringSink sink) {
                                         final PublicPassthroughConfiguration config = getPublicPassthroughConfiguration();
-                                        settings.put(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), bool(config.isPosthogEnabled()));
-                                        settings.put(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), str(config.getPosthogApiKey()));
+                                        bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), config.isPosthogEnabled(), sink);
+                                        str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), config.getPosthogApiKey(), sink);
                                     }
                                 };
                             }

@@ -32,16 +32,13 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.Utf8StringSink;
 
-import java.net.HttpURLConnection;
+import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
+import static java.net.HttpURLConnection.HTTP_OK;
 
 public class SettingsProcessor implements HttpRequestProcessor {
-    // TODO: create a state class and use that instead of thread locals?
-    private static final ThreadLocal<CharSequenceObjHashMap<CharSequence>> tlSettings = new ThreadLocal<>(CharSequenceObjHashMap::new);
     private static final ThreadLocal<Utf8StringSink> tlSink = new ThreadLocal<>(Utf8StringSink::new);
     private final ConfigStore configStore;
     private final ServerConfiguration serverConfiguration;
@@ -51,21 +48,6 @@ public class SettingsProcessor implements HttpRequestProcessor {
         this.configStore = configStore;
     }
 
-    // TODO: move it into a util class?
-    public static void convertMapToJson(CharSequenceObjHashMap<CharSequence> settings, Utf8StringSink sink) {
-        sink.putAscii('{');
-        final ObjList<CharSequence> keys = settings.keys();
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            final CharSequence key = keys.getQuick(i);
-            final CharSequence value = settings.get(key);
-            sink.putQuoted(key).putAscii(':').put(value);
-            if (i != n - 1) {
-                sink.putAscii(',');
-            }
-        }
-        sink.putAscii('}');
-    }
-
     @Override
     public byte getRequiredAuthType() {
         return SecurityContext.AUTH_TYPE_NONE;
@@ -73,17 +55,18 @@ public class SettingsProcessor implements HttpRequestProcessor {
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final CharSequenceObjHashMap<CharSequence> settings = tlSettings.get();
         final Utf8StringSink sink = tlSink.get();
 
-        serverConfiguration.getCairoConfiguration().populateSettings(settings);
-        serverConfiguration.getPublicPassthroughConfiguration().populateSettings(settings);
-        configStore.populateSettings(settings);
-
-        convertMapToJson(settings, sink);
+        sink.clear();
+        sink.putAscii('{');
+        serverConfiguration.getCairoConfiguration().populateSettings(sink);
+        serverConfiguration.getPublicPassthroughConfiguration().populateSettings(sink);
+        configStore.populateSettings(sink);
+        sink.clear(sink.size() - 1);
+        sink.putAscii('}');
 
         final HttpChunkedResponse r = context.getChunkedResponse();
-        r.status(HttpURLConnection.HTTP_OK, "application/json");
+        r.status(HTTP_OK, CONTENT_TYPE_JSON);
         r.sendHeader();
         r.put(sink);
         r.sendChunk(true);

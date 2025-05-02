@@ -111,6 +111,7 @@ public class ConfigProcessor implements HttpRequestProcessor, HttpContentListene
             configStore.save(transientState.sink, mode);
             sendOk();
         } catch (JsonException | CairoException | CairoError e) {
+            LOG.error().$("error while saving config").$(e).$();
             sendErr(e.getFlyweightMessage());
         }
         transientState.clear();
