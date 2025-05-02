@@ -26,7 +26,9 @@ package io.questdb.test;
 
 import io.questdb.Bootstrap;
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -44,11 +46,15 @@ import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
 import org.junit.runner.OrderWith;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
+@SuppressWarnings("ClassEscapesDefinedScope")
 @OrderWith(RandomOrder.class)
 public class AbstractTest {
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
     protected static final Log LOG = LogFactory.getLog(AbstractTest.class);
+    protected static final AtomicInteger OFF_POOL_READER_ID = new AtomicInteger();
     protected static String root;
     @Rule
     public final TestName testName = new TestName();
@@ -81,6 +87,7 @@ public class AbstractTest {
     public void tearDown() throws Exception {
         LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         TestUtils.removeTestPath(root);
+        OFF_POOL_READER_ID.set(0);
     }
 
     protected static MatViewRefreshJob createMatViewRefreshJob(CairoEngine engine) {
@@ -133,5 +140,9 @@ public class AbstractTest {
 
     protected static String[] getServerMainArgs() {
         return Bootstrap.getServerMainArgs(root);
+    }
+
+    protected static TableReader newOffPoolReader(CairoConfiguration configuration, CharSequence tableName, CairoEngine engine) {
+        return new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, engine.verifyTableName(tableName), engine.getTxnScoreboardPool());
     }
 }
