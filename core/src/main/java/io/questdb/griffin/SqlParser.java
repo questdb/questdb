@@ -3579,7 +3579,6 @@ public class SqlParser {
                 }
             }
         }
-
     }
 
     private ExpressionNode rewriteKnownStatements(
