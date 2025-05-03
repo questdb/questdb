@@ -918,7 +918,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     private void assertThat(String expected, String lines, CharSequence tableName, CairoConfiguration configuration, LineUdpReceiverConfiguration udpConfiguration) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (LineUdpParserImpl parser = new LineUdpParserImpl(engine, udpConfiguration)) {
                     byte[] bytes = lines.getBytes(Files.UTF_8);

@@ -210,6 +210,23 @@ public class InTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInSymbol_escapedConstant() throws Exception {
+        assertQuery(
+                "ts\ts\n" +
+                        "2020-01-01T00:00:00.000000Z\t1'suffix\n" +
+                        "2020-01-01T00:10:00.000000Z\t2'suffix\n" +
+                        "2020-01-01T00:20:00.000000Z\t3'suffix\n" +
+                        "2020-01-01T00:30:00.000000Z\t4'suffix\n",
+                "select * from tab WHERE s in ('1''suffix', '2''suffix', '3''suffix', '4''suffix')",
+                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, concat(x::symbol, '''', 'suffix')::symbol s from long_sequence(20))" +
+                        " timestamp(ts) PARTITION BY MONTH",
+                "ts",
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testInUuid_const() throws Exception {
         assertQuery(
                 "ts\tu\n" +

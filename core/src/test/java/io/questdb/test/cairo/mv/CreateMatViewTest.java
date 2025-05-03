@@ -1399,7 +1399,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     );
                     block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
                     block = writer.append();
-                    MatViewState.appendTs(matViewState.getLastRefreshTimestamp(), block);
+                    MatViewState.appendTs(matViewState.getLastRefreshFinishTimestamp(), block);
                     block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE);
                     writer.commit();
                 }
@@ -1411,7 +1411,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
                     assertEquals(matViewState.isInvalid(), actualState.isInvalid());
                     assertEquals(matViewState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
-                    assertEquals(matViewState.getLastRefreshTimestamp(), actualState.getLastRefreshTimestamp());
+                    assertEquals(matViewState.getLastRefreshFinishTimestamp(), actualState.getLastRefreshTimestamp());
                     TestUtils.assertEquals(invalidationReason, actualState.getInvalidationReason());
                 }
             }
@@ -1542,7 +1542,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
 
                     block = writer.append();
-                    MatViewState.appendTs(matViewState.getLastRefreshTimestamp(), block);
+                    MatViewState.appendTs(matViewState.getLastRefreshFinishTimestamp(), block);
                     block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE);
                     writer.commit();
                 }
@@ -1554,7 +1554,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
                     assertEquals(matViewState.isInvalid(), actualState.isInvalid());
                     assertEquals(matViewState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
-                    assertEquals(matViewState.getLastRefreshTimestamp(), actualState.getLastRefreshTimestamp());
+                    assertEquals(matViewState.getLastRefreshFinishTimestamp(), actualState.getLastRefreshTimestamp());
                     TestUtils.assertEquals(invalidationReason, actualState.getInvalidationReason());
                 }
             }

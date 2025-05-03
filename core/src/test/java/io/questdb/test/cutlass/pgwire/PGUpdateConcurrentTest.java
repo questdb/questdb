@@ -39,6 +39,7 @@ import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
@@ -276,6 +277,8 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                         } catch (Throwable th) {
                             LOG.error().$("writer error ").$(th).$();
                             exceptions.add(th);
+                        } finally {
+                            Path.clearThreadLocals();
                         }
                     });
                     threads.add(writer);
@@ -317,6 +320,8 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                         } catch (Throwable th) {
                             LOG.error().$("reader error ").$(th).$();
                             exceptions.add(th);
+                        } finally {
+                            Path.clearThreadLocals();
                         }
                     });
                     threads.add(reader);

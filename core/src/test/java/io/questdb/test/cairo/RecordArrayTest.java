@@ -60,7 +60,7 @@ public class RecordArrayTest extends AbstractCairoTest {
 
     @Test
     public void testPseudoRandomAccess() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 10000;
             CreateTableTestUtils.createTestTable(N, new Rnd(), new TestRecord.ArrayBinarySequence());
             try (
@@ -195,7 +195,7 @@ public class RecordArrayTest extends AbstractCairoTest {
 
     @Test
     public void testWriteAndRead() throws Exception {
-        TestUtils.assertMemoryLeak(
+        assertMemoryLeak(
                 () -> {
                     final int N = 10000 * 2;
                     CreateTableTestUtils.createTestTable(N, new Rnd(), new TestRecord.ArrayBinarySequence());
@@ -333,11 +333,11 @@ public class RecordArrayTest extends AbstractCairoTest {
     }
 
     private void testChainReuseWithClearFunction(ClearFunc clear) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 10000;
             Rnd rnd = new Rnd();
 
-            // in a spirit of using only what's available in this package
+            // in the spirit of using only what's available in this package
             // we create temporary table the hard way
 
             CreateTableTestUtils.createTestTable(N, rnd, new TestRecord.ArrayBinarySequence());
