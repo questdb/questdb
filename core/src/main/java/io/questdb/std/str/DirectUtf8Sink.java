@@ -168,7 +168,8 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
         return Utf8s.stringFromUtf8Bytes(sink.lo(), sink.hi());
     }
 
-    private void setAscii(boolean ascii) {
+    public void setAscii(boolean ascii) {
         sink.setAscii(ascii);
     }
+
 }
