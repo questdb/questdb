@@ -41,7 +41,7 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         while (i < hi) {
             char c = cs.charAt(i++);
             if (c < 32) {
-                escapeJsonStrChar(c);
+                escapeCsvStrChar(c);
             } else if (c < 128) {
                 switch (c) {
                     case '"':
@@ -66,10 +66,10 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         final int hi = utf8.size();
 
         while (i < hi) {
-            char c = (char) utf8.byteAt(i++);
-            if (c > 0 && c < 32) {
-                escapeJsonStrChar(c);
-            } else if (c > 0 && c < 128) {
+            byte c = utf8.byteAt(i++);
+            if (c >= 0 && c < 32) {
+                escapeCsvStrChar((char) c);
+            } else if (c > 0) {
                 switch (c) {
                     case '"':
                         putAscii("\"\"");
@@ -78,10 +78,10 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
                         putAscii("\\\\");
                         break;
                     default:
-                        putAscii(c);
+                        putAscii((char) c);
                 }
             } else {
-                put((byte) c);
+                put(c);
             }
         }
         return this;
@@ -122,21 +122,21 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         int i = 0;
         final int hi = utf8.size();
         while (i < hi) {
-            char c = (char) utf8.byteAt(i++);
-            if (c > 0 && c < 32) {
-                escapeJsonStrChar(c);
-            } else if (c > 0 && c < 128) {
+            byte c = utf8.byteAt(i++);
+            if (c >= 0 && c < 32) {
+                escapeJsonStrChar((char) c);
+            } else if (c > 0) {
                 switch (c) {
                     case '\"':
                     case '\\':
                         putAscii('\\');
                         // intentional fall through
                     default:
-                        putAscii(c);
+                        putAscii((char) c);
                         break;
                 }
             } else {
-                put((byte) c);
+                put(c);
             }
         }
         return this;
@@ -163,6 +163,22 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
                 putAscii("\\u00");
                 put(c >> 4);
                 putAscii(Numbers.hexDigits[c & 15]);
+                break;
+        }
+    }
+
+    default void escapeCsvStrChar(char c) {
+        switch (c) {
+            case '\n':
+                putAscii("\\n");
+                break;
+            case '\r':
+                putAscii("\\r");
+                break;
+            case '\t':
+                putAscii("\\t");
+                break;
+            default:
                 break;
         }
     }
