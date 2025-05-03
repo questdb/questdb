@@ -6287,7 +6287,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final String columnNameA = slaveMetadata.getColumnName(columnIndexA);
             final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
             final String columnNameB = masterMetadata.getColumnName(columnIndexB);
-            if (columnTypeB != columnTypeA && !(ColumnType.isSymbolOrString(columnTypeB) && ColumnType.isSymbolOrString(columnTypeA))) {
+            if (columnTypeB != columnTypeA &&
+                    !(ColumnType.isSymbolOrString(columnTypeB) && ColumnType.isSymbolOrString(columnTypeA)) &&
+                    !(ColumnType.isBuiltInWideningCast(columnTypeB, columnTypeA) || ColumnType.isBuiltInWideningCast(columnTypeA, columnTypeB))) {
                 // index in column filter and join context is the same
                 throw SqlException.$(jc.aNodes.getQuick(k).position, "join column type mismatch");
             }
@@ -6312,6 +6314,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 keyTypes.add(columnTypeB);
                 writeSymbolAsString.set(columnIndexA);
                 writeSymbolAsString.set(columnIndexB);
+            } else if (ColumnType.isBuiltInWideningCast(columnTypeB, columnTypeA)) {
+                keyTypes.add(columnTypeA);
             } else {
                 keyTypes.add(columnTypeB);
             }
