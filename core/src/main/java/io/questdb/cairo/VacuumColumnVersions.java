@@ -65,7 +65,7 @@ public class VacuumColumnVersions implements Closeable {
     public VacuumColumnVersions(CairoEngine engine) {
         try {
             this.engine = engine;
-            this.purgeExecution = new ColumnPurgeOperator(engine.getConfiguration());
+            this.purgeExecution = new ColumnPurgeOperator(engine);
             this.tableFiles = new DirectLongList(COLUMN_VERSION_LIST_CAPACITY, MemoryTag.NATIVE_SQL_COMPILER);
             this.ff = engine.getConfiguration().getFilesFacade();
         } catch (Throwable th) {
@@ -276,7 +276,7 @@ public class VacuumColumnVersions implements Closeable {
             try {
                 partitionTimestamp = getPartitionDirFormatMethod(partitionBy).parse(fileNameSink.asAsciiCharSequence(), 0, dotIndex, DateFormatUtils.EN_LOCALE);
             } catch (NumericException ex) {
-                // Directory is invalid partition name, continue
+                // Directory is an invalid partition name, continue
                 LOG.error().$("skipping column version purge VACUUM, invalid partition directory name [name=").$(fileNameSink)
                         .$(", path=").$(path2).I$();
                 return;
