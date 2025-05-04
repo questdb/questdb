@@ -113,6 +113,7 @@ public interface TableWriterAPI extends Closeable {
      */
     int getSymbolCountWatermark(int columnIndex);
 
+    @NotNull
     TableToken getTableToken();
 
     long getUncommittedRowCount();

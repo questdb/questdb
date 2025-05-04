@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.Rnd;
@@ -93,6 +94,235 @@ public class MatViewTest extends AbstractCairoTest {
         if (rowsPerQuery > 0) {
             setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         }
+    }
+
+    @Test
+    public void testAlterSymbolCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table and mat view
+            execute(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            drainQueues();
+
+            // expect default capacity
+            assertSql(
+                    "column\tsymbolCapacity\nsym\t128\n",
+                    "select \"column\", symbolCapacity from (show columns from price_1h) where type = 'SYMBOL'"
+            );
+
+            // change sym capacity
+            execute("alter materialized view price_1h alter column sym symbol capacity 1000");
+            drainQueues();
+
+            // expect larger capacity
+            assertSql(
+                    "column\tsymbolCapacity\nsym\t1024\n",
+                    "select \"column\", symbolCapacity from (show columns from price_1h) where type = 'SYMBOL'"
+            );
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
+                    "materialized_views",
+                    null,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterSymbolCapacityInvalidStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table and mat view
+            execute(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized foobar;",
+                    19,
+                    "'view' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view foobar;",
+                    24,
+                    "table does not exist [table=foobar]"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h",
+                    32,
+                    "'alter' or 'resume' or 'suspend' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h foobar",
+                    33,
+                    "'alter' or 'resume' or 'suspend' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter",
+                    38,
+                    "'column' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter foobar;",
+                    39,
+                    "'column' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column foobar",
+                    46,
+                    "column 'foobar' does not exist in materialized view 'price_1h'"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym;",
+                    49,
+                    "'symbol' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym foobar;",
+                    50,
+                    "'symbol' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column price symbol;",
+                    46,
+                    "column 'price' is not of symbol type"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym symbol",
+                    56,
+                    "'capacity' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym symbol capacity;",
+                    65,
+                    "numeric capacity expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym symbol capacity -42;",
+                    66,
+                    "min symbol capacity is 2"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym symbol capacity 1073741825;",
+                    66,
+                    "max symbol capacity is 1073741824"
+            );
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW price_1h ALTER COLUMN sym SYMBOL CAPACITY 42 foobar;",
+                    69,
+                    "unexpected token [foobar] while trying to change symbol capacity"
+            );
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t-1\t0\n",
+                    "materialized_views",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinBinarySearchHintInMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades as (\n" +
+                    "  select \n" +
+                    "    rnd_double() price,\n" +
+                    "    rnd_double() volume,\n" +
+                    "    ('2025'::timestamp + x * 200_000_000L + rnd_int(0, 10_000, 0))::timestamp as ts,\n" +
+                    "  from long_sequence(5_000)\n" +
+                    ") timestamp(ts) partition by day wal;");
+
+            execute("create table prices as (\n" +
+                    "  select \n" +
+                    "    rnd_double() bid,\n" +
+                    "    rnd_double() ask,\n" +
+                    "    rnd_boolean() valid,\n" +
+                    "    ('2025'::timestamp + x * 1_000_000L + rnd_int(0, 10_000, 0))::timestamp as ts,\n" +
+                    "  from long_sequence(1_000_000)\n" +
+                    ") timestamp(ts) partition by day wal;\n");
+
+            String mvWithoutHint = "create materialized view daily_summary \n" +
+                    "WITH BASE trades\n" +
+                    "as (\n" +
+                    "select trades.ts, count(*), sum(volume), min(price), max(price), avg(price)\n" +
+                    "FROM trades\n" +
+                    "asof join (select * from prices where valid) prices\n" +
+                    "sample by 1d\n" +
+                    ");";
+
+            String mvWithHint = "create materialized view daily_summary \n" +
+                    "WITH BASE trades\n" +
+                    "as (\n" +
+                    "select /*+ USE_ASOF_BINARY_SEARCH(trades prices) */ trades.ts, count(*), sum(volume), min(price), max(price), avg(price)\n" +
+                    "FROM trades\n" +
+                    "asof join (select * from prices where valid) prices\n" +
+                    "sample by 1d\n" +
+                    ");";
+
+            // sanity test: without the hint it do not use binary search
+            sink.clear();
+            printSql("EXPLAIN " + mvWithoutHint);
+            TestUtils.assertContains(sink, "AsOf Join");
+            TestUtils.assertNotContains(sink, "Fast Scan");
+
+            // but it does with the hint
+            sink.clear();
+            printSql("EXPLAIN " + mvWithHint);
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
+
+            // ok, now the real data: first try the view without the hint
+            execute(mvWithoutHint);
+            drainQueues();
+            String expectedView = "ts\tcount\tsum\tmin\tmax\tavg\n" +
+                    "2025-01-01T00:00:00.000000Z\t431\t215.12906540853268\t0.0031075670450616544\t0.9975907992178104\t0.4923297830071461\n" +
+                    "2025-01-02T00:00:00.000000Z\t432\t214.8933638390628\t0.0027013057617086833\t0.9997998069306392\t0.5363814932706943\n" +
+                    "2025-01-03T00:00:00.000000Z\t432\t211.63403995544482\t0.0014510055926236776\t0.9979936641680203\t0.4900138748185357\n" +
+                    "2025-01-04T00:00:00.000000Z\t432\t225.1870697913935\t0.0026339327135822543\t0.9996217482017493\t0.49406088823120226\n" +
+                    "2025-01-05T00:00:00.000000Z\t432\t213.8124549264717\t0.00985149958244913\t0.9981734770138071\t0.4728684440748092\n" +
+                    "2025-01-06T00:00:00.000000Z\t432\t214.8994847762188\t0.0010433040681515626\t0.9998120012952196\t0.48758818235506823\n" +
+                    "2025-01-07T00:00:00.000000Z\t432\t220.0881500794553\t0.0014542249844708977\t0.9973956570924076\t0.5131734923704387\n" +
+                    "2025-01-08T00:00:00.000000Z\t432\t218.41372811829154\t8.166095924849737E-4\t0.9976953158075262\t0.5276052830143888\n" +
+                    "2025-01-09T00:00:00.000000Z\t432\t220.10482943202246\t0.0011023415061862663\t0.9974983068581821\t0.493060539742248\n" +
+                    "2025-01-10T00:00:00.000000Z\t432\t208.43848337612906\t0.0028067126112681917\t0.9976283386812487\t0.5136095078793146\n" +
+                    "2025-01-11T00:00:00.000000Z\t432\t213.02005186038846\t8.598501058093566E-4\t0.999708216046598\t0.5040670959429089\n" +
+                    "2025-01-12T00:00:00.000000Z\t249\t119.80938485754517\t0.007906045439897036\t0.9962991313334122\t0.4923923393746041\n";
+            assertQuery(expectedView, "SELECT * FROM daily_summary", "ts", true, true);
+
+            // now, recreate the view with hint
+            execute("drop materialized view daily_summary");
+            execute(mvWithHint);
+            drainQueues();
+
+            // it must result in the same data
+            assertQuery(expectedView, "SELECT * FROM daily_summary", "ts", true, true);
+        });
     }
 
     @Test
@@ -187,8 +417,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
                     "materialized_views",
                     null,
                     false
@@ -200,8 +430,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t[-105]: table does not exist [table=base_price]\tinvalid\t1\t-1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t[-105]: table does not exist [table=base_price]\tinvalid\t1\t-1\n",
                     "materialized_views",
                     null,
                     false
@@ -219,8 +449,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tbase table is not a WAL table\tinvalid\t1\t-1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tbase table is not a WAL table\tinvalid\t1\t-1\n",
                     "materialized_views",
                     null,
                     false
@@ -265,8 +495,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~3\t\tvalid\t1\t1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~3\t\tvalid\t1\t1\n",
                     "materialized_views",
                     null,
                     false
@@ -280,8 +510,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~3\ttable rename operation\tinvalid\t1\t1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-10-24T18:00:00.000000Z\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~3\ttable rename operation\tinvalid\t1\t1\n",
                     "materialized_views",
                     null,
                     false
@@ -531,6 +761,74 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewLoop() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE 'trades' (" +
+                            "symbol SYMBOL CAPACITY 256 CACHE, " +
+                            "side SYMBOL CAPACITY 256 CACHE, " +
+                            "price DOUBLE, " +
+                            "amount DOUBLE, " +
+                            "timestamp TIMESTAMP " +
+                            ") timestamp(timestamp) PARTITION BY HOUR WAL;"
+            );
+
+            execute("INSERT INTO trades VALUES('BTC-USD', 'BUY', 29432.50, 0.5, '2023-08-15T09:30:45.789Z');");
+            execute("INSERT INTO trades VALUES('BTC-USD', 'SELL', 29435.20, 1.2, '2023-08-15T09:31:12.345Z');");
+
+            drainQueues();
+            execute("CREATE MATERIALIZED VIEW a AS (\n" +
+                    "  SELECT\n" +
+                    "    timestamp,\n" +
+                    "    symbol,\n" +
+                    "    avg(price) AS avg_price\n" +
+                    "  FROM trades\n" +
+                    "  SAMPLE BY 1d\n" +
+                    ") partition by HOUR;");
+
+            execute("create MATERIALIZED view b as (\n" +
+                    "  SELECT\n" +
+                    "    timestamp,\n" +
+                    "    symbol,\n" +
+                    "    avg(avg_price) AS avg_price\n" +
+                    "  FROM a\n" +
+                    "  SAMPLE BY 2d\n" +
+                    ") partition by HOUR;");
+
+            execute("create MATERIALIZED view c as (\n" +
+                    "  SELECT\n" +
+                    "    timestamp,\n" +
+                    "    symbol,\n" +
+                    "    avg(avg_price) AS avg_price\n" +
+                    "  FROM b\n" +
+                    "  SAMPLE BY 2d\n" +
+                    ") partition by HOUR;");
+
+            drainQueues();
+            execute("drop MATERIALIZED VIEW a;");
+
+            drainQueues();
+
+            try {
+                execute("create MATERIALIZED view A as (\n" +
+                        "  SELECT\n" +
+                        "    timestamp,\n" +
+                        "    symbol,\n" +
+                        "    avg(avg_price) AS avg_price\n" +
+                        "  FROM c\n" +
+                        "  SAMPLE BY 2d\n" +
+                        ") partition by HOUR;");
+                Assert.fail("Expected a dependency loop exception");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
+            }
+            // mat view table should be dropped
+            TableToken token = engine.getTableTokenIfExists("a");
+            Assert.assertNull(token);
+        });
+    }
+
+    @Test
     public void testDisableParallelSqlExecution() throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, "false");
         assertMemoryLeak(() -> {
@@ -650,8 +948,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
                     "materialized_views",
                     null,
                     false
@@ -667,8 +965,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tdrop column operation\tinvalid\t1\t2\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tdrop column operation\tinvalid\t1\t2\n",
                     "materialized_views",
                     null,
                     false
@@ -678,8 +976,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t2\t2\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t2\t2\n",
                     "materialized_views",
                     null,
                     false
@@ -710,8 +1008,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
                     "materialized_views",
                     null,
                     false
@@ -727,8 +1025,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tdrop column operation\tinvalid\t1\t2\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tdrop column operation\tinvalid\t1\t2\n",
                     "materialized_views",
                     null,
                     false
@@ -738,8 +1036,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t[7]: Invalid column: sym\tinvalid\t-1\t2\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t[7]: Invalid column: sym\tinvalid\t-1\t2\n",
                     "materialized_views",
                     null,
                     false
@@ -770,8 +1068,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             // The view is expected to be invalid due to npe() in where clause.
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price where npe() sample by 1h\tprice_1h~2\t[-1]: unexpected filter error\tinvalid\t-1\t1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price where npe() sample by 1h\tprice_1h~2\t[-1]: unexpected filter error\tinvalid\t-1\t1\n",
                     "materialized_views",
                     null,
                     false
@@ -782,8 +1080,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             // The view is expected to be still invalid.
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price where npe() sample by 1h\tprice_1h~2\t[-1]: unexpected filter error\tinvalid\t-1\t1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price where npe() sample by 1h\tprice_1h~2\t[-1]: unexpected filter error\tinvalid\t-1\t1\n",
                     "materialized_views",
                     null,
                     false
@@ -806,8 +1104,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
                     "materialized_views",
                     null,
                     false
@@ -817,8 +1115,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tdrop column operation\tinvalid\t1\t2\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tdrop column operation\tinvalid\t1\t2\n",
                     "materialized_views",
                     null,
                     false
@@ -829,8 +1127,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             // The view is expected to be still invalid.
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t[17]: Invalid column: price\tinvalid\t-1\t2\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t[17]: Invalid column: price\tinvalid\t-1\t2\n",
                     "materialized_views",
                     null,
                     false
@@ -882,8 +1180,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t-1\t0\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t-1\t0\n",
                     "materialized_views",
                     null,
                     false
@@ -921,8 +1219,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
                     "materialized_views",
                     null,
                     false
@@ -1610,6 +1908,46 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshSkipsUnchangedBuckets() throws Exception {
+        // Verify that incremental refresh skips unchanged SAMPLE BY buckets.
+        assertMemoryLeak(() -> {
+            TestTimestampCounterFactory.COUNTER.set(0);
+
+            execute(
+                    "create table base_price (" +
+                            "  price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL;"
+            );
+
+            final String viewSql = "select ts, test_timestamp_counter(ts) ts0, max(price) max_price " +
+                    "from base_price " +
+                    "sample by 1d";
+            createMatView(viewSql);
+
+            execute("insert into base_price(price, ts) values (1.320, '2024-01-01T00:01'), (1.321, '2024-01-30T00:01');");
+
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\tbase_table_name\tview_status\n" +
+                            "price_1h\tbase_price\tvalid\n",
+                    "select view_name, base_table_name, view_status from materialized_views",
+                    null,
+                    false
+            );
+
+            // The function must have been called for two days only although the full interval is 30 days.
+            Assert.assertEquals(2, TestTimestampCounterFactory.COUNTER.get());
+
+            final String expected = "ts\tts0\tmax_price\n" +
+                    "2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.32\n" +
+                    "2024-01-30T00:00:00.000000Z\t2024-01-30T00:00:00.000000Z\t1.321\n";
+            assertQueryNoLeakCheck(expected, viewSql + " order by ts", "ts", true, true);
+            assertQueryNoLeakCheck(expected, "price_1h order by ts", "ts", true, true);
+        });
+    }
+
+    @Test
     public void testResumeSuspendMatView() throws Exception {
         assertMemoryLeak(() -> {
             // create table and mat view
@@ -1632,8 +1970,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
                     "materialized_views",
                     null,
                     false
@@ -2191,6 +2529,47 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampGetsRefreshedOnInvalidation() throws Exception {
+        assertMemoryLeak(() -> {
+
+            currentMicros = parseFloorPartialTimestamp("2020-01-01T01:01:01.000000Z");
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, amount int, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            final String viewQuery = "select sym, last(price) as price, ts from base_price sample by 1d";
+            createMatView(viewQuery);
+
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainQueues();
+
+            final String expected = "sym\tprice\tts\n" +
+                    "gbpusd\t1.321\t2024-09-10T00:00:00.000000Z\n" +
+                    "jpyusd\t103.21\t2024-09-10T00:00:00.000000Z\n";
+            assertQueryNoLeakCheck(expected, viewQuery, "ts", true, true);
+            assertQueryNoLeakCheck(expected, "price_1h", "ts", true, true);
+
+            execute("drop table base_price;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2020-01-01T01:01:01.000000Z\t2020-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1d\tprice_1h~2\tbase table is dropped or renamed\tinvalid\t1\t-1\n",
+                    "materialized_views",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testTtl() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -2220,74 +2599,6 @@ public class MatViewTest extends AbstractCairoTest {
                     true,
                     true
             );
-        });
-    }
-
-    @Test
-    public void testCreateMatViewLoop() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE 'trades' (" +
-                            "symbol SYMBOL CAPACITY 256 CACHE, " +
-                            "side SYMBOL CAPACITY 256 CACHE, " +
-                            "price DOUBLE, " +
-                            "amount DOUBLE, " +
-                            "timestamp TIMESTAMP " +
-                            ") timestamp(timestamp) PARTITION BY HOUR WAL;"
-            );
-
-            execute("INSERT INTO trades VALUES('BTC-USD', 'BUY', 29432.50, 0.5, '2023-08-15T09:30:45.789Z');");
-            execute("INSERT INTO trades VALUES('BTC-USD', 'SELL', 29435.20, 1.2, '2023-08-15T09:31:12.345Z');");
-
-            drainQueues();
-            execute("CREATE MATERIALIZED VIEW a AS (\n" +
-                    "  SELECT\n" +
-                    "    timestamp,\n" +
-                    "    symbol,\n" +
-                    "    avg(price) AS avg_price\n" +
-                    "  FROM trades\n" +
-                    "  SAMPLE BY 1d\n" +
-                    ") partition by HOUR;");
-
-            execute("create MATERIALIZED view b as (\n" +
-                    "  SELECT\n" +
-                    "    timestamp,\n" +
-                    "    symbol,\n" +
-                    "    avg(avg_price) AS avg_price\n" +
-                    "  FROM a\n" +
-                    "  SAMPLE BY 2d\n" +
-                    ") partition by HOUR;");
-
-            execute("create MATERIALIZED view c as (\n" +
-                    "  SELECT\n" +
-                    "    timestamp,\n" +
-                    "    symbol,\n" +
-                    "    avg(avg_price) AS avg_price\n" +
-                    "  FROM b\n" +
-                    "  SAMPLE BY 2d\n" +
-                    ") partition by HOUR;");
-
-            drainQueues();
-            execute("drop MATERIALIZED VIEW a;");
-
-            drainQueues();
-
-            try {
-                execute("create MATERIALIZED view A as (\n" +
-                        "  SELECT\n" +
-                        "    timestamp,\n" +
-                        "    symbol,\n" +
-                        "    avg(avg_price) AS avg_price\n" +
-                        "  FROM c\n" +
-                        "  SAMPLE BY 2d\n" +
-                        ") partition by HOUR;");
-                Assert.fail("Expected a dependency loop exception");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
-            }
-            // mat view table should be dropped
-            TableToken token = engine.getTableTokenIfExists("a");
-            Assert.assertNull(token);
         });
     }
 
@@ -2330,12 +2641,7 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     private void drainQueues() {
-        drainWalQueue();
-        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-            while (refreshJob.run(0)) {
-            }
-            drainWalQueue();
-        }
+        drainWalAndMatViewQueues();
         // purge job may create MatViewRefreshList for existing tables by calling engine.getDependentMatViews();
         // this affects refresh logic in some scenarios, so make sure to run it
         runWalPurgeJob();
@@ -2459,8 +2765,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable rename operation\tinvalid\t1\t3\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-10-24T19:00:00.000000Z\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable rename operation\tinvalid\t1\t3\n",
                     "materialized_views",
                     null,
                     false
@@ -2577,20 +2883,13 @@ public class MatViewTest extends AbstractCairoTest {
         createMatView(viewName, viewQuery);
         drainQueues();
 
-        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-            refreshJob.run(0);
-            drainWalQueue();
-
-            int prev = initSize + 1;
-            for (int i = 0; i < K; i++) {
-                int size = chunkSize + (i < tail ? 1 : 0);
-                execute("insert into x " + copySql(prev, size));
-                prev = prev + size;
-                drainWalQueue();
-                refreshJob.run(0);
-                drainWalQueue();
-                remainingSize -= size;
-            }
+        int prev = initSize + 1;
+        for (int i = 0; i < K; i++) {
+            int size = chunkSize + (i < tail ? 1 : 0);
+            execute("insert into x " + copySql(prev, size));
+            prev = prev + size;
+            drainWalAndMatViewQueues();
+            remainingSize -= size;
         }
 
         Assert.assertEquals(0, remainingSize);

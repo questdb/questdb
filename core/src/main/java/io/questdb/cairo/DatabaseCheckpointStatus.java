@@ -38,7 +38,17 @@ public interface DatabaseCheckpointStatus {
     }
 
     /**
-     * Returns a non-negative number when database is in "checkpoint" mode.
+     * Returns true when database is in "checkpoint" mode and no partition cleanup
+     * is allowed. With new version of TxnScoreboard partition cleanup is still
+     * allowed with checkpoint is in progress hence this method is different from
+     * {@link #isInProgress()}.
+     */
+    default boolean partitionsLocked() {
+        return isInProgress();
+    }
+
+    /**
+     * Returns a non-negative number when the database is in "checkpoint" mode.
      * Checkpoint mode is entered when CHECKPOINT CREATE SQL is called
      * and exited after CHECKPOINT RELEASE is called.
      * The value is an epoch timestamp in micros for the time when CHECKPOINT CREATE was run.

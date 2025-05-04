@@ -7,7 +7,7 @@ jobs:
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
           os: macOS
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "all"
           includeTests: "**/griffin/**"
           javadoc_step: ""
@@ -16,7 +16,7 @@ jobs:
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
           os: macOS
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/**"
           excludeTests: "**/cairo/fuzz/**"
@@ -26,7 +26,7 @@ jobs:
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
           os: macOS
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
@@ -35,7 +35,7 @@ jobs:
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
           os: macOS
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "all"
           includeTests: "**/pgwire/**/*.java"
           javadoc_step: ""
@@ -44,7 +44,7 @@ jobs:
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
           os: macOS
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "all"
           excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
           javadoc_step: ""
@@ -53,7 +53,7 @@ jobs:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "all"
           includeTests: "**/griffin/**"
           excludeTests: "**/O3*Test**,**/**Fuzz**"
@@ -63,7 +63,7 @@ jobs:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
@@ -72,7 +72,7 @@ jobs:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "all"
           includeTests: "**/O3*Test**,**/**Fuzz**"
           excludeTests: "**/cairo/fuzz/**"
@@ -82,7 +82,7 @@ jobs:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/**"
           excludeTests: "**/O3*Test**,**/**Fuzz**"
@@ -92,7 +92,7 @@ jobs:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "all"
           includeTests: "**/pgwire/**/*.java"
           javadoc_step: ""
@@ -101,7 +101,7 @@ jobs:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "all"
           excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
           javadoc_step: ""
@@ -110,7 +110,7 @@ jobs:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "none"
           javadoc_step: "javadoc:javadoc"
           javadoc_profile: ",javadoc"

@@ -98,13 +98,13 @@ public class CharsTest {
         final TestBinarySequence testBinarySequence = new TestBinarySequence();
         sink.clear();
         Chars.base64Encode(testBinarySequence.of("this is a test".getBytes()), 100, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcyBpcyBhIHRlc3Q=");
+        Assert.assertEquals("dGhpcyBpcyBhIHRlc3Q=", sink.toString());
         sink.clear();
         Chars.base64Encode(testBinarySequence.of("this is a test".getBytes()), 4, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcw==");
+        Assert.assertEquals("dGhpcw==", sink.toString());
         // ignore the null
         Chars.base64Encode(null, 4, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcw==");
+        Assert.assertEquals("dGhpcw==", sink.toString());
 
         // random part
         Random rand = new Random(System.currentTimeMillis());
@@ -258,13 +258,13 @@ public class CharsTest {
         final TestBinarySequence testBinarySequence = new TestBinarySequence();
         sink.clear();
         Chars.base64UrlEncode(testBinarySequence.of("this is a test".getBytes()), 100, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcyBpcyBhIHRlc3Q");
+        Assert.assertEquals("dGhpcyBpcyBhIHRlc3Q", sink.toString());
         sink.clear();
         Chars.base64UrlEncode(testBinarySequence.of("this is a test".getBytes()), 4, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcw");
+        Assert.assertEquals("dGhpcw", sink.toString());
         // ignore the null
         Chars.base64UrlEncode(null, 4, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcw");
+        Assert.assertEquals("dGhpcw", sink.toString());
 
         // random part
         Random rand = new Random(System.currentTimeMillis());
@@ -278,6 +278,77 @@ public class CharsTest {
         Chars.base64UrlEncode(testBinarySequence, (int) testBinarySequence.length(), sink);
         byte[] decoded = Base64.getUrlDecoder().decode(sink.toString());
         Assert.assertArrayEquals(bytes, decoded);
+    }
+
+    @Test
+    public void testContainsWordIgnoreCase() {
+        // --- Positive Cases ---
+        // Middle
+        Assert.assertTrue(Chars.containsWordIgnoreCase("a b c", "b", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("alpha beta gamma", "beta", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("a,b,c", "b", ','));
+        // Start
+        Assert.assertTrue(Chars.containsWordIgnoreCase("b c d", "b", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("beta gamma", "beta", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("b,c,d", "b", ','));
+        // End
+        Assert.assertTrue(Chars.containsWordIgnoreCase("a b c", "c", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("alpha beta", "beta", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("a,b,c", "c", ','));
+        // Single word sequence
+        Assert.assertTrue(Chars.containsWordIgnoreCase("word", "word", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("word", "word", ','));
+        // Multiple occurrences
+        Assert.assertTrue(Chars.containsWordIgnoreCase("a b a", "a", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("beta alpha beta", "beta", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("a b,c d", "b,c", ' '));
+
+        // --- Negative Cases ---
+        // Term not present
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a b c", "d", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("alpha beta", "gamma", ' '));
+        // Term is substring (start)
+        Assert.assertFalse(Chars.containsWordIgnoreCase("abc d", "ab", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("alphabet soup", "alpha", ' '));
+        // Term is substring (middle) - not preceded by separator
+        Assert.assertFalse(Chars.containsWordIgnoreCase("xabc d", "abc", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("alphabet soup", "lphabe", ' '));
+        // Term is substring (middle) - not followed by separator
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a bcd", "bc", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("alpha beta", "bet", ' '));
+        // Term is substring (end)
+        Assert.assertFalse(Chars.containsWordIgnoreCase("the alphabet", "bet", ' '));
+        // Incorrect separator used in check
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a,b,c", "b", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a b c", "b", ','));
+        // Term matches but wrong separator before
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a,b c", "b", ' '));
+        // Term matches but wrong separator after
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a b,c", "b", ' '));
+        // Term contains separator char, but boundaries don't match separator
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a b,c d", "b,c", ',')); // Space before/after != ','
+
+        // --- Edge Cases ---
+        // Null inputs
+        Assert.assertFalse(Chars.containsWordIgnoreCase(null, "a", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a b c", null, ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase(null, null, ' '));
+        // Empty inputs (Assuming empty term is not a word)
+        Assert.assertFalse(Chars.containsWordIgnoreCase("", "a", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("a b c", "", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase("", "", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase(" ", "", ' '));
+        // Sequence equals term
+        Assert.assertTrue(Chars.containsWordIgnoreCase("abc", "abc", ' '));
+        Assert.assertTrue(Chars.containsWordIgnoreCase("abc", "abc", ','));
+        // Sequence contains only separators
+        Assert.assertFalse(Chars.containsWordIgnoreCase("   ", "a", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase(",,,", "a", ','));
+        // Using StringBuilder (different CharSequence type)
+        Assert.assertTrue(Chars.containsWordIgnoreCase(new StringBuilder("a b c"), "b", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase(new StringBuilder("abc d"), "ab", ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase(new StringBuilder("a b c"), null, ' '));
+        Assert.assertFalse(Chars.containsWordIgnoreCase(new StringBuilder("a b c"), "", ' '));
     }
 
     @Test
@@ -314,6 +385,32 @@ public class CharsTest {
         Assert.assertEquals(-1, Chars.indexOf("foo bar baz", 2, 4, "y"));
         Assert.assertEquals(-1, Chars.indexOf("", 0, 0, "oo"));
         Assert.assertEquals(-1, Chars.indexOf("", 0, 0, "y"));
+    }
+
+    @Test
+    public void testIndexOfIgnoreCase() {
+        Assert.assertEquals(4, Chars.indexOfIgnoreCase("foo bar baz", 0, 11, "bar"));
+        Assert.assertEquals(4, Chars.indexOfIgnoreCase("foo bar baz", 0, 11, "BAR"));
+
+        Assert.assertEquals(4, Chars.indexOfIgnoreCase("FOO BAR BAZ", 0, 11, "bar"));
+        Assert.assertEquals(4, Chars.indexOfIgnoreCase("FOO BAR BAZ", 0, 11, "BAR"));
+
+        Assert.assertEquals(4, Chars.indexOfIgnoreCase("foo bar baz", 0, 11, "ba"));
+        Assert.assertEquals(4, Chars.indexOfIgnoreCase("foo bar baz", 0, 11, "BA"));
+
+        Assert.assertEquals(8, Chars.indexOfIgnoreCase("foo BAr BAz", 6, 11, "ba"));
+        Assert.assertEquals(8, Chars.indexOfIgnoreCase("foo BAr BAz", 6, 11, "BA"));
+
+        Assert.assertEquals(1, Chars.indexOfIgnoreCase("foo bar baz", 0, 7, "oo"));
+        Assert.assertEquals(1, Chars.indexOfIgnoreCase("foo bar baz", 0, 7, "OO"));
+
+        Assert.assertEquals(0, Chars.indexOfIgnoreCase("foo bar baz", 2, 4, ""));
+        Assert.assertEquals(-1, Chars.indexOfIgnoreCase("foo bar baz", 2, 4, "y"));
+        Assert.assertEquals(-1, Chars.indexOfIgnoreCase("foo bar baz", 2, 4, "Y"));
+        Assert.assertEquals(-1, Chars.indexOfIgnoreCase("", 0, 0, "oo"));
+        Assert.assertEquals(-1, Chars.indexOfIgnoreCase("", 0, 0, "OO"));
+        Assert.assertEquals(-1, Chars.indexOfIgnoreCase("", 0, 0, "y"));
+        Assert.assertEquals(-1, Chars.indexOfIgnoreCase("", 0, 0, "y"));
     }
 
     @Test
@@ -437,6 +534,122 @@ public class CharsTest {
         // The pattern has to be lower-case.
         Assert.assertFalse(Chars.startsWithLowerCase("abc", "ABC"));
         Assert.assertFalse(Chars.startsWithLowerCase("ABC", "ABC"));
+    }
+
+    @Test
+    public void testUnescape() {
+        final StringSink sink = new StringSink();
+        final char escapeChar = '\'';
+
+        // double escape in the middle
+        final String input1 = "prefix''suffix";
+        final String expected1 = "prefix'suffix";
+        sink.clear();
+        Chars.unescape(input1, 0, input1.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 1 Failed: Double escape in middle",
+                expected1,
+                sink.toString()
+        );
+
+        // double escape at the start
+        final String input2 = "''suffix";
+        final String expected2 = "'suffix";
+        sink.clear();
+        Chars.unescape(input2, 0, input2.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 2 Failed: Double escape at start",
+                expected2,
+                sink.toString()
+        );
+
+        // double escape at the end
+        final String input3 = "prefix''";
+        final String expected3 = "prefix'";
+        sink.clear();
+        Chars.unescape(input3, 0, input3.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 3 Failed: Double escape at end",
+                expected3,
+                sink.toString()
+        );
+
+        // multiple double escapes
+        final String input4 = "a''b''c''";
+        final String expected4 = "a'b'c'";
+        sink.clear();
+        Chars.unescape(input4, 0, input4.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 4 Failed: Multiple double escapes",
+                expected4,
+                sink.toString()
+        );
+
+        // mix of single and double escapes
+        final String input5 = "a'b''c'd";
+        final String expected5 = "a'b'c'd";
+        sink.clear();
+        Chars.unescape(input5, 0, input5.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 5 Failed: Mixed single and double escapes",
+                expected5,
+                sink.toString()
+        );
+
+        // only a double escape
+        final String input6 = "''";
+        final String expected6 = "'";
+        sink.clear();
+        Chars.unescape(input6, 0, input6.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 6 Failed: Only double escape",
+                expected6,
+                sink.toString()
+        );
+
+        // no escapes
+        final String input7 = "plain string";
+        final String expected7 = "plain string";
+        sink.clear();
+        Chars.unescape(input7, 0, input7.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 7 Failed: No escapes",
+                expected7,
+                sink.toString()
+        );
+
+        // single escape not at end
+        final String input8 = "single'escape";
+        final String expected8 = "single'escape";
+        sink.clear();
+        Chars.unescape(input8, 0, input8.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 8 Failed: Single escape internal",
+                expected8,
+                sink.toString()
+        );
+
+        // single escape at end
+        final String input9 = "single'";
+        final String expected9 = "single'";
+        sink.clear();
+        Chars.unescape(input9, 0, input9.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 9 Failed: Single escape at end",
+                expected9,
+                sink.toString()
+        );
+
+        // empty input
+        final String input10 = "";
+        final String expected10 = "";
+        sink.clear();
+        Chars.unescape(input10, 0, input10.length(), escapeChar, sink);
+        Assert.assertEquals(
+                "Test Case 10 Failed: Empty input",
+                expected10,
+                sink.toString()
+        );
     }
 
     private void assertThat(String expected, ObjList<Path> list) {

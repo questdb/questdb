@@ -365,7 +365,7 @@ public class WalWriter implements TableWriterAPI {
         return symbolMapReaders.getQuick(columnIndex);
     }
 
-    public TableToken getTableToken() {
+    public @NotNull TableToken getTableToken() {
         return tableToken;
     }
 
@@ -2088,7 +2088,7 @@ public class WalWriter implements TableWriterAPI {
                     }
                 }
             } else {
-                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exists");
+                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exist");
             }
         }
 
@@ -2150,7 +2150,7 @@ public class WalWriter implements TableWriterAPI {
                     }
                 }
             } else {
-                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exists");
+                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exist");
             }
         }
 
@@ -2204,7 +2204,7 @@ public class WalWriter implements TableWriterAPI {
                     }
                 }
             } else {
-                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exists");
+                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exist");
             }
         }
 

@@ -65,6 +65,7 @@ public class SampleByIntervalIteratorBenchmark {
             fixedOffsetIterator.of(
                     sampler,
                     2 * Timestamps.HOUR_MICROS,
+                    null,
                     minTs,
                     maxTs,
                     step
@@ -73,6 +74,7 @@ public class SampleByIntervalIteratorBenchmark {
                     sampler,
                     rules,
                     0,
+                    null,
                     minTs,
                     maxTs,
                     step
