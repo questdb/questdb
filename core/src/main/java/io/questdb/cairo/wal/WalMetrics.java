@@ -38,11 +38,13 @@ public class WalMetrics implements Mutable {
     private final Counter rowsWrittenCounter;
     private final AtomicLong totalRowsWritten = new AtomicLong();
     private final AtomicLong totalRowsWrittenTotalTime = new AtomicLong();
+    private final LongGauge txnLagGauge;
 
     public WalMetrics(MetricsRegistry metricsRegistry) {
         this.applyPhysicallyWrittenRowsCounter = metricsRegistry.newCounter("wal_apply_physically_written_rows");
         this.applyRowsWrittenCounter = metricsRegistry.newCounter("wal_apply_written_rows");
         this.applyRowsWriteRateGauge = metricsRegistry.newLongGauge("wal_apply_rows_per_second");
+        this.txnLagGauge = metricsRegistry.newLongGauge("wal_apply_txn_lag");
         this.rowsWrittenCounter = metricsRegistry.newCounter("wal_written_rows");
     }
 
@@ -67,5 +69,9 @@ public class WalMetrics implements Mutable {
         rowsWrittenCounter.reset();
         totalRowsWritten.set(0);
         totalRowsWrittenTotalTime.set(0);
+    }
+
+    public void setTxnLag(long pendingTxnCount) {
+        txnLagGauge.setValue(pendingTxnCount);
     }
 }
