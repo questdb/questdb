@@ -40,12 +40,14 @@ import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
+import io.questdb.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -77,6 +79,27 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testLineProtocolVersionResponse() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                    request.GET().url("/settings");
+                    try (HttpClient.ResponseHeaders responseHeaders = request.send();
+                         AbstractLineHttpSender.JsonSettingsParser parser = new AbstractLineHttpSender.JsonSettingsParser()) {
+                        responseHeaders.await();
+                        TestUtils.assertEquals(String.valueOf(200), responseHeaders.getStatusCode());
+                        parser.parse(responseHeaders.getResponse());
+                        Assert.assertTrue(parser.isSupportVersion(parser.getDefaultProtocolVersion()));
+                    }
+                }
+            }
+        });
     }
 
     @Test

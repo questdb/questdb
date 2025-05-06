@@ -825,7 +825,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
     }
 
-    private static class JsonSettingsParser implements JsonParser, Closeable {
+    public static class JsonSettingsParser implements JsonParser, Closeable {
         private final static byte LINE_PROTO_DEFAULT_VERSION = 1;
         private final static byte LINE_PROTO_SUPPORT_VERSIONS = 2;
         private final JsonLexer lexer = new JsonLexer(1024, 1024);
