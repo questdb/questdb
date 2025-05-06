@@ -26,24 +26,24 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.ServerMain;
-import io.questdb.config.ConfigStore;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
+import io.questdb.preferences.PreferencesStore;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import org.junit.Before;
 import org.junit.Test;
 
-import static io.questdb.config.ConfigStore.Mode.MERGE;
-import static io.questdb.config.ConfigStore.Mode.OVERWRITE;
+import static io.questdb.preferences.PreferencesStore.Mode.MERGE;
+import static io.questdb.preferences.PreferencesStore.Mode.OVERWRITE;
 import static io.questdb.test.tools.TestUtils.*;
 import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 import static java.net.HttpURLConnection.HTTP_OK;
 
-public class ConfigEndpointTest extends AbstractBootstrapTest {
+public class PreferencesEndpointTest extends AbstractBootstrapTest {
 
     @Before
     public void setUp() {
@@ -62,10 +62,10 @@ public class ConfigEndpointTest extends AbstractBootstrapTest {
                     saveConfig(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", MERGE, 0L);
                     saveConfig(httpClient, "{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}", MERGE, 1L);
 
-                    final ConfigStore configStore = serverMain.getEngine().getConfigStore();
+                    final PreferencesStore preferencesStore = serverMain.getEngine().getPreferencesStore();
                     final Utf8StringSink sink = new Utf8StringSink();
                     sink.putAscii('{');
-                    configStore.populateSettings(sink);
+                    preferencesStore.populateSettings(sink);
                     sink.clear(sink.size() - 1);
                     sink.putAscii('}');
                     assertEquals("{\"version\":2,\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}", sink);
@@ -95,12 +95,12 @@ public class ConfigEndpointTest extends AbstractBootstrapTest {
                     saveConfig(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", MERGE, 0L);
                     saveConfig(httpClient, "{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}", MERGE, 1L);
                     assertConfigRequest(httpClient, "{\"key1\":\"value111\",\"instance_desc\":\"desc222\"}", MERGE, 1L,
-                            HTTP_BAD_REQUEST, "settings view is out of date [currentVersion=2, expectedVersion=1]\r\n");
+                            HTTP_BAD_REQUEST, "preferences view is out of date [currentVersion=2, expectedVersion=1]\r\n");
 
-                    final ConfigStore configStore = serverMain.getEngine().getConfigStore();
+                    final PreferencesStore preferencesStore = serverMain.getEngine().getPreferencesStore();
                     final Utf8StringSink sink = new Utf8StringSink();
                     sink.putAscii('{');
-                    configStore.populateSettings(sink);
+                    preferencesStore.populateSettings(sink);
                     sink.clear(sink.size() - 1);
                     sink.putAscii('}');
                     assertEquals("{\"version\":2,\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}", sink);
@@ -130,10 +130,10 @@ public class ConfigEndpointTest extends AbstractBootstrapTest {
                     final String config = "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}";
                     saveConfig(httpClient, config, OVERWRITE, 0L);
 
-                    final ConfigStore configStore = serverMain.getEngine().getConfigStore();
+                    final PreferencesStore preferencesStore = serverMain.getEngine().getPreferencesStore();
                     final Utf8StringSink sink = new Utf8StringSink();
                     sink.putAscii('{');
-                    configStore.populateSettings(sink);
+                    preferencesStore.populateSettings(sink);
                     sink.clear(sink.size() - 1);
                     sink.putAscii('}');
                     assertEquals("{\"version\":1,\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", sink);
@@ -171,10 +171,10 @@ public class ConfigEndpointTest extends AbstractBootstrapTest {
         }
     }
 
-    private void assertConfigRequest(HttpClient httpClient, String config, ConfigStore.Mode mode, long version, int expectedStatusCode, String expectedHttpResponse) {
+    private void assertConfigRequest(HttpClient httpClient, String config, PreferencesStore.Mode mode, long version, int expectedStatusCode, String expectedHttpResponse) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
         request.POST()
-                .url("/config?mode=" + mode.name().toLowerCase() + "&version=" + version)
+                .url("/preferences?mode=" + mode.name().toLowerCase() + "&version=" + version)
                 .withContent().put(config);
         assertResponse(request, expectedStatusCode, expectedHttpResponse);
     }
@@ -185,7 +185,7 @@ public class ConfigEndpointTest extends AbstractBootstrapTest {
         assertResponse(request, HTTP_OK, expectedHttpResponse);
     }
 
-    private void saveConfig(HttpClient httpClient, String config, ConfigStore.Mode mode, long version) {
+    private void saveConfig(HttpClient httpClient, String config, PreferencesStore.Mode mode, long version) {
         assertConfigRequest(httpClient, config, mode, version, HTTP_OK, "");
     }
 }

@@ -1,4 +1,4 @@
-package io.questdb.config;
+package io.questdb.preferences;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.file.AppendableBlock;
@@ -10,31 +10,31 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.StringSink;
 
-class ConfigMap {
-    private static final int CONFIG_FORMAT_MSG_TYPE = 0;
-    private final CharSequenceObjHashMap<StringSink> configMap = new CharSequenceObjHashMap<>();
+class PreferencesMap {
+    private static final int PREFERENCES_FORMAT_MSG_TYPE = 0;
     private final ObjectPool<StringSink> csPool;
+    private final CharSequenceObjHashMap<StringSink> map = new CharSequenceObjHashMap<>();
 
-    ConfigMap(CairoConfiguration configuration) {
+    PreferencesMap(CairoConfiguration configuration) {
         // TODO: move initial capacity to config
         csPool = new ObjectPool<>(StringSink::new, 64);
     }
 
     void clear() {
-        configMap.clear();
+        map.clear();
         csPool.clear();
     }
 
     CharSequence get(CharSequence key) {
-        return configMap.get(key);
+        return map.get(key);
     }
 
     ObjList<CharSequence> keys() {
-        return configMap.keys();
+        return map.keys();
     }
 
     void put(CharSequence key, CharSequence value) {
-        final ObjList<CharSequence> keys = configMap.keys();
+        final ObjList<CharSequence> keys = map.keys();
         final int keyIndex = keys.indexOf(key);
         final StringSink keySink;
         if (keyIndex > -1) {
@@ -45,11 +45,11 @@ class ConfigMap {
             keySink.put(key);
         }
 
-        final StringSink valueSink = configMap.contains(key) ? configMap.get(key) : csPool.next();
+        final StringSink valueSink = map.contains(key) ? map.get(key) : csPool.next();
         valueSink.clear();
         valueSink.put(value);
 
-        configMap.put(keySink, valueSink);
+        map.put(keySink, valueSink);
     }
 
     void putAll(CharSequenceObjHashMap<CharSequence> map) {
@@ -65,7 +65,7 @@ class ConfigMap {
         long offset = 0;
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
-            if (block.type() != CONFIG_FORMAT_MSG_TYPE) {
+            if (block.type() != PREFERENCES_FORMAT_MSG_TYPE) {
                 // ignore unknown block
                 continue;
             }
@@ -85,20 +85,20 @@ class ConfigMap {
                 valueSink.clear();
                 valueSink.put(value);
 
-                configMap.put(keySink, valueSink);
+                map.put(keySink, valueSink);
             }
         }
     }
 
     void writeToBlock(AppendableBlock block) {
-        block.putInt(configMap.size());
-        final ObjList<CharSequence> keys = configMap.keys();
+        block.putInt(map.size());
+        final ObjList<CharSequence> keys = map.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final CharSequence key = keys.getQuick(i);
-            final CharSequence value = configMap.get(key);
+            final CharSequence value = map.get(key);
             block.putStr(key);
             block.putStr(value);
         }
-        block.commit(CONFIG_FORMAT_MSG_TYPE);
+        block.commit(PREFERENCES_FORMAT_MSG_TYPE);
     }
 }

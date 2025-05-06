@@ -26,12 +26,12 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.config.ConfigStore;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.preferences.PreferencesStore;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.Utf8StringSink;
 
@@ -40,12 +40,12 @@ import static java.net.HttpURLConnection.HTTP_OK;
 
 public class SettingsProcessor implements HttpRequestProcessor {
     private static final ThreadLocal<Utf8StringSink> tlSink = new ThreadLocal<>(Utf8StringSink::new);
-    private final ConfigStore configStore;
+    private final PreferencesStore preferencesStore;
     private final ServerConfiguration serverConfiguration;
 
-    public SettingsProcessor(ServerConfiguration serverConfiguration, ConfigStore configStore) {
+    public SettingsProcessor(ServerConfiguration serverConfiguration, PreferencesStore preferencesStore) {
         this.serverConfiguration = serverConfiguration;
-        this.configStore = configStore;
+        this.preferencesStore = preferencesStore;
     }
 
     @Override
@@ -61,7 +61,7 @@ public class SettingsProcessor implements HttpRequestProcessor {
         sink.putAscii('{');
         serverConfiguration.getCairoConfiguration().populateSettings(sink);
         serverConfiguration.getPublicPassthroughConfiguration().populateSettings(sink);
-        configStore.populateSettings(sink);
+        preferencesStore.populateSettings(sink);
         sink.clear(sink.size() - 1);
         sink.putAscii('}');
 

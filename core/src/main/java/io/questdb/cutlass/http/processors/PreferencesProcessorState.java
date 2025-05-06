@@ -30,10 +30,10 @@ import io.questdb.std.str.DirectUtf8Sink;
 import java.io.Closeable;
 import java.io.IOException;
 
-class ConfigProcessorState implements Mutable, Closeable {
+class PreferencesProcessorState implements Mutable, Closeable {
     final DirectUtf8Sink sink = new DirectUtf8Sink(4096);
 
-    ConfigProcessorState() {
+    PreferencesProcessorState() {
     }
 
     @Override

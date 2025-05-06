@@ -1,4 +1,4 @@
-package io.questdb.config;
+package io.questdb.preferences;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
@@ -24,27 +24,27 @@ import java.io.IOException;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.integer;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
 
-public class ConfigStore implements Closeable {
-    private static final String CONFIG_FILE_NAME = "_config~store";
+public class PreferencesStore implements Closeable {
     private static final Utf8String MERGE_STR = new Utf8String("merge");
     private static final Utf8String OVERWRITE_STR = new Utf8String("overwrite");
+    private static final String PREFERENCES_FILE_NAME = "_preferences~store";
     private static final String VERSION = "version";
     private final BlockFileReader blockFileReader;
     private final BlockFileWriter blockFileWriter;
-    private final ConfigMap configMap;
-    private final ConfigParser configParser;
     private final CairoConfiguration configuration;
     private final CharSequenceObjHashMap<CharSequence> parserMap;
     private final Path path = new Path();
+    private final PreferencesMap preferencesMap;
+    private final PreferencesParser preferencesParser;
     private final int rootLen;
     private long version = 0L;
 
-    public ConfigStore(CairoConfiguration configuration) {
+    public PreferencesStore(CairoConfiguration configuration) {
         this.configuration = configuration;
 
-        configMap = new ConfigMap(configuration);
+        preferencesMap = new PreferencesMap(configuration);
         parserMap = new CharSequenceObjHashMap<>();
-        configParser = new ConfigParser(configuration, parserMap);
+        preferencesParser = new PreferencesParser(configuration, parserMap);
 
         path.of(configuration.getDbRoot());
         rootLen = path.size();
@@ -54,7 +54,7 @@ public class ConfigStore implements Closeable {
 
     @Override
     public void close() throws IOException {
-        Misc.free(configParser);
+        Misc.free(preferencesParser);
         Misc.free(blockFileReader);
         Misc.free(blockFileWriter);
         Misc.free(path);
@@ -68,27 +68,27 @@ public class ConfigStore implements Closeable {
     public synchronized void init() {
         final LPSZ configPath = configFilePath();
         if (configuration.getFilesFacade().exists(configPath)) {
-            load(configPath, configMap);
+            load(configPath, preferencesMap);
         }
     }
 
     public synchronized void populateSettings(Utf8StringSink sink) {
         integer(VERSION, version, sink);
-        final ObjList<CharSequence> keys = configMap.keys();
+        final ObjList<CharSequence> keys = preferencesMap.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final CharSequence key = keys.getQuick(i);
-            final CharSequence value = configMap.get(key);
+            final CharSequence value = preferencesMap.get(key);
             str(key, value, sink);
         }
     }
 
     public synchronized void save(DirectUtf8Sink sink, Mode mode, long expectedVersion) throws JsonException {
         if (version != expectedVersion) {
-            throw CairoException.settingsOutOfDate(version, expectedVersion);
+            throw CairoException.preferencesOutOfDate(version, expectedVersion);
         }
 
-        configParser.clear();
-        configParser.parse(sink);
+        preferencesParser.clear();
+        preferencesParser.parse(sink);
 
         switch (mode) {
             case OVERWRITE:
@@ -104,10 +104,10 @@ public class ConfigStore implements Closeable {
     }
 
     private LPSZ configFilePath() {
-        return path.trimTo(rootLen).concat(CONFIG_FILE_NAME).$();
+        return path.trimTo(rootLen).concat(PREFERENCES_FILE_NAME).$();
     }
 
-    private void load(LPSZ configPath, ConfigMap map) {
+    private void load(LPSZ configPath, PreferencesMap map) {
         map.clear();
         try (BlockFileReader reader = blockFileReader) {
             reader.of(configPath);
@@ -118,16 +118,16 @@ public class ConfigStore implements Closeable {
     }
 
     private void merge() {
-        configMap.putAll(parserMap);
-        persist(configMap);
+        preferencesMap.putAll(parserMap);
+        persist(preferencesMap);
     }
 
     private void overwrite() {
-        configMap.clear();
+        preferencesMap.clear();
         merge();
     }
 
-    private void persist(ConfigMap map) {
+    private void persist(PreferencesMap map) {
         try (BlockFileWriter writer = blockFileWriter) {
             writer.of(configFilePath());
             final AppendableBlock block = writer.append();

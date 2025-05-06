@@ -27,7 +27,6 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
-import io.questdb.config.ConfigStore;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpContentListener;
 import io.questdb.cutlass.http.HttpException;
@@ -39,6 +38,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.preferences.PreferencesStore;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.Utf8Sequence;
@@ -49,23 +49,23 @@ import java.io.Closeable;
 import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 import static java.net.HttpURLConnection.HTTP_OK;
 
-public class ConfigProcessor implements HttpRequestProcessor, HttpContentListener, Closeable {
-    private static final Log LOG = LogFactory.getLog(ConfigProcessor.class);
+public class PreferencesProcessor implements HttpRequestProcessor, HttpContentListener, Closeable {
+    private static final Log LOG = LogFactory.getLog(PreferencesProcessor.class);
     // Local value has to be static because each thread will have its own instance of
     // processor. For different threads to lookup the same value from local value map the key,
     // which is LV, has to be the same between processor instances
-    private static final LocalValue<ConfigProcessorState> LV = new LocalValue<>();
+    private static final LocalValue<PreferencesProcessorState> LV = new LocalValue<>();
     private static final Utf8String URL_PARAM_MODE = new Utf8String("mode");
     private static final Utf8String URL_PARAM_VERSION = new Utf8String("version");
-    private final ConfigStore configStore;
+    private final PreferencesStore preferencesStore;
     private final byte requiredAuthType;
-    private ConfigStore.Mode mode;
+    private PreferencesStore.Mode mode;
     private HttpConnectionContext transientContext;
-    private ConfigProcessorState transientState;
+    private PreferencesProcessorState transientState;
     private long version;
 
-    public ConfigProcessor(CairoEngine engine, JsonQueryProcessorConfiguration configuration) {
-        configStore = engine.getConfigStore();
+    public PreferencesProcessor(CairoEngine engine, JsonQueryProcessorConfiguration configuration) {
+        preferencesStore = engine.getPreferencesStore();
         requiredAuthType = configuration.getRequiredAuthType();
     }
 
@@ -100,10 +100,10 @@ public class ConfigProcessor implements HttpRequestProcessor, HttpContentListene
         transientState = LV.get(context);
         if (transientState == null) {
             LOG.debug().$("new config state").$();
-            LV.set(context, transientState = new ConfigProcessorState());
+            LV.set(context, transientState = new PreferencesProcessorState());
         }
 
-        mode = ConfigStore.Mode.of(context.getRequestHeader().getUrlParam(URL_PARAM_MODE));
+        mode = PreferencesStore.Mode.of(context.getRequestHeader().getUrlParam(URL_PARAM_MODE));
 
         final Utf8Sequence versionStr = context.getRequestHeader().getUrlParam(URL_PARAM_VERSION);
         try {
@@ -120,7 +120,7 @@ public class ConfigProcessor implements HttpRequestProcessor, HttpContentListene
         context.getSecurityContext().authorizeSystemAdmin();
 
         try {
-            configStore.save(transientState.sink, mode, version);
+            preferencesStore.save(transientState.sink, mode, version);
             sendOk();
         } catch (JsonException | CairoException | CairoError e) {
             LOG.error().$("error while saving config").$((Throwable) e).$();

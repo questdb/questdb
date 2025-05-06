@@ -205,12 +205,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration;
-    private final ObjList<String> httpContextPathConfig = new ObjList<>();
     private final ObjList<String> httpContextPathExec = new ObjList<>();
     private final ObjList<String> httpContextPathExport = new ObjList<>();
     private final ObjList<String> httpContextPathILP = new ObjList<>();
     private final ObjList<String> httpContextPathILPPing = new ObjList<>();
     private final ObjList<String> httpContextPathImport = new ObjList<>();
+    private final ObjList<String> httpContextPathPreferences = new ObjList<>();
     private final ObjList<String> httpContextPathSettings = new ObjList<>();
     private final ObjList<String> httpContextPathTableStatus = new ObjList<>();
     private final ObjList<String> httpContextPathWarnings = new ObjList<>();
@@ -968,7 +968,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_IMPORT, this.httpContextPathImport, httpContextWebConsole + "/imp");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXPORT, this.httpContextPathExport, httpContextWebConsole + "/exp");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_SETTINGS, this.httpContextPathSettings, httpContextWebConsole + "/settings");
-            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_CONFIG, this.httpContextPathConfig, httpContextWebConsole + "/config");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_PREFERENCES, this.httpContextPathPreferences, httpContextWebConsole + "/preferences");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_TABLE_STATUS, this.httpContextPathTableStatus, httpContextWebConsole + "/chk");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathExec, httpContextWebConsole + "/exec");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_WARNINGS, this.httpContextPathWarnings, httpContextWebConsole + "/warnings");
@@ -982,8 +982,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             // paths is ok because duplicates are squashed by the HTTP server.
             // 1. import, to support CSV import UI
             // 2. export, to support CSV export UI
-            // 3. settings, that is what the Web Console loads on startup
-            // 4. config, the Web Console can persist settings via this endpoint
+            // 3. preferences, the Web Console can persist preferences via this endpoint
+            // 4. settings, a union of selected config properties and the preferences, the Web Console loads it on startup
             // 5. table status, to support CSV import UI
             // 6. JSON query execution, e.g. exec
             // 7. warnings, that displays warnings in the table view
@@ -992,7 +992,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             httpContextPathImport.add(httpContextWebConsole + "/imp");
             httpContextPathExport.add(httpContextWebConsole + "/exp");
             httpContextPathSettings.add(httpContextWebConsole + "/settings");
-            httpContextPathConfig.add(httpContextWebConsole + "/config");
+            httpContextPathPreferences.add(httpContextWebConsole + "/preferences");
             httpContextPathTableStatus.add(httpContextWebConsole + "/chk");
             httpContextPathExec.add(httpContextWebConsole + "/exec");
             httpContextPathWarnings.add(httpContextWebConsole + "/warnings");
@@ -4042,11 +4042,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public ObjList<String> getContextPathConfig() {
-            return httpContextPathConfig;
-        }
-
-        @Override
         public ObjList<String> getContextPathExec() {
             return httpContextPathExec;
         }
@@ -4069,6 +4064,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public ObjList<String> getContextPathImport() {
             return httpContextPathImport;
+        }
+
+        @Override
+        public ObjList<String> getContextPathPreferences() {
+            return httpContextPathPreferences;
         }
 
         @Override

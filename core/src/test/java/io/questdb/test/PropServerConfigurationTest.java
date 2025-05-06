@@ -1557,8 +1557,8 @@ public class PropServerConfigurationTest {
         );
 
         Assert.assertEquals(
-                "[/new-path/config,/new-path/config]",
-                configuration.getHttpServerConfiguration().getContextPathConfig().toString()
+                "[/new-path/preferences,/new-path/preferences]",
+                configuration.getHttpServerConfiguration().getContextPathPreferences().toString()
         );
 
         // check the ILP did not move
@@ -1582,7 +1582,7 @@ public class PropServerConfigurationTest {
         pathsThatCanBePinned.add(new FuzzItem("http.context.import", "/imp", HttpFullFatServerConfiguration::getContextPathImport));
         pathsThatCanBePinned.add(new FuzzItem("http.context.export", "/exp", HttpFullFatServerConfiguration::getContextPathExport));
         pathsThatCanBePinned.add(new FuzzItem("http.context.settings", "/settings", HttpFullFatServerConfiguration::getContextPathSettings));
-        pathsThatCanBePinned.add(new FuzzItem("http.context.config", "/config", HttpFullFatServerConfiguration::getContextPathConfig));
+        pathsThatCanBePinned.add(new FuzzItem("http.context.preferences", "/preferences", HttpFullFatServerConfiguration::getContextPathPreferences));
         pathsThatCanBePinned.add(new FuzzItem("http.context.table.status", "/chk", HttpFullFatServerConfiguration::getContextPathTableStatus));
         pathsThatCanBePinned.add(new FuzzItem("http.context.warnings", "/warnings", HttpFullFatServerConfiguration::getContextPathWarnings));
         pathsThatCanBePinned.add(new FuzzItem("http.context.execute", "/exec", HttpFullFatServerConfiguration::getContextPathExec));

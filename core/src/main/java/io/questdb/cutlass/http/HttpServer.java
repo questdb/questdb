@@ -27,9 +27,9 @@ package io.questdb.cutlass.http;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.http.processors.ConfigProcessor;
 import io.questdb.cutlass.http.processors.LineHttpPingProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
+import io.questdb.cutlass.http.processors.PreferencesProcessor;
 import io.questdb.cutlass.http.processors.SettingsProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
@@ -185,7 +185,7 @@ public class HttpServer implements Closeable {
             });
         }
 
-        final SettingsProcessor settingsProcessor = new SettingsProcessor(serverConfiguration, cairoEngine.getConfigStore());
+        final SettingsProcessor settingsProcessor = new SettingsProcessor(serverConfiguration, cairoEngine.getPreferencesStore());
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public ObjList<String> getUrls() {
@@ -198,19 +198,19 @@ public class HttpServer implements Closeable {
             }
         });
 
-        final ConfigProcessor configProcessor = new ConfigProcessor(
+        final PreferencesProcessor preferencesProcessor = new PreferencesProcessor(
                 cairoEngine,
                 httpServerConfiguration.getJsonQueryProcessorConfiguration()
         );
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public ObjList<String> getUrls() {
-                return httpServerConfiguration.getContextPathConfig();
+                return httpServerConfiguration.getContextPathPreferences();
             }
 
             @Override
             public HttpRequestProcessor newInstance() {
-                return configProcessor;
+                return preferencesProcessor;
             }
         });
 

@@ -1,4 +1,4 @@
-package io.questdb.config;
+package io.questdb.preferences;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
@@ -7,7 +7,7 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 
-public final class ConfigParser extends AbstractJsonParser {
+public final class PreferencesParser extends AbstractJsonParser {
 
     private static final int STATE_ROOT = 1;
     private static final int STATE_START = 0;
@@ -15,7 +15,7 @@ public final class ConfigParser extends AbstractJsonParser {
     private CharSequence key;
     private int state = STATE_START;
 
-    public ConfigParser(CairoConfiguration configuration, CharSequenceObjHashMap<CharSequence> parserMap) {
+    public PreferencesParser(CairoConfiguration configuration, CharSequenceObjHashMap<CharSequence> parserMap) {
         // TODO: move these settings into config
         super(256, Numbers.SIZE_1MB, 4096);
         this.parserMap = parserMap;
