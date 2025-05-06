@@ -52,20 +52,28 @@ import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
 public class SettingsEndpointTest extends AbstractBootstrapTest {
     private static final String OSS_PAYLOAD = "{" +
+            "\"config\":{" +
             "\"release.type\":\"OSS\"," +
             "\"release.version\":\"[DEVELOPMENT]\"," +
             "\"posthog.enabled\":false," +
-            "\"posthog.api.key\":null," +
-            "\"version\":0" +
+            "\"posthog.api.key\":null" +
+            "}," +
+            "\"preferences.version\":0," +
+            "\"preferences\":{" +
+            "}" +
             "}";
 
     private static final String TEST_PAYLOAD = "{" +
+            "\"config\":{" +
             "\"cairo.snapshot.instance.id\":\"db\"," +
             "\"cairo.max.file.name.length\":127," +
             "\"cairo.wal.supported\":true," +
             "\"posthog.enabled\":false," +
-            "\"posthog.api.key\":null," +
-            "\"version\":0" +
+            "\"posthog.api.key\":null" +
+            "}," +
+            "\"preferences.version\":0," +
+            "\"preferences\":{" +
+            "}" +
             "}";
 
     @Before

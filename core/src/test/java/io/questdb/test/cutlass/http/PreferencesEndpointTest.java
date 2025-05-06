@@ -34,6 +34,7 @@ import io.questdb.preferences.PreferencesStore;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -44,6 +45,8 @@ import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 import static java.net.HttpURLConnection.HTTP_OK;
 
 public class PreferencesEndpointTest extends AbstractBootstrapTest {
+
+    private final Utf8StringSink sink = new Utf8StringSink();
 
     @Before
     public void setUp() {
@@ -59,26 +62,29 @@ public class PreferencesEndpointTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    saveConfig(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", MERGE, 0L);
-                    saveConfig(httpClient, "{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}", MERGE, 1L);
+                    savePreferences(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", MERGE, 0L);
+                    savePreferences(httpClient, "{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}", MERGE, 1L);
 
                     final PreferencesStore preferencesStore = serverMain.getEngine().getPreferencesStore();
-                    final Utf8StringSink sink = new Utf8StringSink();
-                    sink.putAscii('{');
+                    Assert.assertEquals(2, preferencesStore.getVersion());
+
+                    sink.clear();
                     preferencesStore.populateSettings(sink);
-                    sink.clear(sink.size() - 1);
-                    sink.putAscii('}');
-                    assertEquals("{\"version\":2,\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}", sink);
+                    assertEquals("\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}", sink);
 
                     assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"posthog.enabled\":false," +
-                            "\"posthog.api.key\":null," +
-                            "\"version\":2," +
+                            "\"posthog.api.key\":null" +
+                            "}," +
+                            "\"preferences.version\":2," +
+                            "\"preferences\":{" +
                             "\"instance_name\":\"instance1\"," +
                             "\"instance_desc\":\"desc222\"," +
                             "\"key1\":\"value1\"" +
+                            "}" +
                             "}");
                 }
             }
@@ -92,28 +98,36 @@ public class PreferencesEndpointTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    saveConfig(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", MERGE, 0L);
-                    saveConfig(httpClient, "{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}", MERGE, 1L);
-                    assertConfigRequest(httpClient, "{\"key1\":\"value111\",\"instance_desc\":\"desc222\"}", MERGE, 1L,
+                    savePreferences(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", MERGE, 0L);
+                    savePreferences(httpClient, "{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}", MERGE, 1L);
+
+                    // out of date version rejected
+                    assertPreferencesRequest(httpClient, "{\"key1\":\"value111\",\"instance_desc\":\"desc222\"}", MERGE, 1L,
                             HTTP_BAD_REQUEST, "preferences view is out of date [currentVersion=2, expectedVersion=1]\r\n");
 
+                    // same update based on latest version accepted
+                    savePreferences(httpClient, "{\"key1\":\"value111\",\"instance_desc\":\"desc222\"}", MERGE, 2L);
+
                     final PreferencesStore preferencesStore = serverMain.getEngine().getPreferencesStore();
-                    final Utf8StringSink sink = new Utf8StringSink();
-                    sink.putAscii('{');
+                    Assert.assertEquals(3, preferencesStore.getVersion());
+
+                    sink.clear();
                     preferencesStore.populateSettings(sink);
-                    sink.clear(sink.size() - 1);
-                    sink.putAscii('}');
-                    assertEquals("{\"version\":2,\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}", sink);
+                    assertEquals("\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value111\"}", sink);
 
                     assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"posthog.enabled\":false," +
-                            "\"posthog.api.key\":null," +
-                            "\"version\":2," +
+                            "\"posthog.api.key\":null" +
+                            "}," +
+                            "\"preferences.version\":3," +
+                            "\"preferences\":{" +
                             "\"instance_name\":\"instance1\"," +
                             "\"instance_desc\":\"desc222\"," +
-                            "\"key1\":\"value1\"" +
+                            "\"key1\":\"value111\"" +
+                            "}" +
                             "}");
                 }
             }
@@ -127,25 +141,27 @@ public class PreferencesEndpointTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    final String config = "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}";
-                    saveConfig(httpClient, config, OVERWRITE, 0L);
+                    savePreferences(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", OVERWRITE, 0L);
 
                     final PreferencesStore preferencesStore = serverMain.getEngine().getPreferencesStore();
-                    final Utf8StringSink sink = new Utf8StringSink();
-                    sink.putAscii('{');
+                    Assert.assertEquals(1L, preferencesStore.getVersion());
+
+                    sink.clear();
                     preferencesStore.populateSettings(sink);
-                    sink.clear(sink.size() - 1);
-                    sink.putAscii('}');
-                    assertEquals("{\"version\":1,\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", sink);
+                    assertEquals("\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", sink);
 
                     assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"posthog.enabled\":false," +
-                            "\"posthog.api.key\":null," +
-                            "\"version\":1," +
+                            "\"posthog.api.key\":null" +
+                            "}," +
+                            "\"preferences.version\":1," +
+                            "\"preferences\":{" +
                             "\"instance_name\":\"instance1\"," +
                             "\"instance_desc\":\"desc1\"" +
+                            "}" +
                             "}");
                 }
             }
@@ -171,11 +187,11 @@ public class PreferencesEndpointTest extends AbstractBootstrapTest {
         }
     }
 
-    private void assertConfigRequest(HttpClient httpClient, String config, PreferencesStore.Mode mode, long version, int expectedStatusCode, String expectedHttpResponse) {
+    private void assertPreferencesRequest(HttpClient httpClient, String preferences, PreferencesStore.Mode mode, long version, int expectedStatusCode, String expectedHttpResponse) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
         request.POST()
                 .url("/preferences?mode=" + mode.name().toLowerCase() + "&version=" + version)
-                .withContent().put(config);
+                .withContent().put(preferences);
         assertResponse(request, expectedStatusCode, expectedHttpResponse);
     }
 
@@ -185,7 +201,7 @@ public class PreferencesEndpointTest extends AbstractBootstrapTest {
         assertResponse(request, HTTP_OK, expectedHttpResponse);
     }
 
-    private void saveConfig(HttpClient httpClient, String config, PreferencesStore.Mode mode, long version) {
-        assertConfigRequest(httpClient, config, mode, version, HTTP_OK, "");
+    private void savePreferences(HttpClient httpClient, String preferences, PreferencesStore.Mode mode, long version) {
+        assertPreferencesRequest(httpClient, preferences, mode, version, HTTP_OK, "");
     }
 }

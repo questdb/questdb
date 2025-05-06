@@ -35,10 +35,12 @@ import io.questdb.preferences.PreferencesStore;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.Utf8StringSink;
 
+import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.integer;
 import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
 import static java.net.HttpURLConnection.HTTP_OK;
 
 public class SettingsProcessor implements HttpRequestProcessor {
+    private static final String PREFERENCES_VERSION = "preferences.version";
     private static final ThreadLocal<Utf8StringSink> tlSink = new ThreadLocal<>(Utf8StringSink::new);
     private final PreferencesStore preferencesStore;
     private final ServerConfiguration serverConfiguration;
@@ -56,13 +58,11 @@ public class SettingsProcessor implements HttpRequestProcessor {
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final Utf8StringSink sink = tlSink.get();
-
         sink.clear();
         sink.putAscii('{');
-        serverConfiguration.getCairoConfiguration().populateSettings(sink);
-        serverConfiguration.getPublicPassthroughConfiguration().populateSettings(sink);
+        serverConfiguration.populateSettings(sink);
+        integer(PREFERENCES_VERSION, preferencesStore.getVersion(), sink);
         preferencesStore.populateSettings(sink);
-        sink.clear(sink.size() - 1);
         sink.putAscii('}');
 
         final HttpChunkedResponse r = context.getChunkedResponse();
