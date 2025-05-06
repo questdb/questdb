@@ -75,7 +75,6 @@ import java.util.function.Function;
 import static io.questdb.cairo.ErrorTag.*;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
-import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.std.Files.SEPARATOR;
 import static io.questdb.test.tools.TestUtils.assertEventually;
@@ -595,15 +594,20 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             TableToken tableToken = createStandardWalTable(tableName);
 
-            FilesFacade ff = configuration.getFilesFacade();
-            long waldFd = TableUtils.openRW(
-                    ff,
-                    Path.getThreadLocal(root).concat(tableToken).concat(WAL_NAME_BASE).put(1).concat("0").concat(EVENT_INDEX_FILE_NAME).$(),
-                    LOG,
-                    configuration.getWriterFileOpenOpts()
-            );
-            Files.truncate(waldFd, 0);
-            ff.close(waldFd);
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    final String eventIndexName = SEPARATOR + tableToken.getDirName() +
+                            SEPARATOR + "wal1" +
+                            SEPARATOR + "0" +
+                            SEPARATOR + "_event.i";
+                    if (Utf8s.endsWithAscii(name, eventIndexName)) {
+                        return -1;
+                    }
+
+                    return super.openRO(name);
+                }
+            };
 
             drainWalQueue();
 
