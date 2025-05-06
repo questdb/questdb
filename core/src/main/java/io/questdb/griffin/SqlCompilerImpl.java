@@ -100,6 +100,7 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
@@ -2270,10 +2271,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table name");
         }
 
-        tok = expectToken(lexer, "'full' or 'incremental'");
-        final boolean incremental = isIncrementalKeyword(tok);
-        if (!incremental && !isFullKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'full' or 'incremental' expected");
+        tok = expectToken(lexer, "'full' or 'incremental' or 'interval'");
+        final boolean full = isFullKeyword(tok);
+        long from = Numbers.LONG_NULL;
+        long to = Numbers.LONG_NULL;
+        if (isIntervalKeyword(tok)) {
+            expectKeyword(lexer, "from");
+            tok = expectToken(lexer, "FROM timestamp");
+            try {
+                from = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+            } catch (NumericException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid FROM timestamp value");
+            }
+            expectKeyword(lexer, "to");
+            tok = expectToken(lexer, "TO timestamp");
+            try {
+                to = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+            } catch (NumericException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid TO timestamp value");
+            }
+            if (from > to) {
+                throw SqlException.$(lexer.lastTokenPosition(), "TO timestamp must not be earlier than FROM timestamp");
+            }
+        } else if (!full && !isIncrementalKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'full' or 'incremental' or 'interval' expected");
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -2283,10 +2304,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
         executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
-        if (incremental) {
-            matViewStateStore.enqueueIncrementalRefresh(matViewToken);
-        } else {
+        if (full) {
             matViewStateStore.enqueueFullRefresh(matViewToken);
+        } else if (from != Numbers.LONG_NULL) {
+            matViewStateStore.enqueueIntervalRefresh(matViewToken, from, to);
+        } else {
+            matViewStateStore.enqueueIncrementalRefresh(matViewToken);
         }
         compiledQuery.ofRefreshMatView();
     }

@@ -34,6 +34,7 @@ import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Queue;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TelemetryMatViewTask;
@@ -120,7 +121,13 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     @Override
     public void createViewState(MatViewDefinition viewDefinition) {
         addViewState(viewDefinition).init();
-        enqueueMatViewTask(viewDefinition.getMatViewToken(), MatViewRefreshTask.INCREMENTAL_REFRESH, null);
+        enqueueMatViewTask(
+                viewDefinition.getMatViewToken(),
+                MatViewRefreshTask.INCREMENTAL_REFRESH,
+                null,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL
+        );
     }
 
     @Override
@@ -134,15 +141,30 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     }
 
     @Override
+    public void enqueueIntervalRefresh(TableToken matViewToken, long intervalFrom, long intervalTo) {
+        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.INTERVAL_REFRESH, null, intervalFrom, intervalTo);
+    }
+
+    @Override
     public void enqueueInvalidate(TableToken matViewToken, String invalidationReason) {
         enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.INVALIDATE, invalidationReason);
     }
 
-    public void enqueueRefreshTaskIfStateExists(TableToken matViewToken, int operation, String invalidationReason) {
+    public void enqueueRefreshTaskIfStateExists(
+            TableToken matViewToken,
+            int operation,
+            String invalidationReason,
+            long intervalFrom,
+            long intervalTo
+    ) {
         final MatViewState state = stateByTableDirName.get(matViewToken.getDirName());
         if (state != null && !state.isDropped()) {
-            enqueueMatViewTask(matViewToken, operation, invalidationReason);
+            enqueueMatViewTask(matViewToken, operation, invalidationReason, intervalFrom, intervalTo);
         }
+    }
+
+    public void enqueueRefreshTaskIfStateExists(TableToken matViewToken, int operation, String invalidationReason) {
+        enqueueRefreshTaskIfStateExists(matViewToken, operation, invalidationReason, Numbers.LONG_NULL, Numbers.LONG_NULL);
     }
 
     @Override
@@ -216,13 +238,21 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         return taskQueue.tryDequeue(task);
     }
 
-    private void enqueueMatViewTask(TableToken matViewToken, int operation, String invalidationReason) {
+    private void enqueueMatViewTask(
+            TableToken matViewToken,
+            int operation,
+            String invalidationReason,
+            long intervalFrom,
+            long intervalTo
+    ) {
         final MatViewRefreshTask task = taskHolder.get();
         task.clear();
         task.matViewToken = matViewToken;
         task.operation = operation;
         task.invalidationReason = invalidationReason;
-        if (operation == MatViewRefreshTask.INCREMENTAL_REFRESH || operation == MatViewRefreshTask.FULL_REFRESH) {
+        task.intervalFrom = intervalFrom;
+        task.intervalTo = intervalTo;
+        if (MatViewRefreshTask.isRefreshOperation(operation)) {
             task.refreshTriggerTimestamp = microsecondClock.getTicks();
         }
         taskQueue.enqueue(task);
