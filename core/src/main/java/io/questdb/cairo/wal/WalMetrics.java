@@ -36,15 +36,17 @@ public class WalMetrics implements Mutable {
     private final LongGauge applyRowsWriteRateGauge;
     private final Counter applyRowsWrittenCounter;
     private final Counter rowsWrittenCounter;
+    private final LongGauge seqTxnGauge;
     private final AtomicLong totalRowsWritten = new AtomicLong();
     private final AtomicLong totalRowsWrittenTotalTime = new AtomicLong();
-    private final LongGauge txnLagGauge;
+    private final LongGauge writerTxnGauge;
 
     public WalMetrics(MetricsRegistry metricsRegistry) {
         this.applyPhysicallyWrittenRowsCounter = metricsRegistry.newCounter("wal_apply_physically_written_rows");
         this.applyRowsWrittenCounter = metricsRegistry.newCounter("wal_apply_written_rows");
         this.applyRowsWriteRateGauge = metricsRegistry.newLongGauge("wal_apply_rows_per_second");
-        this.txnLagGauge = metricsRegistry.newLongGauge("wal_apply_txn_lag");
+        this.seqTxnGauge = metricsRegistry.newLongGauge("wal_apply_seq_txn");
+        this.writerTxnGauge = metricsRegistry.newLongGauge("wal_apply_writer_txn");
         this.rowsWrittenCounter = metricsRegistry.newCounter("wal_written_rows");
     }
 
@@ -71,7 +73,11 @@ public class WalMetrics implements Mutable {
         totalRowsWrittenTotalTime.set(0);
     }
 
-    public void setTxnLag(long pendingTxnCount) {
-        txnLagGauge.setValue(pendingTxnCount);
+    public void setSeqTxnSum(long seqTxnSum) {
+        seqTxnGauge.setValue(seqTxnSum);
+    }
+
+    public void setWriterTxnSum(long writerTxnSum) {
+        writerTxnGauge.setValue(writerTxnSum);
     }
 }
