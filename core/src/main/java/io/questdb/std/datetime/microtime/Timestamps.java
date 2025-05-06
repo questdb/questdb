@@ -785,7 +785,7 @@ public final class Timestamps {
                 final int multiple = Numbers.parseInt(str, 0, str.length() - 1);
                 return multiple <= 0 ? 1 : multiple;
             } catch (NumericException exception) {
-                throw SqlException.position(position).put("Invalid stride: ").put(str.subSequence(0, str.length() - 1));
+                throw SqlException.position(position).put("Invalid stride: ").put(str, 0, str.length() - 1);
             }
         }
         return 1;
@@ -1310,16 +1310,6 @@ public final class Timestamps {
             return Long.MIN_VALUE;
         }
         return micros;
-    }
-
-    private static int extractUnitIndex(CharSequence str) {
-        int startIndexOfUnit = str.length() - 1;
-        for (; startIndexOfUnit > -1; startIndexOfUnit--) {
-            if (Character.isDigit(str.charAt(startIndexOfUnit))) {
-                return startIndexOfUnit + 1;
-            }
-        }
-        return 0; // no stride, only unit
     }
 
     private static long getTimeMicros(long micros) {
