@@ -54,9 +54,9 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
     private static final String OSS_PAYLOAD = "{" +
             "\"release.type\":\"OSS\"," +
             "\"release.version\":\"[DEVELOPMENT]\"," +
-            "\"acl.enabled\":false," +
             "\"posthog.enabled\":false," +
-            "\"posthog.api.key\":null" +
+            "\"posthog.api.key\":null," +
+            "\"version\":0" +
             "}";
 
     private static final String TEST_PAYLOAD = "{" +
@@ -64,7 +64,8 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "\"cairo.max.file.name.length\":127," +
             "\"cairo.wal.supported\":true," +
             "\"posthog.enabled\":false," +
-            "\"posthog.api.key\":null" +
+            "\"posthog.api.key\":null," +
+            "\"version\":0" +
             "}";
 
     @Before
