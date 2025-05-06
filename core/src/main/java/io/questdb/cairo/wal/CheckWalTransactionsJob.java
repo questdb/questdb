@@ -135,6 +135,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private boolean republishNotificationsFromTrackers() {
         engine.getTableTokens(tableTokenBucket, false);
         long suspendedCount = 0;
+        boolean notificationQueueReady = true;
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             TableToken tableToken = tableTokenBucket.get(i);
             SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
@@ -142,17 +143,17 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                 suspendedCount++;
                 continue;
             }
+            if (!notificationQueueReady) {
+                continue;
+            }
             long seqTxn = tracker.getSeqTxn();
             long writerTxn = tracker.getWriterTxn();
             long currTablePendingTxnCount = seqTxn - writerTxn;
             if (currTablePendingTxnCount > 0) {
-                if (!engine.notifyWalTxnCommitted(tableToken)) {
-                    return false;
-                }
+                notificationQueueReady = engine.notifyWalTxnCommitted(tableToken);
             }
         }
         metrics.tableWriterMetrics().setSuspendedTables(suspendedCount);
-        WalMetrics walMetrics = metrics.walMetrics();
-        return true;
+        return notificationQueueReady;
     }
 }
