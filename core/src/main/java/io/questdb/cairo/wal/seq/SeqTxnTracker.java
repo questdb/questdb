@@ -27,6 +27,7 @@ package io.questdb.cairo.wal.seq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.TableWriterPressureControl;
+import io.questdb.cairo.wal.WalMetrics;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
@@ -36,6 +37,7 @@ public class SeqTxnTracker {
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
     private final TableWriterPressureControlImpl pressureControl;
+    private final WalMetrics walMetrics;
     private volatile long dirtyWriterTxn;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
@@ -49,6 +51,8 @@ public class SeqTxnTracker {
 
     public SeqTxnTracker(CairoConfiguration configuration) {
         this.pressureControl = new TableWriterPressureControlImpl(configuration);
+        this.walMetrics = configuration.getMetrics().walMetrics();
+
     }
 
     public String getErrorMessage() {
@@ -115,6 +119,7 @@ public class SeqTxnTracker {
         long stxn = seqTxn;
         while (newSeqTxn > stxn) {
             if (Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
+                walMetrics.addSeqTxn(newSeqTxn - stxn);
                 break;
             }
             stxn = seqTxn;
@@ -146,7 +151,6 @@ public class SeqTxnTracker {
 
     /**
      * Updates writerTxn and dirtyWriterTxn and returns true if the Apply2Wal job should be notified.
-     * This method is not thread-safe and should be called under TableWriter lock.
      *
      * @param writerTxn      txn that is available for reading
      * @param dirtyWriterTxn txn that is in flight that is not yet fully written
@@ -157,9 +161,11 @@ public class SeqTxnTracker {
         long prevDirtyWriterTxn = this.dirtyWriterTxn;
         this.writerTxn = writerTxn;
         this.dirtyWriterTxn = dirtyWriterTxn;
-
         // Progress made means table is not suspended
-        if (writerTxn > prevWriterTxn || dirtyWriterTxn > prevDirtyWriterTxn) {
+        if (writerTxn > prevWriterTxn) {
+            suspendedState = 1;
+            walMetrics.addWriterTxn(writerTxn - prevWriterTxn);
+        } else if (dirtyWriterTxn > prevDirtyWriterTxn) {
             suspendedState = 1;
         }
         return writerTxn < seqTxn;

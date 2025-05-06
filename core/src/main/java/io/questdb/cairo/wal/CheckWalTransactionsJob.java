@@ -135,8 +135,6 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private boolean republishNotificationsFromTrackers() {
         engine.getTableTokens(tableTokenBucket, false);
         long suspendedCount = 0;
-        long seqTxnSum = 0;
-        long writerTxnSum = 0;
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             TableToken tableToken = tableTokenBucket.get(i);
             SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
@@ -146,12 +144,6 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
             }
             long seqTxn = tracker.getSeqTxn();
             long writerTxn = tracker.getWriterTxn();
-            if (seqTxn > 0) {
-                seqTxnSum += seqTxn;
-            }
-            if (writerTxn > 0) {
-                writerTxnSum += writerTxn;
-            }
             long currTablePendingTxnCount = seqTxn - writerTxn;
             if (currTablePendingTxnCount > 0) {
                 if (!engine.notifyWalTxnCommitted(tableToken)) {
@@ -161,8 +153,6 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         }
         metrics.tableWriterMetrics().setSuspendedTables(suspendedCount);
         WalMetrics walMetrics = metrics.walMetrics();
-        walMetrics.setSeqTxnSum(seqTxnSum);
-        walMetrics.setWriterTxnSum(writerTxnSum);
         return true;
     }
 }

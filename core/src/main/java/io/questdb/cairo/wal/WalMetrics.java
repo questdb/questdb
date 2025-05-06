@@ -36,17 +36,17 @@ public class WalMetrics implements Mutable {
     private final LongGauge applyRowsWriteRateGauge;
     private final Counter applyRowsWrittenCounter;
     private final Counter rowsWrittenCounter;
-    private final LongGauge seqTxnGauge;
+    private final Counter seqTxnCounter;
     private final AtomicLong totalRowsWritten = new AtomicLong();
     private final AtomicLong totalRowsWrittenTotalTime = new AtomicLong();
-    private final LongGauge writerTxnGauge;
+    private final Counter writerTxnCounter;
 
     public WalMetrics(MetricsRegistry metricsRegistry) {
         this.applyPhysicallyWrittenRowsCounter = metricsRegistry.newCounter("wal_apply_physically_written_rows");
         this.applyRowsWrittenCounter = metricsRegistry.newCounter("wal_apply_written_rows");
         this.applyRowsWriteRateGauge = metricsRegistry.newLongGauge("wal_apply_rows_per_second");
-        this.seqTxnGauge = metricsRegistry.newLongGauge("wal_apply_seq_txn");
-        this.writerTxnGauge = metricsRegistry.newLongGauge("wal_apply_writer_txn");
+        this.seqTxnCounter = metricsRegistry.newCounter("wal_apply_seq_txn");
+        this.writerTxnCounter = metricsRegistry.newCounter("wal_apply_writer_txn");
         this.rowsWrittenCounter = metricsRegistry.newCounter("wal_written_rows");
     }
 
@@ -63,6 +63,14 @@ public class WalMetrics implements Mutable {
         rowsWrittenCounter.add(rows);
     }
 
+    public void addSeqTxn(long txnDelta) {
+        seqTxnCounter.add(txnDelta);
+    }
+
+    public void addWriterTxn(long txnDelta) {
+        writerTxnCounter.add(txnDelta);
+    }
+
     @Override
     public void clear() {
         applyPhysicallyWrittenRowsCounter.reset();
@@ -71,13 +79,5 @@ public class WalMetrics implements Mutable {
         rowsWrittenCounter.reset();
         totalRowsWritten.set(0);
         totalRowsWrittenTotalTime.set(0);
-    }
-
-    public void setSeqTxnSum(long seqTxnSum) {
-        seqTxnGauge.setValue(seqTxnSum);
-    }
-
-    public void setWriterTxnSum(long writerTxnSum) {
-        writerTxnGauge.setValue(writerTxnSum);
     }
 }
