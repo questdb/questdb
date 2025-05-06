@@ -24,6 +24,7 @@
 
 package io.questdb.test.config;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.config.ConfigStore;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -35,7 +36,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
 
-import static io.questdb.test.tools.TestUtils.assertEquals;
+import static io.questdb.test.tools.TestUtils.assertContains;
 import static io.questdb.test.tools.TestUtils.await;
 import static org.junit.Assert.fail;
 
@@ -55,7 +56,7 @@ public class ConfigStoreConcurrentTest extends AbstractCairoTest {
                     for (int j = 0; j < numOfWrites; j++) {
                         directUtf8Sink.clear();
                         directUtf8Sink.put(config);
-                        configStore.save(directUtf8Sink, ConfigStore.Mode.OVERWRITE);
+                        configStore.save(directUtf8Sink, ConfigStore.Mode.OVERWRITE, j);
                     }
                 }
 
@@ -71,7 +72,13 @@ public class ConfigStoreConcurrentTest extends AbstractCairoTest {
                             for (int j = 0; j < numOfWrites; j++) {
                                 directUtf8Sink.clear();
                                 directUtf8Sink.put(config);
-                                configStore.save(directUtf8Sink, ConfigStore.Mode.OVERWRITE);
+                                try {
+                                    configStore.save(directUtf8Sink, ConfigStore.Mode.OVERWRITE, configStore.getVersion());
+                                } catch (CairoException e) {
+                                    if (!e.isSettingsOutOfDateError()) {
+                                        throw e;
+                                    }
+                                }
                             }
                         } catch (Throwable th) {
                             errors.put(threadIndex, th);
@@ -92,7 +99,7 @@ public class ConfigStoreConcurrentTest extends AbstractCairoTest {
                                 configStore.populateSettings(sink);
                                 sink.clear(sink.size() - 1);
                                 sink.putAscii('}');
-                                assertEquals(config, sink);
+                                assertContains(sink.toString(), ",\"key1\":\"value1\",\"key2\":\"value2\",\"key3\":\"value3\"}");
                             }
                         } catch (Throwable th) {
                             errors.put(threadIndex, th);

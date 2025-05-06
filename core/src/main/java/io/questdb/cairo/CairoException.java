@@ -63,6 +63,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private boolean interruption; // used when a query times out
     private int messagePosition;
     private boolean outOfMemory;
+    private boolean settingsOutOfDateError = false;
 
     public static CairoException authorization() {
         return nonCritical().setAuthorizationError();
@@ -153,6 +154,15 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public static CairoException queryTimedOut() {
         return nonCritical().put("timeout, query aborted").setInterruption(true);
+    }
+
+    public static CairoException settingsOutOfDate(long currentVersion, long expectedVersion) {
+        return nonCritical().setSettingsOutOfDateError()
+                .put("settings view is out of date [currentVersion=")
+                .put(currentVersion)
+                .put(", expectedVersion=")
+                .put(expectedVersion)
+                .put(']');
     }
 
     public static CairoException tableDoesNotExist(CharSequence tableName) {
@@ -249,6 +259,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return outOfMemory;
     }
 
+    public boolean isSettingsOutOfDateError() {
+        return settingsOutOfDateError;
+    }
+
     public boolean isTableDoesNotExist() {
         return errno == TABLE_DOES_NOT_EXIST;
     }
@@ -333,6 +347,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public CairoException setOutOfMemory(boolean outOfMemory) {
         this.outOfMemory = outOfMemory;
+        return this;
+    }
+
+    public CairoException setSettingsOutOfDateError() {
+        this.settingsOutOfDateError = true;
         return this;
     }
 

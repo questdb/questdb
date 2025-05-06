@@ -2190,7 +2190,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
         }
 
-        public static void integer(CharSequence key, int value, Utf8StringSink sink) {
+        public static void integer(CharSequence key, long value, Utf8StringSink sink) {
             sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
         }
 

@@ -16,17 +16,19 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.io.IOException;
 
+import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.integer;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
 
-// TODO: add versioning
 public class ConfigStore implements Closeable {
     private static final String CONFIG_FILE_NAME = "_config~store";
     private static final Utf8String MERGE_STR = new Utf8String("merge");
     private static final Utf8String OVERWRITE_STR = new Utf8String("overwrite");
+    private static final String VERSION = "version";
     private final BlockFileReader blockFileReader;
     private final BlockFileWriter blockFileWriter;
     private final ConfigMap configMap;
@@ -35,6 +37,7 @@ public class ConfigStore implements Closeable {
     private final CharSequenceObjHashMap<CharSequence> parserMap;
     private final Path path = new Path();
     private final int rootLen;
+    private long version = 0L;
 
     public ConfigStore(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -57,6 +60,11 @@ public class ConfigStore implements Closeable {
         Misc.free(path);
     }
 
+    @TestOnly
+    public long getVersion() {
+        return version;
+    }
+
     public synchronized void init() {
         final LPSZ configPath = configFilePath();
         if (configuration.getFilesFacade().exists(configPath)) {
@@ -65,6 +73,7 @@ public class ConfigStore implements Closeable {
     }
 
     public synchronized void populateSettings(Utf8StringSink sink) {
+        integer(VERSION, version, sink);
         final ObjList<CharSequence> keys = configMap.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final CharSequence key = keys.getQuick(i);
@@ -73,7 +82,11 @@ public class ConfigStore implements Closeable {
         }
     }
 
-    public synchronized void save(DirectUtf8Sink sink, Mode mode) throws JsonException {
+    public synchronized void save(DirectUtf8Sink sink, Mode mode, long expectedVersion) throws JsonException {
+        if (version != expectedVersion) {
+            throw CairoException.settingsOutOfDate(version, expectedVersion);
+        }
+
         configParser.clear();
         configParser.parse(sink);
 
@@ -87,6 +100,7 @@ public class ConfigStore implements Closeable {
             default:
                 throw CairoException.nonCritical().put("Invalid mode [mode=").put(mode.name()).put(']');
         }
+        version++;
     }
 
     private LPSZ configFilePath() {

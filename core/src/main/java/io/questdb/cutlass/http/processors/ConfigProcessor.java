@@ -39,6 +39,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 
 import java.io.Closeable;
@@ -53,11 +56,13 @@ public class ConfigProcessor implements HttpRequestProcessor, HttpContentListene
     // which is LV, has to be the same between processor instances
     private static final LocalValue<ConfigProcessorState> LV = new LocalValue<>();
     private static final Utf8String URL_PARAM_MODE = new Utf8String("mode");
+    private static final Utf8String URL_PARAM_VERSION = new Utf8String("version");
     private final ConfigStore configStore;
     private final byte requiredAuthType;
     private ConfigStore.Mode mode;
     private HttpConnectionContext transientContext;
     private ConfigProcessorState transientState;
+    private long version;
 
     public ConfigProcessor(CairoEngine engine, JsonQueryProcessorConfiguration configuration) {
         configStore = engine.getConfigStore();
@@ -99,6 +104,13 @@ public class ConfigProcessor implements HttpRequestProcessor, HttpContentListene
         }
 
         mode = ConfigStore.Mode.of(context.getRequestHeader().getUrlParam(URL_PARAM_MODE));
+
+        final Utf8Sequence versionStr = context.getRequestHeader().getUrlParam(URL_PARAM_VERSION);
+        try {
+            version = Numbers.parseLong(versionStr);
+        } catch (NumericException e) {
+            throw CairoException.nonCritical().put("Could not parse version, numeric value expected [version=").put(versionStr).put(']');
+        }
     }
 
     @Override
@@ -108,7 +120,7 @@ public class ConfigProcessor implements HttpRequestProcessor, HttpContentListene
         context.getSecurityContext().authorizeSystemAdmin();
 
         try {
-            configStore.save(transientState.sink, mode);
+            configStore.save(transientState.sink, mode, version);
             sendOk();
         } catch (JsonException | CairoException | CairoError e) {
             LOG.error().$("error while saving config").$((Throwable) e).$();
