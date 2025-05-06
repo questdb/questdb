@@ -95,7 +95,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                         responseHeaders.await();
                         TestUtils.assertEquals(String.valueOf(200), responseHeaders.getStatusCode());
                         parser.parse(responseHeaders.getResponse());
-                        Assert.assertTrue(parser.isSupportVersion(parser.getDefaultProtocolVersion()));
+                        Assert.assertTrue(parser.isSupportedLineProtoVersion(parser.getDefaultProtocolVersion()));
                     }
                 }
             }

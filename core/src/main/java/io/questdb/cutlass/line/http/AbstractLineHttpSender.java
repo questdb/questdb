@@ -191,7 +191,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                         parser.parse(responseHeaders.getResponse());
                         if (protocolVersion == PROTOCOL_VERSION_NOT_SET_EXPLICIT) {
                             protocolVersion = parser.getDefaultProtocolVersion();
-                        } else if (!parser.isSupportVersion(protocolVersion)) {
+                        } else if (!parser.isSupportedLineProtoVersion(protocolVersion)) {
                             throw new LineSenderException("Server does not support line protocol version: ")
                                     .put(protocolVersion);
                         }
@@ -854,7 +854,7 @@ public abstract class AbstractLineHttpSender implements Sender {
             }
         }
 
-        public boolean isSupportVersion(int protocolVersion) {
+        public boolean isSupportedLineProtoVersion(int protocolVersion) {
             return (supportVersions.size() == 0 && protocolVersion == PROTOCOL_VERSION_V1) || supportVersions.contains(protocolVersion);
         }
 
