@@ -30,7 +30,7 @@ import org.junit.Test;
 public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testSimpleDataTransaction() throws Exception {
-        Rnd rnd = generateRandom(LOG, 441253055880333L, 1745590113688L);
+        Rnd rnd = generateRandom(LOG, 655127554479625L, 1746541894564L);
         setFuzzProbabilities(
                 0.01,
                 0.2,
@@ -48,8 +48,9 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
                 0.8,
                 0.9
         );
-        setFuzzCounts(rnd.nextBoolean(), 1000,
-                7, 20, 10, 200, 0, 1
+        setFuzzCounts(
+                rnd.nextBoolean(), 1000, 7,
+                20, 10, 200, 0, 1
         );
         runFuzz(rnd);
     }

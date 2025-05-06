@@ -750,12 +750,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     Vect.BIN_SEARCH_SCAN_DOWN
                             );
 
-                            if (mergeO3Lo > mergeO3Hi) {
-                                if (!tableWriter.isCommitReplaceMode()) {
-                                    mergeType = O3_BLOCK_DATA;
-                                } else {
-                                    mergeType = O3_BLOCK_NONE;
-                                }
+                            if (mergeO3Lo > mergeO3Hi && !tableWriter.isCommitReplaceMode()) {
+                                mergeType = O3_BLOCK_DATA;
                             } else {
                                 mergeType = O3_BLOCK_MERGE;
                             }
@@ -796,6 +792,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Save inital overlap state, mergeType can be re-written in commit replace mode
                 boolean overlaps = mergeType == O3_BLOCK_MERGE;
                 if (tableWriter.isCommitReplaceMode()) {
+                    if (prefixHi < prefixLo) {
+                        prefixType = O3_BLOCK_NONE;
+                    }
+                    if (suffixHi < suffixLo) {
+                        suffixType = O3_BLOCK_NONE;
+                    }
 
                     if (srcOooLo <= srcOooHi) {
                         if (mergeType == O3_BLOCK_MERGE) {
@@ -860,6 +862,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
 
                     }
+                }
+
+                if (!tableWriter.isCommitReplaceMode() || dataTimestampLo < o3TimestampLo) {
+                    // Do not take existing data timestamp low if it's being fully replaced.
+                    o3TimestampMin = Math.min(o3TimestampMin, dataTimestampLo);
                 }
 
                 LOG.debug()

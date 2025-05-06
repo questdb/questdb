@@ -5912,7 +5912,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final boolean isLastWrittenPartition = o3PartitionUpdateSink.nextBlockIndex(blockIndex) == -1;
                 final long o3SplitPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 5 * Long.BYTES);
 
-                txWriter.minTimestamp = Math.min(timestampMin, txWriter.minTimestamp);
+                boolean isFirstPartitionReplaced = isCommitReplaceMode()
+                        && partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(txWriter.getMinTimestamp())
+                        && partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(timestampMin);
+                txWriter.minTimestamp = isFirstPartitionReplaced ? timestampMin : Math.min(timestampMin, txWriter.minTimestamp);
+
+//                txWriter.minTimestamp = Math.min(timestampMin, txWriter.minTimestamp);
+
                 int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
 
                 final long newPartitionTimestamp = partitionTimestamp;
