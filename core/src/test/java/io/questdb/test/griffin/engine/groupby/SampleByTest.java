@@ -2868,6 +2868,28 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidSampleByUnit() throws Exception {
+        assertException(
+                "select count(*) from x sample by 1min",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol(5,4,4,1) sym," +
+                        " rnd_symbol(5,4,4,1) sym2," +
+                        " timestamp_sequence(172800000000, 3600000000) ts" +
+                        " from long_sequence(20)" +
+                        ") timestamp(ts) partition by day",
+                33,
+                "Invalid stride: 1mi"
+        );
+        assertException(
+                "select count(*) from x sample by 1.5D",
+                33,
+                "Invalid stride: 1.5"
+        );
+    }
+
+    @Test
     public void testKeyedFromTo() throws Exception {
         assertException(
                 "SELECT" +
