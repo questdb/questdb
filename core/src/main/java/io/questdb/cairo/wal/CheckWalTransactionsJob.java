@@ -139,16 +139,15 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             TableToken tableToken = tableTokenBucket.get(i);
             SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-            boolean suspended = tracker.isSuspended();
-            if (suspended) {
+            if (tracker.isSuspended()) {
                 suspendedCount++;
-            } else {
-                long currTablePendingTxnCount = tracker.getSeqTxn() - tracker.getWriterTxn();
-                if (currTablePendingTxnCount > 0) {
-                    pendingTxnCount += currTablePendingTxnCount;
-                    if (!engine.notifyWalTxnCommitted(tableToken)) {
-                        return false;
-                    }
+                continue;
+            }
+            long currTablePendingTxnCount = tracker.getSeqTxn() - tracker.getWriterTxn();
+            if (currTablePendingTxnCount > 0) {
+                pendingTxnCount += currTablePendingTxnCount;
+                if (!engine.notifyWalTxnCommitted(tableToken)) {
+                    return false;
                 }
             }
         }
