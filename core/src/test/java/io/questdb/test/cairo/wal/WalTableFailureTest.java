@@ -1302,6 +1302,37 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalApplyMetrics() throws Exception {
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(filesFacade, () -> {
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+
+            execute("update " + tableToken.getTableName() + " set x = 11;");
+            execute("update " + tableToken.getTableName() + " set x = 111;");
+            execute("update " + tableToken.getTableName() + " set x = 1111;");
+            drainWalQueue();
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertWalApplyMetrics(1, 4, 1);
+
+            execute("alter table " + tableToken.getTableName() + " resume wal;");
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            drainWalQueue();
+            assertWalApplyMetrics(0, 4, 4);
+        });
+    }
+
+    @Test
     public void testWalMultipleColumnConversions() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table abc (x0 symbol, x string, y string, y1 symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
@@ -1322,40 +1353,6 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             assertSql("x0\ty1\tts\tx\ty\n" +
                     "aa\tbb\t2022-02-24T01:00:00.000000Z\ta\tb\n", "abc");
-        });
-    }
-
-    @Test
-    public void testWalSuspendedTablesMetric() throws Exception {
-        FilesFacade filesFacade = new TestFilesFacadeImpl() {
-            private int attempt = 0;
-
-            @Override
-            public long openRW(LPSZ name, long opts) {
-                if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
-                    return -1;
-                }
-                return Files.openRW(name, opts);
-            }
-        };
-        assertMemoryLeak(filesFacade, () -> {
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
-
-            execute("update " + tableToken.getTableName() + " set x = 1111;");
-            execute("update " + tableToken.getTableName() + " set sym = 'XXX';");
-            execute("update " + tableToken.getTableName() + " set sym2 = 'YYY';");
-            drainWalQueue();
-            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSuspendedTablCountMetric(1);
-            assertSql("x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
-
-            execute("alter table " + tableToken.getTableName() + " resume wal;");
-
-            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            drainWalQueue();
-            assertSql("x\tsym\tts\tsym2\n1111\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n", tableToken.getTableName());
-            assertSuspendedTablCountMetric(0);
         });
     }
 
@@ -1721,11 +1718,18 @@ public class WalTableFailureTest extends AbstractCairoTest {
         }
     }
 
-    private void assertSuspendedTablCountMetric(int expectedCount) {
+    private void assertWalApplyMetrics(int suspendedTables, int seqTxnTotal, int writerTxnTotal) {
         try (DirectUtf8Sink metricsSink = new DirectUtf8Sink(1024)) {
             engine.getMetrics().scrapeIntoPrometheus(metricsSink);
-            Assert.assertTrue(Arrays.stream(metricsSink.toString().split("\n"))
-                    .anyMatch(line -> line.startsWith("questdb_suspended_tables " + expectedCount))
+            String[] lines = metricsSink.toString().split("\n");
+            Assert.assertTrue(Arrays.stream(lines)
+                    .anyMatch(line -> line.startsWith("questdb_suspended_tables " + suspendedTables))
+            );
+            Assert.assertTrue(Arrays.stream(lines)
+                    .anyMatch(line -> line.startsWith("questdb_wal_apply_seq_txn_total " + seqTxnTotal))
+            );
+            Assert.assertTrue(Arrays.stream(lines)
+                    .anyMatch(line -> line.startsWith("questdb_wal_apply_writer_txn_total " + writerTxnTotal))
             );
         }
     }
