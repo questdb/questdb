@@ -24,10 +24,10 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.TableWriterPressureControl;
-import io.questdb.cairo.wal.WalMetrics;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
@@ -36,8 +36,8 @@ public class SeqTxnTracker {
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
+    private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
-    private final WalMetrics walMetrics;
     private volatile long dirtyWriterTxn;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
@@ -51,7 +51,7 @@ public class SeqTxnTracker {
 
     public SeqTxnTracker(CairoConfiguration configuration) {
         this.pressureControl = new TableWriterPressureControlImpl(configuration);
-        this.walMetrics = configuration.getMetrics().walMetrics();
+        this.metrics = configuration.getMetrics();
 
     }
 
@@ -119,7 +119,7 @@ public class SeqTxnTracker {
         long stxn = seqTxn;
         while (newSeqTxn > stxn) {
             if (Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
-                walMetrics.addSeqTxn(newSeqTxn - stxn);
+                metrics.walMetrics().addSeqTxn(newSeqTxn - stxn);
                 break;
             }
             stxn = seqTxn;
@@ -138,6 +138,8 @@ public class SeqTxnTracker {
         // should be the last one to be set
         // to make sure error details are available for read when the table is suspended
         this.suspendedState = -1;
+
+        metrics.tableWriterMetrics().incSuspendedTables();
     }
 
     public void setUnsuspended() {
@@ -147,6 +149,8 @@ public class SeqTxnTracker {
 
         this.errorTag = ErrorTag.NONE;
         this.errorMessage = "";
+
+        metrics.tableWriterMetrics().decSuspendedTables();
     }
 
     /**
@@ -164,7 +168,7 @@ public class SeqTxnTracker {
         // Progress made means table is not suspended
         if (writerTxn > prevWriterTxn) {
             suspendedState = 1;
-            walMetrics.addWriterTxn(writerTxn - prevWriterTxn);
+            metrics.walMetrics().addWriterTxn(writerTxn - prevWriterTxn);
         } else if (dirtyWriterTxn > prevDirtyWriterTxn) {
             suspendedState = 1;
         }

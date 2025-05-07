@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.metrics.AtomicLongGauge;
 import io.questdb.metrics.Counter;
-import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.std.Mutable;
 
@@ -38,7 +38,7 @@ public class TableWriterMetrics implements Mutable {
     // For write amplification metric, `physicallyWrittenRowCounter / committedRowCounter`.
     private final Counter physicallyWrittenRowCounter;
     private final Counter rollbackCounter;
-    private final LongGauge suspendedTablesGauge;
+    private final AtomicLongGauge suspendedTablesGauge;
 
     public TableWriterMetrics(MetricsRegistry metricsRegistry) {
         this.commitCounter = metricsRegistry.newCounter("commits");
@@ -66,6 +66,10 @@ public class TableWriterMetrics implements Mutable {
         rollbackCounter.reset();
     }
 
+    public void decSuspendedTables() {
+        suspendedTablesGauge.dec();
+    }
+
     public long getCommitCount() {
         return commitCounter.getValue();
     }
@@ -86,6 +90,10 @@ public class TableWriterMetrics implements Mutable {
         return rollbackCounter.getValue();
     }
 
+    public void incSuspendedTables() {
+        suspendedTablesGauge.inc();
+    }
+
     public void incrementCommits() {
         commitCounter.inc();
     }
@@ -96,9 +104,5 @@ public class TableWriterMetrics implements Mutable {
 
     public void incrementRollbacks() {
         rollbackCounter.inc();
-    }
-
-    public void setSuspendedTables(long count) {
-        suspendedTablesGauge.setValue(count);
     }
 }
