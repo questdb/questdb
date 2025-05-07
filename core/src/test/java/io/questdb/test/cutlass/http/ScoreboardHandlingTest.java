@@ -48,8 +48,7 @@ public class ScoreboardHandlingTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testPermissionsAreUpdatedWhenColumnIsRenamed() throws Exception {
-
+    public void testVacuumRerunOnWindows() throws Exception {
         createDummyConfiguration();
         assertMemoryLeak(() -> {
             try (
