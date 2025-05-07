@@ -53,7 +53,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public interface SqlExecutionContext extends Sinkable, Closeable {
 
     // Returns true when the context doesn't require all SQL functions to be deterministic.
-    // Deterministic-only function are allowed e.g. when compiling a mat view.
+    // Deterministic-only functions are enforced e.g. when compiling a mat view.
     default boolean allowNonDeterministic() {
         return true;
     }
