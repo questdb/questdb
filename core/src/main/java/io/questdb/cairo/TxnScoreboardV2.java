@@ -157,7 +157,9 @@ public class TxnScoreboardV2 implements TxnScoreboard {
                 final int bit = Long.numberOfTrailingZeros(lowestBit);
                 int internalId = base + bit;
                 long lockedTxn = Unsafe.getUnsafe().getLongVolatile(null, entriesMem + (long) internalId * Long.BYTES);
-                min = Math.min(min, lockedTxn);
+                if (lockedTxn > UNLOCKED) {
+                    min = Math.min(min, lockedTxn);
+                }
                 bitmap ^= lowestBit;
             }
         }
@@ -242,7 +244,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
                 final int bit = Long.numberOfTrailingZeros(lowestBit);
                 int internalId = base + bit;
                 long lockedTxn = Unsafe.getUnsafe().getLongVolatile(null, entriesMem + (long) internalId * Long.BYTES);
-                if (lockedTxn >= fromTxn && lockedTxn < toTxn) {
+                if (lockedTxn > UNLOCKED && lockedTxn >= fromTxn && lockedTxn < toTxn) {
                     return false;
                 }
 
@@ -257,7 +259,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         // This call should only be used from TableReader
         // when maxTxn is already initialized.
         // Check that the txn we are scanning for is not the max, to avoid races with acquireTxn()
-        if (getMax() <= txn) {
+        if (getMax() < txn) {
             return false;
         }
 
