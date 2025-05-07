@@ -57,6 +57,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -68,6 +69,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -1324,6 +1326,40 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalSuspendedTablesMetric() throws Exception {
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(filesFacade, () -> {
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+
+            execute("update " + tableToken.getTableName() + " set x = 1111;");
+            execute("update " + tableToken.getTableName() + " set sym = 'XXX';");
+            execute("update " + tableToken.getTableName() + " set sym2 = 'YYY';");
+            drainWalQueue();
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertSuspendedTablCountMetric(1);
+            assertSql("x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
+
+            execute("alter table " + tableToken.getTableName() + " resume wal;");
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            drainWalQueue();
+            assertSql("x\tsym\tts\tsym2\n1111\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n", tableToken.getTableName());
+            assertSuspendedTablCountMetric(0);
+        });
+    }
+
+    @Test
     public void testWalTableAddColumnFailedNoDiskSpaceShouldSuspendTable() throws Exception {
         String tableName = testName.getMethodName();
         String query = "alter table " + tableName + " ADD COLUMN sym5 SYMBOL CAPACITY 1024";
@@ -1682,6 +1718,15 @@ public class WalTableFailureTest extends AbstractCairoTest {
             Assert.fail("expected SQLException is not thrown");
         } catch (SqlException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), expected);
+        }
+    }
+
+    private void assertSuspendedTablCountMetric(int expectedCount) {
+        try (DirectUtf8Sink metricsSink = new DirectUtf8Sink(1024)) {
+            engine.getMetrics().scrapeIntoPrometheus(metricsSink);
+            Assert.assertTrue(Arrays.stream(metricsSink.toString().split("\n"))
+                    .anyMatch(line -> line.startsWith("questdb_suspended_tables " + expectedCount))
+            );
         }
     }
 
