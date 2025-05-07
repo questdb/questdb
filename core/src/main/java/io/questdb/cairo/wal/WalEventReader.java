@@ -29,8 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -42,7 +40,6 @@ import java.io.Closeable;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalEventReader implements Closeable {
-    private final Log LOG = LogFactory.getLog(WalEventReader.class);
     private final WalEventCursor eventCursor;
     private final MemoryCMR eventIndexMem;
     private final MemoryCMR eventMem;
@@ -64,11 +61,17 @@ public class WalEventReader implements Closeable {
     }
 
     public WalEventCursor of(Path path, long segmentTxn) {
+        // The reader needs to deal with:
+        //   * _event and _event.i truncation.
+        //   * mmap-written data which has not persisted to disk and appears as zeros when read back.
+
         int trimTo = path.size();
         try {
             final int pathLen = path.size();
-
             path.concat(EVENT_FILE_NAME);
+
+            // We initially just map the header which contains the `maxTxn` value.
+            // We will later `.extend(..)` this to contain the full file size.
             eventMem.of(
                     ff,
                     path.$(),
@@ -80,28 +83,70 @@ public class WalEventReader implements Closeable {
             );
 
             if (segmentTxn > -1) {
-                // Read record offset and size
-                eventIndexMem.of(
-                        ff,
-                        path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(),
-                        ff.getPageSize(),
-                        -1,
-                        MemoryTag.MMAP_TABLE_WAL_READER,
-                        CairoConfiguration.O_NONE,
-                        Files.POSIX_MADV_RANDOM
-                );
-                try {
-                    final int maxTxn = eventMem.getInt(WALE_MAX_TXN_OFFSET_32);
-                    final long offset = readNonNegativeLong(eventIndexMem, segmentTxn << 3);
-                    long size = readNonNegativeLong(eventIndexMem, (maxTxn + 1L) << 3);
+                final int maxTxn = eventMem.getInt(WALE_MAX_TXN_OFFSET_32);
+                if (maxTxn < -1) {
+                    final int errno = 0;
+                    throw CairoException.critical(errno).put("segment ")
+                            .put(path).put(" does not have a valid maxTxn: ")
+                            .put(maxTxn);
+                }
 
-                    if (offset > -1 && size < WALE_HEADER_SIZE + Integer.BYTES) {
-                        // index file may not contain all records from data file, but it should contain
-                        // the transaction we need to read, e.g. segmentTxn
-                        size = readNonNegativeLong(eventIndexMem, (segmentTxn + 1L) << 3);
+                // To read the `_event.i` fully we need to map it so we can read the `maxTxn` transaction.
+                // N.B. `+ 2 is for: (+1) to skip to one past the end and (+1) for the size of the data to read.
+                final long fullEventIndexMapSize = (maxTxn + 2L) * Long.BYTES;
+
+                // But if that mapping fails (say, because didn't persist all the data), we want to at least
+                // map until the specific `segmentTxn` we want to read.
+                // N.B. `+ 2` same as above.
+                final long minEventIndexMapSize = (segmentTxn + 2L) * Long.BYTES;
+
+                try {
+                    eventIndexMem.of(
+                            ff,
+                            path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(),
+                            ff.getPageSize(),
+                            fullEventIndexMapSize,
+                            MemoryTag.MMAP_TABLE_WAL_READER,
+                            CairoConfiguration.O_NONE,
+                            Files.POSIX_MADV_RANDOM
+                    );
+                } catch (CairoException _couldNotMapToMaxTxn) {
+                    eventIndexMem.of(
+                            ff,
+                            path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(),
+                            ff.getPageSize(),
+                            minEventIndexMapSize,
+                            MemoryTag.MMAP_TABLE_WAL_READER,
+                            CairoConfiguration.O_NONE,
+                            Files.POSIX_MADV_RANDOM
+                    );
+                }
+
+                try {
+                    // The offset to the start of the record in `_event` pointed to by `segmentTxn`.
+                    final long offset = readNonNegativeLong(eventIndexMem, segmentTxn * Long.BYTES);
+
+                    // The `_event` file length, as determined by the `maxTxn` value in the `_event` header.
+                    long size = readNonNegativeLong(eventIndexMem, (maxTxn + 1L) * Long.BYTES);
+
+                    // N.B.
+                    // The `_event` file starts with a header. If we're reading a section of the file that was grown
+                    // by setting the filesize (via the mmap writer logic) and either never written or persisted,
+                    // we'd read a zero-value offset or size.
+                    // The following two conditionals catch two partial and full corruption cases when data was not
+                    // fully flushed to disk.
+
+                    // Case 1: Lost some data, but have the `segmentTxn` record.
+                    // The offset for the `segmentTxn` points to valid data,
+                    // but the `maxTxn`-calculated `size` is nonsensical.
+                    if (offset >= WALE_HEADER_SIZE && size < WALE_HEADER_SIZE + Integer.BYTES) {
+                        // We curtail the `_event` size to just what we strictly need.
+                        size = readNonNegativeLong(eventIndexMem, (segmentTxn + 1L) * Long.BYTES);
                     }
 
-                    if (offset < 0 || size < WALE_HEADER_SIZE + Integer.BYTES || offset >= size) {
+                    // Case 2: Data is corrupt or was never flushed and is all zeros.
+                    // The `+ Integer.BYTES` here is to include the len-prefix of each `_event` entry.
+                    if (offset < WALE_HEADER_SIZE || size < WALE_HEADER_SIZE + Integer.BYTES || offset >= size) {
                         final int errno = offset < 0 || size < 0 ? ff.errno() : 0;
                         final long fileSize = ff.length(eventMem.getFd());
 
@@ -113,9 +158,16 @@ public class WalEventReader implements Closeable {
                                 .put(", size=").put(size);
                     }
 
-                    // WAL-E file has record indicator for the next record always present
-                    // so file size is the size read + 4 bytes
-                    eventMem.extend(size + Integer.BYTES);
+                    // The `size` here should _correctly_ mark the end of the last record we can read.
+                    // There's a gotcha though:
+                    // Each entry in the `_event` file has a 32-bit int byte len at the start.
+                    // When we're done writing an entry we do two things:
+                    //   * Update the length for the written record.
+                    //   * Add an empty (zero) length for the next (future) record.
+                    // We rely on this second entry to determine that we're done reading.
+                    // As such, we need this extra `+ Integer.BYTES` here, or we would not be able to read it.
+                    final long eventMapSize = size + Integer.BYTES;
+                    eventMem.extend(eventMapSize);
                     eventCursor.openOffset(offset);
                 } finally {
                     Misc.free(eventIndexMem);
@@ -145,7 +197,7 @@ public class WalEventReader implements Closeable {
      * Read a non-negative long at the specified offset, or return -1 if out of bounds.
      */
     private static long readNonNegativeLong(MemoryCMR eventIndexMem, long offset) {
-        if ((offset < 0) || (eventIndexMem.addressOf(offset + Long.BYTES) < 0)) {
+        if ((offset < 0) || ((offset + Long.BYTES) > eventIndexMem.size())) {
             return -1;
         }
         return eventIndexMem.getLong(offset);
