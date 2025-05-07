@@ -188,7 +188,7 @@ public class ColumnPurgeOperator implements Closeable {
 
     private boolean openScoreboardAndTxn(ColumnPurgeTask task, ScoreboardUseMode scoreboardUseMode) {
         if (scoreboardUseMode == ScoreboardUseMode.INTERNAL) {
-            Misc.free(txnScoreboard);
+            txnScoreboard = Misc.free(txnScoreboard);
             txnScoreboard = engine.getTxnScoreboard(task.getTableName());
         }
 
@@ -370,7 +370,11 @@ public class ColumnPurgeOperator implements Closeable {
         } finally {
             if (scoreboardMode != ScoreboardUseMode.EXTERNAL) {
                 txnScoreboard = Misc.free(txnScoreboard);
-                Misc.free(txReader);
+                txReader = Misc.free(txReader);
+            } else {
+                // even though we take these things from the reader, we must not re-use them on the next run
+                txnScoreboard = null;
+                txReader = null;
             }
         }
 
