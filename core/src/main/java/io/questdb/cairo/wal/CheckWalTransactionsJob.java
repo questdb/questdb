@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
@@ -47,7 +46,6 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final CharSequence dbRoot;
     private final CairoEngine engine;
     private final FilesFacade ff;
-    private final Metrics metrics;
     private final MillisecondClock millisecondClock;
     private final long spinLockTimeout;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
@@ -61,7 +59,6 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
 
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;
-        this.metrics = engine.getConfiguration().getMetrics();
         this.ff = engine.getConfiguration().getFilesFacade();
         txReader = new TxReader(engine.getConfiguration().getFilesFacade());
         dbRoot = engine.getConfiguration().getDbRoot();
@@ -134,26 +131,15 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
 
     private boolean republishNotificationsFromTrackers() {
         engine.getTableTokens(tableTokenBucket, false);
-        long suspendedCount = 0;
-        boolean notificationQueueReady = true;
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             TableToken tableToken = tableTokenBucket.get(i);
             SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-            if (tracker.isSuspended()) {
-                suspendedCount++;
-                continue;
-            }
-            if (!notificationQueueReady) {
-                continue;
-            }
-            long seqTxn = tracker.getSeqTxn();
-            long writerTxn = tracker.getWriterTxn();
-            long currTablePendingTxnCount = seqTxn - writerTxn;
-            if (currTablePendingTxnCount > 0) {
-                notificationQueueReady = engine.notifyWalTxnCommitted(tableToken);
+            if (!tracker.isSuspended() && tracker.getWriterTxn() < tracker.getSeqTxn()) {
+                if (!engine.notifyWalTxnCommitted(tableToken)) {
+                    return false;
+                }
             }
         }
-        metrics.tableWriterMetrics().setSuspendedTables(suspendedCount);
-        return notificationQueueReady;
+        return true;
     }
 }
