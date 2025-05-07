@@ -48,6 +48,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public boolean allowNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public void clearWindowContext() {
     }
 

@@ -54,9 +54,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     // Returns true when the context doesn't require all SQL functions to be deterministic.
     // Deterministic-only functions are enforced e.g. when compiling a mat view.
-    default boolean allowNonDeterministic() {
-        return true;
-    }
+    boolean allowNonDeterministic();
 
     void clearWindowContext();
 
