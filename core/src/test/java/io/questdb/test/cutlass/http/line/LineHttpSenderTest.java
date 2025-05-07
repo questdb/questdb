@@ -475,6 +475,37 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testInsertInvalidArrayDims() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                String tableName = "arr_exception_test";
+                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, a1 DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTxn(tableName, 0);
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .protocolVersion(PROTOCOL_VERSION_V2)
+                        .autoFlushRows(Integer.MAX_VALUE)
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    sender.table(tableName)
+                            .symbol("x", "42i")
+                            .doubleArray("a1", (double[][]) createDoubleArray(2, 2))
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    flushAndAssertError(
+                            sender,
+                            "ast error from protocol type: DOUBLE[][] to column type: DOUBLE[]");
+                }
+
+            }
+        });
+    }
+
+    @Test
     public void testInsertLargeArray() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
