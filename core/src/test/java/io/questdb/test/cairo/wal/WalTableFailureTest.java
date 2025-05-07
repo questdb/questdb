@@ -70,6 +70,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -1719,18 +1720,28 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     private void assertWalApplyMetrics(int suspendedTables, int seqTxnTotal, int writerTxnTotal) {
+        String tagSuspendedTables = "questdb_suspended_tables ";
+        String tagSeqTxn = "questdb_wal_apply_seq_txn_total ";
+        String tagWriterTxn = "questdb_wal_apply_writer_txn_total ";
+        String missing = "missing";
         try (DirectUtf8Sink metricsSink = new DirectUtf8Sink(1024)) {
             engine.getMetrics().scrapeIntoPrometheus(metricsSink);
             String[] lines = metricsSink.toString().split("\n");
-            Assert.assertTrue(Arrays.stream(lines)
-                    .anyMatch(line -> line.startsWith("questdb_suspended_tables " + suspendedTables))
-            );
-            Assert.assertTrue(Arrays.stream(lines)
-                    .anyMatch(line -> line.startsWith("questdb_wal_apply_seq_txn_total " + seqTxnTotal))
-            );
-            Assert.assertTrue(Arrays.stream(lines)
-                    .anyMatch(line -> line.startsWith("questdb_wal_apply_writer_txn_total " + writerTxnTotal))
-            );
+
+            Optional<String> suspendedTablesLine = Arrays.stream(lines)
+                    .filter(line -> line.startsWith(tagSuspendedTables)).findFirst();
+            Assert.assertTrue(tagSuspendedTables + missing, suspendedTablesLine.isPresent());
+            Assert.assertEquals(tagSuspendedTables + suspendedTables, suspendedTablesLine.get());
+
+            Optional<String> seqTxnLine = Arrays.stream(lines)
+                    .filter(line -> line.startsWith(tagSeqTxn)).findFirst();
+            Assert.assertTrue(tagSeqTxn + missing, seqTxnLine.isPresent());
+            Assert.assertEquals(tagSeqTxn + seqTxnTotal, seqTxnLine.get());
+
+            Optional<String> writerTxnLine = Arrays.stream(lines)
+                    .filter(line -> line.startsWith(tagWriterTxn)).findFirst();
+            Assert.assertTrue(tagWriterTxn + missing, writerTxnLine.isPresent());
+            Assert.assertEquals(tagWriterTxn + writerTxnTotal, writerTxnLine.get());
         }
     }
 
