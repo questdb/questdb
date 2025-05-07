@@ -842,8 +842,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             try (var ctx = new SqlExecutionContextImpl(engine, 1) {
                 @Override
-                public boolean isDeterministic() {
-                    return false;
+                public boolean allowNonDeterministic() {
+                    return true;
                 }
             }) {
                 ctx.with(sqlExecutionContext.getSecurityContext(), bindVariableService, sqlExecutionContext.getRandom(), sqlExecutionContext.getRequestFd(), circuitBreaker);

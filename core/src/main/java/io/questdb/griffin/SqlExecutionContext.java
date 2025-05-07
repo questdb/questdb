@@ -52,6 +52,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public interface SqlExecutionContext extends Sinkable, Closeable {
 
+    // Returns true when the context doesn't require all SQL functions to be deterministic.
+    // Deterministic-only function are allowed e.g. when compiling a mat view.
+    default boolean allowNonDeterministic() {
+        return true;
+    }
+
     void clearWindowContext();
 
     @Override
@@ -177,10 +183,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // Used to disable column pre-touch without affecting the explain plan
     boolean isColumnPreTouchEnabledOverride();
 
-    // Returns true when the context requires all SQL functions to be deterministic,
-    // e.g. when we're compiling a mat view.
-    boolean isDeterministic();
-
     // Returns true when where intrinsics are overridden, i.e. by a materialized view refresh
     default boolean isOverriddenIntrinsics(TableToken tableToken) {
         return false;
@@ -212,6 +214,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void resetFlags();
 
+    void setAllowNonDeterministic(boolean value);
+
     void setCacheHit(boolean value);
 
     void setCancelledFlag(AtomicBoolean cancelled);
@@ -222,8 +226,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     // Used to disable column pre-touch without affecting the explain plan
     void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride);
-
-    void setDeterministic(boolean value);
 
     void setJitMode(int jitMode);
 

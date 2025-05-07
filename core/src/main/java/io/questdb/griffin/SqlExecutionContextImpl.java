@@ -59,6 +59,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final IntStack timestampRequiredStack = new IntStack();
     private final WindowContextImpl windowContext = new WindowContextImpl();
     private final int workerCount;
+    private boolean allowNonDeterministic = true;
     private BindVariableService bindVariableService;
     private boolean cacheHit;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
@@ -67,7 +68,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean columnPreTouchEnabled = true;
     private boolean columnPreTouchEnabledOverride = true;
     private boolean containsSecret;
-    private boolean deterministic;
     private int jitMode;
     private long now;
     private final MicrosecondClock nowClock = () -> now;
@@ -102,6 +102,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
         this(cairoEngine, workerCount, workerCount);
+    }
+
+    @Override
+    public boolean allowNonDeterministic() {
+        return allowNonDeterministic;
     }
 
     @Override
@@ -259,11 +264,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public boolean isDeterministic() {
-        return deterministic;
-    }
-
-    @Override
     public boolean isParallelFilterEnabled() {
         return parallelFilterEnabled;
     }
@@ -305,7 +305,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cacheHit = false;
         this.columnPreTouchEnabled = true;
         this.columnPreTouchEnabledOverride = true;
-        this.deterministic = false;
+        this.allowNonDeterministic = true;
+    }
+
+    @Override
+    public void setAllowNonDeterministic(boolean value) {
+        this.allowNonDeterministic = value;
     }
 
     @Override
@@ -332,11 +337,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
         this.columnPreTouchEnabledOverride = columnPreTouchEnabledOverride;
-    }
-
-    @Override
-    public void setDeterministic(boolean value) {
-        this.deterministic = value;
     }
 
     @Override

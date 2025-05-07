@@ -163,11 +163,6 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public boolean isDeterministic() {
-        return false;
-    }
-
-    @Override
     public boolean isParallelFilterEnabled() {
         return false;
     }
@@ -205,6 +200,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public void setAllowNonDeterministic(boolean value) {
+    }
+
+    @Override
     public void setCacheHit(boolean value) {
     }
 
@@ -222,10 +221,6 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
-    }
-
-    @Override
-    public void setDeterministic(boolean value) {
     }
 
     @Override

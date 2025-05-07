@@ -66,6 +66,11 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
         );
     }
 
+    @Override
+    public boolean allowNonDeterministic() {
+        return false;
+    }
+
     public void clearReader() {
         this.viewTableToken = null;
         this.baseTableReader = null;
@@ -105,11 +110,6 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     }
 
     @Override
-    public boolean isDeterministic() {
-        return true;
-    }
-
-    @Override
     public boolean isOverriddenIntrinsics(TableToken tableToken) {
         return tableToken == baseTableReader.getTableToken();
     }
@@ -131,7 +131,7 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     }
 
     @Override
-    public void setDeterministic(boolean value) {
+    public void setAllowNonDeterministic(boolean value) {
         // no-op
     }
 

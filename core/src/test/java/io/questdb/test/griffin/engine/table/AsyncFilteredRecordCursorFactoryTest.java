@@ -1087,6 +1087,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     private static abstract class DelegatingSqlExecutionContext implements SqlExecutionContext {
 
         @Override
+        public boolean allowNonDeterministic() {
+            return sqlExecutionContext.allowNonDeterministic();
+        }
+
+        @Override
         public void clearWindowContext() {
             sqlExecutionContext.clearWindowContext();
         }
@@ -1223,11 +1228,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean isDeterministic() {
-            return sqlExecutionContext.isDeterministic();
-        }
-
-        @Override
         public boolean isParallelFilterEnabled() {
             return sqlExecutionContext.isParallelFilterEnabled();
         }
@@ -1268,6 +1268,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void setAllowNonDeterministic(boolean value) {
+            sqlExecutionContext.setAllowNonDeterministic(value);
+        }
+
+        @Override
         public void setCacheHit(boolean value) {
             sqlExecutionContext.setCacheHit(value);
         }
@@ -1290,11 +1295,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
             sqlExecutionContext.setColumnPreTouchEnabledOverride(columnPreTouchEnabledOverride);
-        }
-
-        @Override
-        public void setDeterministic(boolean value) {
-            sqlExecutionContext.setDeterministic(value);
         }
 
         @Override
