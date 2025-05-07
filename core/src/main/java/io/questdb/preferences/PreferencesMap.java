@@ -16,8 +16,7 @@ class PreferencesMap {
     private final CharSequenceObjHashMap<StringSink> map = new CharSequenceObjHashMap<>();
 
     PreferencesMap(CairoConfiguration configuration) {
-        // TODO: move initial capacity to config
-        csPool = new ObjectPool<>(StringSink::new, 64);
+        csPool = new ObjectPool<>(StringSink::new, configuration.getPreferencesStringPoolCapacity());
     }
 
     void clear() {

@@ -5,7 +5,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.json.AbstractJsonParser;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Numbers;
 
 public final class PreferencesParser extends AbstractJsonParser {
 
@@ -16,8 +15,7 @@ public final class PreferencesParser extends AbstractJsonParser {
     private int state = STATE_START;
 
     public PreferencesParser(CairoConfiguration configuration, CharSequenceObjHashMap<CharSequence> parserMap) {
-        // TODO: move these settings into config
-        super(256, Numbers.SIZE_1MB, 4096);
+        super(16384, configuration.getPreferencesParserCacheSizeLimit(), configuration.getPreferencesStringPoolCapacity());
         this.parserMap = parserMap;
     }
 

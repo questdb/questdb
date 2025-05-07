@@ -31,9 +31,10 @@ import java.io.Closeable;
 import java.io.IOException;
 
 class PreferencesProcessorState implements Mutable, Closeable {
-    final DirectUtf8Sink sink = new DirectUtf8Sink(4096);
+    final DirectUtf8Sink sink;
 
-    PreferencesProcessorState() {
+    PreferencesProcessorState(int size) {
+        sink = new DirectUtf8Sink(size);
     }
 
     @Override

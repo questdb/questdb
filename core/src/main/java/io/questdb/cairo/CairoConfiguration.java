@@ -372,6 +372,10 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
+    int getPreferencesParserCacheSizeLimit();
+
+    int getPreferencesStringPoolCapacity();
+
     int getQueryCacheEventQueueCapacity();
 
     int getQueryRegistryPoolSize();

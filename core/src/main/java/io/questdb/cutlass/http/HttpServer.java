@@ -200,7 +200,7 @@ public class HttpServer implements Closeable {
 
         final PreferencesProcessor preferencesProcessor = new PreferencesProcessor(
                 cairoEngine,
-                httpServerConfiguration.getJsonQueryProcessorConfiguration()
+                httpServerConfiguration
         );
         server.bind(new HttpRequestProcessorFactory() {
             @Override

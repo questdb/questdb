@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpContentListener;
 import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.json.JsonException;
@@ -46,8 +47,7 @@ import io.questdb.std.str.Utf8String;
 
 import java.io.Closeable;
 
-import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
-import static java.net.HttpURLConnection.HTTP_OK;
+import static java.net.HttpURLConnection.*;
 
 public class PreferencesProcessor implements HttpRequestProcessor, HttpContentListener, Closeable {
     private static final Log LOG = LogFactory.getLog(PreferencesProcessor.class);
@@ -57,6 +57,7 @@ public class PreferencesProcessor implements HttpRequestProcessor, HttpContentLi
     private static final LocalValue<PreferencesProcessorState> LV = new LocalValue<>();
     private static final Utf8String URL_PARAM_MODE = new Utf8String("mode");
     private static final Utf8String URL_PARAM_VERSION = new Utf8String("version");
+    private final HttpFullFatServerConfiguration configuration;
     private final PreferencesStore preferencesStore;
     private final byte requiredAuthType;
     private PreferencesStore.Mode mode;
@@ -64,9 +65,10 @@ public class PreferencesProcessor implements HttpRequestProcessor, HttpContentLi
     private PreferencesProcessorState transientState;
     private long version;
 
-    public PreferencesProcessor(CairoEngine engine, JsonQueryProcessorConfiguration configuration) {
+    public PreferencesProcessor(CairoEngine engine, HttpFullFatServerConfiguration httpServerConfiguration) {
+        configuration = httpServerConfiguration;
         preferencesStore = engine.getPreferencesStore();
-        requiredAuthType = configuration.getRequiredAuthType();
+        requiredAuthType = configuration.getJsonQueryProcessorConfiguration().getRequiredAuthType();
     }
 
     @Override
@@ -100,7 +102,7 @@ public class PreferencesProcessor implements HttpRequestProcessor, HttpContentLi
         transientState = LV.get(context);
         if (transientState == null) {
             LOG.debug().$("new config state").$();
-            LV.set(context, transientState = new PreferencesProcessorState());
+            LV.set(context, transientState = new PreferencesProcessorState(configuration.getRecvBufferSize()));
         }
 
         mode = PreferencesStore.Mode.of(context.getRequestHeader().getUrlParam(URL_PARAM_MODE));
@@ -115,14 +117,17 @@ public class PreferencesProcessor implements HttpRequestProcessor, HttpContentLi
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        context.getSecurityContext().authorizeSystemAdmin();
-
         try {
+            context.getSecurityContext().authorizeSystemAdmin();
+
             preferencesStore.save(transientState.sink, mode, version);
             sendOk();
-        } catch (JsonException | CairoException | CairoError e) {
+        } catch (JsonException | CairoError e) {
             LOG.error().$("error while saving config").$((Throwable) e).$();
             sendErr(e.getFlyweightMessage());
+        } catch (CairoException e) {
+            LOG.error().$("error while saving config").$((Throwable) e).$();
+            sendErr(e.isAuthorizationError() ? HTTP_UNAUTHORIZED : HTTP_BAD_REQUEST, e.getFlyweightMessage());
         }
         transientState.clear();
     }
@@ -138,11 +143,15 @@ public class PreferencesProcessor implements HttpRequestProcessor, HttpContentLi
         context.resumeResponseSend();
     }
 
+    private void sendErr(int statusCode, CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        transientContext.simpleResponse().sendStatusJsonContent(statusCode, message);
+    }
+
     private void sendErr(CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        transientContext.simpleResponse().sendStatusJsonContent(HTTP_BAD_REQUEST, message);
+        sendErr(HTTP_BAD_REQUEST, message);
     }
 
     private void sendOk() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        transientContext.simpleResponse().sendStatusNoContent(HTTP_OK);
+        transientContext.simpleResponse().sendStatusJsonContent(HTTP_OK, "");
     }
 }

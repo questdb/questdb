@@ -627,6 +627,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPreferencesParserCacheSizeLimit() {
+        return getDelegate().getPreferencesParserCacheSizeLimit();
+    }
+
+    @Override
+    public int getPreferencesStringPoolCapacity() {
+        return getDelegate().getPreferencesStringPoolCapacity();
+    }
+
+    @Override
     public int getQueryCacheEventQueueCapacity() {
         return getDelegate().getQueryCacheEventQueueCapacity();
     }
