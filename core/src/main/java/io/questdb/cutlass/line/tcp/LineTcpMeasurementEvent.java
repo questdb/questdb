@@ -33,6 +33,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.log.Log;
@@ -576,10 +577,11 @@ class LineTcpMeasurementEvent implements Closeable {
                     break;
                 }
                 case LineTcpParser.ENTITY_TYPE_ARRAY:
-                    if (!ColumnType.isArray(colType)) {
-                        throw castError(tud.getTableNameUtf16(), "ND_ARRAY", colType, entity.getName());
+                    BorrowedArray array = entity.getArray();
+                    if (array.getType() != colType) {
+                        throw castError(tud.getTableNameUtf16(), ColumnType.nameOf(array.getType()), colType, entity.getName());
                     }
-                    offset = buffer.addArray(offset, entity.getArray());
+                    offset = buffer.addArray(offset, array);
                     break;
                 case ENTITY_TYPE_NULL:
                     offset = buffer.addNull(offset);
