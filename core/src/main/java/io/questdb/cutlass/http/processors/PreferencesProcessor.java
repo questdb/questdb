@@ -115,8 +115,6 @@ public class PreferencesProcessor implements HttpRequestProcessor, HttpContentLi
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        // TODO: authorization, for now system admins can set config
-        //   can be changed to a specific permission later
         context.getSecurityContext().authorizeSystemAdmin();
 
         try {
