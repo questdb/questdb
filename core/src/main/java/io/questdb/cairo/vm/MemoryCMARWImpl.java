@@ -335,7 +335,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     private void extend0(long newSize) {
-        System.err.println("extending to " + newSize);
         long nPages = (newSize >>> extendSegmentMsb) + 1;
         newSize = nPages << extendSegmentMsb;
         long offset = appendAddress - pageAddress;

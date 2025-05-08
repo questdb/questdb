@@ -61,8 +61,6 @@ public class WalEventReader implements Closeable {
     }
 
     public WalEventCursor of(Path path, long segmentTxn) {
-        System.err.println("WalEventReader.of :: (A) path = " + path + ", segment txn = " + segmentTxn);
-
         // The reader needs to deal with:
         //   * _event and _event.i truncation.
         //   * mmap-written data which has not persisted to disk and appears as zeros when read back.
@@ -84,11 +82,7 @@ public class WalEventReader implements Closeable {
                     -1
             );
 
-            System.err.println("WalEventReader.of :: (B)");
-
             if (segmentTxn > -1) {
-                System.err.println("WalEventReader.of :: (C)");
-
                 final int maxTxn = eventMem.getInt(WALE_MAX_TXN_OFFSET_32);
                 if (maxTxn < -1) {
                     final int errno = 0;
@@ -106,8 +100,6 @@ public class WalEventReader implements Closeable {
                 // N.B. `+ 2` same as above.
                 final long minEventIndexMapSize = (segmentTxn + 2L) * Long.BYTES;
 
-                System.err.println("WalEventReader.of :: (D) fullEventIndexMapSize = " + fullEventIndexMapSize + ", minEventIndexMapSize = " + minEventIndexMapSize);
-
                 try {
                     eventIndexMem.of(
                             ff,
@@ -118,9 +110,12 @@ public class WalEventReader implements Closeable {
                             CairoConfiguration.O_NONE,
                             Files.POSIX_MADV_RANDOM
                     );
-                    System.err.println("WalEventReader.of :: (E)");
                 } catch (CairoException _couldNotMapToMaxTxn) {
-                    System.err.println("WalEventReader.of :: (F)");
+                    // Windows-only code:
+                    // Mapping outside the file range is possible on non-windows platform.
+                    // If data is accessed, however, it would fail.
+                    // On windows, we'd observe an exception, for best effort we retry the mapping.
+                    // See `testWalEventReaderMaxTxnTooLarge`.
                     eventIndexMem.of(
                             ff,
                             path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(),
@@ -130,10 +125,7 @@ public class WalEventReader implements Closeable {
                             CairoConfiguration.O_NONE,
                             Files.POSIX_MADV_RANDOM
                     );
-                    System.err.println("WalEventReader.of :: (G)");
                 }
-
-                System.err.println("WalEventReader.of :: (H)");
 
                 try {
                     // The offset to the start of the record in `_event` pointed to by `segmentTxn`.
@@ -141,9 +133,6 @@ public class WalEventReader implements Closeable {
 
                     // The `_event` file length, as determined by the `maxTxn` value in the `_event` header.
                     long size = readNonNegativeLong(eventIndexMem, (maxTxn + 1L) * Long.BYTES);
-
-                    System.err.println("WalEventReader.of :: (I) offset = " + offset);
-                    System.err.println("WalEventReader.of :: (I2) size = " + size);
 
                     // N.B.
                     // The `_event` file starts with a header. If we're reading a section of the file that was grown
@@ -156,8 +145,6 @@ public class WalEventReader implements Closeable {
                     // The offset for the `segmentTxn` points to valid data,
                     // but the `maxTxn`-calculated `size` is nonsensical.
                     if (offset >= WALE_HEADER_SIZE && size < WALE_HEADER_SIZE + Integer.BYTES) {
-                        System.err.println("WalEventReader.of :: (J)");
-
                         // We curtail the `_event` size to just what we strictly need.
                         size = readNonNegativeLong(eventIndexMem, (segmentTxn + 1L) * Long.BYTES);
                     }
@@ -165,7 +152,6 @@ public class WalEventReader implements Closeable {
                     // Case 2: Data is corrupt or was never flushed and is all zeros.
                     // The `+ Integer.BYTES` here is to include the len-prefix of each `_event` entry.
                     if (offset < WALE_HEADER_SIZE || size < WALE_HEADER_SIZE + Integer.BYTES || offset >= size) {
-                        System.err.println("WalEventReader.of :: (K)");
                         final int errno = offset < 0 || size < 0 ? ff.errno() : 0;
                         final long fileSize = ff.length(eventMem.getFd());
 
@@ -186,8 +172,6 @@ public class WalEventReader implements Closeable {
                     // We rely on this second entry to determine that we're done reading.
                     // As such, we need this extra `+ Integer.BYTES` here, or we would not be able to read it.
                     final long eventMapSize = size + Integer.BYTES;
-
-                    System.err.println("WalEventReader.of :: (L) eventMapSize = " + eventMapSize);
                     eventMem.extend(eventMapSize);
                     eventCursor.openOffset(offset);
                 } finally {
@@ -218,7 +202,6 @@ public class WalEventReader implements Closeable {
      * Read a non-negative long at the specified offset, or return -1 if out of bounds.
      */
     private static long readNonNegativeLong(MemoryCMR eventIndexMem, long offset) {
-        System.err.println("WalEventReader.readNonNegativeLong :: (A) offset = " + offset + ", size = " + eventIndexMem.size());
         if ((offset < 0) || ((offset + Long.BYTES) > eventIndexMem.size())) {
             return -1;
         }

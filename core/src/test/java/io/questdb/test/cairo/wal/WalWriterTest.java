@@ -3775,16 +3775,9 @@ public class WalWriterTest extends AbstractCairoTest {
             row.putInt(0, 1);
             row.append();
 
-            System.err.println("testWalEventReaderMaxTxnTooLarge :: (A)");
-
             walWriter.commit();
-
-            System.err.println("testWalEventReaderMaxTxnTooLarge :: (B)");
-
             walWriter.close();
             engine.releaseInactive();
-
-            System.err.println("testWalEventReaderMaxTxnTooLarge :: (C)");
 
             final int newMaxTxn = 200000;
             try (
@@ -3835,35 +3828,22 @@ public class WalWriterTest extends AbstractCairoTest {
                             // Extend the file with 0 content to simulate unflushed pages.
                             eventIndexMem.putLong((newMaxTxn + 1) * Long.BYTES, 0);
 
-                            System.err.println("testWalEventReaderMaxTxnTooLarge :: (D) eventIndexMem.size: " + eventIndexMem.size());
-
                             // Don't truncate!
                             eventIndexMem.close(false);
                         }
 
                         final long newWaleIndexSize = engine.getConfiguration().getFilesFacade().length(waleIndexPath.$());
                         Assert.assertTrue(newWaleIndexSize >= (newMaxTxn + 2) * Long.BYTES);
-
-                        System.err.println("testWalEventReaderMaxTxnTooLarge :: (D2) newWaleIndexSize: " + newWaleIndexSize);
                     }
                 }
-
-                System.err.println("testWalEventReaderMaxTxnTooLarge :: (E)");
             }
 
-            System.err.println("testWalEventReaderMaxTxnTooLarge :: (F)");
-
-            System.err.println("testWalEventReaderMaxTxnTooLarge :: (G)");
             drainWalQueue();
-
-            System.err.println("testWalEventReaderMaxTxnTooLarge :: (H)");
 
             assertSql(
                     "a\tb\tts\n" +
                             "1\t\t1970-01-01T00:00:00.000000Z\n", tableName
             );
-
-            System.err.println("testWalEventReaderMaxTxnTooLarge :: (I)");
         });
     }
 
