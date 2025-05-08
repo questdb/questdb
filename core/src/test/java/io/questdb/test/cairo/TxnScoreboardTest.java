@@ -98,6 +98,32 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBitmapIndexEdgeCase() throws Exception {
+        Assume.assumeTrue(version == 2);
+        TestUtils.assertMemoryLeak(() -> {
+            for (int i = 127; i < 130; i++) {
+                try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(i)) {
+                    for (int j = 1; j < 88; j++) {
+                        scoreboard.acquireTxn(i - j, i * j);
+                        Assert.assertFalse(scoreboard.isTxnAvailable(i * j));
+                        Assert.assertEquals(1, scoreboard.getActiveReaderCount(i * j));
+                        Assert.assertFalse(scoreboard.isRangeAvailable(i * j, i * (j + 1)));
+                    }
+                    Assert.assertEquals(i, getMin(scoreboard));
+                    for (int j = 1; j < 88; j++) {
+                        scoreboard.releaseTxn(i - j, i * j);
+                        Assert.assertEquals(0, scoreboard.getActiveReaderCount(i * j));
+                        Assert.assertTrue(scoreboard.isTxnAvailable(i * j));
+                        Assert.assertTrue(scoreboard.isRangeAvailable(i * j, i * (j + 1)));
+                    }
+
+                    Assert.assertEquals(-1, getMin(scoreboard));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCannotLockTwice() throws Exception {
         Assume.assumeTrue(version == 2);
         TestUtils.assertMemoryLeak(() -> {

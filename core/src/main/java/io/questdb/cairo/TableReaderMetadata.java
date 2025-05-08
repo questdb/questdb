@@ -51,6 +51,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private boolean isCopy;
     private boolean isSoftLink;
+    private int matViewRefreshLimitHoursOrMonths;
     private int maxUncommittedRows;
     private MemoryCARW metaCopyMem; // used when loadFrom() called
     private MemoryMR metaMem;
@@ -151,6 +152,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
+    }
+
+    @Override
+    public int getMatViewRefreshLimitHoursOrMonths() {
+        return matViewRefreshLimitHoursOrMonths;
     }
 
     @Override
@@ -297,6 +303,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.metadataVersion = mem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = mem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(mem);
+        this.matViewRefreshLimitHoursOrMonths = TableUtils.getMatViewRefreshLimitHoursOrMonths(mem);
         this.columnMetadata.clear();
         this.timestampIndex = -1;
 
@@ -362,6 +369,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
+        this.matViewRefreshLimitHoursOrMonths = TableUtils.getMatViewRefreshLimitHoursOrMonths(metaMem);
 
         int shiftLeft = 0, existingIndex = 0;
         buildWriterOrderMap(metaMem, columnCount);

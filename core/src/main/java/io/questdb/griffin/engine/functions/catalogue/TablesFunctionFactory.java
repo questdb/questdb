@@ -64,6 +64,35 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int TTL_VALUE_COLUMN = 9;
     private static final int WAL_ENABLED_COLUMN = 6;
 
+    public static String getTtlUnit(int ttl) {
+        if (ttl == 0) {
+            return "HOUR";
+        }
+        if (ttl < 0) {
+            return -ttl % 12 != 0 ? "MONTH" : "YEAR";
+        }
+        if (ttl % 24 != 0) {
+            return "HOUR";
+        }
+        ttl /= 24;
+        return ttl % 7 != 0 ? "DAY" : "WEEK";
+    }
+
+    public static int getTtlValue(int ttl) {
+        if (ttl == 0) {
+            return 0;
+        }
+        if (ttl > 0) {
+            if (ttl % 24 != 0) {
+                return ttl;
+            }
+            ttl /= 24;
+            return (ttl % 7 == 0) ? (ttl / 7) : ttl;
+        }
+        ttl = -ttl;
+        return (ttl % 12 == 0) ? (ttl / 12) : ttl;
+    }
+
     @Override
     public String getSignature() {
         return "tables()";
@@ -233,35 +262,6 @@ public class TablesFunctionFactory implements FunctionFactory {
                 @Override
                 public int getStrLen(int col) {
                     return TableUtils.lengthOf(getStrA(col));
-                }
-
-                private String getTtlUnit(int ttl) {
-                    if (ttl == 0) {
-                        return "HOUR";
-                    }
-                    if (ttl < 0) {
-                        return -ttl % 12 != 0 ? "MONTH" : "YEAR";
-                    }
-                    if (ttl % 24 != 0) {
-                        return "HOUR";
-                    }
-                    ttl /= 24;
-                    return ttl % 7 != 0 ? "DAY" : "WEEK";
-                }
-
-                private int getTtlValue(int ttl) {
-                    if (ttl == 0) {
-                        return 0;
-                    }
-                    if (ttl > 0) {
-                        if (ttl % 24 != 0) {
-                            return ttl;
-                        }
-                        ttl /= 24;
-                        return (ttl % 7 == 0) ? (ttl / 7) : ttl;
-                    }
-                    ttl = -ttl;
-                    return (ttl % 12 == 0) ? (ttl / 12) : ttl;
                 }
 
                 private void of(CairoTable table) {

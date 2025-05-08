@@ -236,6 +236,15 @@ public class AlterOperationBuilder implements Mutable {
         extraStrInfo.add(newName);
     }
 
+    public AlterOperationBuilder ofSetMatViewRefreshLimit(int matViewNamePosition, TableToken matViewToken, int tableId, int limitHoursOrMonths) {
+        this.command = SET_MAT_VIEW_REFRESH_LIMIT;
+        this.tableNamePosition = matViewNamePosition;
+        this.tableToken = matViewToken;
+        this.extraInfo.add(limitHoursOrMonths);
+        this.tableId = tableId;
+        return this;
+    }
+
     public AlterOperationBuilder ofSetO3MaxLag(int tableNamePosition, TableToken tableToken, int tableId, long o3MaxLag) {
         this.command = SET_PARAM_COMMIT_LAG;
         this.tableNamePosition = tableNamePosition;
@@ -254,8 +263,8 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
-    public AlterOperationBuilder ofSetTtlHoursOrMonths(int tableNamePosition, TableToken tableToken, int tableId, int ttlHoursOrMonths) {
-        this.command = SET_TTL_HOURS_OR_MONTHS;
+    public AlterOperationBuilder ofSetTtl(int tableNamePosition, TableToken tableToken, int tableId, int ttlHoursOrMonths) {
+        this.command = SET_TTL;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.extraInfo.add(ttlHoursOrMonths);
