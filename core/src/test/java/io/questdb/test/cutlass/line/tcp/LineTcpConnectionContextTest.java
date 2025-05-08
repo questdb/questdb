@@ -1845,7 +1845,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             closeContext();
 
             // with this line we are testing that mmap size is calculated correctly even in case of fileSize=pageSize
-            (new TableReader(configuration, engine.verifyTableName(table))).close();
+            newOffPoolReader(configuration, table, engine).close();
         });
     }
 

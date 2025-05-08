@@ -169,8 +169,8 @@ public class SqlParser {
         CharSequence tok;
         int valuePos = lexer.getPosition();
         tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "missing argument, should be TTL <number> <unit> or <number_with_unit>");
+        if (tok == null || Chars.equals(tok, ';')) {
+            throw SqlException.$(lexer.getPosition(), "missing argument, should be <number> <unit> or <number_with_unit>");
         }
         int tokLength = tok.length();
         int unit = -1;
@@ -184,15 +184,10 @@ public class SqlParser {
                 try {
                     Numbers.parseLong(tok, 0, tokLength - 1);
                 } catch (NumericException e) {
-                    throw SqlException.$(
-                            valuePos,
-                            "invalid argument, should be TTL <number> <unit> or <number_with_unit>"
-                    );
+                    throw SqlException.$(valuePos, "invalid argument, should be <number> <unit> or <number_with_unit>");
                 }
-                throw SqlException.$(
-                        valuePos + tokLength - 1,
-                        "invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was '"
-                ).put(unitChar).put('\'');
+                throw SqlException.$(valuePos + tokLength - 1, "invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was '")
+                        .put(unitChar).put('\'');
             }
         }
         // at this point, unit == -1 means the syntax wasn't of the "1H" form, it can still be of the "1 HOUR" form
@@ -200,32 +195,23 @@ public class SqlParser {
         try {
             long ttlLong = unit == -1 ? Numbers.parseLong(tok) : Numbers.parseLong(tok, 0, tokLength - 1);
             if (ttlLong > Integer.MAX_VALUE || ttlLong < 0) {
-                throw SqlException.$(valuePos, "TTL value out of range: ").put(ttlLong)
+                throw SqlException.$(valuePos, "value out of range: ").put(ttlLong)
                         .put(". Max value: ").put(Integer.MAX_VALUE);
             }
             ttlValue = (int) ttlLong;
         } catch (NumericException e) {
-            throw SqlException.$(
-                    valuePos,
-                    "invalid syntax, should be TTL <number> <unit> but was TTL "
-            ).put(tok);
+            throw SqlException.$(valuePos, "invalid syntax, should be <number> <unit> but was ").put(tok);
         }
         if (unit == -1) {
             unitPos = lexer.getPosition();
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null) {
-                throw SqlException.$(
-                        unitPos,
-                        "missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected"
-                );
+                throw SqlException.$(unitPos, "missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected");
             }
             unit = PartitionBy.ttlUnitFromString(tok, 0, tok.length());
         }
         if (unit == -1) {
-            throw SqlException.$(
-                            unitPos,
-                            "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '"
-                    )
+            throw SqlException.$(unitPos, "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '")
                     .put(tok).put('\'');
         }
         return Timestamps.toHoursOrMonths(ttlValue, unit, valuePos);
@@ -948,6 +934,10 @@ public class SqlParser {
             mvOpBuilder.setBaseTableName(baseTableNameStr);
 
             // Basic validation - check all nested models that read from the base table for window functions, unions, FROM-TO, or FILL.
+            if (!isTableQueried(queryModel, baseTableNameStr)) {
+                throw SqlException.position(queryModel.getModelPosition())
+                        .put("base table is not referenced in materialized view query: ").put(baseTableName);
+            }
             validateMatViewQuery(queryModel, baseTableNameStr);
 
             final QueryModel nestedModel = queryModel.getNestedModel();
@@ -975,7 +965,7 @@ public class SqlParser {
                 return mvOpBuilder;
             }
         } else {
-            throw SqlException.position(lexer.getPosition()).put("'as' expected");
+            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
         }
 
         // Optional clauses that go after the parentheses.
@@ -1010,8 +1000,8 @@ public class SqlParser {
         }
 
         if (tok != null && isTtlKeyword(tok)) {
-            int ttlValuePos = lexer.getPosition();
-            int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
+            final int ttlValuePos = lexer.getPosition();
+            final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
             if (partitionBy != -1) {
                 PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
             }
@@ -1170,8 +1160,8 @@ public class SqlParser {
             tok = optTok(lexer);
 
             if (tok != null && isTtlKeyword(tok)) {
-                int ttlValuePos = lexer.getPosition();
-                int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
+                final int ttlValuePos = lexer.getPosition();
+                final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
                 PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
                 builder.setTtlHoursOrMonths(ttlHoursOrMonths);
                 tok = optTok(lexer);
@@ -2261,6 +2251,80 @@ public class SqlParser {
         parseTableName(lexer, model);
     }
 
+    private void parseHints(GenericLexer lexer, QueryModel model) {
+        CharSequence hintToken = null;
+        boolean parsingParams = false;
+        CharSequence hintKey = null;
+        CharacterStoreEntry hintValuesEntry = null;
+        boolean error = false;
+        while ((hintToken = SqlUtil.fetchNextHintToken(lexer)) != null) {
+            if (error) {
+                // if in error state, just consume the rest of hints, but ignore them
+                // since in error state we cannot reliably parse them
+                continue;
+            }
+
+            if (Chars.equals(hintToken, '(')) {
+                if (parsingParams) {
+                    // hints cannot be nested
+                    error = true;
+                    continue;
+                }
+                if (hintKey == null) {
+                    // missing key
+                    error = true;
+                    continue;
+                }
+                parsingParams = true;
+                continue;
+            }
+
+            if (Chars.equals(hintToken, ')')) {
+                if (!parsingParams) {
+                    // unexpected closing parenthesis
+                    error = true;
+                    continue;
+                }
+                if (hintValuesEntry == null) {
+                    // store last parameter-less hint, e.g. KEY()
+                    model.addHint(hintKey, null);
+                } else {
+                    // ok, there are some parameters
+                    model.addHint(hintKey, hintValuesEntry.toImmutable());
+                    hintValuesEntry = null;
+                }
+                hintKey = null;
+                parsingParams = false;
+                continue;
+            }
+
+            if (parsingParams) {
+                if (hintValuesEntry == null) {
+                    // store first parameter
+                    hintValuesEntry = characterStore.newEntry();
+                } else {
+                    hintValuesEntry.put(SqlHints.HINTS_PARAMS_DELIMITER);
+                }
+                hintValuesEntry.put(GenericLexer.unquote(hintToken));
+                continue;
+            }
+
+            if (hintKey != null) {
+                // store previous parameter-less hint
+                model.addHint(hintKey, null);
+            }
+            CharacterStoreEntry entry = characterStore.newEntry();
+            entry.put(hintToken);
+            hintKey = entry.toImmutable();
+        }
+        if (!error && !parsingParams && hintKey != null) {
+            // store the last parameter-less hint
+            // why only when not parsingParams? dangling parsingParams indicates a syntax error and in this case
+            // we don't want to store the hint
+            model.addHint(hintKey, null);
+        }
+    }
+
     private void parseInVolume(GenericLexer lexer, CreateTableOperationBuilderImpl tableOpBuilder) throws SqlException {
         int volumeKwPos = lexer.getPosition();
         expectTok(lexer, "volume");
@@ -2585,7 +2649,16 @@ public class SqlParser {
     }
 
     private void parseSelectClause(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
-        CharSequence tok = tok(lexer, "[distinct] column");
+        int pos = lexer.getPosition();
+        CharSequence tok = SqlUtil.fetchNext(lexer, true);
+        if (tok == null || (subQueryMode && Chars.equals(tok, ')') && !overClauseMode)) {
+            throw SqlException.position(pos).put("[distinct] column expected");
+        }
+
+        if (Chars.equals(tok, "/*+")) {
+            parseHints(lexer, model);
+            tok = tok(lexer, "[distinct] column");
+        }
 
         ExpressionNode expr;
         if (isDistinctKeyword(tok)) {
@@ -2776,7 +2849,7 @@ public class SqlParser {
                                 } else if (isPrecedingKeyword(tok)) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "integer expression expected");
                                 } else {
-                                    int pos = lexer.lastTokenPosition();
+                                    pos = lexer.lastTokenPosition();
                                     lexer.unparseLast();
                                     winCol.setRowsLoExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
@@ -2820,7 +2893,7 @@ public class SqlParser {
                                     } else if (isPrecedingKeyword(tok) || isFollowingKeyword(tok)) {
                                         throw SqlException.$(lexer.lastTokenPosition(), "integer expression expected");
                                     } else {
-                                        int pos = lexer.lastTokenPosition();
+                                        pos = lexer.lastTokenPosition();
                                         lexer.unparseLast();
                                         winCol.setRowsHiExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                         if (framingMode == WindowColumn.FRAMING_RANGE) {
@@ -2850,7 +2923,7 @@ public class SqlParser {
                             } else {
                                 // If you omit BETWEEN and specify only one end point, then QuestDB considers it the
                                 // start point, and the end point defaults to the current row.
-                                int pos = lexer.lastTokenPosition();
+                                pos = lexer.lastTokenPosition();
                                 if (isUnboundedPreceding(lexer, tok)) {
                                     winCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
                                 } else if (isCurrentRow(lexer, tok)) {

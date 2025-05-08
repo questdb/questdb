@@ -206,6 +206,20 @@ public class SqlUtil {
      * @return with next valid token or null if end of input is reached .
      */
     public static CharSequence fetchNext(GenericLexer lexer) throws SqlException {
+        return fetchNext(lexer, false);
+    }
+
+    /**
+     * Fetches next non-whitespace token that's not part of single or multiline comment.
+     *
+     * @param lexer        The input lexer containing the token stream to process
+     * @param includeHints If true, hint block markers (/*+) are treated as valid tokens and returned;
+     *                     if false, hint blocks are treated as comments and skipped
+     * @return The next meaningful token as a CharSequence, or null if the end of input is reached
+     * @throws SqlException If a parsing error occurs while processing the token stream
+     * @see #fetchNextHintToken(GenericLexer) For handling tokens within hint blocks
+     */
+    public static CharSequence fetchNext(GenericLexer lexer, boolean includeHints) throws SqlException {
         int blockCount = 0;
         boolean lineComment = false;
         while (lexer.hasNext()) {
@@ -228,6 +242,11 @@ public class SqlUtil {
                 continue;
             }
 
+            if (Chars.equals("/*+", cs) && (!includeHints || blockCount > 0)) {
+                blockCount++;
+                continue;
+            }
+
             if (Chars.equals("*/", cs) && blockCount > 0) {
                 blockCount--;
                 continue;
@@ -239,6 +258,79 @@ public class SqlUtil {
                     throw SqlException.$(lexer.lastTokenPosition(), "unclosed quotation mark");
                 }
                 return cs;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Fetches the next non-whitespace, non-comment hint token from the lexer.
+     * <p>
+     * This method should only be called after entering a hint block. Specifically,
+     * a previous call to {@link #fetchNext(GenericLexer, boolean)} must have returned
+     * a hint start token (<code>/*+</code>) before this method can be used.
+     * <p>
+     * The method processes the input stream, skipping over any nested comments and whitespace,
+     * and returns the next meaningful hint token. This allows for clean parsing of hint
+     * content without manual handling of comments and formatting characters.
+     * <p>
+     * When the end of the hint block is reached, the method returns null, indicating
+     * no more hint tokens are available for processing.
+     * <p>
+     * If a hint contains unbalanced quotes, the method will NOT throw an exception, instead
+     * it will consume all tokens until the end of the hint block is reached and then return null indicating
+     * the end of the hint block.
+     *
+     * @param lexer The input lexer containing the token stream to process
+     * @return The next meaningful hint token, or null if the end of the hint block is reached
+     * @see #fetchNext(GenericLexer, boolean) For entering the hint block initially
+     */
+    public static CharSequence fetchNextHintToken(GenericLexer lexer) {
+        int blockCount = 0;
+        boolean lineComment = false;
+        boolean inError = false;
+        while (lexer.hasNext()) {
+            CharSequence cs = lexer.next();
+
+            if (lineComment) {
+                if (Chars.equals(cs, '\n') || Chars.equals(cs, '\r')) {
+                    lineComment = false;
+                }
+                continue;
+            }
+
+            if (Chars.equals("--", cs)) {
+                lineComment = true;
+                continue;
+            }
+
+            if (Chars.equals("/*", cs)) {
+                blockCount++;
+                continue;
+            }
+
+            if (Chars.equals("/*+", cs)) {
+                // nested hints are treated as regular comments
+                blockCount++;
+                continue;
+            }
+
+            // end of hints or a nested comment
+            if (Chars.equals("*/", cs)) {
+                if (blockCount > 0) {
+                    blockCount--;
+                    continue;
+                }
+                return null;
+            }
+
+            if (!inError && blockCount == 0 && GenericLexer.WHITESPACE.excludes(cs)) {
+                // unclosed quote check
+                if (cs.length() == 1 && cs.charAt(0) == '"') {
+                    inError = true;
+                } else {
+                    return cs;
+                }
             }
         }
         return null;

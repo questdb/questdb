@@ -136,7 +136,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             drainWalQueue();
             fuzzer.checkNoSuspendedTables();
 
-            runRefreshJobAndDrainWalQueue();
+            drainWalAndMatViewQueues();
             fuzzer.checkNoSuspendedTables();
 
             for (int i = 0; i < tableCount; i++) {
@@ -144,7 +144,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 final String mvName = testTableName + "_" + i + "_mv";
 
                 execute("refresh materialized view '" + mvName + "' full;");
-                runRefreshJobAndDrainWalQueue();
+                drainWalAndMatViewQueues();
 
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
                 assertSql(
@@ -312,13 +312,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         execute("create materialized view " + mvName + " as (" + viewSql + ") partition by DAY");
     }
 
-    private static void runRefreshJobAndDrainWalQueue() {
-        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-            refreshJob.run(0);
-            drainWalQueue();
-        }
-    }
-
     private ObjList<FuzzTransaction> createTransactionsAndMv(Rnd rnd, String tableNameBase, String matViewName, String viewSql) throws SqlException, NumericException {
         fuzzer.createInitialTable(tableNameBase, true);
         createMatView(viewSql, matViewName);
@@ -367,7 +360,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         drainWalQueue();
         fuzzer.checkNoSuspendedTables();
 
-        runRefreshJobAndDrainWalQueue();
+        drainWalAndMatViewQueues();
         fuzzer.checkNoSuspendedTables();
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -457,7 +450,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                             // Run one final time before stopping
                             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                                 do {
-                                    drainWalQueue(walApplyJob);
+                                    drainWalQueue(walApplyJob, engine);
                                 } while (refreshJob.run(workerId));
                             }
                         }

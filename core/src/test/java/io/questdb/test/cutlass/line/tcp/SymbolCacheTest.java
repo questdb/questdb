@@ -201,7 +201,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
         final String tableName = "tb1";
         final FilesFacade ff = new TestFilesFacadeImpl();
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (Path path = new Path();
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration(configuration) {
                      @Override
@@ -382,7 +382,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
         final String symbolPrefix = "аз_съм_грут";
         final FilesFacade ff = new FilesFacadeImpl();
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (Path path = new Path();
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration(configuration) {
                      @Override
@@ -445,7 +445,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
     public void testSimpleInteraction() throws Exception {
         String tableName = "tb1";
         FilesFacade ff = new TestFilesFacadeImpl();
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (Path path = new Path();
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration(configuration) {
                      @Override
@@ -605,7 +605,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
     public void testSymbolCountNonZeroWatermark() throws Exception {
         String tableName = "tb1";
         FilesFacade ff = new TestFilesFacadeImpl();
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (Path path = new Path();
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration(configuration) {
                      @Override
@@ -688,7 +688,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
     public void testSymbolCountZeroWatermark() throws Exception {
         String tableName = "tb1";
         FilesFacade ff = new TestFilesFacadeImpl();
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (Path path = new Path();
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration(configuration) {
                      @Override
@@ -779,6 +779,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
     private static class TestTableWriterAPI implements TableWriterAPI {
 
+        private final static TableToken emptyTableToken = new TableToken("", "", 0, false, false, false);
         private final int watermark;
 
         public TestTableWriterAPI() {
@@ -831,8 +832,8 @@ public class SymbolCacheTest extends AbstractCairoTest {
         }
 
         @Override
-        public TableToken getTableToken() {
-            return null;
+        public @NotNull TableToken getTableToken() {
+            return emptyTableToken;
         }
 
         @Override

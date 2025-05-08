@@ -367,7 +367,7 @@ public class WalWriter implements TableWriterAPI {
         return symbolMapReaders.getQuick(columnIndex);
     }
 
-    public TableToken getTableToken() {
+    public @NotNull TableToken getTableToken() {
         return tableToken;
     }
 

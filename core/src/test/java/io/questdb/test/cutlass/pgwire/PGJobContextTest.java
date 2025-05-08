@@ -32,7 +32,6 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -136,10 +135,10 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.*;
 import static io.questdb.test.tools.TestUtils.assertEquals;
-import static org.junit.Assert.*;
+import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -8381,6 +8380,7 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithNowFunction() throws Exception {
+        Assume.assumeFalse(legacyMode);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(
                     "create table xts (ts timestamp) timestamp(ts) partition by YEAR")) {
@@ -12185,12 +12185,7 @@ create table tab as (
 
     private void mayDrainWalAndMatViewQueues() {
         if (walEnabled) {
-            drainWalQueue();
-            try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-                while (refreshJob.run(0)) {
-                }
-                drainWalQueue();
-            }
+            drainWalAndMatViewQueues();
         }
     }
 

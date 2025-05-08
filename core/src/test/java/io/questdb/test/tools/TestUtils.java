@@ -735,6 +735,49 @@ public final class TestUtils {
         }
     }
 
+    /**
+     * Asserts that a {@code CharSequence} does NOT contain another {@code CharSequence}.
+     *
+     * @param sequence the {@code CharSequence} to check.
+     * @param term     the {@code CharSequence} to search for (and assert its absence).
+     * @see #assertNotContains(String, CharSequence, CharSequence)
+     */
+    public static void assertNotContains(CharSequence sequence, CharSequence term) {
+        assertNotContains(null, sequence, term);
+    }
+
+    /**
+     * Asserts that a {@code CharSequence} does NOT contain another {@code CharSequence}.
+     * <p>
+     * Fails if the {@code term} is empty (""), because the convention established by
+     * {@link #assertContains(String, CharSequence, CharSequence)} considers an empty
+     * term to be contained within any sequence.
+     * </p>
+     *
+     * @param message  the identifying message for the {@link AssertionError} (<code>null</code> okay)
+     * @param sequence the {@code CharSequence} to check.
+     * @param term     the {@code CharSequence} to search for (and assert its absence).
+     */
+    public static void assertNotContains(String message, CharSequence sequence, CharSequence term) {
+        if (term.length() == 0) {
+            String formatted = "";
+            if (message != null) {
+                formatted = message + " ";
+            }
+            Assert.fail(formatted + "Cannot assert that sequence does not contain an empty term; an empty term is always considered contained by definition.");
+        }
+
+        if (!Chars.contains(sequence, term)) {
+            return;
+        }
+
+        String formatted = "";
+        if (message != null) {
+            formatted = message + " ";
+        }
+        Assert.fail(formatted + "Expected sequence <" + sequence + "> to NOT contain term <" + term + "> but it did.");
+    }
+
     public static void assertReader(CharSequence expected, TableReader reader, MutableUtf16Sink sink) {
         try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
             assertCursor(expected, cursor, reader.getMetadata(), true, sink);

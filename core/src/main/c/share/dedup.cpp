@@ -907,6 +907,8 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndexManyAddresses(
     auto segment_bytes = read_segment_bytes(indexFormat);
     auto dedup_key_count = (int32_t) dedupKeyCount;
     auto format = read_format(indexFormat);
+    auto reverse_index_bytes = read_reverse_index_format_bytes(indexFormat);
+    auto index_count = read_row_count(indexFormat);
 
     if (format != dedup_index_format) {
         return merge_index_format(-1, 0, 0, 0);
@@ -923,9 +925,8 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndexManyAddresses(
             src_keys
     );
 
-    auto reverse_index_bytes = read_reverse_index_format_bytes(indexFormat);
     if (dedup_row_count == no_timestamp_duplicates) {
-        return merge_index_format(dedup_row_count, reverse_index_bytes, segment_bytes, shuffle_index_format);
+        return merge_index_format(index_count, reverse_index_bytes, segment_bytes, shuffle_index_format);
     }
     return merge_index_format(dedup_row_count, reverse_index_bytes, segment_bytes, dedup_shuffle_index_format);
 }

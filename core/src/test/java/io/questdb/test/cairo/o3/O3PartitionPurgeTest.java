@@ -55,24 +55,48 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
+@RunWith(Parameterized.class)
 public class O3PartitionPurgeTest extends AbstractCairoTest {
+    private static int SCOREBOARD_FORMAT = 1;
     private static O3PartitionPurgeJob purgeJob;
 
-    @BeforeClass
-    public static void begin() {
-        purgeJob = new O3PartitionPurgeJob(engine, 1);
+    public O3PartitionPurgeTest(int version) throws Exception {
+        if (version != SCOREBOARD_FORMAT) {
+            SCOREBOARD_FORMAT = version;
+            tearDownStatic();
+            setUpStatic();
+        }
     }
 
     @AfterClass
     public static void end() {
         purgeJob = Misc.free(purgeJob);
+    }
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, SCOREBOARD_FORMAT);
+        AbstractCairoTest.setUpStatic();
+        purgeJob = new O3PartitionPurgeJob(engine, 1);
+    }
+
+    @Parameterized.Parameters(name = "V{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {1},
+                {2},
+        });
     }
 
     @Test
@@ -83,7 +107,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             // OOO insert
             execute("insert into tbl select 4, '1970-01-10T09'");
 
-            // This should lock partition 1970-01-10.1 from being deleted from disk
+            // This should lock partition 1970-01-10.1 from being deleted from the disk
             try (TableReader rdr = getReader("tbl")) {
 
                 try (TableReader rdr2 = getReader("tbl")) {
@@ -126,7 +150,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
             final CyclicBarrier barrier = new CyclicBarrier(3);
             AtomicInteger done = new AtomicInteger();
-            // Open a reader so that writer will not delete partitions easily
+            // Open a reader so that the writer will not delete partitions easily
             ObjList<TableReader> readers = new ObjList<>(tableCount);
             try {
                 for (int i = 0; i < tableCount; i++) {
@@ -189,11 +213,48 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointDoesNotBlockPurge() throws Exception {
+        Assume.assumeTrue(SCOREBOARD_FORMAT == 2 && Os.type != Os.WINDOWS);
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+
+                execute("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
+
+                path.concat(engine.getConfiguration().getDbRoot()).concat(engine.verifyTableName("tbl")).concat("1970-01-10");
+                int len = path.size();
+
+                // OOO insert
+                execute("insert into tbl select 4, '1970-01-10T09'");
+
+                // This should lock partition 1970-01-10.1 from being deleted from the disk
+                engine.checkpointCreate(sqlExecutionContext);
+                runPartitionPurgeJobs();
+                testPartitionExist(path, len, true, false, false);
+
+                // OOO insert
+                execute("insert into tbl select 2, '1970-01-10T09'");
+                runPartitionPurgeJobs();
+                testPartitionExist(path, len, true, true, false);
+
+                // OOO insert
+                execute("insert into tbl select 4, '1970-01-10T08'");
+                runPartitionPurgeJobs();
+                testPartitionExist(path, len, true, false, true);
+
+                engine.checkpointRelease();
+                runPartitionPurgeJobs();
+                testPartitionExist(path, len, false, false, true);
+            }
+        });
+    }
+
+    @Test
     public void testInvalidFolderNames() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
 
-            // This should lock partition 1970-01-10.1 from being deleted from disk
+            // This should lock partition 1970-01-10.1 from being deleted from the disk
             try (TableReader ignored = getReader("tbl")) {
                 // OOO insert
                 execute("insert into tbl select 4, '1970-01-10T09'");
@@ -352,7 +413,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             // in order insert
             execute("insert into " + tableName + " select 2, '1970-01-10T11'");
 
-            // This should lock partition 1970-01-10.1 from being deleted from disk
+            // This should lock partition 1970-01-10.1 from being deleted from the disk
             try (TableReader rdr = getReader(tableName)) {
                 // OOO insert
                 execute("insert into " + tableName + " select 4, '1970-01-10T09'");
@@ -429,7 +490,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
             Path path = Path.getThreadLocal("");
 
-            // This should lock partition 1970-01-10.1 from being deleted from disk
+            // This should lock partition 1970-01-10.1 from being deleted from the disk
             try (TableReader rdr = getReader("tbl")) {
                 // OOO insert
                 execute("insert into tbl select 4, '2022-02-24T19'");
@@ -516,7 +577,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
             execute("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
 
-            // This should lock partition 1970-01-10.1 from being deleted from disk
+            // This should lock partition 1970-01-10.1 from being deleted from the disk
             try (TableReader ignored = getReader("tbl")) {
                 // OOO insert
                 execute("insert into tbl select 4, '1970-01-10T09'");
@@ -553,7 +614,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
             execute("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
 
-            // This should lock partition 1970-01-10.1 from being deleted from disk
+            // This should lock partition 1970-01-10.1 from being deleted from the disk
             try (TableReader ignored = getReader("tbl")) {
                 // OOO insert
                 execute("insert into tbl select 4, '1970-01-10T09'");
@@ -588,7 +649,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             // OOO insert
             execute("insert into tbl select 4, '1970-01-10T09'");
 
-            // This should lock partition 1970-01-10.1 from being deleted from disk
+            // This should lock partition 1970-01-10.1 from being deleted from the disk
             try (TableReader rdr = getReader("tbl")) {
 
                 // in order insert
@@ -644,7 +705,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                         Assert.assertTrue(e.getMessage().contains("failed and will be rolled back"));
                     }
                     execute("insert into tbl select 4, '1970-01-09T10'");
-                    // Close this reader so that purge job is potentially able to delete partition version .0
+                    // Close this reader so that the purge job is potentially able to delete the partition version '.0'
                 }
 
                 try (TableReader rdr = getReader("tbl")) {
@@ -673,7 +734,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
 
-            // This should lock partition 1970-01-10.1 to not do delete in writer
+            // This should lock partition 1970-01-10.1 to not do delete in the writer
             try (TableReader ignored = getReader("tbl")) {
                 // OOO insert
                 execute("insert into tbl select 4, '1970-01-10T09'");
@@ -682,14 +743,14 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             engine.releaseInactive();
             execute("drop table tbl");
 
-            // Main assert here is that job runs without exceptions
+            // The main assertion here is that job runs without exceptions
             runPartitionPurgeJobs();
         });
     }
 
     @Test
     public void testTableRecreatedInBeforePartitionDirDelete() throws Exception {
-        //Windows sometimes fails to drop the table on CI and it's not easily reproducible locally
+        //Windows sometimes fails to drop the table on CI, and it's not easily reproducible locally
         Assume.assumeFalse(Os.isWindows());
         AtomicBoolean dropTable = new AtomicBoolean();
         Thread recreateTable = new Thread(() -> {
@@ -719,7 +780,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             execute("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
 
-            // This should lock partition 1970-01-10.1 to not do delete in writer
+            // This should lock partition 1970-01-10.1 to not do delete in the writer
             try (TableReader rdr = getReader("tbl")) {
                 rdr.openPartition(0);
 
@@ -739,7 +800,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
     @Test
     public void testTableRecreatedViaRenameInBeforePartitionDirDelete() throws Exception {
-        //Windows sometimes fails to drop the table on CI and it's not easily reproducible locally
+        //Windows sometimes fails to drop the table on CI, and it's not easily reproducible locally
         Assume.assumeFalse(Os.isWindows());
         AtomicBoolean dropTable = new AtomicBoolean();
         Thread recreateTable = new Thread(() -> {
@@ -769,7 +830,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             execute("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
 
-            // This should lock partition 1970-01-10.1 to not do delete in writer
+            // This should lock partition 1970-01-10.1 to not do delete in the writer
             try (TableReader rdr = getReader("tbl")) {
                 rdr.openPartition(0);
 
@@ -787,7 +848,6 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             }
         });
     }
-
 
     @Test
     public void testTableWriterDeletePartitionWhenNoReadersOpen() throws Exception {
@@ -886,8 +946,15 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
         });
     }
 
+    private static void testPartitionExist(Path path, int len, boolean... existence) {
+        for (int i = 0, n = existence.length; i < n; i++) {
+            path.trimTo(len).put(".").put(Integer.toString(i + 1)).concat("x.d").$();
+            Assert.assertEquals(Utf8s.toString(path), existence[i], Files.exists(path.$()));
+        }
+    }
+
     private void runPartitionPurgeJobs() {
-        // when reader is returned to pool it remains in open state
+        // when the reader is returned to pool, it remains in open state
         // holding files such that purge fails with access violation
         engine.releaseInactive();
         purgeJob.drain(0);

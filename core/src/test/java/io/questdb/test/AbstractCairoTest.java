@@ -26,6 +26,7 @@ package io.questdb.test;
 
 import io.questdb.FactoryProvider;
 import io.questdb.MessageBus;
+import io.questdb.ParanoiaState;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -38,6 +39,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -54,7 +56,6 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -135,6 +136,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
+@SuppressWarnings("ClassEscapesDefinedScope")
 public abstract class AbstractCairoTest extends AbstractTest {
 
     public static final int DEFAULT_SPIN_LOCK_TIMEOUT = 5000;
@@ -231,7 +233,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         cursor.toTop();
         testStringsLong256AndBinary(metadata, cursor);
 
-        // test API where same record is being updated by cursor
+        // test API where the same record is being updated by cursor
         cursor.toTop();
         Record record = cursor.getRecord();
         Assert.assertNotNull(record);
@@ -288,7 +290,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
             TestUtils.assertEquals(expected, sink);
 
-            // test that absolute positioning of record does not affect state of record cursor
+            // test that absolute positioning of record does not affect the state of record cursor
             if (rows.size() > 0) {
                 sink.clear();
 
@@ -299,7 +301,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     TestUtils.println(record, metadata, sink);
                 }
 
-                // no obliterate record with absolute positioning
+                // no obliterated record with absolute positioning
                 for (int i = 0, n = rows.size(); i < n; i++) {
                     cursor.recordAt(factRec, rows.getQuick(i));
                 }
@@ -349,7 +351,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                                 Assert.assertEquals(TableUtils.NULL_LEN, record.getStrLen(i));
                             } else {
                                 if (a instanceof AbstractCharSequence) {
-                                    // AbstractCharSequence are usually mutable. We cannot have same mutable instance for A and B
+                                    // AbstractCharSequence are usually mutable. We cannot have a same mutable instance for A and B
                                     Assert.assertNotSame(a, b);
                                 }
                                 TestUtils.assertEquals(a, b);
@@ -405,7 +407,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     //ignores:
     // o3, mmap - because they're usually linked with table readers that are kept in pool
-    // join map memory - because it's usually a small and can't really be released until factory is closed
+    // join map memory - because it's usually a small and can't really be released until the factory is closed
     // native sample by long list - because it doesn't seem to grow beyond initial size (10kb)
     public static long getMemUsedByFactories() {
         long memUsed = 0;
@@ -478,7 +480,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         // it is necessary to initialise logger before tests start
-        // logger doesn't relinquish memory until JVM stops
+        // logger doesn't relinquish memory until JVM stops,
         // which causes memory leak detector to fail should logger be
         // created mid-test
         AbstractTest.setUpStatic();
@@ -546,7 +548,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
         sqlExecutionContext.setParallelReadParquetEnabled(configuration.isSqlParallelReadParquetEnabled());
         // 30% chance to enable paranoia checking FD mode
-        Files.PARANOIA_FD_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
+        ParanoiaState.FD_PARANOIA_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
         engine.getMetrics().clear();
         engine.getMatViewStateStore().clear();
     }
@@ -673,7 +675,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                             Assert.assertEquals(s.length(), record.getStrLen(i));
                             CharSequence b = record.getStrB(i);
                             if (b instanceof AbstractCharSequence) {
-                                // AbstractCharSequence are usually mutable. We cannot have same mutable instance for A and B
+                                // AbstractCharSequence are usually mutable. We cannot have a same mutable instance for A and B
                                 Assert.assertNotSame("Expected string instances to be different for getStr and getStrB", s, b);
                             }
                         } else {
@@ -737,7 +739,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                         originalSymbolTables.add(cursor.getSymbolTable(columnIndex));
                     }
 
-                    // take snapshot of symbol tables
+                    // take a snapshot of symbol tables
                     // multiple passes over the same cursor, if not very efficient, we
                     // can swap loops around
                     int sumOfMax = 0;
@@ -768,7 +770,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                         clonedSymbolTables.add(tab);
                     }
 
-                    // Now start two threads, one will be using normal symbol table
+                    // Now start two threads, one will be using normal symbol table,
                     // another will be using a clone. Threads will randomly check that
                     // symbol table is able to convert keys to values without problems
 
@@ -1104,7 +1106,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     /**
-     * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
+     * expectedTimestamp can either be an exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
     protected static void assertQuery(
             CharSequence expected,
@@ -1181,7 +1183,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     /**
-     * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
+     * expectedTimestamp can either be an exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
     protected static void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertQuery(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, expectSize, false);
@@ -1192,7 +1194,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     /**
-     * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
+     * expectedTimestamp can either be an exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
     protected static void assertQueryNoLeakCheck(
             CharSequence expected,
@@ -1251,14 +1253,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     /**
-     * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
+     * expectedTimestamp can either be an exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
     protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory) throws SqlException {
         assertTimestamp(expectedTimestamp, factory, sqlExecutionContext);
     }
 
     /**
-     * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
+     * expectedTimestamp can either be an exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
     protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (expectedTimestamp == null || expectedTimestamp.length() == 0) {
@@ -1336,42 +1338,36 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return false;  // Could not obtain lock.
     }
 
+    protected static MatViewRefreshJob createMatViewRefreshJob() {
+        return createMatViewRefreshJob(engine);
+    }
+
     protected static TableToken createTable(TableModel model) {
         return TestUtils.createTable(engine, model);
     }
 
     protected static ApplyWal2TableJob createWalApplyJob(QuestDBTestNode node) {
-        return new ApplyWal2TableJob(node.getEngine(), 1, 1);
+        return createWalApplyJob(node.getEngine());
     }
 
     protected static ApplyWal2TableJob createWalApplyJob() {
-        return new ApplyWal2TableJob(engine, 1, 1);
+        return createWalApplyJob(engine);
+    }
+
+    protected static void drainWalAndMatViewQueues() {
+        drainWalAndMatViewQueues(engine);
     }
 
     protected static void drainWalQueue(QuestDBTestNode node) {
-        try (ApplyWal2TableJob walApplyJob = createWalApplyJob(node)) {
-            drainWalQueue(walApplyJob, node.getEngine());
-        }
+        drainWalQueue(node.getEngine());
     }
 
     protected static void drainWalQueue(ApplyWal2TableJob walApplyJob) {
         drainWalQueue(walApplyJob, engine);
     }
 
-    protected static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
-        CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-        //noinspection StatementWithEmptyBody
-        while (walApplyJob.run(0)) ;
-        if (checkWalTransactionsJob.run(0)) {
-            //noinspection StatementWithEmptyBody
-            while (walApplyJob.run(0)) ;
-        }
-    }
-
     protected static void drainWalQueue() {
-        try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-            drainWalQueue(walApplyJob);
-        }
+        drainWalQueue(engine);
     }
 
     protected static void dumpMemoryUsage() {
@@ -1442,10 +1438,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return engine.getWriter(tt, "testing");
     }
 
-    protected static QuestDBTestNode newNode() {
-        return newNode("/Users/alpel/temp/db", true, 2, new Overrides(), getEngineFactory(), getConfigurationFactory());
-    }
-
     protected static QuestDBTestNode newNode(int nodeId) {
         String root = TestUtils.unchecked(() -> temp.newFolder("dbRoot" + nodeId).getAbsolutePath());
         return newNode(root, true, nodeId, new Overrides(), getEngineFactory(), getConfigurationFactory());
@@ -1466,7 +1458,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static TableReader newOffPoolReader(CairoConfiguration configuration, CharSequence tableName) {
-        return new TableReader(configuration, engine.verifyTableName(tableName));
+        return newOffPoolReader(configuration, tableName, engine);
     }
 
     protected static TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName) {
@@ -1559,6 +1551,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         engine.releaseInactive();
         engine.releaseInactiveTableSequencers();
         engine.resetNameRegistryMemory();
+        engine.getTxnScoreboardPool().clear();
         Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
         Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
     }
@@ -1683,7 +1676,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertVariableColumns(factory, executionContext);
     }
 
-    // asserts plan without having to prefix query with 'explain ', specify the fixed output header, etc.
+    // asserts plan without having to prefix a query with 'explain', specify the fixed output header, etc.
     protected void assertPlanNoLeakCheck(CharSequence query, CharSequence expectedPlan) throws SqlException {
         StringSink sink = new StringSink();
         sink.put("EXPLAIN ").put(query);

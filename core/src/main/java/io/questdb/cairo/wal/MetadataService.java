@@ -166,19 +166,27 @@ public interface MetadataService {
 
     void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName);
 
+    /**
+     * Sets the incremental refresh limit for materialized view:
+     * if positive, it's in hours;
+     * if negative, it's in months (and the actual value is positive);
+     * zero means "no refresh limit".
+     */
+    void setMetaMatViewRefreshLimit(int limitHoursOrMonths);
+
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 
     void setMetaO3MaxLag(long o3MaxLagUs);
 
     /**
-     * Sets the time-to-live (TTL) of the data in this table: if positive,
-     * it's in hours; if negative, it's in months (and the actual value is positive).
-     * Zero means "no TTL".
+     * Sets the time-to-live (TTL) of the data in this table:
+     * if positive, it's in hours;
+     * if negative, it's in months (and the actual value is positive);
+     * zero means "no TTL".
      */
-    void setMetaTtlHoursOrMonths(int metaTtlHoursOrMonths);
+    void setMetaTtl(int ttlHoursOrMonths);
 
     void squashPartitions();
 
     void tick();
-
 }
