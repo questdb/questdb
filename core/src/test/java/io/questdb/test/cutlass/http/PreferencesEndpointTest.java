@@ -61,16 +61,13 @@ public class PreferencesEndpointTest extends AbstractBootstrapTest {
             try (final ServerMain serverMain = ServerMain.create(root)) {
                 serverMain.start();
 
+                final PreferencesStore preferencesStore = serverMain.getEngine().getPreferencesStore();
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    savePreferences(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", MERGE, 0L);
+                    savePreferences(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", OVERWRITE, 0L);
+                    assertPreferencesStore(preferencesStore, 1, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}");
+
                     savePreferences(httpClient, "{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}", MERGE, 1L);
-
-                    final PreferencesStore preferencesStore = serverMain.getEngine().getPreferencesStore();
-                    Assert.assertEquals(2, preferencesStore.getVersion());
-
-                    sink.clear();
-                    preferencesStore.populateSettings(sink);
-                    assertEquals("\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}", sink);
+                    assertPreferencesStore(preferencesStore, 2, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}");
 
                     assertSettingsRequest(httpClient, "{" +
                             "\"config\":{" +
@@ -97,23 +94,22 @@ public class PreferencesEndpointTest extends AbstractBootstrapTest {
             try (final ServerMain serverMain = ServerMain.create(root)) {
                 serverMain.start();
 
+                final PreferencesStore preferencesStore = serverMain.getEngine().getPreferencesStore();
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     savePreferences(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", MERGE, 0L);
+                    assertPreferencesStore(preferencesStore, 1, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}");
+
                     savePreferences(httpClient, "{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}", MERGE, 1L);
+                    assertPreferencesStore(preferencesStore, 2, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}");
 
                     // out of date version rejected
                     assertPreferencesRequest(httpClient, "{\"key1\":\"value111\",\"instance_desc\":\"desc222\"}", MERGE, 1L,
                             HTTP_BAD_REQUEST, "preferences view is out of date [currentVersion=2, expectedVersion=1]\r\n");
+                    assertPreferencesStore(preferencesStore, 2, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}");
 
                     // same update based on latest version accepted
                     savePreferences(httpClient, "{\"key1\":\"value111\",\"instance_desc\":\"desc222\"}", MERGE, 2L);
-
-                    final PreferencesStore preferencesStore = serverMain.getEngine().getPreferencesStore();
-                    Assert.assertEquals(3, preferencesStore.getVersion());
-
-                    sink.clear();
-                    preferencesStore.populateSettings(sink);
-                    assertEquals("\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value111\"}", sink);
+                    assertPreferencesStore(preferencesStore, 3, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value111\"}");
 
                     assertSettingsRequest(httpClient, "{" +
                             "\"config\":{" +
@@ -140,15 +136,13 @@ public class PreferencesEndpointTest extends AbstractBootstrapTest {
             try (final ServerMain serverMain = ServerMain.create(root)) {
                 serverMain.start();
 
+                final PreferencesStore preferencesStore = serverMain.getEngine().getPreferencesStore();
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     savePreferences(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", OVERWRITE, 0L);
+                    assertPreferencesStore(preferencesStore, 1, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}");
 
-                    final PreferencesStore preferencesStore = serverMain.getEngine().getPreferencesStore();
-                    Assert.assertEquals(1L, preferencesStore.getVersion());
-
-                    sink.clear();
-                    preferencesStore.populateSettings(sink);
-                    assertEquals("\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", sink);
+                    savePreferences(httpClient, "{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}", OVERWRITE, 1L);
+                    assertPreferencesStore(preferencesStore, 2, "\"preferences\":{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}");
 
                     assertSettingsRequest(httpClient, "{" +
                             "\"config\":{" +
@@ -157,10 +151,10 @@ public class PreferencesEndpointTest extends AbstractBootstrapTest {
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null" +
                             "}," +
-                            "\"preferences.version\":1," +
+                            "\"preferences.version\":2," +
                             "\"preferences\":{" +
-                            "\"instance_name\":\"instance1\"," +
-                            "\"instance_desc\":\"desc1\"" +
+                            "\"key1\":\"value1\"," +
+                            "\"instance_desc\":\"desc222\"" +
                             "}" +
                             "}");
                 }
@@ -193,6 +187,13 @@ public class PreferencesEndpointTest extends AbstractBootstrapTest {
                 .url("/preferences?mode=" + mode.name().toLowerCase() + "&version=" + version)
                 .withContent().put(preferences);
         assertResponse(request, expectedStatusCode, expectedHttpResponse);
+    }
+
+    private void assertPreferencesStore(PreferencesStore preferencesStore, int expectedVersion, String expectedPreferences) {
+        Assert.assertEquals(expectedVersion, preferencesStore.getVersion());
+        sink.clear();
+        preferencesStore.appendToSettingsSink(sink);
+        assertEquals(expectedPreferences, sink);
     }
 
     private void assertSettingsRequest(HttpClient httpClient, String expectedHttpResponse) {

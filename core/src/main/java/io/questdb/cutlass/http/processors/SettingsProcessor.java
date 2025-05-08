@@ -62,18 +62,18 @@ public class SettingsProcessor implements HttpRequestProcessor {
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final Utf8StringSink sink = tlSink.get();
-        sink.clear();
-        sink.putAscii('{');
-        serverConfiguration.appendToSettingsSink(sink);
-        integer(PREFERENCES_VERSION, preferencesStore.getVersion(), sink);
-        preferencesStore.populateSettings(sink);
-        sink.putAscii('}');
+        final Utf8StringSink settings = tlSink.get();
+        settings.clear();
+        settings.putAscii('{');
+        serverConfiguration.appendToSettingsSink(settings);
+        integer(PREFERENCES_VERSION, preferencesStore.getVersion(), settings);
+        preferencesStore.appendToSettingsSink(settings);
+        settings.putAscii('}');
 
         final HttpChunkedResponse r = context.getChunkedResponse();
         r.status(HTTP_OK, CONTENT_TYPE_JSON);
         r.sendHeader();
-        r.put(sink);
+        r.put(settings);
         r.sendChunk(true);
     }
 }

@@ -95,7 +95,7 @@ public class PreferencesStoreConcurrentTest extends AbstractCairoTest {
                             final Utf8StringSink sink = new Utf8StringSink();
                             for (int j = 0; j < numOfReads; j++) {
                                 sink.clear();
-                                preferencesStore.populateSettings(sink);
+                                preferencesStore.appendToSettingsSink(sink);
                                 assertEquals("\"preferences\":{\"key1\":\"value1\",\"key2\":\"value2\",\"key3\":\"value3\"}", sink);
                             }
                         } catch (Throwable th) {

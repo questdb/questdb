@@ -101,7 +101,7 @@ public class PreferencesProcessor implements HttpRequestProcessor, HttpContentLi
         transientContext = context;
         transientState = LV.get(context);
         if (transientState == null) {
-            LOG.debug().$("new config state").$();
+            LOG.debug().$("new preferences state").$();
             LV.set(context, transientState = new PreferencesProcessorState(configuration.getRecvBufferSize()));
         }
 

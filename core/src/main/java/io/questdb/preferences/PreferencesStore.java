@@ -49,6 +49,20 @@ public class PreferencesStore implements Closeable {
         blockFileReader = new BlockFileReader(configuration);
     }
 
+    public synchronized void appendToSettingsSink(Utf8StringSink settings) {
+        settings.putAscii("\"preferences\":{");
+        final ObjList<CharSequence> keys = preferencesMap.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final CharSequence key = keys.getQuick(i);
+            final CharSequence value = preferencesMap.get(key);
+            str(key, value, settings);
+        }
+        if (keys.size() > 0) {
+            settings.clear(settings.size() - 1);
+        }
+        settings.putAscii('}');
+    }
+
     @Override
     public void close() throws IOException {
         Misc.free(preferencesParser);
@@ -66,20 +80,6 @@ public class PreferencesStore implements Closeable {
         if (configuration.getFilesFacade().exists(configPath)) {
             load(configPath, preferencesMap);
         }
-    }
-
-    public synchronized void populateSettings(Utf8StringSink sink) {
-        sink.putAscii("\"preferences\":{");
-        final ObjList<CharSequence> keys = preferencesMap.keys();
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            final CharSequence key = keys.getQuick(i);
-            final CharSequence value = preferencesMap.get(key);
-            str(key, value, sink);
-        }
-        if (keys.size() > 0) {
-            sink.clear(sink.size() - 1);
-        }
-        sink.putAscii('}');
     }
 
     public synchronized void save(DirectUtf8Sink sink, Mode mode, long expectedVersion) throws JsonException {
