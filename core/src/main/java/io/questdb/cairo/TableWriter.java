@@ -5915,10 +5915,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 boolean isFirstPartitionReplaced = isCommitReplaceMode()
                         && partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(txWriter.getMinTimestamp())
                         && partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(timestampMin);
+
                 txWriter.minTimestamp = isFirstPartitionReplaced ? timestampMin : Math.min(timestampMin, txWriter.minTimestamp);
-
-//                txWriter.minTimestamp = Math.min(timestampMin, txWriter.minTimestamp);
-
                 int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
 
                 final long newPartitionTimestamp = partitionTimestamp;
@@ -6007,8 +6005,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     if (isCommitReplaceMode() && srcDataNewPartitionSize == 0) {
                         // Partition data is fully removed by the replace-commit
+                        LOG.info().$("partition is fully removed in range replace [table=").$(tableToken)
+                                .$(", ts=").$ts(partitionTimestamp)
+                                .I$();
                         txWriter.removeAttachedPartitions(partitionTimestamp);
                         partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+
+                        if (partitionTimestamp == lastPartitionTimestamp) {
+                            // Recalculate fixed/transient row count
+                            // Max timestamp is already re-calculated and set in processO3Block
+                            txWriter.finishPartitionSizeUpdate(txWriter.getMinTimestamp(), txWriter.getMaxTimestamp());
+                            commitTransientRowCount = txWriter.transientRowCount;
+                        }
                         txWriter.bumpPartitionTableVersion();
                     } else {
                         final long parquetFileSize = Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES);
@@ -6665,6 +6673,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final O3Basket o3Basket = o3BasketPool.next();
                     o3Basket.checkCapacity(configuration, columnCount, indexCount);
                     AtomicInteger columnCounter = o3ColumnCounters.next();
+
+                    if (isCommitReplaceMode() && srcOooLo > srcOooHi && (srcDataMax == 0 || append)) {
+                        // Noting to insert and replace range does not intersect with existing data
+                        partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
+                        pressureControl.updateInflightPartitions(--inflightPartitions);
+                        continue;
+                    }
 
                     // To collect column top values and partition updates
                     // from o3 partition tasks add them to pre-allocated continuous block of memory
@@ -7942,6 +7957,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txWriter.setLagMinTimestamp(replaceRangeTsLow);
                     txWriter.setLagMaxTimestamp(replaceRangeTsHi);
                     this.dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
+
+                    // Wal column can are lazily mapped to improve performance. It works ok, except in this case
+                    // where access getAddress() calls are concurrent. Map them eagerly now.
+                    segmentFileCache.mmapWalColsEager();
 
                     processWalCommitFinishApply(0, timestampAddr, rowLo, rowHi, pressureControl, false, initialPartitionTimestampHi);
                 } else {

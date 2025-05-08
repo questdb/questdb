@@ -510,7 +510,7 @@ public class TxReader implements Closeable, Mutable {
             long timestamp = getPartitionTimestampByIndex(i / LONGS_PER_TX_ATTACHED_PARTITION);
             long rowCount = attachedPartitions.getQuick(i + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
 
-            if (i / LONGS_PER_TX_ATTACHED_PARTITION == getPartitionIndex(maxTimestamp)) {
+            if (i / LONGS_PER_TX_ATTACHED_PARTITION == getPartitionCount()) {
                 rowCount = transientRowCount;
             }
 

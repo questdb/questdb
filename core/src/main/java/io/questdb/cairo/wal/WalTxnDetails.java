@@ -233,32 +233,34 @@ public class WalTxnDetails implements QuietCloseable {
         long minTs = Long.MAX_VALUE;
         long maxTs = Long.MIN_VALUE;
 
-        for (long nextTxn = seqTxn + 1; nextTxn <= lastSeqTxn; nextTxn++) {
-            long currentWalSegment = getWalSegment(nextTxn);
-            if (allInOrder) {
-                if (currentWalSegment != lastWalSegment) {
-                    if (totalRowCount >= maxBlockRecordCount / 10) {
-                        // Big enough chunk of all in order data in same segment
-                        break;
+        if (getCommitToTimestamp(seqTxn) != FORCE_FULL_COMMIT && getDedupMode(seqTxn) != WAL_DEDUP_MODE_REPLACE_RANGE) {
+            for (long nextTxn = seqTxn + 1; nextTxn <= lastSeqTxn; nextTxn++) {
+                long currentWalSegment = getWalSegment(nextTxn);
+                if (allInOrder) {
+                    if (currentWalSegment != lastWalSegment) {
+                        if (totalRowCount >= maxBlockRecordCount / 10) {
+                            // Big enough chunk of all in order data in same segment
+                            break;
+                        }
+                        allInOrder = false;
+                    } else {
+                        allInOrder = getTxnInOrder(nextTxn) && maxTs <= getMinTimestamp(nextTxn);
+                        minTs = Math.min(minTs, getMinTimestamp(nextTxn));
+                        maxTs = Math.max(maxTs, getMaxTimestamp(nextTxn));
                     }
-                    allInOrder = false;
-                } else {
-                    allInOrder = getTxnInOrder(nextTxn) && maxTs <= getMinTimestamp(nextTxn);
-                    minTs = Math.min(minTs, getMinTimestamp(nextTxn));
-                    maxTs = Math.max(maxTs, getMaxTimestamp(nextTxn));
                 }
-            }
-            totalRowCount += getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
-            lastWalSegment = currentWalSegment;
+                totalRowCount += getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
+                lastWalSegment = currentWalSegment;
 
-            if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT || totalRowCount > maxBlockRecordCount) {
-                break;
+                if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT || totalRowCount > maxBlockRecordCount) {
+                    break;
+                }
+                if (getDedupMode(nextTxn) == WAL_DEDUP_MODE_REPLACE_RANGE) {
+                    // If there is a deduplication mode, we need to commit the transaction one by one
+                    break;
+                }
+                blockSize++;
             }
-            if (getDedupMode(nextTxn) != WAL_DEDUP_MODE_DEFAULT) {
-                // If there is a deduplication mode, we need to commit the transaction one by one
-                break;
-            }
-            blockSize++;
         }
 
         // Find reasonable block size that will not cause O3

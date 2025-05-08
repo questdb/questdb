@@ -29,8 +29,8 @@ import org.junit.Test;
 
 public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
     @Test
-    public void testSimpleDataTransaction() throws Exception {
-        Rnd rnd = generateRandom(LOG, 655127554479625L, 1746541894564L);
+    public void testSimpleDataTransactionBigReplaceProb() throws Exception {
+        Rnd rnd = generateRandom(LOG, 697838209190000L, 1746639279815L);
         setFuzzProbabilities(
                 0.01,
                 0.2,
@@ -49,7 +49,34 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
                 0.9
         );
         setFuzzCounts(
-                rnd.nextBoolean(), 1000, 7,
+                rnd.nextBoolean(), 1000, 100,
+                20, 10, 200, 0, 1
+        );
+        runFuzz(rnd);
+    }
+
+    @Test
+    public void testSimpleDataTransactionSmallReplaceProb() throws Exception {
+        Rnd rnd = generateRandom(LOG, 697866729763875L, 1746639308335L);
+        setFuzzProbabilities(
+                0.01,
+                0.2,
+                0.1,
+                0.01,
+                0.02,
+                0.02,
+                0.08,
+                0,
+                1.0,
+                0.01,
+                0.1,
+                0.01,
+                0.01,
+                0.8,
+                0.15
+        );
+        setFuzzCounts(
+                rnd.nextBoolean(), 1000, 100,
                 20, 10, 200, 0, 1
         );
         runFuzz(rnd);

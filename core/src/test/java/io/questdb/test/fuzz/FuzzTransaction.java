@@ -61,5 +61,6 @@ public class FuzzTransaction {
     public void setReplaceRange(long replaceLoTs, long replaceHiTs) {
         this.replaceLoTs = replaceLoTs;
         this.replaceHiTs = replaceHiTs;
+        waitAllDone = true;
     }
 }

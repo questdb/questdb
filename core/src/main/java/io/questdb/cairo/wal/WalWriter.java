@@ -1363,7 +1363,7 @@ public class WalWriter implements TableWriterAPI {
                     dFile(path.trimTo(pathTrimToLen), columnName),
                     getDataAppendPageSize(),
                     -1,
-                    MemoryTag.MMAP_TABLE_WRITER,
+                    MemoryTag.MMAP_TABLE_WAL_WRITER,
                     configuration.getWriterFileOpenOpts(),
                     Files.POSIX_MADV_RANDOM
             );
@@ -1378,7 +1378,7 @@ public class WalWriter implements TableWriterAPI {
                         auxMem,
                         iFile(path.trimTo(pathTrimToLen), columnName),
                         getDataAppendPageSize(),
-                        MemoryTag.MMAP_TABLE_WRITER,
+                        MemoryTag.MMAP_TABLE_WAL_WRITER,
                         configuration.getWriterFileOpenOpts(),
                         Files.POSIX_MADV_RANDOM
                 );
