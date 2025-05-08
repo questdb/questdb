@@ -1160,12 +1160,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
             engine.reloadTableNames(convertedTables);
 
             drainWalQueue();
-            runWalPurgeJob();
+            drainPurgeJob();
 
             engine.releaseInactive();
 
             drainWalQueue();
-            runWalPurgeJob();
+            drainPurgeJob();
 
             checkTableFilesExist(sysTableName1, "2022-02-24", "sym.d", false);
         });
@@ -1201,12 +1201,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
             pretendNotExist.set(Path.getThreadLocal(root).concat(sysTableName1).toString());
             engine.reloadTableNames();
 
-            runWalPurgeJob();
+            drainPurgeJob();
 
             engine.reloadTableNames();
 
             drainWalQueue();
-            runWalPurgeJob();
+            drainPurgeJob();
 
             checkTableFilesExist(sysTableName1, "2022-02-24", "sym.d", false);
         });
@@ -1243,10 +1243,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
             pretendNotExist.set(Path.getThreadLocal(root).concat(sysTableName1).slash$().toString());
             engine.reloadTableNames();
 
-            runWalPurgeJob();
+            drainPurgeJob();
 
             drainWalQueue();
-            runWalPurgeJob();
+            drainPurgeJob();
 
             checkTableFilesExist(sysTableName1, "2022-02-24", "sym.d", false);
         });
@@ -2164,7 +2164,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             execute("drop table " + tableName + "2");
             engine.releaseInactive();
             drainWalQueue();
-            runWalPurgeJob();
+            drainPurgeJob();
             checkTableFilesExist(sysTableName2, "2022-02-24", "sym.d", false);
 
             // Mark table1 as deleted
@@ -2187,7 +2187,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             engine.releaseInactive();
 
             drainWalQueue();
-            runWalPurgeJob();
+            drainPurgeJob();
 
             checkTableFilesExist(sysTableName1, "2022-02-24", "sym.d", false);
         });
