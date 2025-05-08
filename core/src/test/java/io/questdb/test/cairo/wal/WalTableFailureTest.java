@@ -1316,12 +1316,17 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
         };
         assertMemoryLeak(filesFacade, () -> {
+            assertWalApplyMetrics(0, 0, 0);
+
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
+
+            assertWalApplyMetrics(0, 1, 0);
 
             execute("update " + tableToken.getTableName() + " set x = 11;");
             execute("update " + tableToken.getTableName() + " set x = 111;");
             execute("update " + tableToken.getTableName() + " set x = 1111;");
             drainWalQueue();
+
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertWalApplyMetrics(1, 4, 1);
 
