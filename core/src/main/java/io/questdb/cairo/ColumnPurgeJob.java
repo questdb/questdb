@@ -261,7 +261,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     if (ts != lastTs || task == null) {
                         if (task != null) {
                             if (taskInitialized) {
-                                columnPurgeOperator.purgeExclusive(task);
+                                columnPurgeOperator.purge(task);
                                 taskInitialized = false;
                             }
                         } else {
@@ -303,7 +303,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                 }
                 if (task != null) {
                     if (taskInitialized) {
-                        columnPurgeOperator.purgeExclusive(task);
+                        columnPurgeOperator.purge(task);
                     }
                     taskPool.push(task);
                 }
