@@ -44,8 +44,8 @@ public class TableWriterMetrics implements Mutable {
         this.commitCounter = metricsRegistry.newCounter("commits");
         this.o3CommitCounter = metricsRegistry.newCounter("o3_commits");
         this.committedRowCounter = metricsRegistry.newCounter("committed_rows");
-        this.rollbackCounter = metricsRegistry.newCounter("rollbacks");
         this.physicallyWrittenRowCounter = metricsRegistry.newCounter("physically_written_rows");
+        this.rollbackCounter = metricsRegistry.newCounter("rollbacks");
         this.suspendedTablesGauge = metricsRegistry.newAtomicLongGauge("suspended_tables");
     }
 
@@ -64,6 +64,7 @@ public class TableWriterMetrics implements Mutable {
         o3CommitCounter.reset();
         physicallyWrittenRowCounter.reset();
         rollbackCounter.reset();
+        suspendedTablesGauge.setValue(0);
     }
 
     public void decSuspendedTables() {

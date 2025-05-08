@@ -43,11 +43,11 @@ public class WalMetrics implements Mutable {
 
     public WalMetrics(MetricsRegistry metricsRegistry) {
         this.applyPhysicallyWrittenRowsCounter = metricsRegistry.newCounter("wal_apply_physically_written_rows");
-        this.applyRowsWrittenCounter = metricsRegistry.newCounter("wal_apply_written_rows");
         this.applyRowsWriteRateGauge = metricsRegistry.newLongGauge("wal_apply_rows_per_second");
+        this.applyRowsWrittenCounter = metricsRegistry.newCounter("wal_apply_written_rows");
+        this.rowsWrittenCounter = metricsRegistry.newCounter("wal_written_rows");
         this.seqTxnCounter = metricsRegistry.newCounter("wal_apply_seq_txn");
         this.writerTxnCounter = metricsRegistry.newCounter("wal_apply_writer_txn");
-        this.rowsWrittenCounter = metricsRegistry.newCounter("wal_written_rows");
     }
 
     public void addApplyRowsWritten(long rows, long physicallyWrittenRows, long timeMicros) {
@@ -77,7 +77,9 @@ public class WalMetrics implements Mutable {
         applyRowsWriteRateGauge.setValue(0);
         applyRowsWrittenCounter.reset();
         rowsWrittenCounter.reset();
+        seqTxnCounter.reset();
         totalRowsWritten.set(0);
         totalRowsWrittenTotalTime.set(0);
+        writerTxnCounter.reset();
     }
 }
