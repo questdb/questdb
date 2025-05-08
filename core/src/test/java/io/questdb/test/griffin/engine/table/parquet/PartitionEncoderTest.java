@@ -33,10 +33,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.QuestDBTestNode;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 
@@ -91,26 +89,6 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                 }
             }
         });
-    }
-
-    @Test
-    @Ignore
-    public void testEncodeExternal() {
-        final String root2 = "/Users/alpel/temp/db";
-        final QuestDBTestNode node2 = newNode();
-        nodes.remove(node2);
-
-        try (
-                Path path = new Path();
-                PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
-                TableReader reader = node2.getEngine().getReader("request_logs")
-        ) {
-            path.of(root2).concat("x.parquet").$();
-            long start = System.nanoTime();
-            PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
-            PartitionEncoder.encode(partitionDescriptor, path);
-            LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
-        }
     }
 
     @Test

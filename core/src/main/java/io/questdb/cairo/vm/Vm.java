@@ -38,7 +38,6 @@ import io.questdb.std.str.LPSZ;
 
 public class Vm {
     // Set to true to enable the assertion of pointers and buffer sizes which are too expensive for production.
-    public static final boolean PARANOIA_MODE = false;
     public static final int STRING_LENGTH_BYTES = 4;
     public static final byte TRUNCATE_TO_PAGE = 0;
     public static final byte TRUNCATE_TO_POINTER = 1;

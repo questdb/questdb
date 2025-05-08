@@ -56,6 +56,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -13900,16 +13901,20 @@ public class SampleByTest extends AbstractCairoTest {
                             new Thread(() -> {
                                 TestUtils.await(barrier);
 
-                                final RecordCursorFactory factory = factories[finalI];
-                                while (!writerDone.get()) {
-                                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                        TestUtils.drainCursor(cursor);
-                                    } catch (Throwable e) {
-                                        e.printStackTrace();
-                                        errors.incrementAndGet();
+                                try {
+                                    final RecordCursorFactory factory = factories[finalI];
+                                    while (!writerDone.get()) {
+                                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                            TestUtils.drainCursor(cursor);
+                                        } catch (Throwable e) {
+                                            e.printStackTrace();
+                                            errors.incrementAndGet();
+                                        }
                                     }
+                                    haltLatch.countDown();
+                                } finally {
+                                    Path.clearThreadLocals();
                                 }
-                                haltLatch.countDown();
                             }).start();
                         }
 

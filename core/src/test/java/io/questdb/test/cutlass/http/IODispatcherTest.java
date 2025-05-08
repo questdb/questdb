@@ -40,6 +40,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxnScoreboardPoolFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -161,7 +162,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 import static io.questdb.test.cutlass.http.HttpUtils.urlEncodeQuery;
-import static io.questdb.test.tools.TestUtils.*;
+import static io.questdb.test.tools.TestUtils.assertEventually;
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.assertTrue;
 
 public class IODispatcherTest extends AbstractTest {
@@ -8388,7 +8390,7 @@ public class IODispatcherTest extends AbstractTest {
                                 () -> {
                                     started.countDown();
 
-                                    try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                                    try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
                                         while (queryError.get() == null) {
                                             walApplyJob.drain(0);
                                             new CheckWalTransactionsJob(engine).run(0);
@@ -8533,7 +8535,7 @@ public class IODispatcherTest extends AbstractTest {
                             () -> {
                                 started.countDown();
 
-                                try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                                try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
                                     while (queryError.get() == null) {
                                         walApplyJob.drain(0);
                                         new CheckWalTransactionsJob(engine).run(0);
@@ -8839,7 +8841,7 @@ public class IODispatcherTest extends AbstractTest {
         String dirName = TableUtils.getTableDir(mangleTableDirNames, tableName, 1, false);
         TableToken tableToken = new TableToken(tableName, dirName, 1, false, false, false);
         try (
-                TableReader reader = new TableReader(configuration, tableToken);
+                TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, tableToken, TxnScoreboardPoolFactory.createPool(configuration));
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
         ) {
             cursor.of(reader);
@@ -8859,7 +8861,7 @@ public class IODispatcherTest extends AbstractTest {
         String telemetry = TelemetryTask.TABLE_NAME;
         TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false, false, true);
         try (
-                TableReader reader = new TableReader(configuration, telemetryTableName);
+                TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, telemetryTableName, TxnScoreboardPoolFactory.createPool(configuration));
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
         ) {
             cursor.of(reader);
