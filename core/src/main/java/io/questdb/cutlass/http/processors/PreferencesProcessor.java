@@ -55,7 +55,6 @@ public class PreferencesProcessor implements HttpRequestProcessor, HttpContentLi
     // processor. For different threads to lookup the same value from local value map the key,
     // which is LV, has to be the same between processor instances
     private static final LocalValue<PreferencesProcessorState> LV = new LocalValue<>();
-    private static final Utf8String URL_PARAM_MODE = new Utf8String("mode");
     private static final Utf8String URL_PARAM_VERSION = new Utf8String("version");
     private final HttpFullFatServerConfiguration configuration;
     private final PreferencesStore preferencesStore;
@@ -105,7 +104,7 @@ public class PreferencesProcessor implements HttpRequestProcessor, HttpContentLi
             LV.set(context, transientState = new PreferencesProcessorState(configuration.getRecvBufferSize()));
         }
 
-        mode = PreferencesStore.Mode.of(context.getRequestHeader().getUrlParam(URL_PARAM_MODE));
+        mode = PreferencesStore.Mode.of(context.getRequestHeader().getMethod());
 
         final Utf8Sequence versionStr = context.getRequestHeader().getUrlParam(URL_PARAM_VERSION);
         try {

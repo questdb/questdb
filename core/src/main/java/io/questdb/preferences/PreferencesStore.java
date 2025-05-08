@@ -13,7 +13,6 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
@@ -21,10 +20,10 @@ import java.io.Closeable;
 import java.io.IOException;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
+import static io.questdb.cutlass.http.HttpConstants.METHOD_POST;
+import static io.questdb.cutlass.http.HttpConstants.METHOD_PUT;
 
 public class PreferencesStore implements Closeable {
-    private static final Utf8String MERGE_STR = new Utf8String("merge");
-    private static final Utf8String OVERWRITE_STR = new Utf8String("overwrite");
     private static final String PREFERENCES_FILE_NAME = "_preferences~store";
     private final BlockFileReader blockFileReader;
     private final BlockFileWriter blockFileWriter;
@@ -139,14 +138,14 @@ public class PreferencesStore implements Closeable {
     public enum Mode {
         MERGE, OVERWRITE;
 
-        public static Mode of(DirectUtf8Sequence mode) {
-            if (mode == null || Utf8s.equals(mode, MERGE_STR)) {
-                return MERGE;
-            }
-            if (Utf8s.equals(mode, OVERWRITE_STR)) {
+        public static Mode of(DirectUtf8Sequence method) {
+            if (Utf8s.equalsNcAscii(METHOD_PUT, method)) {
                 return OVERWRITE;
             }
-            throw CairoException.nonCritical().put("Unsupported mode [mode=").put(mode).put(']');
+            if (Utf8s.equalsNcAscii(METHOD_POST, method)) {
+                return MERGE;
+            }
+            throw CairoException.nonCritical().put("Unsupported HTTP method [method=").put(method).put(']');
         }
     }
 }

@@ -183,9 +183,19 @@ public class PreferencesEndpointTest extends AbstractBootstrapTest {
 
     private void assertPreferencesRequest(HttpClient httpClient, String preferences, PreferencesStore.Mode mode, long version, int expectedStatusCode, String expectedHttpResponse) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-        request.POST()
-                .url("/preferences?mode=" + mode.name().toLowerCase() + "&version=" + version)
-                .withContent().put(preferences);
+
+        switch (mode) {
+            case OVERWRITE:
+                request.PUT();
+                break;
+            case MERGE:
+                request.POST();
+                break;
+            default:
+                Assert.fail("Unexpected preferences update mode");
+        }
+
+        request.url("/preferences?version=" + version).withContent().put(preferences);
         assertResponse(request, expectedStatusCode, expectedHttpResponse);
     }
 
