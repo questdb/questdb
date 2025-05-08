@@ -2542,6 +2542,15 @@ public class PropServerConfiguration implements ServerConfiguration {
         };
 
         @Override
+        public void appendToSettingsSink(Utf8StringSink settings) {
+            str(RELEASE_TYPE, getReleaseType(), settings);
+            str(RELEASE_VERSION, getBuildInformation().getSwVersion(), settings);
+            if (!Chars.empty(httpUsername)) {
+                bool(ACL_ENABLED, true, settings);
+            }
+        }
+
+        @Override
         public boolean attachPartitionCopy() {
             return cairoAttachPartitionCopy;
         }
@@ -3797,15 +3806,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean mangleTableDirNames() {
             return false;
-        }
-
-        @Override
-        public void populateSettings(Utf8StringSink sink) {
-            str(RELEASE_TYPE, getReleaseType(), sink);
-            str(RELEASE_VERSION, getBuildInformation().getSwVersion(), sink);
-            if (!Chars.empty(httpUsername)) {
-                bool(ACL_ENABLED, true, sink);
-            }
         }
 
         @Override
@@ -5241,6 +5241,12 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     class PropPublicPassthroughConfiguration implements PublicPassthroughConfiguration {
         @Override
+        public void appendToSettingsSink(Utf8StringSink settings) {
+            bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), isPosthogEnabled(), settings);
+            str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), getPosthogApiKey(), settings);
+        }
+
+        @Override
         public String getPosthogApiKey() {
             return posthogApiKey;
         }
@@ -5248,12 +5254,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isPosthogEnabled() {
             return posthogEnabled;
-        }
-
-        @Override
-        public void populateSettings(Utf8StringSink sink) {
-            bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), isPosthogEnabled(), sink);
-            str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), getPosthogApiKey(), sink);
         }
     }
 

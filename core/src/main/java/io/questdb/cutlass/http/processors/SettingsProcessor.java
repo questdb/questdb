@@ -60,7 +60,7 @@ public class SettingsProcessor implements HttpRequestProcessor {
         final Utf8StringSink sink = tlSink.get();
         sink.clear();
         sink.putAscii('{');
-        serverConfiguration.populateSettings(sink);
+        serverConfiguration.appendToSettingsSink(sink);
         integer(PREFERENCES_VERSION, preferencesStore.getVersion(), sink);
         preferencesStore.populateSettings(sink);
         sink.putAscii('}');

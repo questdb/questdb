@@ -38,6 +38,18 @@ import io.questdb.std.str.Utf8StringSink;
 public interface ServerConfiguration {
     String OSS = "OSS";
 
+    /**
+     * Constructs the config part of settings.
+     * Appends to the settings sink from server configuration in JSON format.
+     */
+    default void appendToSettingsSink(Utf8StringSink settings) {
+        settings.putAscii("\"config\":{");
+        getCairoConfiguration().appendToSettingsSink(settings);
+        getPublicPassthroughConfiguration().appendToSettingsSink(settings);
+        settings.clear(settings.size() - 1);
+        settings.putAscii("},");
+    }
+
     CairoConfiguration getCairoConfiguration();
 
     FactoryProvider getFactoryProvider();
@@ -76,13 +88,5 @@ public interface ServerConfiguration {
     WorkerPoolConfiguration getWorkerPoolConfiguration();
 
     default void init(CairoEngine engine, FreeOnExit freeOnExit) {
-    }
-
-    default void populateSettings(Utf8StringSink sink) {
-        sink.putAscii("\"config\":{");
-        getCairoConfiguration().populateSettings(sink);
-        getPublicPassthroughConfiguration().populateSettings(sink);
-        sink.clear(sink.size() - 1);
-        sink.putAscii("},");
     }
 }

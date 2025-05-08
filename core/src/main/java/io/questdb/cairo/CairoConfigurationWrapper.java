@@ -62,6 +62,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public void appendToSettingsSink(Utf8StringSink settings) {
+        getDelegate().appendToSettingsSink(settings);
+    }
+
+    @Override
     public boolean attachPartitionCopy() {
         return getDelegate().attachPartitionCopy();
     }
@@ -1313,11 +1318,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean mangleTableDirNames() {
         return getDelegate().mangleTableDirNames();
-    }
-
-    @Override
-    public void populateSettings(Utf8StringSink sink) {
-        getDelegate().populateSettings(sink);
     }
 
     public void setDelegate(CairoConfiguration delegate) {

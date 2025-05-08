@@ -64,6 +64,12 @@ public interface CairoConfiguration {
     long O_SYNC = 0x80;
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
+    /**
+     * Appends to the settings sink from cairo configuration in JSON format.
+     */
+    default void appendToSettingsSink(Utf8StringSink settings) {
+    }
+
     boolean attachPartitionCopy();
 
     default boolean disableColumnPurgeJob() {
@@ -732,9 +738,6 @@ public interface CairoConfiguration {
      * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
      */
     boolean mangleTableDirNames();
-
-    default void populateSettings(Utf8StringSink sink) {
-    }
 
     boolean useFastAsOfJoin();
 }
