@@ -24,38 +24,19 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 
-/**
- * Per-table transaction scoreboard. Used as a MVCC building block:
- * table readers acquire a transaction number lock in the scoreboard when
- * going active. This way table writers and purge jobs (GC) can check
- * if files associated with an older transaction can be deleted.
- */
-public interface TxnScoreboard extends QuietCloseable {
-    int CHECKPOINT_ID = -1;
+public interface TxnScoreboardPool extends QuietCloseable, Mutable {
 
-    boolean acquireTxn(int id, long txn);
+    @Override
+    default void close() {
+        clear();
+    }
 
-    int getEntryCount();
+    TxnScoreboard getTxnScoreboard(TableToken token);
 
-    TableToken getTableToken();
+    boolean releaseInactive();
 
-    boolean hasEarlierTxnLocks(long maxTxn);
-
-    /**
-     * Ignores min/max txn values and increments the counter. Must be called only when there is
-     * an active reader that already acquired this txn.
-     * <p>
-     * Used by {@link io.questdb.cairo.pool.ReaderPool#getCopyOf(TableReader)}.
-     */
-    boolean incrementTxn(int id, long txn);
-
-    boolean isOutdated(long txn);
-
-    boolean isRangeAvailable(long fromTxn, long toTxn);
-
-    boolean isTxnAvailable(long txn);
-
-    long releaseTxn(int id, long txn);
+    void remove(TableToken token);
 }

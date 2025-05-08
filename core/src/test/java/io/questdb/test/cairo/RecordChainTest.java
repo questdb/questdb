@@ -46,7 +46,7 @@ public class RecordChainTest extends AbstractCairoTest {
 
     @Test
     public void testClear() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CreateTableTestUtils.createTestTable(10000, new Rnd(), new TestRecord.ArrayBinarySequence());
             try (TableReader reader = newOffPoolReader(configuration, "x")) {
                 entityColumnFilter.of(reader.getColumnCount());
@@ -66,7 +66,7 @@ public class RecordChainTest extends AbstractCairoTest {
 
     @Test
     public void testPseudoRandomAccess() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 10000;
             CreateTableTestUtils.createTestTable(N, new Rnd(), new TestRecord.ArrayBinarySequence());
             try (
@@ -195,7 +195,7 @@ public class RecordChainTest extends AbstractCairoTest {
 
     @Test
     public void testWriteAndRead() throws Exception {
-        TestUtils.assertMemoryLeak(
+        assertMemoryLeak(
                 () -> {
                     final int N = 10000 * 2;
                     CreateTableTestUtils.createTestTable(N, new Rnd(), new TestRecord.ArrayBinarySequence());
@@ -321,11 +321,11 @@ public class RecordChainTest extends AbstractCairoTest {
     }
 
     private void testChainReuseWithClearFunction(ClearFunc clear) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 10000;
             Rnd rnd = new Rnd();
 
-            // in a spirit of using only what's available in this package
+            // in the spirit of using only what's available in this package
             // we create temporary table the hard way
 
             CreateTableTestUtils.createTestTable(N, rnd, new TestRecord.ArrayBinarySequence());
