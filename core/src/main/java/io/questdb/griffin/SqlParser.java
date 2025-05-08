@@ -79,6 +79,7 @@ public class SqlParser {
     private static final RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
+    private static final IntList tableNamePositions = new IntList();
     private static final LowerCaseCharSequenceHashSet tableNames = new LowerCaseCharSequenceHashSet();
     private final IntList accumulatedColumnPositions = new IntList();
     private final ObjList<QueryColumn> accumulatedColumns = new ObjList<>();
@@ -168,8 +169,8 @@ public class SqlParser {
         CharSequence tok;
         int valuePos = lexer.getPosition();
         tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "missing argument, should be TTL <number> <unit> or <number_with_unit>");
+        if (tok == null || Chars.equals(tok, ';')) {
+            throw SqlException.$(lexer.getPosition(), "missing argument, should be <number> <unit> or <number_with_unit>");
         }
         int tokLength = tok.length();
         int unit = -1;
@@ -183,15 +184,10 @@ public class SqlParser {
                 try {
                     Numbers.parseLong(tok, 0, tokLength - 1);
                 } catch (NumericException e) {
-                    throw SqlException.$(
-                            valuePos,
-                            "invalid argument, should be TTL <number> <unit> or <number_with_unit>"
-                    );
+                    throw SqlException.$(valuePos, "invalid argument, should be <number> <unit> or <number_with_unit>");
                 }
-                throw SqlException.$(
-                        valuePos + tokLength - 1,
-                        "invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was '"
-                ).put(unitChar).put('\'');
+                throw SqlException.$(valuePos + tokLength - 1, "invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was '")
+                        .put(unitChar).put('\'');
             }
         }
         // at this point, unit == -1 means the syntax wasn't of the "1H" form, it can still be of the "1 HOUR" form
@@ -199,32 +195,23 @@ public class SqlParser {
         try {
             long ttlLong = unit == -1 ? Numbers.parseLong(tok) : Numbers.parseLong(tok, 0, tokLength - 1);
             if (ttlLong > Integer.MAX_VALUE || ttlLong < 0) {
-                throw SqlException.$(valuePos, "TTL value out of range: ").put(ttlLong)
+                throw SqlException.$(valuePos, "value out of range: ").put(ttlLong)
                         .put(". Max value: ").put(Integer.MAX_VALUE);
             }
             ttlValue = (int) ttlLong;
         } catch (NumericException e) {
-            throw SqlException.$(
-                    valuePos,
-                    "invalid syntax, should be TTL <number> <unit> but was TTL "
-            ).put(tok);
+            throw SqlException.$(valuePos, "invalid syntax, should be <number> <unit> but was ").put(tok);
         }
         if (unit == -1) {
             unitPos = lexer.getPosition();
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null) {
-                throw SqlException.$(
-                        unitPos,
-                        "missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected"
-                );
+                throw SqlException.$(unitPos, "missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected");
             }
             unit = PartitionBy.ttlUnitFromString(tok, 0, tok.length());
         }
         if (unit == -1) {
-            throw SqlException.$(
-                            unitPos,
-                            "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '"
-                    )
+            throw SqlException.$(unitPos, "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '")
                     .put(tok).put('\'');
         }
         return Timestamps.toHoursOrMonths(ttlValue, unit, valuePos);
@@ -256,12 +243,16 @@ public class SqlParser {
         return visitor.visit(node);
     }
 
-    private static void collectAllTableNames(QueryModel model, LowerCaseCharSequenceHashSet tableNames) {
+    private static void collectAllTableNames(
+            QueryModel model, LowerCaseCharSequenceHashSet outTableNames, IntList outTableNamePositions
+    ) {
         QueryModel m = model;
         do {
             final ExpressionNode tableNameExpr = m.getTableNameExpr();
             if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
-                tableNames.add(unquote(tableNameExpr.token));
+                if (outTableNames.add(unquote(tableNameExpr.token))) {
+                    outTableNamePositions.add(tableNameExpr.position);
+                }
             }
 
             final ObjList<QueryModel> joinModels = m.getJoinModels();
@@ -270,12 +261,12 @@ public class SqlParser {
                 if (joinModel == m) {
                     continue;
                 }
-                collectAllTableNames(joinModel, tableNames);
+                collectAllTableNames(joinModel, outTableNames, outTableNamePositions);
             }
 
             final QueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
-                collectAllTableNames(unionModel, tableNames);
+                collectAllTableNames(unionModel, outTableNames, outTableNamePositions);
             }
 
             m = m.getNestedModel();
@@ -375,7 +366,7 @@ public class SqlParser {
             final boolean baseTableQueried = isTableQueried(m, baseTableName);
             if (baseTableQueried) {
                 if (m.getSampleBy() != null && m.getSampleByOffset() == null) {
-                    throw SqlException.position(m.getSampleBy().position)
+                    throw SqlException.position(m.getSampleBy().position + m.getSampleBy().token.length() + 1)
                             .put("ALIGN TO FIRST OBSERVATION on base table is not supported for materialized views: ").put(baseTableName);
                 }
 
@@ -839,7 +830,7 @@ public class SqlParser {
         final CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized'");
         if (isMaterializedKeyword(tok)) {
             if (!configuration.isMatViewEnabled()) {
-                throw SqlException.$(lexer.lastTokenPosition(), "materialized views are disabled");
+                throw SqlException.$(0, "materialized views are disabled");
             }
             return parseCreateMatView(lexer, executionContext, sqlParserCallback);
         }
@@ -926,14 +917,16 @@ public class SqlParser {
             // Find base table name if not set explicitly.
             if (baseTableName == null) {
                 tableNames.clear();
-                collectAllTableNames(queryModel, tableNames);
+                tableNamePositions.clear();
+                collectAllTableNames(queryModel, tableNames, tableNamePositions);
                 if (tableNames.size() < 1) {
-                    throw SqlException.$(0, "missing base table, materialized views have to be based on a table");
+                    throw SqlException.$(startOfQuery, "missing base table, materialized views have to be based on a table");
                 }
                 if (tableNames.size() > 1) {
-                    throw SqlException.$(0, "more than one table used in query, base table has to be set using 'WITH BASE'");
+                    throw SqlException.$(startOfQuery, "more than one table used in query, base table has to be set using 'WITH BASE'");
                 }
                 baseTableName = Chars.toString(tableNames.getAny());
+                baseTableNamePos = tableNamePositions.getQuick(0);
             }
 
             mvOpBuilder.setBaseTableNamePosition(baseTableNamePos);
@@ -941,6 +934,10 @@ public class SqlParser {
             mvOpBuilder.setBaseTableName(baseTableNameStr);
 
             // Basic validation - check all nested models that read from the base table for window functions, unions, FROM-TO, or FILL.
+            if (!isTableQueried(queryModel, baseTableNameStr)) {
+                throw SqlException.position(queryModel.getModelPosition())
+                        .put("base table is not referenced in materialized view query: ").put(baseTableName);
+            }
             validateMatViewQuery(queryModel, baseTableNameStr);
 
             final QueryModel nestedModel = queryModel.getNestedModel();
@@ -954,7 +951,7 @@ public class SqlParser {
             }
 
             final String matViewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
-            tableOpBuilder.setSelectText(matViewSql);
+            tableOpBuilder.setSelectText(matViewSql, startOfQuery);
             tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only
 
             if (enclosedInParentheses) {
@@ -968,7 +965,7 @@ public class SqlParser {
                 return mvOpBuilder;
             }
         } else {
-            throw SqlException.position(lexer.getPosition()).put("'as' expected");
+            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
         }
 
         // Optional clauses that go after the parentheses.
@@ -996,15 +993,15 @@ public class SqlParser {
                 throw SqlException.$(partitionByExpr.position, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
             }
             if (!PartitionBy.isPartitioned(partitionBy)) {
-                throw SqlException.position(0).put("materialized view has to be partitioned");
+                throw SqlException.position(partitionByExpr.position).put("materialized view has to be partitioned");
             }
             tableOpBuilder.setPartitionByExpr(partitionByExpr);
             tok = optTok(lexer);
         }
 
         if (tok != null && isTtlKeyword(tok)) {
-            int ttlValuePos = lexer.getPosition();
-            int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
+            final int ttlValuePos = lexer.getPosition();
+            final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
             if (partitionBy != -1) {
                 PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
             }
@@ -1014,12 +1011,7 @@ public class SqlParser {
         }
 
         if (tok != null && isInKeyword(tok)) {
-            expectTok(lexer, "volume");
-            tok = tok(lexer, "path for volume");
-            if (Os.isWindows()) {
-                throw SqlException.position(lexer.getPosition()).put("'in volume' is not supported on Windows");
-            }
-            tableOpBuilder.setVolumeAlias(GenericLexer.unquote(tok));
+            parseInVolume(lexer, tableOpBuilder);
             tok = optTok(lexer);
         }
 
@@ -1168,8 +1160,8 @@ public class SqlParser {
             tok = optTok(lexer);
 
             if (tok != null && isTtlKeyword(tok)) {
-                int ttlValuePos = lexer.getPosition();
-                int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
+                final int ttlValuePos = lexer.getPosition();
+                final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
                 PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
                 builder.setTtlHoursOrMonths(ttlHoursOrMonths);
                 tok = optTok(lexer);
@@ -1240,15 +1232,7 @@ public class SqlParser {
         builder.setO3MaxLag(o3MaxLag);
 
         if (tok != null && isInKeyword(tok)) {
-            tok = tok(lexer, "volume");
-            if (!isVolumeKeyword(tok)) {
-                throw SqlException.position(lexer.getPosition()).put("expected 'volume'");
-            }
-            tok = tok(lexer, "path for volume");
-            if (Os.isWindows()) {
-                throw SqlException.position(lexer.getPosition()).put("'in volume' is not supported on Windows");
-            }
-            builder.setVolumeAlias(unquote(tok));
+            parseInVolume(lexer, builder);
             tok = optTok(lexer);
         }
 
@@ -1319,7 +1303,8 @@ public class SqlParser {
         // It'll be compiled and optimized later, at the execution phase.
         final QueryModel selectModel = parseDml(lexer, null, startOfSelect, true, sqlParserCallback, null);
         final int endOfSelect = lexer.getPosition() - 1;
-        createTableOperationBuilder.setSelectText(lexer.getContent().subSequence(startOfSelect, endOfSelect));
+        final String selectText = Chars.toString(lexer.getContent(), startOfSelect, endOfSelect);
+        createTableOperationBuilder.setSelectText(selectText, startOfSelect);
         createTableOperationBuilder.setSelectModel(selectModel); // transient model, for toSink() purposes only
         expectTok(lexer, ')');
     }
@@ -2253,6 +2238,90 @@ public class SqlParser {
         parseTableName(lexer, model);
     }
 
+    private void parseHints(GenericLexer lexer, QueryModel model) {
+        CharSequence hintToken = null;
+        boolean parsingParams = false;
+        CharSequence hintKey = null;
+        CharacterStoreEntry hintValuesEntry = null;
+        boolean error = false;
+        while ((hintToken = SqlUtil.fetchNextHintToken(lexer)) != null) {
+            if (error) {
+                // if in error state, just consume the rest of hints, but ignore them
+                // since in error state we cannot reliably parse them
+                continue;
+            }
+
+            if (Chars.equals(hintToken, '(')) {
+                if (parsingParams) {
+                    // hints cannot be nested
+                    error = true;
+                    continue;
+                }
+                if (hintKey == null) {
+                    // missing key
+                    error = true;
+                    continue;
+                }
+                parsingParams = true;
+                continue;
+            }
+
+            if (Chars.equals(hintToken, ')')) {
+                if (!parsingParams) {
+                    // unexpected closing parenthesis
+                    error = true;
+                    continue;
+                }
+                if (hintValuesEntry == null) {
+                    // store last parameter-less hint, e.g. KEY()
+                    model.addHint(hintKey, null);
+                } else {
+                    // ok, there are some parameters
+                    model.addHint(hintKey, hintValuesEntry.toImmutable());
+                    hintValuesEntry = null;
+                }
+                hintKey = null;
+                parsingParams = false;
+                continue;
+            }
+
+            if (parsingParams) {
+                if (hintValuesEntry == null) {
+                    // store first parameter
+                    hintValuesEntry = characterStore.newEntry();
+                } else {
+                    hintValuesEntry.put(SqlHints.HINTS_PARAMS_DELIMITER);
+                }
+                hintValuesEntry.put(GenericLexer.unquote(hintToken));
+                continue;
+            }
+
+            if (hintKey != null) {
+                // store previous parameter-less hint
+                model.addHint(hintKey, null);
+            }
+            CharacterStoreEntry entry = characterStore.newEntry();
+            entry.put(hintToken);
+            hintKey = entry.toImmutable();
+        }
+        if (!error && !parsingParams && hintKey != null) {
+            // store the last parameter-less hint
+            // why only when not parsingParams? dangling parsingParams indicates a syntax error and in this case
+            // we don't want to store the hint
+            model.addHint(hintKey, null);
+        }
+    }
+
+    private void parseInVolume(GenericLexer lexer, CreateTableOperationBuilderImpl tableOpBuilder) throws SqlException {
+        int volumeKwPos = lexer.getPosition();
+        expectTok(lexer, "volume");
+        CharSequence tok = tok(lexer, "path for volume");
+        if (Os.isWindows()) {
+            throw SqlException.position(volumeKwPos).put("'in volume' is not supported on Windows");
+        }
+        tableOpBuilder.setVolumeAlias(GenericLexer.unquote(tok), lexer.lastTokenPosition());
+    }
+
     private ExecutionModel parseInsert(
             GenericLexer lexer,
             SqlParserCallback sqlParserCallback,
@@ -2567,7 +2636,16 @@ public class SqlParser {
     }
 
     private void parseSelectClause(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
-        CharSequence tok = tok(lexer, "[distinct] column");
+        int pos = lexer.getPosition();
+        CharSequence tok = SqlUtil.fetchNext(lexer, true);
+        if (tok == null || (subQueryMode && Chars.equals(tok, ')') && !overClauseMode)) {
+            throw SqlException.position(pos).put("[distinct] column expected");
+        }
+
+        if (Chars.equals(tok, "/*+")) {
+            parseHints(lexer, model);
+            tok = tok(lexer, "[distinct] column");
+        }
 
         ExpressionNode expr;
         if (isDistinctKeyword(tok)) {
@@ -2758,7 +2836,7 @@ public class SqlParser {
                                 } else if (isPrecedingKeyword(tok)) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "integer expression expected");
                                 } else {
-                                    int pos = lexer.lastTokenPosition();
+                                    pos = lexer.lastTokenPosition();
                                     lexer.unparseLast();
                                     winCol.setRowsLoExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
@@ -2802,7 +2880,7 @@ public class SqlParser {
                                     } else if (isPrecedingKeyword(tok) || isFollowingKeyword(tok)) {
                                         throw SqlException.$(lexer.lastTokenPosition(), "integer expression expected");
                                     } else {
-                                        int pos = lexer.lastTokenPosition();
+                                        pos = lexer.lastTokenPosition();
                                         lexer.unparseLast();
                                         winCol.setRowsHiExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                         if (framingMode == WindowColumn.FRAMING_RANGE) {
@@ -2832,7 +2910,7 @@ public class SqlParser {
                             } else {
                                 // If you omit BETWEEN and specify only one end point, then QuestDB considers it the
                                 // start point, and the end point defaults to the current row.
-                                int pos = lexer.lastTokenPosition();
+                                pos = lexer.lastTokenPosition();
                                 if (isUnboundedPreceding(lexer, tok)) {
                                     winCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
                                 } else if (isCurrentRow(lexer, tok)) {

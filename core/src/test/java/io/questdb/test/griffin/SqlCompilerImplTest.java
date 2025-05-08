@@ -3030,8 +3030,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 if (Os.isWindows()) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported on Windows");
+                    Assert.assertEquals(46, e.getPosition());
                 } else {
                     TestUtils.assertContains(e.getFlyweightMessage(), "volume alias is not allowed [alias=niza]");
+                    Assert.assertEquals(53, e.getPosition());
                 }
             }
         });

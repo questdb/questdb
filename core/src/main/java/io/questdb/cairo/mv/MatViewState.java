@@ -28,7 +28,6 @@ import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopier;
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
@@ -42,8 +41,11 @@ import static io.questdb.TelemetrySystemEvent.*;
 /**
  * Mat view refresh state serves the purpose of synchronizing and coordinating
  * {@link MatViewRefreshJob}s.
+ * <p>
+ * Unlike {@link MatViewStateReader}, it doesn't include invalidation reason
+ * string as that field is not needed for refresh jobs.
  */
-public class MatViewState implements ReadableMatViewState, QuietCloseable {
+public class MatViewState implements QuietCloseable {
     public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE = 1;
     public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
@@ -54,9 +56,9 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
     private RecordCursorFactory cursorFactory;
     private volatile boolean dropped;
     private volatile boolean invalid;
-    private volatile String invalidationReason;
     private volatile long lastRefreshBaseTxn = -1;
-    private volatile long lastRefreshTimestamp = Numbers.LONG_NULL;
+    private volatile long lastRefreshFinishTimestamp = Numbers.LONG_NULL;
+    private volatile long lastRefreshStartTimestamp = Numbers.LONG_NULL;
     private volatile boolean pendingInvalidation;
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
@@ -73,7 +75,7 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
             long lastRefreshTimestamp,
             long lastRefreshBaseTxn,
             boolean invalid,
-            CharSequence invalidationReason,
+            @Nullable CharSequence invalidationReason,
             @NotNull BlockFileWriter writer
     ) {
         final AppendableBlock block = writer.append();
@@ -86,7 +88,7 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
     }
 
     // refreshState can be null, in this case "default" record will be written
-    public static void append(@Nullable ReadableMatViewState refreshState, @NotNull BlockFileWriter writer) {
+    public static void append(@Nullable MatViewStateReader refreshState, @NotNull BlockFileWriter writer) {
         if (refreshState != null) {
             append(
                     refreshState.getLastRefreshTimestamp(),
@@ -110,7 +112,7 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
     public static void appendState(
             long lastRefreshBaseTxn,
             boolean invalid,
-            CharSequence invalidationReason,
+            @Nullable CharSequence invalidationReason,
             @NotNull AppendableBlock block
     ) {
         block.putBool(invalid);
@@ -135,20 +137,16 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
         cursorFactory = Misc.free(cursorFactory);
     }
 
-    @Nullable
-    @Override
-    public String getInvalidationReason() {
-        return invalidationReason;
-    }
-
-    @Override
     public long getLastRefreshBaseTxn() {
         return lastRefreshBaseTxn;
     }
 
-    @Override
-    public long getLastRefreshTimestamp() {
-        return lastRefreshTimestamp;
+    public long getLastRefreshFinishTimestamp() {
+        return lastRefreshFinishTimestamp;
+    }
+
+    public long getLastRefreshStartTimestamp() {
+        return lastRefreshStartTimestamp;
     }
 
     public long getRecordRowCopierMetadataVersion() {
@@ -169,16 +167,14 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
 
     public void initFromReader(MatViewStateReader reader) {
         this.invalid = reader.isInvalid();
-        this.invalidationReason = reader.getInvalidationReason();
         this.lastRefreshBaseTxn = reader.getLastRefreshBaseTxn();
-        this.lastRefreshTimestamp = reader.getLastRefreshTimestamp();
+        this.lastRefreshFinishTimestamp = reader.getLastRefreshTimestamp();
     }
 
     public boolean isDropped() {
         return dropped;
     }
 
-    @Override
     public boolean isInvalid() {
         return invalid;
     }
@@ -196,16 +192,11 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
         telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, null, 0);
     }
 
-    public void markAsInvalid(@Nullable String invalidationReason) {
-        final boolean wasValid = !invalid;
-        final boolean invalidationReasonChanged = Chars.compare(this.invalidationReason, invalidationReason) != 0;
-        if (invalidationReasonChanged) {
-            this.invalidationReason = invalidationReason;
-        }
-        this.invalid = true;
-        if (wasValid || invalidationReasonChanged) {
+    public void markAsInvalid(CharSequence invalidationReason) {
+        if (!invalid) {
             telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, invalidationReason, 0);
         }
+        this.invalid = true;
     }
 
     public void markAsPendingInvalidation() {
@@ -215,12 +206,11 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
     public void markAsValid() {
         this.invalid = false;
         this.pendingInvalidation = false;
-        this.invalidationReason = null;
     }
 
-    public void refreshFail(long refreshTimestamp, String errorMessage) {
+    public void refreshFail(long refreshTimestamp, CharSequence errorMessage) {
         assert latch.get();
-        this.lastRefreshTimestamp = refreshTimestamp;
+        this.lastRefreshFinishTimestamp = refreshTimestamp;
         markAsInvalid(errorMessage);
         telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, errorMessage, 0);
     }
@@ -229,7 +219,7 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
             RecordCursorFactory factory,
             RecordToRowCopier copier,
             long recordRowCopierMetadataVersion,
-            long refreshTimestamp,
+            long refreshFinishedTimestamp,
             long refreshTriggeredTimestamp,
             long baseTableTxn
     ) {
@@ -237,18 +227,26 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
         this.cursorFactory = factory;
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
-        this.lastRefreshTimestamp = refreshTimestamp;
+        this.lastRefreshFinishTimestamp = refreshFinishedTimestamp;
         telemetryFacade.store(
                 MAT_VIEW_REFRESH_SUCCESS,
                 viewDefinition.getMatViewToken(),
                 baseTableTxn,
                 null,
-                refreshTimestamp - refreshTriggeredTimestamp
+                refreshFinishedTimestamp - refreshTriggeredTimestamp
         );
     }
 
     public void setLastRefreshBaseTableTxn(long txn) {
         lastRefreshBaseTxn = txn;
+    }
+
+    public void setLastRefreshStartTimestamp(long ts) {
+        lastRefreshStartTimestamp = ts;
+    }
+
+    public void setLastRefreshTimestamp(long ts) {
+        this.lastRefreshFinishTimestamp = ts;
     }
 
     public void tryCloseIfDropped() {

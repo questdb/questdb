@@ -28,7 +28,6 @@ import io.questdb.std.str.Utf8String;
 
 public final class HttpConstants {
     public static final String CONTENT_TYPE_CSV = "text/csv; charset=utf-8";
-    public static final String CONTENT_TYPE_HTML = "text/html; charset=utf-8";
     public static final String CONTENT_TYPE_JSON = "application/json; charset=utf-8";
     public static final String CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
 

@@ -707,7 +707,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         responseUtf8Sink.sendBufferAndReset();
     }
 
-    private boolean lookupPipelineEntryForNamedPortal(@Nullable Utf8Sequence namedPortal) throws BadProtocolException {
+    private void lookupPipelineEntryForNamedPortal(@Nullable Utf8Sequence namedPortal) throws BadProtocolException {
         if (namedPortal != null) {
             PGPipelineEntry pe = namedPortals.get(namedPortal);
             if (pe == null) {
@@ -716,12 +716,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             }
 
             replaceCurrentPipelineEntry(pe);
-            return false;
         }
-        return true;
     }
 
-    private boolean lookupPipelineEntryForNamedStatement(long lo, long hi) throws BadProtocolException {
+    private void lookupPipelineEntryForNamedStatement(long lo, long hi) throws BadProtocolException {
         @Nullable Utf8Sequence namedStatement = getUtf8NamedStatement(lo, hi);
         if (namedStatement != null) {
             PGPipelineEntry pe = namedStatements.get(namedStatement);
@@ -731,9 +729,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             }
 
             replaceCurrentPipelineEntry(pe);
-            return false;
         }
-        return true;
     }
 
     private void msgBind(long lo, long msgLimit) throws BadProtocolException {
@@ -741,7 +737,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             return;
         }
 
-        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isStateExec()) {
+        if (pipelineCurrentEntry != null && (pipelineCurrentEntry.isStateExec() || pipelineCurrentEntry.isStateClosed())) {
             // this is the sequence of B/E/B/E where B starts a new pipeline entry
             pipeline.add(pipelineCurrentEntry);
             pipelineCurrentEntry = null;
@@ -901,7 +897,13 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             // we are liable to look up the current entry, depending on how protocol is used
             // if this the case, we should not attempt to save the current entry prematurely
         } else if (lookedUpPipelineEntry != pipelineCurrentEntry) {
-            addPipelineEntry();
+            if (pipelineCurrentEntry != null) {
+                if (pipelineCurrentEntry.isDirty()) {
+                    addPipelineEntry();
+                } else {
+                    releaseToPoolIfAbandoned(pipelineCurrentEntry);
+                }
+            }
             pipelineCurrentEntry = lookedUpPipelineEntry;
         }
 
@@ -918,11 +920,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // followed by the name, which can be NULL, typically with 'P'
         boolean isPortal = Unsafe.getUnsafe().getByte(lo) == 'P';
         final long hi = getUtf8StrSize(lo + 1, msgLimit, "bad prepared statement name length (describe)", pipelineCurrentEntry);
-        final boolean nullTargetName;
         if (isPortal) {
-            nullTargetName = lookupPipelineEntryForNamedPortal(getUtf8NamedPortal(lo + 1, hi));
+            lookupPipelineEntryForNamedPortal(getUtf8NamedPortal(lo + 1, hi));
         } else {
-            nullTargetName = lookupPipelineEntryForNamedStatement(lo + 1, hi);
+            lookupPipelineEntryForNamedStatement(lo + 1, hi);
         }
 
         // some defensive code to have predictable behaviour
@@ -933,7 +934,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             throw msgKaput().put("spurious describe message received");
         }
 
-        pipelineCurrentEntry.setStateDesc(nullTargetName || isPortal ? PGPipelineEntry.SYNC_DESC_ROW_DESCRIPTION : PGPipelineEntry.SYNC_DESC_PARAMETER_DESCRIPTION);
+        pipelineCurrentEntry.setStateDesc(isPortal ? PGPipelineEntry.SYNC_DESC_ROW_DESCRIPTION : PGPipelineEntry.SYNC_DESC_PARAMETER_DESCRIPTION);
     }
 
     private void msgExecute(long lo, long msgLimit) throws BadProtocolException {

@@ -146,8 +146,8 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static CairoException queryTimedOut(long fd, long runtime, long timeout) {
         return nonCritical()
                 .put("timeout, query aborted [fd=").put(fd)
-                .put(", runtime=").put(runtime).put("us")
-                .put(", timeout=").put(timeout).put("us")
+                .put(", runtime=").put(runtime).put("ms")
+                .put(", timeout=").put(timeout).put("ms")
                 .put(']').setInterruption(true);
     }
 
@@ -230,7 +230,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public boolean isCritical() {
-        return errno != NON_CRITICAL && errno != PARTITION_MANIPULATION_RECOVERABLE && errno != METADATA_VALIDATION_RECOVERABLE;
+        return errno != NON_CRITICAL
+                && errno != PARTITION_MANIPULATION_RECOVERABLE
+                && errno != METADATA_VALIDATION_RECOVERABLE
+                && errno != TABLE_DROPPED
+                && errno != MAT_VIEW_DOES_NOT_EXIST
+                && errno != TABLE_DOES_NOT_EXIST;
     }
 
     public boolean isHousekeeping() {

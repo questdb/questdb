@@ -7,7 +7,7 @@ jobs:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "coverage-griffin"
           includeTests: "**/griffin/**"
           javadoc_step: ""
@@ -16,7 +16,7 @@ jobs:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "coverage-fuzz"
           includeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
@@ -25,7 +25,7 @@ jobs:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "coverage-cairo"
           includeTests: "**/cairo/**"
           excludeTests: "**/O3*Test**,**/**Fuzz**"
@@ -35,7 +35,7 @@ jobs:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "coverage-cutlass"
           includeTests: "**/pgwire/**/*.java"
           javadoc_step: ""
@@ -44,7 +44,7 @@ jobs:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "coverage-other"
           excludeTests: "**/griffin/**,**/cairo/**,**/pgwire/**"
           javadoc_step: ""

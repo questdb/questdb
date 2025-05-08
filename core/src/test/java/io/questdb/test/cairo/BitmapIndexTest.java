@@ -729,7 +729,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testCppLatestByIndexReaderIndexedWithTruncate() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int timestampIncrement = 1000000 * 60 * 5;
             final int M = 1000;
             final int N = 100;

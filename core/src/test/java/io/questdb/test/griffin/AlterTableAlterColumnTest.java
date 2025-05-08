@@ -174,7 +174,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidColumnName() throws Exception {
-        assertFailure("alter table x alter column y add index", 27, "column 'y' does not exists in table 'x'");
+        assertFailure("alter table x alter column y add index", 27, "column 'y' does not exist in table 'x'");
     }
 
     @Test

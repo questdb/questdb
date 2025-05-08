@@ -22,20 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.mv;
+package io.questdb.cairo;
 
-import org.jetbrains.annotations.Nullable;
+import io.questdb.std.Mutable;
+import io.questdb.std.QuietCloseable;
 
-/**
- * Describes materialized view refresh state fields.
- */
-public interface ReadableMatViewState {
+public interface TxnScoreboardPool extends QuietCloseable, Mutable {
 
-    @Nullable String getInvalidationReason();
+    @Override
+    default void close() {
+        clear();
+    }
 
-    long getLastRefreshBaseTxn();
+    TxnScoreboard getTxnScoreboard(TableToken token);
 
-    long getLastRefreshTimestamp();
+    boolean releaseInactive();
 
-    boolean isInvalid();
+    void remove(TableToken token);
 }

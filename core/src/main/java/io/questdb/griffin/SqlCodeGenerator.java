@@ -2453,8 +2453,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             );
                                         }
                                     } else {
+                                        boolean binarySearchHinted = SqlHints.hasAsOfJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
                                         boolean created = false;
-                                        if (fastAsOfJoins) {
+                                        if (fastAsOfJoins || binarySearchHinted) {
+                                            // when slave directly supports time frame cursor then it's strictly better to use it, even without any hint
                                             if (slave.supportsTimeFrameCursor()) {
                                                 master = new AsOfJoinNoKeyFastRecordCursorFactory(
                                                         configuration,
@@ -2466,8 +2468,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 created = true;
                                             }
 
-                                            if (!created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                                            // if we have a hint, we can try to steal the filter from the slave.
+                                            // this downgrades to single-threaded Java-level filtering so it's only worth it if
+                                            // the filter selectivity is low. we don't have statistics to tell selectivity, so
+                                            // we rely on the user to provide an explicit hint.
+                                            if (binarySearchHinted && !created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
                                                 RecordCursorFactory slaveBase = slave.getBaseFactory();
+                                                int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
+
+                                                // slave.supportsFilterStealing() means slave is nothing but a filter.
+                                                // if slave is just a filter then it must have the same metadata as its base,
+                                                // that includes the timestamp index.
+                                                assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
+
+
                                                 Function stolenFilter = slave.getFilter();
                                                 assert stolenFilter != null;
 
@@ -2475,6 +2489,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 Misc.free(slave.getBindVarMemory());
                                                 Misc.freeObjList(slave.getBindVarFunctions());
                                                 slave.halfClose();
+
 
                                                 master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
                                                         configuration,
@@ -2484,11 +2499,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         stolenFilter,
                                                         masterMetadata.getColumnCount(),
                                                         NullRecordFactory.getInstance(slaveMetadata),
-                                                        null);
+                                                        null,
+                                                        slaveTimestampIndex
+                                                );
                                                 created = true;
                                             }
 
-                                            if (!created && slave.isProjection()) {
+                                            if (binarySearchHinted && !created && slave.isProjection()) {
                                                 RecordCursorFactory projectionBase = slave.getBaseFactory();
                                                 // We know projectionBase does not support supportsTimeFrameCursor, because
                                                 // Projections forward this call to its base factory and if we are in this branch
@@ -2504,6 +2521,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         Function stolenFilter = projectionBase.getFilter();
                                                         assert stolenFilter != null;
 
+                                                        // index *after* applying the projection
+                                                        int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
+                                                        assert stolenCrossIndex.get(slaveTimestampIndex) == filterStealingBase.getMetadata().getTimestampIndex();
+
                                                         Misc.free(projectionBase.getCompiledFilter());
                                                         Misc.free(projectionBase.getBindVarMemory());
                                                         Misc.freeObjList(projectionBase.getBindVarFunctions());
@@ -2517,7 +2538,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                                 stolenFilter,
                                                                 masterMetadata.getColumnCount(),
                                                                 NullRecordFactory.getInstance(slaveMetadata),
-                                                                stolenCrossIndex
+                                                                stolenCrossIndex,
+                                                                slaveTimestampIndex
                                                         );
                                                         created = true;
                                                     }

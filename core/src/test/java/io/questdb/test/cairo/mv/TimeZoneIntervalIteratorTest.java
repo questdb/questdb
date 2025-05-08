@@ -24,21 +24,23 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.cairo.mv.SampleByIntervalIterator;
 import io.questdb.cairo.mv.TimeZoneIntervalIterator;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class TimeZoneIntervalIteratorTest {
+public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     private static final Log LOG = LogFactory.getLog(TimeZoneIntervalIteratorTest.class);
 
     @Test
@@ -49,6 +51,7 @@ public class TimeZoneIntervalIteratorTest {
                 sampler,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "UTC"),
                 0,
+                null,
                 TimestampFormatUtils.parseTimestamp("2024-03-03T01:01:00.000000Z"),
                 TimestampFormatUtils.parseTimestamp("2024-03-04T01:01:00.000000Z"),
                 14
@@ -72,6 +75,7 @@ public class TimeZoneIntervalIteratorTest {
                 sampler,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "UTC"),
                 offset,
+                null,
                 0,
                 7 * Timestamps.DAY_MICROS - 1,
                 1
@@ -90,8 +94,11 @@ public class TimeZoneIntervalIteratorTest {
 
     @Test
     public void testFuzzTimeZoneWithDst() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
         testFuzz(
+                rnd,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/Berlin"),
+                Long.MIN_VALUE,
                 TimestampFormatUtils.parseTimestamp("2021-03-26T10:03:00.000000Z"),
                 TimestampFormatUtils.parseTimestamp("2021-03-29T12:01:00.000000Z")
         );
@@ -99,8 +106,11 @@ public class TimeZoneIntervalIteratorTest {
 
     @Test
     public void testFuzzTimeZoneWithDstLargeInterval() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
         testFuzz(
+                rnd,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/Berlin"),
+                Long.MIN_VALUE,
                 TimestampFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"),
                 TimestampFormatUtils.parseTimestamp("2030-01-01T00:00:00.000000Z")
         );
@@ -108,8 +118,11 @@ public class TimeZoneIntervalIteratorTest {
 
     @Test
     public void testFuzzTimeZoneWithFixedOffset() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
         testFuzz(
+                rnd,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "GMT+2"),
+                Long.MIN_VALUE,
                 TimestampFormatUtils.parseTimestamp("2000-01-01T23:10:00.000000Z"),
                 TimestampFormatUtils.parseTimestamp("2000-01-02T20:59:59.000000Z")
         );
@@ -117,8 +130,11 @@ public class TimeZoneIntervalIteratorTest {
 
     @Test
     public void testFuzzUTC() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
         testFuzz(
+                rnd,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "UTC"),
+                Long.MIN_VALUE,
                 TimestampFormatUtils.parseTimestamp("2024-03-03T12:01:01.000000Z"),
                 TimestampFormatUtils.parseTimestamp("2024-03-07T12:01:01.000000Z")
         );
@@ -132,6 +148,7 @@ public class TimeZoneIntervalIteratorTest {
                 sampler,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "UTC"),
                 0,
+                null,
                 0,
                 7 * Timestamps.DAY_MICROS - 1,
                 1
@@ -156,6 +173,7 @@ public class TimeZoneIntervalIteratorTest {
                 sampler,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/Berlin"),
                 0,
+                null,
                 TimestampFormatUtils.parseTimestamp("2021-03-28T00:59:00.000000Z"),
                 TimestampFormatUtils.parseTimestamp("2021-03-28T08:01:00.000000Z"),
                 2
@@ -188,6 +206,7 @@ public class TimeZoneIntervalIteratorTest {
                 sampler,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/Berlin"),
                 0,
+                null,
                 TimestampFormatUtils.parseTimestamp("2021-03-28T00:01:00.000000Z"), // 01:01 local time (GMT+1)
                 TimestampFormatUtils.parseTimestamp("2021-03-28T02:52:00.000000Z"), // 04:52 local time (GMT+2)
                 1
@@ -220,6 +239,7 @@ public class TimeZoneIntervalIteratorTest {
                 sampler,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/Berlin"),
                 0,
+                null,
                 TimestampFormatUtils.parseTimestamp("2021-10-31T00:51:00.000000Z"),
                 TimestampFormatUtils.parseTimestamp("2021-10-31T01:41:00.000000Z"),
                 1
@@ -244,6 +264,7 @@ public class TimeZoneIntervalIteratorTest {
                 sampler,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/Berlin"),
                 0,
+                null,
                 TimestampFormatUtils.parseTimestamp("2021-10-30T23:30:00.000000Z"),
                 TimestampFormatUtils.parseTimestamp("2021-10-31T02:40:00.000000Z"),
                 1
@@ -287,6 +308,7 @@ public class TimeZoneIntervalIteratorTest {
                 sampler,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/Berlin"),
                 0,
+                null,
                 TimestampFormatUtils.parseTimestamp("2021-03-28T00:01:00.000000Z"),
                 TimestampFormatUtils.parseTimestamp("2021-03-28T02:52:00.000000Z"),
                 1
@@ -324,13 +346,14 @@ public class TimeZoneIntervalIteratorTest {
     }
 
     @Test
-    public void testTimeZoneWithDstSingleRow() throws Exception {
+    public void testTimeZoneWithDstSingleRow1() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(30, 'm', 0);
         iterator.of(
                 sampler,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/London"),
                 0,
+                null,
                 TimestampFormatUtils.parseTimestamp("2024-10-27T01:00:00.600000Z"),
                 TimestampFormatUtils.parseTimestamp("2024-10-27T01:00:00.600000Z"),
                 2
@@ -347,6 +370,30 @@ public class TimeZoneIntervalIteratorTest {
     }
 
     @Test
+    public void testTimeZoneWithDstSingleRow2() throws Exception {
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(30, 'm', 0);
+        iterator.of(
+                sampler,
+                Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/London"),
+                0,
+                null,
+                TimestampFormatUtils.parseTimestamp("2024-03-31T00:30:06.000000Z"),
+                TimestampFormatUtils.parseTimestamp("2024-03-31T00:30:06.000000Z"),
+                2
+        );
+
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-03-31T00:30:00.000000Z"), iterator.getMinTimestamp());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-03-31T01:00:00.000000Z"), iterator.getMaxTimestamp());
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-03-31T00:30:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-03-31T01:00:00.000000Z"), iterator.getTimestampHi());
+
+        Assert.assertFalse(iterator.next());
+    }
+
+    @Test
     public void testTimeZoneWithFixedOffset() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
@@ -354,6 +401,7 @@ public class TimeZoneIntervalIteratorTest {
                 sampler,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "GMT+00:30"),
                 0,
+                null,
                 TimestampFormatUtils.parseTimestamp("2024-01-01T01:01:00.000000Z"),
                 TimestampFormatUtils.parseTimestamp("2024-01-03T07:00:01.000000Z"),
                 1
@@ -375,51 +423,128 @@ public class TimeZoneIntervalIteratorTest {
         Assert.assertFalse(iterator.next());
     }
 
-    private void testFuzz(
-            @NotNull TimeZoneRules tzRules,
-            long start,
-            long end
-    ) throws Exception {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        final int step = Math.max(1, rnd.nextInt(1000));
-        final int interval = Math.max(1, rnd.nextInt(300));
-
-        final char[] timeUnits = new char[]{'m', 'h', 'd'};
-        final char timeUnit = timeUnits[rnd.nextInt(timeUnits.length)];
-
-        final long fixedTzOffset = (rnd.nextBoolean() ? 1 : -1) * rnd.nextLong(Timestamps.HOUR_MICROS);
-
+    @Test
+    public void testTxnIntervalSingle() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(interval, timeUnit, 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final TimeZoneRules tzRules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "UTC");
+        final LongList txnIntervals = new LongList();
+
+        final long minTs = 0;
+        final long maxTs = 3 * Timestamps.DAY_MICROS - 1;
+
+        // match
+        txnIntervals.add(minTs, maxTs);
+        iterator.of(sampler, tzRules, 0, txnIntervals, minTs, maxTs, 1);
+        for (int i = 0; i < 3; i++) {
+            Assert.assertTrue(iterator.next());
+            Assert.assertEquals(i * Timestamps.DAY_MICROS, iterator.getTimestampLo());
+            Assert.assertEquals((i + 1) * Timestamps.DAY_MICROS, iterator.getTimestampHi());
+        }
+        Assert.assertFalse(iterator.next());
+
+        // to the left
+        txnIntervals.clear();
+        txnIntervals.add(-2L, -1L);
+        iterator.of(sampler, tzRules, 0, txnIntervals, minTs, maxTs, 1);
+        Assert.assertFalse(iterator.next());
+
+        // to the left with intersection
+        txnIntervals.clear();
+        txnIntervals.add(-2L, 0L);
+        iterator.of(sampler, tzRules, 0, txnIntervals, minTs, maxTs, 1);
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(0, iterator.getTimestampLo());
+        Assert.assertEquals(Timestamps.DAY_MICROS, iterator.getTimestampHi());
+        Assert.assertFalse(iterator.next());
+
+        // to the right
+        txnIntervals.clear();
+        txnIntervals.add(maxTs + 1, maxTs + 2);
+        iterator.of(sampler, tzRules, 0, txnIntervals, minTs, maxTs, 1);
+        Assert.assertFalse(iterator.next());
+
+        // to the right with intersection
+        txnIntervals.clear();
+        txnIntervals.add(maxTs, maxTs + 2);
+        iterator.of(sampler, tzRules, 0, txnIntervals, minTs, maxTs, 1);
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(2 * Timestamps.DAY_MICROS, iterator.getTimestampLo());
+        Assert.assertEquals(3 * Timestamps.DAY_MICROS, iterator.getTimestampHi());
+        Assert.assertFalse(iterator.next());
+
+        // middle
+        txnIntervals.clear();
+        txnIntervals.add(Timestamps.DAY_MICROS + 1, 2 * Timestamps.DAY_MICROS - 1);
+        iterator.of(sampler, tzRules, 0, txnIntervals, minTs, maxTs, 1);
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(Timestamps.DAY_MICROS, iterator.getTimestampLo());
+        Assert.assertEquals(2 * Timestamps.DAY_MICROS, iterator.getTimestampHi());
+        Assert.assertFalse(iterator.next());
+    }
+
+    @Test
+    public void testTxnIntervalToTop() throws Exception {
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final TimeZoneRules tzRules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "UTC");
+        final LongList txnIntervals = new LongList();
+
+        txnIntervals.add(0, Timestamps.DAY_MICROS - 1);
+        iterator.of(sampler, tzRules, 0, txnIntervals, 0, 3 * Timestamps.DAY_MICROS - 1, 1);
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(0, iterator.getTimestampLo());
+        Assert.assertEquals(Timestamps.DAY_MICROS, iterator.getTimestampHi());
+        Assert.assertFalse(iterator.next());
+
+        iterator.toTop(1);
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(0, iterator.getTimestampLo());
+        Assert.assertEquals(Timestamps.DAY_MICROS, iterator.getTimestampHi());
+        Assert.assertFalse(iterator.next());
+    }
+
+    @Test
+    public void testTxnIntervalsEmpty() throws Exception {
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
         iterator.of(
                 sampler,
-                tzRules,
-                fixedTzOffset,
-                start,
-                end,
-                step
+                Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "UTC"),
+                0,
+                new LongList(),
+                0,
+                7 * Timestamps.DAY_MICROS - 1,
+                1
         );
 
-        final long minTs = iterator.getMinTimestamp();
-        final long maxTs = iterator.getMaxTimestamp();
-        Assert.assertTrue(minTs < maxTs);
+        Assert.assertEquals(0, iterator.getMinTimestamp());
+        Assert.assertEquals(7 * Timestamps.DAY_MICROS, iterator.getMaxTimestamp());
 
-        long minObservedTs = Long.MAX_VALUE;
-        long maxObservedTs = Long.MIN_VALUE;
-        long prevTsHi = Long.MIN_VALUE;
-        while (iterator.next()) {
-            final long tsLo = iterator.getTimestampLo();
-            final long tsHi = iterator.getTimestampHi();
-            Assert.assertTrue(tsLo < tsHi);
-            if (prevTsHi != Long.MIN_VALUE) {
-                Assert.assertEquals(prevTsHi, tsLo);
-            }
-            prevTsHi = tsHi;
-            minObservedTs = Math.min(minObservedTs, tsLo);
-            maxObservedTs = Math.max(maxObservedTs, tsHi);
-        }
+        Assert.assertFalse(iterator.next());
+    }
 
-        Assert.assertEquals(minTs, minObservedTs);
-        Assert.assertEquals(maxTs, maxObservedTs);
+    @Override
+    protected SampleByIntervalIterator createIterator(
+            TimestampSampler sampler,
+            @Nullable TimeZoneRules tzRules,
+            long offset,
+            @Nullable LongList txnIntervals,
+            long minTs,
+            long maxTs,
+            int step
+    ) {
+        Assert.assertNotNull(tzRules);
+        return new TimeZoneIntervalIterator().of(
+                sampler,
+                tzRules,
+                offset,
+                txnIntervals,
+                minTs,
+                maxTs,
+                step
+        );
     }
 }

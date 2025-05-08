@@ -26,11 +26,14 @@ package io.questdb.cairo.mv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.ThreadLocal;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -42,30 +45,41 @@ import java.util.function.Function;
  * This object is always in-use, even when mat views are disabled or the node is a read-only replica.
  */
 public class MatViewGraph implements Mutable {
+    private static final ThreadLocal<LowerCaseCharSequenceHashSet> tlSeen = new ThreadLocal<>(LowerCaseCharSequenceHashSet::new);
+    private static final ThreadLocal<ArrayDeque<CharSequence>> tlStack = new ThreadLocal<>(ArrayDeque::new);
     private final Function<CharSequence, MatViewDependencyList> createDependencyList;
     private final ConcurrentHashMap<MatViewDefinition> definitionByTableDirName = new ConcurrentHashMap<>();
     // Note: this map is grow-only, i.e. keys are never removed.
-    private final ConcurrentHashMap<MatViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<MatViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
 
     public MatViewGraph() {
         this.createDependencyList = name -> new MatViewDependencyList();
     }
 
-    public void addView(MatViewDefinition viewDefinition) {
+    public boolean addView(MatViewDefinition viewDefinition) {
         final TableToken matViewToken = viewDefinition.getMatViewToken();
         final MatViewDefinition prevDefinition = definitionByTableDirName.putIfAbsent(matViewToken.getDirName(), viewDefinition);
         // WAL table directories are unique, so we don't expect previous value
         if (prevDefinition != null) {
-            throw CairoException.critical(0).put("materialized view definition already exists [dir=").put(matViewToken.getDirName());
+            return false;
         }
 
-        final MatViewDependencyList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());
-        final ObjList<TableToken> matViews = list.lockForWrite();
-        try {
-            matViews.add(matViewToken);
-        } finally {
-            list.unlockAfterWrite();
+        synchronized (this) {
+            if (hasDependencyLoop(viewDefinition.getBaseTableName(), matViewToken)) {
+                throw CairoException.critical(0)
+                        .put("circular dependency detected for materialized view [view=").put(matViewToken.getTableName())
+                        .put(", baseTable=").put(viewDefinition.getBaseTableName())
+                        .put(']');
+            }
+            final MatViewDependencyList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());
+            final ObjList<TableToken> matViews = list.lockForWrite();
+            try {
+                matViews.add(matViewToken);
+            } finally {
+                list.unlockAfterWrite();
+            }
         }
+        return true;
     }
 
     @TestOnly
@@ -143,6 +157,44 @@ public class MatViewGraph implements Mutable {
     @NotNull
     private MatViewDependencyList getOrCreateDependentViews(CharSequence baseTableName) {
         return dependentViewsByTableName.computeIfAbsent(baseTableName, createDependencyList);
+    }
+
+    private boolean hasDependencyLoop(CharSequence baseTableName, TableToken newMatViewToken) {
+        LowerCaseCharSequenceHashSet seen = tlSeen.get();
+        ArrayDeque<CharSequence> stack = tlStack.get();
+
+        seen.clear();
+        stack.clear();
+
+        if (Chars.equalsIgnoreCase(baseTableName, newMatViewToken.getTableName())) {
+            return true; // Self-loop
+        }
+
+        stack.push(newMatViewToken.getTableName());
+
+        while (!stack.isEmpty()) {
+            CharSequence currentTableName = stack.pop();
+            if (!seen.add(currentTableName)) {
+                continue;
+            }
+
+            MatViewDependencyList dependentViews = dependentViewsByTableName.get(currentTableName);
+            if (dependentViews != null) {
+                ReadOnlyObjList<TableToken> matViews = dependentViews.lockForRead();
+                try {
+                    for (int i = 0, n = matViews.size(); i < n; i++) {
+                        TableToken matView = matViews.get(i);
+                        if (Chars.equalsIgnoreCase(matView.getTableName(), baseTableName)) {
+                            return true; // Cycle detected
+                        }
+                        stack.push(matView.getTableName());
+                    }
+                } finally {
+                    dependentViews.unlockAfterRead();
+                }
+            }
+        }
+        return false;
     }
 
     private void orderByDependentViews(

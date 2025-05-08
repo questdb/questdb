@@ -150,6 +150,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
     private final SqlExecutionContext rootExecutionContext;
+    private final TxnScoreboardPool scoreboardPool;
     private final SequencerMetadataPool sequencerMetadataPool;
     private final SqlCompilerPool sqlCompilerPool;
     private final TableFlagResolver tableFlagResolver;
@@ -185,7 +186,8 @@ public class CairoEngine implements Closeable, WriterSource {
             this.metrics = configuration.getMetrics();
             // Message bus and metrics must be initialized before the pools.
             this.writerPool = new WriterPool(configuration, this);
-            this.readerPool = new ReaderPool(configuration, messageBus, partitionOverwriteControl);
+            this.scoreboardPool = TxnScoreboardPoolFactory.createPool(configuration);
+            this.readerPool = new ReaderPool(configuration, scoreboardPool, messageBus, partitionOverwriteControl);
             this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
             this.tableMetadataPool = new TableMetadataPool(configuration);
             this.walWriterPool = new WalWriterPool(configuration, this);
@@ -368,8 +370,9 @@ public class CairoEngine implements Closeable, WriterSource {
                                     pathLen,
                                     tableToken
                             );
-                            matViewGraph.addView(matViewDefinition);
-                            matViewStateStore.createViewState(matViewDefinition);
+                            if (matViewGraph.addView(matViewDefinition)) {
+                                matViewStateStore.createViewState(matViewDefinition);
+                            }
                         }
 
                         MatViewState state = matViewStateStore.getViewState(tableToken);
@@ -417,11 +420,7 @@ public class CairoEngine implements Closeable, WriterSource {
                                         .$(", matViewBaseTxn=").$(state.getLastRefreshBaseTxn())
                                         .$(", baseTableTxn=").$(baseTableLastTxn)
                                         .I$();
-                                matViewStateStore.enqueueInvalidate(tableToken, "out of sync with base table");
-                                matViewStateStore.enqueueInvalidate(
-                                        tableToken,
-                                        "materialized view is ahead of base table and cannot be synchronized"
-                                );
+                                matViewStateStore.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
                             } else {
                                 matViewStateStore.enqueueIncrementalRefresh(tableToken);
                             }
@@ -472,6 +471,7 @@ public class CairoEngine implements Closeable, WriterSource {
         boolean b4 = sequencerMetadataPool.releaseAll();
         boolean b5 = walWriterPool.releaseAll();
         boolean b6 = tableMetadataPool.releaseAll();
+        scoreboardPool.clear();
         partitionOverwriteControl.clear();
         return b1 & b2 & b3 & b4 & b5 & b6;
     }
@@ -491,6 +491,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(tableNameRegistry);
         Misc.free(checkpointAgent);
         Misc.free(metadataCache);
+        Misc.free(scoreboardPool);
     }
 
     @TestOnly
@@ -516,8 +517,14 @@ public class CairoEngine implements Closeable, WriterSource {
         final TableToken matViewToken = createTableOrMatViewUnsecure(mem, blockFileWriter, path, ifNotExists, struct, keepLock, inVolume);
         getDdlListener(matViewToken).onTableOrMatViewCreated(securityContext, matViewToken);
         final MatViewDefinition matViewDefinition = struct.getMatViewDefinition();
-        matViewGraph.addView(matViewDefinition);
-        matViewStateStore.createViewState(matViewDefinition);
+        try {
+            if (matViewGraph.addView(matViewDefinition)) {
+                matViewStateStore.createViewState(matViewDefinition);
+            }
+        } catch (CairoException e) {
+            dropTableOrMatView(path, matViewToken);
+            throw e;
+        }
         return matViewDefinition;
     }
 
@@ -566,6 +573,7 @@ public class CairoEngine implements Closeable, WriterSource {
             }
         } else {
             CharSequence lockedReason = lockAll(tableToken, "removeTable", false);
+            scoreboardPool.remove(tableToken);
             if (lockedReason == null) {
                 try {
                     path.of(configuration.getDbRoot()).concat(tableToken).$();
@@ -974,6 +982,14 @@ public class CairoEngine implements Closeable, WriterSource {
         return telemetryWal;
     }
 
+    public TxnScoreboard getTxnScoreboard(@NotNull TableToken tableToken) {
+        return scoreboardPool.getTxnScoreboard(tableToken);
+    }
+
+    public TxnScoreboardPool getTxnScoreboardPool() {
+        return scoreboardPool;
+    }
+
     public long getUnpublishedWalTxnCount() {
         return unpublishedWalTxnCount.get();
     }
@@ -1234,6 +1250,7 @@ public class CairoEngine implements Closeable, WriterSource {
         useful |= sequencerMetadataPool.releaseInactive();
         useful |= tableMetadataPool.releaseInactive();
         useful |= walWriterPool.releaseInactive();
+        useful |= scoreboardPool.releaseInactive();
         return useful;
     }
 
@@ -1334,6 +1351,9 @@ public class CairoEngine implements Closeable, WriterSource {
                 String lockedReason = lockAll(fromTableToken, "renameTable", false);
                 if (lockedReason == null) {
                     try {
+                        // No readers exist for the table, no checkpoint
+                        // it is ok to remove the scoreboard in case it's in memory implementation
+                        scoreboardPool.remove(fromTableToken);
                         toTableToken = rename0(fromPath, fromTableToken, toPath, toTableName);
                         TableUtils.overwriteTableNameFile(
                                 fromPath.of(configuration.getDbRoot()).concat(toTableToken),

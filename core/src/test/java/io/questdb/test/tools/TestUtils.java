@@ -116,10 +116,15 @@ import java.io.InputStream;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Paths;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -699,6 +704,49 @@ public final class TestUtils {
         }
     }
 
+    /**
+     * Asserts that a {@code CharSequence} does NOT contain another {@code CharSequence}.
+     *
+     * @param sequence the {@code CharSequence} to check.
+     * @param term     the {@code CharSequence} to search for (and assert its absence).
+     * @see #assertNotContains(String, CharSequence, CharSequence)
+     */
+    public static void assertNotContains(CharSequence sequence, CharSequence term) {
+        assertNotContains(null, sequence, term);
+    }
+
+    /**
+     * Asserts that a {@code CharSequence} does NOT contain another {@code CharSequence}.
+     * <p>
+     * Fails if the {@code term} is empty (""), because the convention established by
+     * {@link #assertContains(String, CharSequence, CharSequence)} considers an empty
+     * term to be contained within any sequence.
+     * </p>
+     *
+     * @param message  the identifying message for the {@link AssertionError} (<code>null</code> okay)
+     * @param sequence the {@code CharSequence} to check.
+     * @param term     the {@code CharSequence} to search for (and assert its absence).
+     */
+    public static void assertNotContains(String message, CharSequence sequence, CharSequence term) {
+        if (term.length() == 0) {
+            String formatted = "";
+            if (message != null) {
+                formatted = message + " ";
+            }
+            Assert.fail(formatted + "Cannot assert that sequence does not contain an empty term; an empty term is always considered contained by definition.");
+        }
+
+        if (!Chars.contains(sequence, term)) {
+            return;
+        }
+
+        String formatted = "";
+        if (message != null) {
+            formatted = message + " ";
+        }
+        Assert.fail(formatted + "Expected sequence <" + sequence + "> to NOT contain term <" + term + "> but it did.");
+    }
+
     public static void assertReader(CharSequence expected, TableReader reader, MutableUtf16Sink sink) {
         try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
             assertCursor(expected, cursor, reader.getMetadata(), true, sink);
@@ -1171,9 +1219,13 @@ public final class TestUtils {
     }
 
     public static void drainPurgeJob(CairoEngine engine) {
+        drainPurgeJob(engine, engine.getConfiguration().getFilesFacade());
+    }
+
+    public static void drainPurgeJob(CairoEngine engine, FilesFacade filesFacade) {
         try (WalPurgeJob job = new WalPurgeJob(
                 engine,
-                engine.getConfiguration().getFilesFacade(),
+                filesFacade,
                 engine.getConfiguration().getMicrosecondClock()
         )) {
             engine.setWalPurgeJobRunLock(job.getRunLock());
@@ -1255,6 +1307,23 @@ public final class TestUtils {
         }
     }
 
+    public static void execute(Connection conn, String sql, String... bindVars) throws SQLException {
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            for (int i = 0; i < bindVars.length; i++) {
+                stmt.setString(i + 1, bindVars[i]);
+            }
+            stmt.execute();
+        }
+    }
+
+    public static void executeSQLViaPostgres(String username, String password, int pgPort, String... sqls) throws SQLException {
+        try (final Connection connection = getConnectionForUser(username, password, pgPort)) {
+            for (String sql : sqls) {
+                execute(connection, sql);
+            }
+        }
+    }
+
     @NotNull
     public static Rnd generateRandom(Log log) {
         return generateRandom(log, System.nanoTime(), System.currentTimeMillis());
@@ -1289,6 +1358,10 @@ public final class TestUtils {
             }
         }
         return Integer.parseInt(version);
+    }
+
+    public static String getPgConnectionUri(int pgPort) {
+        return "jdbc:postgresql://127.0.0.1:" + pgPort + "/qdb";
     }
 
     public static String getResourcePath(String resourceName) {
@@ -2094,6 +2167,13 @@ public final class TestUtils {
                     return i + 1;
                 }
         );
+    }
+
+    static Connection getConnectionForUser(String username, String password, int pgPort) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", username);
+        properties.setProperty("password", password);
+        return DriverManager.getConnection(getPgConnectionUri(pgPort), properties);
     }
 
     public interface CheckedIntFunction {
