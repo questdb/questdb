@@ -332,7 +332,7 @@ class WalEventWriter implements Closeable {
         eventIndexMem.of(
                 ff,
                 path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(),
-                Math.max(16 * 1024, appendPageSize / 4),
+                Math.max(ff.getPageSize(), appendPageSize / 4),
                 -1,
                 MemoryTag.NATIVE_TABLE_WAL_WRITER,
                 CairoConfiguration.O_NONE,
