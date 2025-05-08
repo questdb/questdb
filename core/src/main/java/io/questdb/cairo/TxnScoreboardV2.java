@@ -259,7 +259,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         // This call should only be used from TableReader
         // when maxTxn is already initialized.
         // Check that the txn we are scanning for is not the max, to avoid races with acquireTxn()
-        if (getMax() < txn) {
+        if (getMax() <= txn) {
             return false;
         }
 
