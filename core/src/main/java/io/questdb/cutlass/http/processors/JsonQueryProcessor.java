@@ -69,6 +69,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -272,7 +273,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public byte getRequiredAuthType() {
+    public byte getRequiredAuthType(Utf8Sequence method) {
         return requiredAuthType;
     }
 

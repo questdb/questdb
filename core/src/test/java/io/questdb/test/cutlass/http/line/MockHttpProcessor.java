@@ -182,7 +182,7 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
     }
 
     @Override
-    public boolean requiresAuthentication() {
+    public boolean requiresAuthentication(Utf8Sequence method) {
         return false;
     }
 

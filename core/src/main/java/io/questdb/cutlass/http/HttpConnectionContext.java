@@ -935,9 +935,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
 
             try {
-                final byte requiredAuthType = processor.getRequiredAuthType();
+                final Utf8Sequence method = headerParser.getMethod();
                 if (newRequest) {
-                    if (processor.requiresAuthentication() && !configureSecurityContext()) {
+                    if (processor.requiresAuthentication(method) && !configureSecurityContext()) {
+                        final byte requiredAuthType = processor.getRequiredAuthType(method);
                         processor = rejectProcessor.withAuthenticationType(requiredAuthType).reject(HTTP_UNAUTHORIZED);
                     }
 
@@ -955,7 +956,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 }
 
                 processor = checkProcessorValidForRequest(
-                        headerParser.getMethod(),
+                        method,
                         processor,
                         chunked,
                         multipartRequest,

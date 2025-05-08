@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.metrics.HealthMetricsImpl;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.str.Utf8Sequence;
 
 public class HealthCheckProcessor implements HttpRequestProcessor {
 
@@ -43,7 +44,7 @@ public class HealthCheckProcessor implements HttpRequestProcessor {
     }
 
     @Override
-    public byte getRequiredAuthType() {
+    public byte getRequiredAuthType(Utf8Sequence method) {
         return requiredAuthType;
     }
 

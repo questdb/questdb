@@ -38,6 +38,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -133,7 +134,7 @@ public class WarningsProcessor implements HttpRequestProcessor {
     }
 
     @Override
-    public byte getRequiredAuthType() {
+    public byte getRequiredAuthType(Utf8Sequence method) {
         return SecurityContext.AUTH_TYPE_NONE;
     }
 

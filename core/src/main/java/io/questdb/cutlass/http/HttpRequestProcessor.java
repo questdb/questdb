@@ -31,6 +31,7 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.str.Utf8Sequence;
 
 public interface HttpRequestProcessor {
     default AtomicLongGauge connectionCountGauge(Metrics metrics) {
@@ -50,7 +51,7 @@ public interface HttpRequestProcessor {
         return configuration.getJsonQueryConnectionLimit();
     }
 
-    default byte getRequiredAuthType() {
+    default byte getRequiredAuthType(Utf8Sequence method) {
         return SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
@@ -81,8 +82,8 @@ public interface HttpRequestProcessor {
         return true;
     }
 
-    default boolean requiresAuthentication() {
-        return getRequiredAuthType() != SecurityContext.AUTH_TYPE_NONE;
+    default boolean requiresAuthentication(Utf8Sequence method) {
+        return getRequiredAuthType(method) != SecurityContext.AUTH_TYPE_NONE;
     }
 
     default void resumeRecv(HttpConnectionContext context) {

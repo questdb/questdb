@@ -52,6 +52,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
 
@@ -103,7 +104,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public byte getRequiredAuthType() {
+    public byte getRequiredAuthType(Utf8Sequence method) {
         return requiredAuthType;
     }
 

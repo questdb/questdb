@@ -41,6 +41,7 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
+import static io.questdb.cutlass.http.HttpConstants.METHOD_POST;
 import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.*;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.*;
 
@@ -63,16 +64,16 @@ public class LineHttpProcessorImpl implements LineHttpProcessor, HttpMultipartCo
     }
 
     @Override
+    public void onChunk(long lo, long hi) {
+        this.state.parse(lo, hi);
+    }
+
+    @Override
     public void onConnectionClosed(HttpConnectionContext context) {
         state = LV.get(context);
         if (state != null) {
             state.onDisconnected();
         }
-    }
-
-    @Override
-    public void onChunk(long lo, long hi) {
-        this.state.parse(lo, hi);
     }
 
     public void onHeadersReady(HttpConnectionContext context) {
@@ -86,7 +87,7 @@ public class LineHttpProcessorImpl implements LineHttpProcessor, HttpMultipartCo
 
         // Method
         HttpRequestHeader requestHeader = context.getRequestHeader();
-        if (!Utf8s.equalsNcAscii("POST", requestHeader.getMethod())) {
+        if (!Utf8s.equalsNcAscii(METHOD_POST, requestHeader.getMethod())) {
             state.reject(METHOD_NOT_SUPPORTED, "Not Found", context.getFd());
             return;
         }

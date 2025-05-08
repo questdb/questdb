@@ -81,7 +81,7 @@ public class PreferencesProcessor implements HttpRequestProcessor, HttpContentLi
     }
 
     @Override
-    public byte getRequiredAuthType() {
+    public byte getRequiredAuthType(Utf8Sequence method) {
         return requiredAuthType;
     }
 

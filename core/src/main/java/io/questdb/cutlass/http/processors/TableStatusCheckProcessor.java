@@ -36,6 +36,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
@@ -63,7 +64,7 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
     }
 
     @Override
-    public byte getRequiredAuthType() {
+    public byte getRequiredAuthType(Utf8Sequence method) {
         return requiredAuthType;
     }
 
