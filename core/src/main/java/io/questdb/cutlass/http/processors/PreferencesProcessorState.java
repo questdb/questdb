@@ -25,12 +25,10 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.std.Mutable;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.DirectUtf8Sink;
 
-import java.io.Closeable;
-import java.io.IOException;
-
-class PreferencesProcessorState implements Mutable, Closeable {
+class PreferencesProcessorState implements Mutable, QuietCloseable {
     final DirectUtf8Sink sink;
 
     PreferencesProcessorState(int size) {
@@ -43,7 +41,7 @@ class PreferencesProcessorState implements Mutable, Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         sink.close();
     }
 }
