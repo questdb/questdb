@@ -25,10 +25,11 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.std.Mutable;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.DirectUtf8Sink;
 
-class PreferencesProcessorState implements Mutable, QuietCloseable {
+import java.io.Closeable;
+
+class PreferencesProcessorState implements Mutable, Closeable {
     final DirectUtf8Sink sink;
 
     PreferencesProcessorState(int size) {

@@ -45,11 +45,9 @@ import io.questdb.std.NumericException;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 
-import java.io.Closeable;
-
 import static java.net.HttpURLConnection.*;
 
-public class PreferencesProcessor implements HttpRequestProcessor, HttpContentListener, Closeable {
+public class PreferencesProcessor implements HttpRequestProcessor, HttpContentListener {
     private static final Log LOG = LogFactory.getLog(PreferencesProcessor.class);
     // Local value has to be static because each thread will have its own instance of
     // processor. For different threads to lookup the same value from local value map the key,
@@ -68,10 +66,6 @@ public class PreferencesProcessor implements HttpRequestProcessor, HttpContentLi
         configuration = httpServerConfiguration;
         preferencesStore = engine.getPreferencesStore();
         requiredAuthType = configuration.getJsonQueryProcessorConfiguration().getRequiredAuthType();
-    }
-
-    @Override
-    public void close() {
     }
 
     @Override
