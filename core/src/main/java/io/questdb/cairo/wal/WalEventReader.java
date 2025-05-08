@@ -142,7 +142,8 @@ public class WalEventReader implements Closeable {
                     // The `_event` file length, as determined by the `maxTxn` value in the `_event` header.
                     long size = readNonNegativeLong(eventIndexMem, (maxTxn + 1L) * Long.BYTES);
 
-                    System.err.println("WalEventReader.of :: (I) offset = " + offset + ", size = " + size);
+                    System.err.println("WalEventReader.of :: (I) offset = " + offset);
+                    System.err.println("WalEventReader.of :: (I2) size = " + size);
 
                     // N.B.
                     // The `_event` file starts with a header. If we're reading a section of the file that was grown
@@ -217,6 +218,7 @@ public class WalEventReader implements Closeable {
      * Read a non-negative long at the specified offset, or return -1 if out of bounds.
      */
     private static long readNonNegativeLong(MemoryCMR eventIndexMem, long offset) {
+        System.err.println("WalEventReader.readNonNegativeLong :: (A) offset = " + offset + ", size = " + eventIndexMem.size());
         if ((offset < 0) || ((offset + Long.BYTES) > eventIndexMem.size())) {
             return -1;
         }

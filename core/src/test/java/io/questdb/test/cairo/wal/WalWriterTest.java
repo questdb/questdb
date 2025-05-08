@@ -3785,6 +3785,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             System.err.println("testWalEventReaderMaxTxnTooLarge :: (C)");
 
+            final int newMaxTxn = 200000;
             try (
                     final Path walePath = new Path()
                             .of(configuration.getDbRoot())
@@ -3807,26 +3808,63 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 // We hack the wale header's `maxTxn` so it's
                 // well outside what's both the `_event` and `_event.i` files.
-                eventMem.putInt(0, 200000);
+                eventMem.putInt(0, newMaxTxn);
 
-                System.err.println("testWalEventReaderMaxTxnTooLarge :: (D)");
+                if (!Os.isWindows()) {
+                    try (
+                            final Path waleIndexPath = new Path()
+                                    .of(configuration.getDbRoot())
+                                    .concat(tableToken)
+                                    .concat(WAL_NAME_BASE + 1)
+                                    .concat("0")
+                                    .concat(EVENT_INDEX_FILE_NAME)) {
+                        try (
+                                final MemoryMARW eventIndexMem = Vm.getCMARWInstance()
+                        ) {
+                            eventIndexMem.of(
+                                    engine.getConfiguration().getFilesFacade(),
+                                    waleIndexPath.$(),
+                                    configuration.getWalEventAppendPageSize(),
+                                    -1,
+                                    MemoryTag.MMAP_TABLE_WAL_WRITER,
+                                    CairoConfiguration.O_NONE,
+                                    Files.POSIX_MADV_RANDOM
+                            );
+
+                            // Extend the file with 0 content to simulate unflushed pages.
+                            eventIndexMem.putLong((newMaxTxn + 1) * Long.BYTES, 0);
+
+                            System.err.println("testWalEventReaderMaxTxnTooLarge :: (D) eventIndexMem.size: " + eventIndexMem.size());
+
+                            // Don't truncate!
+                            eventIndexMem.close(false);
+                        }
+
+                        final long newWaleIndexSize = engine.getConfiguration().getFilesFacade().length(waleIndexPath.$());
+                        Assert.assertTrue(newWaleIndexSize >= (newMaxTxn + 2) * Long.BYTES);
+
+                        System.err.println("testWalEventReaderMaxTxnTooLarge :: (D2) newWaleIndexSize: " + newWaleIndexSize);
+                    }
+                }
+
+                System.err.println("testWalEventReaderMaxTxnTooLarge :: (E)");
             }
 
-            System.err.println("testWalEventReaderMaxTxnTooLarge :: (E)");
+            System.err.println("testWalEventReaderMaxTxnTooLarge :: (F)");
 
             engine.releaseInactive();
 
-            System.err.println("testWalEventReaderMaxTxnTooLarge :: (F)");
+            System.err.println("testWalEventReaderMaxTxnTooLarge :: (G)");
             drainWalQueue();
 
-            System.err.println("testWalEventReaderMaxTxnTooLarge :: (G)");
+            System.err.println("testWalEventReaderMaxTxnTooLarge :: (H)");
 
             assertSql(
                     "a\tb\tts\n" +
                             "1\t\t1970-01-01T00:00:00.000000Z\n", tableName
             );
 
-            System.err.println("testWalEventReaderMaxTxnTooLarge :: (H)");
+            System.err.println("testWalEventReaderMaxTxnTooLarge :: (I)");
         });
     }
 
