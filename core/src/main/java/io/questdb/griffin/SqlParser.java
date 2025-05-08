@@ -41,6 +41,7 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
@@ -373,6 +374,12 @@ public class SqlParser {
     ) throws SqlException {
         CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
         return sqlParserCallback.parseCreateTableExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
+    }
+
+    private static void validateMatViewIntervalUnit(char unit, int pos) throws SqlException {
+        if (unit != 'M' && unit != 'y' && unit != 'w' && unit != 'd' && unit != 'h' && unit != 'm') {
+            throw SqlException.position(pos).put("unsupported refresh interval unit: ").put(unit);
+        }
     }
 
     private static void validateMatViewQuery(QueryModel model, String baseTableName) throws SqlException {
@@ -892,16 +899,33 @@ public class SqlParser {
             tok = tok(lexer, "'as' or 'refresh'");
         }
 
-        // For now, incremental refresh is the only supported refresh type.
         int refreshType = MatViewDefinition.INCREMENTAL_REFRESH_TYPE;
         if (isRefreshKeyword(tok)) {
-            tok = tok(lexer, "'incremental' or 'manual' or 'interval' expected");
-            if (isManualKeyword(tok)) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("manual refresh is not yet supported");
-            } else if (isIntervalKeyword(tok)) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("interval refresh is not yet supported");
+            tok = tok(lexer, "'incremental' or 'interval' expected");
+            if (isIntervalKeyword(tok)) {
+                tok = tok(lexer, "'start' or 'as'");
+                if (isStartKeyword(tok)) {
+                    refreshType = MatViewDefinition.INTERVAL_REFRESH_TYPE;
+                    tok = tok(lexer, "START timestamp");
+                    final long start;
+                    try {
+                        start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                    } catch (NumericException e) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
+                    }
+                    mvOpBuilder.setIntervalStart(start);
+                    expectTok(lexer, "every");
+                    tok = tok(lexer, "interval");
+                    final int stride = Timestamps.getStrideMultiple(tok);
+                    final char unit = Timestamps.getStrideUnit(tok);
+                    validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
+                    mvOpBuilder.setIntervalStride(stride);
+                    mvOpBuilder.setIntervalUnit(unit);
+                } else if (!isAsKeyword(tok)) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put("'start' expected");
+                }
             } else if (!isIncrementalKeyword(tok)) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("'incremental' or 'manual' or 'interval' expected");
+                throw SqlException.position(lexer.lastTokenPosition()).put("'incremental' or 'interval' expected");
             }
             tok = tok(lexer, "'as'");
         }
@@ -979,7 +1003,7 @@ public class SqlParser {
                 return mvOpBuilder;
             }
         } else {
-            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
+            throw SqlException.position(lexer.lastTokenPosition()).put("'as' or 'refresh' expected");
         }
 
         // Optional clauses that go after the parentheses.

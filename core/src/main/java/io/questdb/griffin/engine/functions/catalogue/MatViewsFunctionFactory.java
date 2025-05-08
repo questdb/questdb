@@ -241,11 +241,14 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_VIEW_NAME:
                             return viewDefinition.getMatViewToken().getTableName();
                         case COLUMN_REFRESH_TYPE:
-                            // For now, incremental refresh is the only supported refresh type.
-                            if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
-                                return "incremental";
+                            switch (viewDefinition.getRefreshType()) {
+                                case MatViewDefinition.INCREMENTAL_REFRESH_TYPE:
+                                    return "incremental";
+                                case MatViewDefinition.INTERVAL_REFRESH_TYPE:
+                                    return "interval";
+                                default:
+                                    return "unknown";
                             }
-                            return "unknown";
                         case COLUMN_BASE_TABLE_NAME:
                             return viewDefinition.getBaseTableName();
                         case COLUMN_VIEW_SQL:

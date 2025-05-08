@@ -263,6 +263,10 @@ public interface CairoConfiguration {
 
     long getMatViewInsertAsSelectBatchSize();
 
+    long getMatViewIntervalJobTick();
+
+    int getMatViewIntervalJobWheelSize();
+
     int getMatViewMaxRefreshRetries();
 
     long getMatViewMinRefreshInterval();

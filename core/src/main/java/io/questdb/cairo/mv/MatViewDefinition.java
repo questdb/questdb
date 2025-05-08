@@ -48,13 +48,17 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public class MatViewDefinition implements Mutable {
-    // For now, incremental refresh is the only supported refresh type.
     public static final int INCREMENTAL_REFRESH_TYPE = 0;
+    public static final int INTERVAL_REFRESH_TYPE = 1;
     public static final String MAT_VIEW_DEFINITION_FILE_NAME = "_mv";
+    public static final int MAT_VIEW_DEFINITION_FORMAT_EXTRA_INTERVAL_MSG_TYPE = 1;
     public static final int MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
     private String baseTableName;
     // Not persisted, parsed from timeZoneOffset.
     private long fixedOffset;
+    private long intervalStart; // micros
+    private int intervalStride;
+    private char intervalUnit;
     private String matViewSql;
     private TableToken matViewToken;
     private int refreshType = -1;
@@ -79,10 +83,19 @@ public class MatViewDefinition implements Mutable {
     }
 
     public static void append(@NotNull MatViewDefinition matViewDefinition, @NotNull BlockFileWriter writer) {
-        final AppendableBlock block = writer.append();
+        AppendableBlock block = writer.append();
         append(matViewDefinition, block);
         block.commit(MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE);
+        block = writer.append();
+        appendInterval(matViewDefinition, block);
+        block.commit(MAT_VIEW_DEFINITION_FORMAT_EXTRA_INTERVAL_MSG_TYPE);
         writer.commit();
+    }
+
+    public static void appendInterval(@NotNull MatViewDefinition matViewDefinition, @NotNull AppendableBlock block) {
+        block.putLong(matViewDefinition.getIntervalStart());
+        block.putInt(matViewDefinition.getIntervalStride());
+        block.putChar(matViewDefinition.getIntervalUnit());
     }
 
     public static void readFrom(
@@ -92,18 +105,29 @@ public class MatViewDefinition implements Mutable {
             int rootLen,
             @NotNull TableToken matViewToken
     ) {
-        path.trimTo(rootLen).concat(matViewToken.getDirName()).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
+        path.trimTo(rootLen).concat(matViewToken.getDirName()).concat(MAT_VIEW_DEFINITION_FILE_NAME);
         reader.of(path.$());
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
         // Iterate through the block until we find the one we recognize.
+        boolean matViewDefBlockFound = false;
         while (cursor.hasNext()) {
-            if (loadMatViewDefinition(destDefinition, cursor.next(), matViewToken)) {
+            final ReadableBlock block = cursor.next();
+            if (block.type() == MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE) {
+                readDefinitionBlock(destDefinition, block, matViewToken);
+                matViewDefBlockFound = true;
+                // keep going, because V2 block might follow
+                continue;
+            }
+            if (block.type() == MAT_VIEW_DEFINITION_FORMAT_EXTRA_INTERVAL_MSG_TYPE) {
+                readIntervalBlock(destDefinition, block);
                 return;
             }
         }
-        throw CairoException.critical(0)
-                .put("cannot read materialized view definition, block not found [path=").put(path)
-                .put(']');
+        if (!matViewDefBlockFound) {
+            throw CairoException.critical(0)
+                    .put("cannot read materialized view definition, block not found [path=").put(path)
+                    .put(']');
+        }
     }
 
     @Override
@@ -119,6 +143,9 @@ public class MatViewDefinition implements Mutable {
         refreshType = -1;
         samplingInterval = 0;
         samplingIntervalUnit = 0;
+        intervalStart = 0;
+        intervalStride = 0;
+        intervalUnit = 0;
     }
 
     public String getBaseTableName() {
@@ -127,6 +154,18 @@ public class MatViewDefinition implements Mutable {
 
     public long getFixedOffset() {
         return fixedOffset;
+    }
+
+    public long getIntervalStart() {
+        return intervalStart;
+    }
+
+    public int getIntervalStride() {
+        return intervalStride;
+    }
+
+    public char getIntervalUnit() {
+        return intervalUnit;
     }
 
     public String getMatViewSql() {
@@ -166,6 +205,113 @@ public class MatViewDefinition implements Mutable {
     }
 
     public void init(
+            int refreshType,
+            @NotNull TableToken matViewToken,
+            @NotNull String matViewSql,
+            @NotNull String baseTableName,
+            long samplingInterval,
+            char samplingIntervalUnit,
+            @Nullable String timeZone,
+            @Nullable String timeZoneOffset,
+            long intervalStart,
+            int intervalStride,
+            char intervalUnit
+    ) {
+        initDefinition(
+                refreshType,
+                matViewToken,
+                matViewSql,
+                baseTableName,
+                samplingInterval,
+                samplingIntervalUnit,
+                timeZone,
+                timeZoneOffset
+        );
+        initInterval(
+                intervalStart,
+                intervalStride,
+                intervalUnit
+        );
+    }
+
+    private static void readDefinitionBlock(
+            MatViewDefinition destDefinition,
+            ReadableBlock block,
+            TableToken matViewToken
+    ) {
+        assert block.type() == MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE;
+
+        long offset = 0;
+        final int refreshType = block.getInt(offset);
+        if (refreshType != INCREMENTAL_REFRESH_TYPE && refreshType != INTERVAL_REFRESH_TYPE) {
+            throw CairoException.critical(0)
+                    .put("unsupported refresh type [view=")
+                    .put(matViewToken.getTableName())
+                    .put(", type=")
+                    .put(refreshType)
+                    .put(']');
+        }
+        offset += Integer.BYTES;
+
+        final CharSequence baseTableName = block.getStr(offset);
+        if (baseTableName == null || baseTableName.length() == 0) {
+            throw CairoException.critical(0)
+                    .put("base table name for materialized view is empty [view=")
+                    .put(matViewToken.getTableName())
+                    .put(']');
+        }
+        offset += Vm.getStorageLength(baseTableName);
+        final String baseTableNameStr = Chars.toString(baseTableName);
+
+        final long samplingInterval = block.getLong(offset);
+        offset += Long.BYTES;
+
+        final char samplingIntervalUnit = block.getChar(offset);
+        offset += Character.BYTES;
+
+        final CharSequence timeZone = block.getStr(offset);
+        offset += Vm.getStorageLength(timeZone);
+        final String timeZoneStr = Chars.toString(timeZone);
+
+        final CharSequence timeZoneOffset = block.getStr(offset);
+        offset += Vm.getStorageLength(timeZoneOffset);
+        final String timeZoneOffsetStr = Chars.toString(timeZoneOffset);
+
+        final CharSequence matViewSql = block.getStr(offset);
+        if (matViewSql == null || matViewSql.length() == 0) {
+            throw CairoException.critical(0)
+                    .put("materialized view SQL is empty [view=")
+                    .put(matViewToken.getTableName())
+                    .put(']');
+        }
+        final String matViewSqlStr = Chars.toString(matViewSql);
+
+        destDefinition.initDefinition(
+                refreshType,
+                matViewToken,
+                matViewSqlStr,
+                baseTableNameStr,
+                samplingInterval,
+                samplingIntervalUnit,
+                timeZoneStr,
+                timeZoneOffsetStr
+        );
+    }
+
+    private static void readIntervalBlock(MatViewDefinition destDefinition, ReadableBlock block) {
+        assert block.type() == MAT_VIEW_DEFINITION_FORMAT_EXTRA_INTERVAL_MSG_TYPE;
+
+        long offset = 0;
+        final long intervalStart = block.getLong(offset);
+        offset += Long.BYTES;
+        final int intervalStride = block.getInt(offset);
+        offset += Integer.BYTES;
+        final char intervalUnit = block.getChar(offset);
+
+        destDefinition.initInterval(intervalStart, intervalStride, intervalUnit);
+    }
+
+    private void initDefinition(
             int refreshType,
             @NotNull TableToken matViewToken,
             @NotNull String matViewSql,
@@ -216,71 +362,13 @@ public class MatViewDefinition implements Mutable {
         }
     }
 
-    private static boolean loadMatViewDefinition(
-            MatViewDefinition destDefinition,
-            ReadableBlock block,
-            TableToken matViewToken
+    private void initInterval(
+            long intervalStart,
+            int intervalStride,
+            char intervalUnit
     ) {
-        if (block.type() != MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE) {
-            // Unknown block.
-            return false;
-        }
-
-        long offset = 0;
-        final int refreshType = block.getInt(offset);
-        if (refreshType != INCREMENTAL_REFRESH_TYPE) {
-            throw CairoException.critical(0)
-                    .put("unsupported refresh type [view=")
-                    .put(matViewToken.getTableName())
-                    .put(", type=")
-                    .put(refreshType)
-                    .put(']');
-        }
-        offset += Integer.BYTES;
-
-        final CharSequence baseTableName = block.getStr(offset);
-        if (baseTableName == null || baseTableName.length() == 0) {
-            throw CairoException.critical(0)
-                    .put("base table name for materialized view is empty [view=")
-                    .put(matViewToken.getTableName())
-                    .put(']');
-        }
-        offset += Vm.getStorageLength(baseTableName);
-        final String baseTableNameStr = Chars.toString(baseTableName);
-
-        final long samplingInterval = block.getLong(offset);
-        offset += Long.BYTES;
-
-        final char samplingIntervalUnit = block.getChar(offset);
-        offset += Character.BYTES;
-
-        final CharSequence timeZone = block.getStr(offset);
-        offset += Vm.getStorageLength(timeZone);
-        final String timeZoneStr = Chars.toString(timeZone);
-
-        final CharSequence timeZoneOffset = block.getStr(offset);
-        offset += Vm.getStorageLength(timeZoneOffset);
-        final String timeZoneOffsetStr = Chars.toString(timeZoneOffset);
-
-        final CharSequence matViewSql = block.getStr(offset);
-        if (matViewSql == null || matViewSql.length() == 0) {
-            throw CairoException.critical(0)
-                    .put("materialized view SQL is empty [view=")
-                    .put(matViewToken.getTableName())
-                    .put(']');
-        }
-        final String matViewSqlStr = Chars.toString(matViewSql);
-
-        destDefinition.init(
-                refreshType,
-                matViewToken,
-                matViewSqlStr,
-                baseTableNameStr,
-                samplingInterval,
-                samplingIntervalUnit,
-                timeZoneStr,
-                timeZoneOffsetStr
-        );
-        return true;
+        this.intervalStart = intervalStart;
+        this.intervalStride = intervalStride;
+        this.intervalUnit = intervalUnit;
     }
 }

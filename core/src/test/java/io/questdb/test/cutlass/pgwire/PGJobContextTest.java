@@ -12163,7 +12163,7 @@ create table tab as (
 
     private void mayDrainWalAndMatViewQueues() {
         if (walEnabled) {
-            drainWalAndMatViewQueues();
+            drainWalAndMatViewQueue();
         }
     }
 

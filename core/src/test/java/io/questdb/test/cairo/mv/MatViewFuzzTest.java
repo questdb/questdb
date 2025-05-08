@@ -136,7 +136,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             drainWalQueue();
             fuzzer.checkNoSuspendedTables();
 
-            drainWalAndMatViewQueues();
+            drainWalAndMatViewQueue();
             fuzzer.checkNoSuspendedTables();
 
             for (int i = 0; i < tableCount; i++) {
@@ -144,7 +144,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 final String mvName = testTableName + "_" + i + "_mv";
 
                 execute("refresh materialized view '" + mvName + "' full;");
-                drainWalAndMatViewQueues();
+                drainWalAndMatViewQueue();
 
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
                 assertSql(
@@ -360,7 +360,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         drainWalQueue();
         fuzzer.checkNoSuspendedTables();
 
-        drainWalAndMatViewQueues();
+        drainWalAndMatViewQueue();
         fuzzer.checkNoSuspendedTables();
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {

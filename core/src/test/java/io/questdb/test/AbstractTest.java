@@ -29,6 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.mv.MatViewRefreshIntervalJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -98,9 +99,9 @@ public class AbstractTest {
         return new ApplyWal2TableJob(engine, 1, 1);
     }
 
-    protected static void drainMatViewQueue(CairoEngine engine) {
-        try (var refreshJob = createMatViewRefreshJob(engine)) {
-            drainMatViewQueue(refreshJob);
+    @SuppressWarnings("StatementWithEmptyBody")
+    protected static void drainMatViewIntervalQueue(MatViewRefreshIntervalJob refreshIntervalJob) {
+        while (refreshIntervalJob.run(0)) {
         }
     }
 
@@ -110,13 +111,19 @@ public class AbstractTest {
         }
     }
 
-    protected static void drainWalAndMatViewQueues(CairoEngine engine) {
+    protected static void drainMatViewQueue(CairoEngine engine) {
+        try (var refreshJob = createMatViewRefreshJob(engine)) {
+            drainMatViewQueue(refreshJob);
+        }
+    }
+
+    protected static void drainWalAndMatViewQueue(CairoEngine engine) {
         drainWalQueue(engine);
         drainMatViewQueue(engine);
         drainWalQueue(engine);
     }
 
-    protected static void drainWalAndMatViewQueues(MatViewRefreshJob refreshJob, CairoEngine engine) {
+    protected static void drainWalAndMatViewQueue(MatViewRefreshJob refreshJob, CairoEngine engine) {
         drainWalQueue(engine);
         drainMatViewQueue(refreshJob);
         drainWalQueue(engine);

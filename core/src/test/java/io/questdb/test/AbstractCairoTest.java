@@ -1348,8 +1348,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return createWalApplyJob(engine);
     }
 
-    protected static void drainWalAndMatViewQueues() {
-        drainWalAndMatViewQueues(engine);
+    protected static void drainWalAndMatViewQueue() {
+        drainWalAndMatViewQueue(engine);
     }
 
     protected static void drainWalQueue(QuestDBTestNode node) {

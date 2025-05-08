@@ -432,6 +432,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewIntervalJobTick() {
+        return getDelegate().getMatViewIntervalJobTick();
+    }
+
+    @Override
+    public int getMatViewIntervalJobWheelSize() {
+        return getDelegate().getMatViewIntervalJobWheelSize();
+    }
+
+    @Override
     public int getMatViewMaxRefreshRetries() {
         return getDelegate().getMatViewMaxRefreshRetries();
     }
