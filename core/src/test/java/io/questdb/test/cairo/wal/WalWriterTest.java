@@ -3761,6 +3761,14 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testWalEventReaderMaxTxnTooLarge() throws Exception {
+        // This test simulates the scenario where data was written via mmap,
+        // but not fully flushed to disk.
+        // The specific case is that the `_event` file has a `maxTxn` outside the index
+        // recorded in `_event.i`.
+        // On Windows we tolerate the `_event.i` file being shorter than expected (see `try/catch` in impl),
+        // On other platforms we require the file to be at least as long, but can tolerate
+        // null index data.
+
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             final TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
