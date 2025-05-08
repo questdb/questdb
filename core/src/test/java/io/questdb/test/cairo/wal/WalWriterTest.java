@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
@@ -42,6 +43,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.WalDataRecord;
@@ -3679,18 +3681,18 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWalEvenReaderConcurrentReadWrite() throws Exception {
-        AtomicReference<TestUtils.LeakProneCode> evenFileLengthCallBack = new AtomicReference<>();
+    public void testWalEventReaderConcurrentReadWrite() throws Exception {
+        AtomicReference<TestUtils.LeakProneCode> eventFileLengthCallBack = new AtomicReference<>();
 
         FilesFacade ff = new TestFilesFacadeImpl() {
 
             @Override
             public long length(long fd) {
                 long len = super.length(fd);
-                if (fd == this.fd && evenFileLengthCallBack.get() != null) {
+                if (fd == this.fd && eventFileLengthCallBack.get() != null) {
                     TestUtils.unchecked(() -> {
-                        evenFileLengthCallBack.get().run();
-                        evenFileLengthCallBack.set(null);
+                        eventFileLengthCallBack.get().run();
+                        eventFileLengthCallBack.set(null);
                     });
                 }
                 return len;
@@ -3699,10 +3701,10 @@ public class WalWriterTest extends AbstractCairoTest {
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == this.fd) {
-                    if (evenFileLengthCallBack.get() != null) {
+                    if (eventFileLengthCallBack.get() != null) {
                         TestUtils.unchecked(() -> {
-                            evenFileLengthCallBack.get().run();
-                            evenFileLengthCallBack.set(null);
+                            eventFileLengthCallBack.get().run();
+                            eventFileLengthCallBack.set(null);
                         });
                     }
 
@@ -3726,23 +3728,22 @@ public class WalWriterTest extends AbstractCairoTest {
         assertMemoryLeak(
                 ff, () -> {
                     final String tableName = testName.getMethodName();
-                    TableToken tableToken;
-                    TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    final TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
                             .col("a", ColumnType.INT)
                             .col("b", ColumnType.SYMBOL)
                             .timestamp("ts")
                             .wal();
-                    tableToken = createTable(model);
+                    final TableToken tableToken = createTable(model);
 
-                    WalWriter walWriter = engine.getWalWriter(tableToken);
-                    TableWriter.Row row = walWriter.newRow(0);
+                    final WalWriter walWriter = engine.getWalWriter(tableToken);
+                    final TableWriter.Row row = walWriter.newRow(0);
                     row.putInt(0, 1);
                     row.append();
 
                     walWriter.commit();
 
-                    evenFileLengthCallBack.set(() -> {
-                        // Close wal segments after the moment when _even file length is taken
+                    eventFileLengthCallBack.set(() -> {
+                        // Close wal segments after the moment when _event file length is taken
                         // but before it's mapped to memory
                         walWriter.close();
                         engine.releaseInactive();
@@ -3756,6 +3757,77 @@ public class WalWriterTest extends AbstractCairoTest {
                     );
                 }
         );
+    }
+
+    @Test
+    public void testWalEventReaderMaxTxnTooLarge() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            final TableToken tableToken = createTable(model);
+
+            final WalWriter walWriter = engine.getWalWriter(tableToken);
+            final TableWriter.Row row = walWriter.newRow(0);
+            row.putInt(0, 1);
+            row.append();
+
+            System.err.println("testWalEventReaderMaxTxnTooLarge :: (A)");
+
+            walWriter.commit();
+
+            System.err.println("testWalEventReaderMaxTxnTooLarge :: (B)");
+
+            walWriter.close();
+
+            System.err.println("testWalEventReaderMaxTxnTooLarge :: (C)");
+
+            try (
+                    final Path walePath = new Path()
+                            .of(configuration.getDbRoot())
+                            .concat(tableToken)
+                            .concat(WAL_NAME_BASE + 1)
+                            .concat("0")
+                            .concat(EVENT_FILE_NAME);
+                    final MemoryMARW eventMem = Vm.getCMARWInstance()
+            ) {
+                Assert.assertTrue(Files.exists(walePath.$()));
+                eventMem.of(
+                        engine.getConfiguration().getFilesFacade(),
+                        walePath.$(),
+                        configuration.getWalEventAppendPageSize(),
+                        WALE_HEADER_SIZE,
+                        MemoryTag.MMAP_TABLE_WAL_WRITER,
+                        CairoConfiguration.O_NONE,
+                        Files.POSIX_MADV_RANDOM
+                );
+
+                // We hack the wale header's `maxTxn` so it's
+                // well outside what's both the `_event` and `_event.i` files.
+                eventMem.putInt(0, 200000);
+
+                System.err.println("testWalEventReaderMaxTxnTooLarge :: (D)");
+            }
+
+            System.err.println("testWalEventReaderMaxTxnTooLarge :: (E)");
+
+            engine.releaseInactive();
+
+            System.err.println("testWalEventReaderMaxTxnTooLarge :: (F)");
+            drainWalQueue();
+
+            System.err.println("testWalEventReaderMaxTxnTooLarge :: (G)");
+
+            assertSql(
+                    "a\tb\tts\n" +
+                            "1\t\t1970-01-01T00:00:00.000000Z\n", tableName
+            );
+
+            System.err.println("testWalEventReaderMaxTxnTooLarge :: (H)");
+        });
     }
 
     @Test
