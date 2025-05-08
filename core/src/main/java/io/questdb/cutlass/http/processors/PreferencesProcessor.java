@@ -123,10 +123,10 @@ public class PreferencesProcessor implements HttpRequestProcessor, HttpContentLi
             preferencesStore.save(transientState.sink, mode, version);
             sendOk();
         } catch (JsonException | CairoError e) {
-            LOG.error().$("error while saving config").$((Throwable) e).$();
+            LOG.error().$("could not save preferences").$((Throwable) e).$();
             sendErr(e.getFlyweightMessage());
         } catch (CairoException e) {
-            LOG.error().$("error while saving config").$((Throwable) e).$();
+            LOG.error().$("could not save preferences").$((Throwable) e).$();
             sendErr(e.isAuthorizationError() ? HTTP_UNAUTHORIZED : HTTP_BAD_REQUEST, e.getFlyweightMessage());
         }
         transientState.clear();
