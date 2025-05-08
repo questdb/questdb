@@ -490,47 +490,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return processor;
     }
 
-    private HttpRequestProcessor checkProcessorValidForRequest(
-            Utf8Sequence method,
-            HttpRequestProcessor processor,
-            boolean chunked,
-            boolean multipartRequest,
-            long contentLength,
-            boolean multipartProcessor
-    ) {
-        if (processor.isErrorProcessor()) {
-            return processor;
-        }
-
-        if (Utf8s.equalsNcAscii("POST", method) || Utf8s.equalsNcAscii("PUT", method)) {
-            if (!multipartProcessor) {
-                if (multipartRequest) {
-                    return rejectProcessor.reject(HTTP_NOT_FOUND, "Method (multipart POST) not supported");
-                } else if (!(processor instanceof HttpContentListener)) {
-                    return rejectProcessor.reject(HTTP_NOT_FOUND, "Method (POST/PUT) not supported");
-                }
-            }
-            if (chunked && contentLength > 0) {
-                return rejectProcessor.reject(HTTP_BAD_REQUEST, "Invalid chunked request; content-length specified");
-            }
-            if (!chunked && !multipartRequest && contentLength < 0) {
-                return rejectProcessor.reject(HTTP_BAD_REQUEST, "Content-length not specified for POST/PUT request");
-            }
-        } else if (Utf8s.equalsNcAscii("GET", method)) {
-            if (chunked || multipartRequest || contentLength > 0) {
-                return rejectProcessor.reject(HTTP_BAD_REQUEST, "GET request method cannot have content");
-            }
-            if (multipartProcessor) {
-                return rejectProcessor.reject(HTTP_NOT_FOUND, "Method GET not supported");
-            }
-        } else {
-            LOG.error().$("rejecting method [method=").$(method).I$();
-            return rejectProcessor.reject(HTTP_BAD_REQUEST, "Method not supported");
-        }
-
-        return processor;
-    }
-
     private void completeRequest(
             HttpRequestProcessor processor,
             RescheduleContext rescheduleContext
@@ -920,11 +879,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 throw HttpException.instance("missing URL");
             }
             HttpRequestProcessor processor = rejectProcessor.isRequestBeingRejected() ? rejectProcessor : getHttpRequestProcessor(selector);
-            long contentLength = headerParser.getContentLength();
-            final boolean chunked = Utf8s.equalsNcAscii("chunked", headerParser.getHeader(HEADER_TRANSFER_ENCODING));
-            final boolean multipartRequest = Utf8s.equalsNcAscii("multipart/form-data", headerParser.getContentType())
-                    || Utf8s.equalsNcAscii("multipart/mixed", headerParser.getContentType());
-            final boolean multipartProcessor = processor instanceof HttpMultipartContentListener;
+            processor = processor.checkRequestSupported(headerParser, rejectProcessor);
 
             DirectUtf8Sequence acceptEncoding = headerParser.getHeader(HEADER_CONTENT_ACCEPT_ENCODING);
             if (configuration.getHttpContextConfiguration().allowDeflateBeforeSend()
@@ -955,19 +910,15 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     }
                 }
 
-                processor = checkProcessorValidForRequest(
-                        method,
-                        processor,
-                        chunked,
-                        multipartRequest,
-                        contentLength,
-                        multipartProcessor
-                );
-
                 if (!connectionCounted) {
                     processor = checkConnectionLimit(processor);
                     connectionCounted = true;
                 }
+
+                final long contentLength = headerParser.getContentLength();
+                final boolean chunked = Utf8s.equalsNcAscii("chunked", headerParser.getHeader(HEADER_TRANSFER_ENCODING));
+                final boolean multipartRequest = Utf8s.equalsNcAscii("multipart/form-data", headerParser.getContentType())
+                        || Utf8s.equalsNcAscii("multipart/mixed", headerParser.getContentType());
 
                 if (chunked) {
                     busyRecv = consumeChunked(processor, headerEnd, read, newRequest);

@@ -46,18 +46,24 @@ public class SettingsProcessor implements HttpRequestProcessor {
     private static final String PREFERENCES_VERSION = "preferences.version";
     private static final ThreadLocal<Utf8StringSink> tlSink = new ThreadLocal<>(Utf8StringSink::new);
     private final PreferencesStore preferencesStore;
+    private final byte requiredAuthType;
     private final ServerConfiguration serverConfiguration;
 
     public SettingsProcessor(ServerConfiguration serverConfiguration, PreferencesStore preferencesStore) {
         this.serverConfiguration = serverConfiguration;
         this.preferencesStore = preferencesStore;
+
+        requiredAuthType = serverConfiguration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getRequiredAuthType();
     }
 
     @Override
     public byte getRequiredAuthType(Utf8Sequence method) {
-        return Utf8s.equalsNcAscii(METHOD_GET, method)
-                ? SecurityContext.AUTH_TYPE_NONE
-                : serverConfiguration.getHttpServerConfiguration().getRequiredAuthType();
+        return Utf8s.equalsNcAscii(METHOD_GET, method) ? SecurityContext.AUTH_TYPE_NONE : requiredAuthType;
+    }
+
+    @Override
+    public void onHeadersReady(HttpConnectionContext context) {
+        context.getRequestHeader().getMethod();
     }
 
     @Override
