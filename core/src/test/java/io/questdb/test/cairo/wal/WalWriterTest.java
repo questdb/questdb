@@ -1881,7 +1881,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertSegmentLockEngagement(false, tableName, 1, 0);
 
                 drainWalQueue();
-                runWalPurgeJob();
+                drainPurgeJob();
 
                 assertSegmentExistence(false, tableName, 1, 0);
             }
@@ -2341,16 +2341,12 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testReadMatViewStateV1() throws Exception {
-        assertMemoryLeak(() -> {
-            testReadMatViewState(0);
-        });
+        assertMemoryLeak(() -> testReadMatViewState(0));
     }
 
     @Test
     public void testReadMatViewStateV2() throws Exception {
-        assertMemoryLeak(() -> {
-            testReadMatViewState(2);
-        });
+        assertMemoryLeak(() -> testReadMatViewState(2));
     }
 
     @Test
@@ -3953,6 +3949,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         return true;
                     }
 
+                    @SuppressWarnings("ResultOfMethodCallIgnored")
                     @Override
                     public void rollbackDirectory(Path path) {
                         final File segmentDirFile = new File(path.toString());
