@@ -42,7 +42,7 @@ public interface RejectProcessor extends HttpRequestProcessor, HttpMultipartCont
 
     boolean isRequestBeingRejected();
 
-    default void onContent(long lo, long hi) {
+    default void onChunk(long lo, long hi) {
     }
 
     default void onPartBegin(HttpRequestHeader partHeader) {

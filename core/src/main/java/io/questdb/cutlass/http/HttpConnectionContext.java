@@ -656,7 +656,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
                 }
 
-                contentListener.onContent(lo, recvBuffer + read);
+                contentListener.onChunk(lo, recvBuffer + read);
                 totalReceived += read;
 
                 if (totalReceived == contentLength) {

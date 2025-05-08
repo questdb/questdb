@@ -59,7 +59,7 @@ public class ChunkedContentParser implements Mutable {
             }
 
             long n = Math.min(hi - lo, chunkSize);
-            listener.onContent(lo, lo + n);
+            listener.onChunk(lo, lo + n);
             chunkSize -= n;
             lo += n;
         }

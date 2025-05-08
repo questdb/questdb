@@ -108,7 +108,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void onContent(long lo, long hi)
+    public void onChunk(long lo, long hi)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         if (hi > lo) {
             try {
@@ -178,7 +178,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         this.transientContext = context;
         this.transientState = LV.get(context);
-        onContent(transientState.lo, transientState.hi);
+        onChunk(transientState.lo, transientState.hi);
     }
 
     @Override

@@ -86,7 +86,7 @@ public class PreferencesProcessor implements HttpRequestProcessor, HttpContentLi
     }
 
     @Override
-    public void onContent(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    public void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         if (hi > lo) {
             try {
                 transientState.sink.putNonAscii(lo, hi);

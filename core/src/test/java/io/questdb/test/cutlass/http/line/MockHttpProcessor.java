@@ -104,7 +104,7 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
     }
 
     @Override
-    public void onContent(long lo, long hi) {
+    public void onChunk(long lo, long hi) {
         actualRequest.bodyContent.putNonAscii(lo, hi);
     }
 

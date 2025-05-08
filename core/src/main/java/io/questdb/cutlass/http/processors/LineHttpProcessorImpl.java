@@ -71,7 +71,7 @@ public class LineHttpProcessorImpl implements LineHttpProcessor, HttpMultipartCo
     }
 
     @Override
-    public void onContent(long lo, long hi) {
+    public void onChunk(long lo, long hi) {
         this.state.parse(lo, hi);
     }
 
