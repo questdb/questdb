@@ -60,7 +60,7 @@ public class PreferencesStoreConcurrentTest extends AbstractCairoTest {
                     }
                 }
 
-                final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
+                final ConcurrentHashMap<String, Throwable> errors = new ConcurrentHashMap<>();
 
                 final CyclicBarrier start = new CyclicBarrier(numOfWriterThreads + numOfReaderThreads);
                 final SOCountDownLatch end = new SOCountDownLatch(numOfWriterThreads + numOfReaderThreads);
@@ -81,7 +81,7 @@ public class PreferencesStoreConcurrentTest extends AbstractCairoTest {
                                 }
                             }
                         } catch (Throwable th) {
-                            errors.put(threadIndex, th);
+                            errors.put("writer" + threadIndex, th);
                         }
                         end.countDown();
                     }).start();
@@ -99,7 +99,7 @@ public class PreferencesStoreConcurrentTest extends AbstractCairoTest {
                                 assertEquals("\"preferences\":{\"key1\":\"value1\",\"key2\":\"value2\",\"key3\":\"value3\"}", sink);
                             }
                         } catch (Throwable th) {
-                            errors.put(threadIndex, th);
+                            errors.put("reader" + threadIndex, th);
                         }
                         end.countDown();
                     }).start();
@@ -108,7 +108,7 @@ public class PreferencesStoreConcurrentTest extends AbstractCairoTest {
                 end.await();
 
                 if (!errors.isEmpty()) {
-                    for (Map.Entry<Integer, Throwable> entry : errors.entrySet()) {
+                    for (Map.Entry<String, Throwable> entry : errors.entrySet()) {
                         LOG.error().$("Error in thread [id=").$(entry.getKey()).$("] ").$(entry.getValue()).$();
                     }
                     fail("Error in threads");
