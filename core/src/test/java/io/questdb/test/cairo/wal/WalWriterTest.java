@@ -3782,6 +3782,7 @@ public class WalWriterTest extends AbstractCairoTest {
             System.err.println("testWalEventReaderMaxTxnTooLarge :: (B)");
 
             walWriter.close();
+            engine.releaseInactive();
 
             System.err.println("testWalEventReaderMaxTxnTooLarge :: (C)");
 
@@ -3851,8 +3852,6 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             System.err.println("testWalEventReaderMaxTxnTooLarge :: (F)");
-
-            engine.releaseInactive();
 
             System.err.println("testWalEventReaderMaxTxnTooLarge :: (G)");
             drainWalQueue();
