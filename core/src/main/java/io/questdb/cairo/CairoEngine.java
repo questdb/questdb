@@ -473,7 +473,6 @@ public class CairoEngine implements Closeable, WriterSource {
         boolean b6 = tableMetadataPool.releaseAll();
         scoreboardPool.clear();
         partitionOverwriteControl.clear();
-        metrics.clear();
         return b1 & b2 & b3 & b4 & b5 & b6;
     }
 
