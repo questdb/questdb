@@ -96,10 +96,6 @@ public interface HttpRequestProcessor {
         return SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
-    default boolean isErrorProcessor() {
-        return false;
-    }
-
     default void onConnectionClosed(HttpConnectionContext context) {
     }
 
