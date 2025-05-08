@@ -10,6 +10,8 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.DirectUtf8Sink;
 
+// Only a single class extends this abstract base class in OSS, but it is also used in other projects.
+// In order to not break those dependent projects, it is advised not to remove this base class. 
 public abstract class AbstractJsonParser implements JsonParser, Mutable, QuietCloseable {
 
     private final ObjectPool<FloatingCharSequence> csPool;
