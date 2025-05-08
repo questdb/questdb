@@ -222,8 +222,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
         } else if (intervalFrom != Numbers.LONG_NULL && intervalTo != Numbers.LONG_NULL) {
             // Interval refresh.
-            minTs = intervalFrom;
-            maxTs = intervalTo;
+            // Consider actual min/max timestamps in the table data to avoid redundant
+            // query executions.
+            minTs = Math.max(intervalFrom, baseTableReader.getMinTimestamp());
+            maxTs = Math.min(intervalTo, baseTableReader.getMaxTimestamp());
         } else {
             // Full refresh.
             // When the table is empty, min timestamp is set to Long.MAX_VALUE,
