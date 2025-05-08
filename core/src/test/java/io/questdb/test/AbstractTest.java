@@ -65,8 +65,8 @@ public class AbstractTest {
     public static void setUpStatic() throws Exception {
         TestOs.init();
         Zip.init();
-        // it is necessary to initialise logger before tests start
-        // logger doesn't relinquish memory until JVM stops
+        // it is necessary to initialize logger before tests start
+        // logger doesn't relinquish memory until JVM stops,
         // which causes memory leak detector to fail should logger be
         // created mid-test
         LOG.info().$("setup logger").$();
