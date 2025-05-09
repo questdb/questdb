@@ -273,6 +273,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         try {
             pathToNewPartition.trimTo(pplen);
             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+            if (srcDataTop > 0 && tableWriter.isCommitReplaceMode()) {
+                long dataMax = 0;
+                if (prefixType == O3_BLOCK_DATA && prefixHi >= prefixLo) {
+                    dataMax = prefixHi + 1;
+                }
+                if (suffixType == O3_BLOCK_DATA && suffixHi >= suffixLo) {
+                    dataMax = suffixHi + 1;
+                }
+                srcDataMax = Math.min(srcDataMax, dataMax);
+                srcDataTop = Math.min(srcDataTop, dataMax);
+            }
+
             if (srcDataTop > 0) {
                 // srcDataMax is the row count in the existing column data
                 final long auxRowCount = srcDataMax - srcDataTop;
@@ -352,22 +364,26 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         // And the new partition will not have any column top since srcDataTop <= prefixHi.
                     }
 
-                    newAuxSize = columnTypeDriver.getAuxVectorSize(auxRowCount);
-                    srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
-                    ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
                     srcDataFixOffset = 0;
+                    if (auxRowCount > 0) {
+                        newAuxSize = columnTypeDriver.getAuxVectorSize(auxRowCount);
+                        srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
+                        ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
 
-                    srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCount - 1);
-                    srcDataAddr = srcDataSize > 0 ? mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : 0;
-                    ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
+                        srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCount - 1);
+                        srcDataAddr = srcDataSize > 0 ? mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : 0;
+                        ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
+                    }
                 }
             } else {
-                newAuxSize = columnTypeDriver.getAuxVectorSize(srcDataMax);
-                srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
-                ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
                 srcDataFixOffset = 0;
-                srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, srcDataMax - 1);
-                srcDataAddr = srcDataSize > 0 ? mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : 0;
+                if (srcDataMax > 0) {
+                    newAuxSize = columnTypeDriver.getAuxVectorSize(srcDataMax);
+                    srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
+                    srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, srcDataMax - 1);
+                    srcDataAddr = srcDataSize > 0 ? mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : 0;
+                }
                 ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
             }
 
@@ -2398,6 +2414,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final boolean mixedIOFlag = tableWriter.allowMixedIO();
 
         try {
+            if (srcDataTop > 0 && tableWriter.isCommitReplaceMode()) {
+                long dataMax = 0;
+                if (prefixType == O3_BLOCK_DATA && prefixHi >= prefixLo) {
+                    dataMax = prefixHi + 1;
+                }
+                if (suffixType == O3_BLOCK_DATA && suffixHi >= suffixLo) {
+                    dataMax = suffixHi + 1;
+                }
+                srcDataMax = Math.min(srcDataMax, dataMax);
+                srcDataTop = Math.min(srcDataTop, dataMax);
+            }
+
             if (srcDataTop > 0) {
                 // Size of data actually in the file.
                 final long srcDataActualBytes = (srcDataMax - srcDataTop) << shl;
@@ -2426,14 +2454,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         // New partition will have 0 column top, since srcDataTop <= prefixHi.
                     }
                     srcDataFixSize = srcDataActualBytes;
-                    srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
-                    ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
+                    if (srcDataFixSize != 0) {
+                        srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                        ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
+                    }
                     srcDataFixOffset = 0;
                 }
             } else {
                 srcDataFixSize = srcDataMax << shl;
-                srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
-                ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
+                if (srcDataFixSize != 0) {
+                    srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
+                }
                 srcDataFixOffset = 0;
             }
 
