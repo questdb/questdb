@@ -119,27 +119,19 @@ public class DerivedArrayView extends ArrayView {
     public void slice(int dim, int lo, int hi, int argPos) {
         if (dim < 0 || dim >= getDimCount()) {
             throw CairoException.nonCritical().position(argPos)
-                    .put("array dimension doesn't exist [dim=").put(dim)
+                    .put("array dimension doesn't exist [dim=").put(dim + 1)
                     .put(", nDims=").put(getDimCount()).put(']');
         }
         int dimLen = getDimLen(dim);
-        if (hi == Numbers.INT_NULL) {
+        if (hi == Numbers.INT_NULL || hi > dimLen) {
             hi = dimLen;
         }
-        // Report bounds + 1 because that's what the user entered, the caller subtracted 1
-        // to align with Postgres' 1-based array indexing
-        if (lo >= hi) {
+        if (lo < 0 || hi < 0) {
+            // Report bounds + 1 because that's what the user entered, the caller subtracted 1
+            // to align with Postgres' 1-based array indexing
             throw CairoException.nonCritical()
                     .position(argPos)
-                    .put("lower bound is not less than upper bound [dim=").put(dim)
-                    .put(", lowerBound=").put(lo + 1)
-                    .put(", upperBound=").put(hi + 1)
-                    .put(']');
-        }
-        if (lo < 0 || lo >= dimLen || hi > dimLen) {
-            throw CairoException.nonCritical()
-                    .position(argPos)
-                    .put("array slice bounds out of range [dim=").put(dim)
+                    .put("array slice bounds must be positive [dim=").put(dim + 1)
                     .put(", dimLen=").put(dimLen)
                     .put(", lowerBound=").put(lo + 1)
                     .put(", upperBound=").put(hi + 1)
@@ -149,8 +141,12 @@ public class DerivedArrayView extends ArrayView {
             return;
         }
         isVanilla = false;
-        flatViewOffset += lo * getStride(dim);
-        shape.set(dim, hi - lo);
+        if (lo < hi) {
+            flatViewOffset += lo * getStride(dim);
+            shape.set(dim, hi - lo);
+        } else {
+            shape.set(dim, 0);
+        }
     }
 
     public void transpose() {

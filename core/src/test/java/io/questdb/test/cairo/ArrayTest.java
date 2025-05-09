@@ -102,27 +102,46 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAccessEmptyResult() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4]] arr FROM long_sequence(1))");
+
+            assertSql("x\nnull\n", "SELECT arr[1, 3] x FROM tango");
+            assertSql("x\nnull\n", "SELECT arr[3, 1] x FROM tango");
+
+            assertSql("x\n[]\n", "SELECT arr[1:1] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[2:1] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[3:3] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[3:5] x FROM tango");
+
+            assertSql("x\n[]\n", "SELECT arr[1, 1:1] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[1, 2:1] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[1, 3:3] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[1, 3:5] x FROM tango");
+        });
+    }
+
+    @Test
     public void testAccessInvalid() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4]] arr FROM long_sequence(1))");
-            assertExceptionNoLeakCheck("SELECT arr['1',1] FROM tango",
+
+            assertExceptionNoLeakCheck("SELECT arr['1', 1] FROM tango",
                     11, "invalid argument type [type=4]");
-            assertExceptionNoLeakCheck("SELECT arr[1,1::long] FROM tango",
-                    14, "invalid argument type [type=6]");
-            assertExceptionNoLeakCheck("SELECT arr[1,true] FROM tango",
-                    13, "invalid argument type [type=1]");
-            assertExceptionNoLeakCheck("SELECT arr[1,'1'] FROM tango",
-                    13, "invalid argument type [type=4]");
+            assertExceptionNoLeakCheck("SELECT arr[1, 1::long] FROM tango",
+                    15, "invalid argument type [type=6]");
+            assertExceptionNoLeakCheck("SELECT arr[1, true] FROM tango",
+                    14, "invalid argument type [type=1]");
+            assertExceptionNoLeakCheck("SELECT arr[1, '1'] FROM tango",
+                    14, "invalid argument type [type=4]");
             assertExceptionNoLeakCheck("SELECT arr[1, 1, 1] FROM tango",
                     17, "too many array access arguments [nArgs=3, nDims=2]");
             assertExceptionNoLeakCheck("SELECT arr[0, 1] FROM tango",
-                    11, "array index out of range [dim=0, index=0, dimLen=2]");
-            assertExceptionNoLeakCheck("SELECT arr[3, 1] FROM tango",
-                    11, "array index out of range [dim=0, index=3, dimLen=2]");
+                    11, "array index must be positive [dim=1, index=0, dimLen=2]");
+            assertExceptionNoLeakCheck("SELECT arr[1:2, 0] FROM tango",
+                    16, "array index must be positive [dim=2, index=0, dimLen=2]");
             assertExceptionNoLeakCheck("SELECT arr[1, 0] FROM tango",
-                    14, "array index out of range [dim=1, index=0, dimLen=2]");
-            assertExceptionNoLeakCheck("SELECT arr[1, 3] FROM tango",
-                    14, "array index out of range [dim=1, index=3, dimLen=2]");
+                    14, "array index must be positive [dim=2, index=0, dimLen=2]");
         });
     }
 

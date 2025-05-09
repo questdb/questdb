@@ -139,12 +139,15 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     private static int flatIndexDelta(ArrayView array, int dim, int indexAtDim, int argPos) {
         int strideAtDim = array.getStride(dim);
         int dimLen = array.getDimLen(dim);
-        if (indexAtDim < 0 || indexAtDim >= dimLen) {
+        if (indexAtDim < 0) {
             throw CairoException.nonCritical()
                     .position(argPos)
-                    .put("array index out of range [dim=").put(dim)
+                    .put("array index must be positive [dim=").put(dim + 1)
                     .put(", index=").put(indexAtDim + 1)
                     .put(", dimLen=").put(dimLen).put(']');
+        }
+        if (indexAtDim >= dimLen) {
+            return Numbers.INT_NULL;
         }
         return strideAtDim * indexAtDim;
     }
@@ -180,7 +183,11 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             for (int n = indexArgs.size(), dim = 0; dim < n; dim++) {
                 // Decrement the index in the argument because Postgres uses 1-based array indexing
                 int indexAtDim = indexArgs.get(dim) - 1;
-                flatIndex += flatIndexDelta(array, dim, indexAtDim, indexArgPositions.get(dim));
+                int indexDelta = flatIndexDelta(array, dim, indexAtDim, indexArgPositions.get(dim));
+                if (indexDelta == Numbers.INT_NULL) {
+                    return Double.NaN;
+                }
+                flatIndex += indexDelta;
             }
             return array.getDouble(flatIndex);
         }
@@ -225,7 +232,11 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             for (int n = indexArgs.size(), dim = 0; dim < n; dim++) {
                 // Decrement the index in the argument because Postgres uses 1-based array indexing
                 int indexAtDim = indexArgs.getQuick(dim).getInt(rec) - 1;
-                flatIndex += flatIndexDelta(array, dim, indexAtDim, indexArgPositions.get(dim));
+                int indexDelta = flatIndexDelta(array, dim, indexAtDim, indexArgPositions.get(dim));
+                if (indexDelta == Numbers.INT_NULL) {
+                    return Double.NaN;
+                }
+                flatIndex += indexDelta;
             }
             return array.getDouble(flatIndex);
         }
@@ -297,7 +308,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     if (index < 0 || index >= dimLen) {
                         throw CairoException.nonCritical()
                                 .position(argPos)
-                                .put("array index out of range [dim=").put(i)
+                                .put("array index must be positive [dim=").put(i + 1)
                                 .put(", index=").put(index + 1)
                                 .put(", dimLen=").put(dimLen)
                                 .put(']');
