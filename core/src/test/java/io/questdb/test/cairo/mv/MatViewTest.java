@@ -842,7 +842,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             try (var ctx = new SqlExecutionContextImpl(engine, 1) {
                 @Override
-                public boolean allowNonDeterministic() {
+                public boolean allowNonDeterministicFunctions() {
                     return true;
                 }
             }) {

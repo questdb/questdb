@@ -2199,15 +2199,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
 
-            final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministic();
-            executionContext.setAllowNonDeterministic(false);
+            final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
+            executionContext.setAllowNonDeterministicFunction(false);
             try {
                 compiledQuery.ofSelect(generateSelectWithRetries(queryModel, executionContext, false));
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
             } finally {
-                executionContext.setAllowNonDeterministic(ogAllowNonDeterministic);
+                executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
             }
         } catch (Throwable th) {
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);

@@ -53,21 +53,19 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
             setParallelGroupByEnabled(false);
             setParallelReadParquetEnabled(false);
         }
-        with(
-                new ReadOnlySecurityContext() {
-                    @Override
-                    public void authorizeInsert(TableToken tableToken) {
-                        if (!tableToken.equals(viewTableToken)) {
-                            throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-                        }
-                    }
-                },
-                new BindVariableServiceImpl(engine.getConfiguration())
-        );
+        this.securityContext = new ReadOnlySecurityContext() {
+            @Override
+            public void authorizeInsert(TableToken tableToken) {
+                if (!tableToken.equals(viewTableToken)) {
+                    throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+                }
+            }
+        };
+        this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
     }
 
     @Override
-    public boolean allowNonDeterministic() {
+    public boolean allowNonDeterministicFunctions() {
         return false;
     }
 
@@ -131,7 +129,7 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     }
 
     @Override
-    public void setAllowNonDeterministic(boolean value) {
+    public void setAllowNonDeterministicFunction(boolean value) {
         // no-op
     }
 

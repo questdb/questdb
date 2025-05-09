@@ -976,53 +976,53 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             TestUtils.setupWorkerPool(sharedPool, engine);
             sharedPool.start();
 
-            final WorkerPool stealingPool = new TestWorkerPool("pool1", stealingPoolWorkerCount);
+            try (final WorkerPool stealingPool = new TestWorkerPool("pool1", stealingPoolWorkerCount)) {
 
-            SOCountDownLatch doneLatch = new SOCountDownLatch(1);
+                SOCountDownLatch doneLatch = new SOCountDownLatch(1);
 
-            stealingPool.assign(new SynchronizedJob() {
-                boolean run = true;
+                stealingPool.assign(new SynchronizedJob() {
+                    boolean run = true;
 
-                @Override
-                protected boolean runSerially() {
-                    if (run) {
-                        try {
-                            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                                runnable.run(
-                                        engine, compiler, new DelegatingSqlExecutionContext() {
-                                            @Override
-                                            public Rnd getRandom() {
-                                                return rnd;
+                    @Override
+                    protected boolean runSerially() {
+                        if (run) {
+                            try {
+                                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                                    runnable.run(
+                                            engine, compiler, new DelegatingSqlExecutionContext() {
+                                                @Override
+                                                public Rnd getRandom() {
+                                                    return rnd;
+                                                }
+
+                                                @Override
+                                                public int getWorkerCount() {
+                                                    return sharedPoolWorkerCount;
+                                                }
                                             }
-
-                                            @Override
-                                            public int getWorkerCount() {
-                                                return sharedPoolWorkerCount;
-                                            }
-                                        }
-                                );
+                                    );
+                                }
+                            } catch (Throwable e) {
+                                e.printStackTrace(System.out);
+                                errorCounter.incrementAndGet();
+                            } finally {
+                                doneLatch.countDown();
+                                run = false;
                             }
-                        } catch (Throwable e) {
-                            e.printStackTrace(System.out);
-                            errorCounter.incrementAndGet();
-                        } finally {
-                            doneLatch.countDown();
-                            run = false;
+                            return true;
                         }
-                        return true;
+                        return false;
                     }
-                    return false;
+                });
+
+                stealingPool.start();
+
+                try {
+                    doneLatch.await();
+                    Assert.assertEquals(0, errorCounter.get());
+                } finally {
+                    sharedPool.halt();
                 }
-            });
-
-            stealingPool.start();
-
-            try {
-                doneLatch.await();
-                Assert.assertEquals(0, errorCounter.get());
-            } finally {
-                sharedPool.halt();
-                stealingPool.halt();
             }
         });
     }
@@ -1087,8 +1087,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     private static abstract class DelegatingSqlExecutionContext implements SqlExecutionContext {
 
         @Override
-        public boolean allowNonDeterministic() {
-            return sqlExecutionContext.allowNonDeterministic();
+        public boolean allowNonDeterministicFunctions() {
+            return sqlExecutionContext.allowNonDeterministicFunctions();
         }
 
         @Override
@@ -1268,8 +1268,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void setAllowNonDeterministic(boolean value) {
-            sqlExecutionContext.setAllowNonDeterministic(value);
+        public void setAllowNonDeterministicFunction(boolean value) {
+            sqlExecutionContext.setAllowNonDeterministicFunction(value);
         }
 
         @Override

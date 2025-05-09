@@ -59,8 +59,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final IntStack timestampRequiredStack = new IntStack();
     private final WindowContextImpl windowContext = new WindowContextImpl();
     private final int workerCount;
-    private boolean allowNonDeterministic = true;
-    private BindVariableService bindVariableService;
+    protected BindVariableService bindVariableService;
+    protected SecurityContext securityContext;
+    private boolean allowNonDeterministicFunction = true;
     private boolean cacheHit;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private MicrosecondClock clock;
@@ -76,7 +77,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelReadParquetEnabled;
     private Rnd random;
     private long requestFd = -1;
-    private SecurityContext securityContext;
     private boolean useSimpleCircuitBreaker;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
@@ -105,8 +105,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public boolean allowNonDeterministic() {
-        return allowNonDeterministic;
+    public boolean allowNonDeterministicFunctions() {
+        return allowNonDeterministicFunction;
     }
 
     @Override
@@ -305,12 +305,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cacheHit = false;
         this.columnPreTouchEnabled = true;
         this.columnPreTouchEnabledOverride = true;
-        this.allowNonDeterministic = true;
+        this.allowNonDeterministicFunction = true;
     }
 
     @Override
-    public void setAllowNonDeterministic(boolean value) {
-        this.allowNonDeterministic = value;
+    public void setAllowNonDeterministicFunction(boolean value) {
+        this.allowNonDeterministicFunction = value;
     }
 
     @Override

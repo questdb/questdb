@@ -579,7 +579,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     .I$();
             Misc.freeObjList(args);
             throw SqlException.position(position).put("bad function factory (NULL), check log");
-        } else if (!sqlExecutionContext.allowNonDeterministic() && function.isNonDeterministic()) {
+        } else if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
             Misc.freeObjList(args);
             throw SqlException.nonDeterministicColumn(node.position, node.token);
         }

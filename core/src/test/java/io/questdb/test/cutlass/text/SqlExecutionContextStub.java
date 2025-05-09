@@ -48,7 +48,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public boolean allowNonDeterministic() {
+    public boolean allowNonDeterministicFunctions() {
         return true;
     }
 
@@ -205,7 +205,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void setAllowNonDeterministic(boolean value) {
+    public void setAllowNonDeterministicFunction(boolean value) {
     }
 
     @Override
