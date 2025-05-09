@@ -109,7 +109,7 @@ public final class DirectArray extends MutableArray implements Mutable {
     }
 
     /**
-     * Puts a double to a randomly-accessed flat index of the array. If you're populating
+     * Puts a double to a randomly accessed flat index of the array. If you're populating
      * the whole array, prefer obtaining {@code MemoryA} via {@link #startMemoryA()},
      * and then use {@link MemoryA#putDouble(double)} to append all values in row-major order.
      */
@@ -123,7 +123,7 @@ public final class DirectArray extends MutableArray implements Mutable {
     }
 
     /**
-     * Puts a long to a randomly-accessed flat index of the array. If you're populating
+     * Puts long value to a randomly accessed flat index of the array. If you're populating
      * the whole array, prefer obtaining {@code MemoryA} via {@link #startMemoryA()},
      * and then use {@link MemoryA#putLong(long)} to append all values in row-major order.
      */

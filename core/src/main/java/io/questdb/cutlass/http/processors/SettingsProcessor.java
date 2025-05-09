@@ -58,7 +58,7 @@ public class SettingsProcessor implements HttpRequestProcessor {
     }
 
     @Override
-    public boolean IgnoreConnectionLimitCheck() {
+    public boolean ignoreConnectionLimitCheck() {
         return true;
     }
 

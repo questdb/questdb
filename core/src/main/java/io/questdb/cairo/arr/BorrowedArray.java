@@ -63,7 +63,7 @@ public class BorrowedArray extends MutableArray {
         assert (dataEntryPtr + nDims * Integer.BYTES) <= dataLim : "dataEntryPtr + shapeSize > dataLim";
         resetToDefaultStrides();
 
-        // Obtain the values ptr / len from the data.
+        // Get the values ptr / len from the data.
         final long unalignedValuesOffset = offset + ((long) nDims * Integer.BYTES);
         final long bytesToSkipForAlignment = bytesToSkipForAlignment(unalignedValuesOffset, elemSize);
         final long valuesPtr = dataAddr + unalignedValuesOffset + bytesToSkipForAlignment;

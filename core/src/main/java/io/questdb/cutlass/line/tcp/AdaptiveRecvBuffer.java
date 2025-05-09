@@ -137,7 +137,7 @@ public class AdaptiveRecvBuffer implements QuietCloseable {
     /**
      * Try to compact or expand memory.
      * First attempts to compact by shifting incomplete measurements to buffer start.
-     * If compaction insufficient, grows buffer exponentially up to maxBufSize.
+     * If compaction is not enough, grows buffer exponentially up to maxBufSize.
      *
      * @return true if operation succeeded, false if buffer exceeded max size
      */

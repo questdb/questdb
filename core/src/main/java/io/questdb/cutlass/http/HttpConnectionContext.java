@@ -963,7 +963,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         multipartProcessor
                 );
 
-                if (!connectionCounted && !processor.IgnoreConnectionLimitCheck()) {
+                if (!connectionCounted && !processor.ignoreConnectionLimitCheck()) {
                     processor = checkConnectionLimit(processor);
                     connectionCounted = true;
                 }
