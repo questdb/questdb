@@ -34,13 +34,9 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.ByteFunction;
-import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.DateFunction;
-import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
@@ -48,9 +44,9 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
-public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
+public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
 
-    private static final String SIGNATURE = LeadLagWindowFunctionFactoryHelper.LAG_NAME + "(DV)";
+    private static final String SIGNATURE = LeadLagWindowFunctionFactoryHelper.LAG_NAME + "(NV)";
 
     @Override
     public String getSignature() {
@@ -72,12 +68,10 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 configuration,
                 sqlExecutionContext,
                 (defaultValue) -> {
-                    if (!(defaultValue instanceof DoubleFunction || defaultValue instanceof ByteFunction
-                            || defaultValue instanceof CharFunction || defaultValue instanceof ShortFunction
-                            || defaultValue instanceof IntFunction || defaultValue instanceof LongFunction
-                            || defaultValue instanceof StrFunction || defaultValue instanceof TimestampFunction
-                            || defaultValue instanceof DateFunction)) {
-                        throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to double");
+                    if (!(defaultValue instanceof TimestampFunction
+                            || defaultValue instanceof IntFunction || defaultValue instanceof StrFunction
+                            || defaultValue instanceof LongFunction || defaultValue instanceof DateFunction)) {
+                        throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to timestamp");
                     }
                 },
                 LagFunction::new,
@@ -86,9 +80,9 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         );
     }
 
-    public static class LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction implements WindowDoubleFunction {
+    public static class LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction implements WindowTimestampFunction {
 
-        private double lagValue;
+        private long lagValue;
 
         public LagFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
             super(arg, defaultValueFunc, offset, memory, ignoreNulls);
@@ -97,33 +91,33 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public boolean computeNext0(Record record) {
             if (count < offset) {
-                lagValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(record);
+                lagValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getTimestamp(record);
             } else {
-                lagValue = buffer.getDouble((long) loIdx * Double.BYTES);
+                lagValue = buffer.getLong((long) loIdx * Long.BYTES);
             }
-            double d = arg.getDouble(record);
-            boolean respectNulls = !ignoreNulls || Numbers.isFinite(d);
+            long l = arg.getTimestamp(record);
+            boolean respectNulls = !ignoreNulls || l != Numbers.LONG_NULL;
             if (respectNulls) {
-                buffer.putDouble((long) loIdx * Double.BYTES, d);
+                buffer.putLong((long) loIdx * Long.BYTES, l);
             }
             return respectNulls;
         }
 
         @Override
-        public double getDouble(Record rec) {
+        public long getTimestamp(Record rec) {
             return lagValue;
         }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lagValue);
         }
     }
 
-    static class LagOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction implements WindowDoubleFunction {
+    static class LagOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction implements WindowTimestampFunction {
 
-        private double lagValue;
+        private long lagValue;
 
         public LagOverPartitionFunction(Map map,
                                         VirtualRecord partitionByRecord,
@@ -137,36 +131,35 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public double getDouble(Record rec) {
+        public long getTimestamp(Record rec) {
             return lagValue;
         }
-
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lagValue);
         }
 
         @Override
         protected boolean computeNext0(long count, long offset, long startOffset, long firstIdx, Record record) {
-            double d = arg.getDouble(record);
+            long l = arg.getTimestamp(record);
             if (count < offset) {
-                lagValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(record);
+                lagValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getTimestamp(record);
             } else {
-                lagValue = memory.getDouble(startOffset + firstIdx * Double.BYTES);
+                lagValue = memory.getLong(startOffset + firstIdx * Long.BYTES);
             }
-            boolean respectNulls = !ignoreNulls || Numbers.isFinite(d);
+            boolean respectNulls = !ignoreNulls || Numbers.LONG_NULL != l;
             if (respectNulls) {
-                memory.putDouble(startOffset + firstIdx * Double.BYTES, d);
+                memory.putLong(startOffset + firstIdx * Long.BYTES, l);
             }
             return respectNulls;
         }
     }
 
-    static class LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow implements WindowDoubleFunction {
+    static class LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow implements WindowTimestampFunction {
 
-        private double value;
+        private long value;
 
         public LeadLagValueCurrentRow(VirtualRecord partitionByRecord, Function arg, String name, boolean ignoreNulls) {
             super(partitionByRecord, arg, name, ignoreNulls);
@@ -174,18 +167,18 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void computeNext(Record record) {
-            value = arg.getDouble(record);
+            value = arg.getTimestamp(record);
         }
 
         @Override
-        public double getDouble(Record rec) {
+        public long getTimestamp(Record rec) {
             return value;
         }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 }

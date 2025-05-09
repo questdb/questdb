@@ -24,62 +24,52 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.Misc;
 
-public abstract class BaseLongWindowFunction extends LongFunction implements WindowFunction, ScalarFunction {
-    protected final Function arg;
-    protected int columnIndex;
+public abstract class BasePartitionedWindowFunction extends BaseWindowFunction implements Reopenable {
+    protected final Map map;
+    protected final VirtualRecord partitionByRecord;
+    protected final RecordSink partitionBySink;
 
-    public BaseLongWindowFunction(Function arg) {
-        this.arg = arg;
+    public BasePartitionedWindowFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
+        super(arg);
+        this.map = map;
+        this.partitionByRecord = partitionByRecord;
+        this.partitionBySink = partitionBySink;
     }
 
     @Override
     public void close() {
-        if (arg != null) {
-            arg.close();
-        }
+        super.close();
+        Misc.free(map);
+        Misc.freeObjList(partitionByRecord.getFunctions());
     }
-
-    @Override
-    public void cursorClosed() {
-        if (arg != null) {
-            arg.cursorClosed();
-        }
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        // unused
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public abstract String getName();
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         super.init(symbolTableSource, executionContext);
-        if (arg != null) {
-            arg.init(symbolTableSource, executionContext);
+        Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
+    }
+
+    @Override
+    public void reopen() {
+        if (map != null) {
+            map.reopen();
         }
     }
 
     @Override
     public void reset() {
-    }
-
-    @Override
-    public void setColumnIndex(int columnIndex) {
-        this.columnIndex = columnIndex;
+        Misc.free(map);
     }
 
     @Override
@@ -90,13 +80,18 @@ public abstract class BaseLongWindowFunction extends LongFunction implements Win
         } else {
             sink.val("(*)");
         }
-        sink.val(" over ()");
+        if (isIgnoreNulls()) {
+            sink.val(" ignore nulls");
+        }
+        sink.val(" over (");
+        sink.val("partition by ");
+        sink.val(partitionByRecord.getFunctions());
+        sink.val(')');
     }
 
     @Override
     public void toTop() {
-        if (arg != null) {
-            arg.toTop();
-        }
+        super.toTop();
+        Misc.clear(map);
     }
 }
