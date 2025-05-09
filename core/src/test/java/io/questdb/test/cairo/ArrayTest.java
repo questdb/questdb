@@ -202,6 +202,14 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAutoCastToDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql("arr\n[1.0,2.0]\n", "SELECT ARRAY[1, 2] arr FROM long_sequence(1)");
+            assertSql("arr\n[[1.0,2.0],[3.0,4.0]]\n", "SELECT ARRAY[[1, 2], [3, 4]] arr FROM long_sequence(1)");
+        });
+    }
+
+    @Test
     public void testBasicArithmetic1d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");

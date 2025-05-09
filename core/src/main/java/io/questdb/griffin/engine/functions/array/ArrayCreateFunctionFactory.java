@@ -80,7 +80,8 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                     throw SqlException.$(argPositions.getQuick(i), "mixed array and non-array elements");
                 }
                 isConstant &= argI.isConstant();
-                commonElemType = commonWideningType(commonElemType, typeI);
+                // use commonWideningType(commonElemType, typeI) once we support more than the DOUBLE array type:
+                commonElemType = ColumnType.DOUBLE;
             }
             if (!ColumnType.isSupportedArrayElementType(commonElemType)) {
                 throw SqlException.position(arg0Pos)
