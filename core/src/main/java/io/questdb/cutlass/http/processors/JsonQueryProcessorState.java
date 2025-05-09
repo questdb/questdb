@@ -766,7 +766,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        querySuffixWithError(response, 0, null);
+        querySuffixWithError(response, 0, null, 0);
     }
 
     private void doRecordFetchLoop(
@@ -1033,7 +1033,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     void querySuffixWithError(
             HttpChunkedResponse response,
             int code,
-            @Nullable CharSequence message
+            @Nullable CharSequence message,
+            int messagePosition
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // we no longer need cursor when we reached query suffix
         // closing cursor here guarantees that by the time http client finished reading response the table
@@ -1045,17 +1046,17 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             logTimings();
             response.bookmark();
             if (code > 0) {
-                // closing the failed record to make the json response parsable
+                // closing the failed record to make the JSON response parsable
                 response.putAscii(']');
             }
             // always close the dataset
             response.putAscii(']');
             response.putAscii(',').putAsciiQuoted("count").putAscii(':').put(count);
             if (code > 0) {
-                response.putAscii(',').putAsciiQuoted("error").putAscii(':').putQuote()
-                        .putAscii("HTTP ").put(code).putAscii(" (").putAscii(HttpResponseSink.getStatusMessage(code))
-                        .putAscii(message != null ? "), " : ")")
-                        .escapeJsonStr(message != null ? message : "").putQuote();
+                response.putAscii(',')
+                        .putAsciiQuoted("error").putAscii(':')
+                        .putQuote().escapeJsonStr(message != null ? message : "Internal server error").putQuote()
+                        .putAscii(", \"errorPos\"").putAscii(':').put(messagePosition);
             }
             if (timings) {
                 response.putAscii(',').putAsciiQuoted("timings").putAscii(':')
