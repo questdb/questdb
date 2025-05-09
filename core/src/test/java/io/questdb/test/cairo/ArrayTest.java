@@ -91,7 +91,7 @@ public class ArrayTest extends AbstractCairoTest {
     public void testAccess3d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT " +
-                    "ARRAY[[[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]] ] arr FROM long_sequence(1))");
+                    "ARRAY[ [[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]] ] arr FROM long_sequence(1))");
             assertSql("x\n2.0\n", "SELECT arr[1, 1, 2] x FROM tango");
             assertSql("x\n6.0\n", "SELECT arr[2, 1, 2] x FROM tango");
             assertSql("x\n8.0\n", "SELECT arr[2, 2, 2] x FROM tango");
@@ -892,6 +892,34 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE tango AS (SELECT ARRAY" + original + " arr FROM long_sequence(1))");
             execute("INSERT INTO tango SELECT transpose(arr) FROM tango");
             assertSql("arr\n" + original + '\n' + transposed + '\n', "SELECT arr FROM tango");
+        });
+    }
+
+    @Test
+    public void testLength() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0, 1]]), " +
+                    "(ARRAY[[2.0, 2], [2.0, 2], [2.0, 2]]), " +
+                    "(ARRAY[[2.0, 3, 3], [3.0, 3, 3]])"
+            );
+            assertSql("len\n1\n3\n2\n", "SELECT dim_length(arr, 1) len FROM tango");
+            assertSql("len\n2\n2\n3\n", "SELECT dim_length(arr, 2) len FROM tango");
+            assertSql("len\n1\n2\n3\n", "SELECT dim_length(arr, arr[1, 1]::int) len FROM tango");
+        });
+    }
+
+    @Test
+    public void testLengthInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]] arr FROM long_sequence(1))");
+            assertExceptionNoLeakCheck("SELECT dim_length(arr, 0) len FROM tango",
+                    23, "array dimension out of bounds [dim=0, nDims=2]");
+            assertExceptionNoLeakCheck("SELECT dim_length(arr, 3) len FROM tango",
+                    23, "array dimension out of bounds [dim=3, nDims=2]");
+            assertExceptionNoLeakCheck("SELECT dim_length(arr, arr[2, 1]::int) len FROM tango",
+                    32, "array dimension out of bounds [dim=3, nDims=2]");
         });
     }
 
