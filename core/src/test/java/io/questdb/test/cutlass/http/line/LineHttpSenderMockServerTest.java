@@ -241,7 +241,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                     .doubleColumn("x", 1.0)
                     .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";protocol_version=2;"));
         } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "Server not support line protocol version: 2");
+            TestUtils.assertContains(e.getMessage(), "Server does not support line protocol version: 2");
         }
     }
 
