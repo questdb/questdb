@@ -33,7 +33,6 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IOURingFacade;
 import io.questdb.std.IOURingFacadeImpl;
@@ -50,6 +49,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -63,6 +63,12 @@ public interface CairoConfiguration {
     long O_NONE = 0;
     long O_SYNC = 0x80;
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
+
+    /**
+     * Appends to the settings sink from cairo configuration in JSON format.
+     */
+    default void appendToSettingsSink(Utf8StringSink settings) {
+    }
 
     boolean attachPartitionCopy();
 
@@ -371,6 +377,10 @@ public interface CairoConfiguration {
     long getPartitionO3SplitMinSize();
 
     int getPartitionPurgeListCapacity();
+
+    int getPreferencesParserCacheSizeLimit();
+
+    int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();
 
@@ -728,9 +738,6 @@ public interface CairoConfiguration {
      * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
      */
     boolean mangleTableDirNames();
-
-    default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-    }
 
     boolean useFastAsOfJoin();
 }

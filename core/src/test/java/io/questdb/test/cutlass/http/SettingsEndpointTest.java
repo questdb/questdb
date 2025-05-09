@@ -24,14 +24,22 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.*;
+import io.questdb.Bootstrap;
+import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.DefaultPublicPassthroughConfiguration;
+import io.questdb.FactoryProviderImpl;
+import io.questdb.PropBootstrapConfiguration;
+import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
+import io.questdb.PublicPassthroughConfiguration;
+import io.questdb.ServerConfiguration;
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -44,19 +52,28 @@ import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
 public class SettingsEndpointTest extends AbstractBootstrapTest {
     private static final String OSS_PAYLOAD = "{" +
+            "\"config\":{" +
             "\"release.type\":\"OSS\"," +
             "\"release.version\":\"[DEVELOPMENT]\"," +
-            "\"acl.enabled\":false," +
             "\"posthog.enabled\":false," +
             "\"posthog.api.key\":null" +
+            "}," +
+            "\"preferences.version\":0," +
+            "\"preferences\":{" +
+            "}" +
             "}";
 
     private static final String TEST_PAYLOAD = "{" +
+            "\"config\":{" +
             "\"cairo.snapshot.instance.id\":\"db\"," +
             "\"cairo.max.file.name.length\":127," +
             "\"cairo.wal.supported\":true," +
             "\"posthog.enabled\":false," +
             "\"posthog.api.key\":null" +
+            "}," +
+            "\"preferences.version\":0," +
+            "\"preferences\":{" +
+            "}" +
             "}";
 
     @Before
@@ -99,11 +116,11 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             public CairoConfiguration getCairoConfiguration() {
                                 return new DefaultCairoConfiguration(bootstrap.getRootDirectory()) {
                                     @Override
-                                    public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
+                                    public void appendToSettingsSink(Utf8StringSink settings) {
                                         final CairoConfiguration config = getCairoConfiguration();
-                                        settings.put(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID.getPropertyPath(), str(config.getDbDirectory().toString()));
-                                        settings.put(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.getPropertyPath(), integer(config.getMaxFileNameLength()));
-                                        settings.put(PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath(), bool(config.isWalSupported()));
+                                        str(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID.getPropertyPath(), config.getDbDirectory(), settings);
+                                        integer(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.getPropertyPath(), config.getMaxFileNameLength(), settings);
+                                        bool(PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath(), config.isWalSupported(), settings);
                                     }
                                 };
                             }
@@ -112,10 +129,10 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
                                 return new DefaultPublicPassthroughConfiguration() {
                                     @Override
-                                    public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
+                                    public void appendToSettingsSink(Utf8StringSink settings) {
                                         final PublicPassthroughConfiguration config = getPublicPassthroughConfiguration();
-                                        settings.put(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), bool(config.isPosthogEnabled()));
-                                        settings.put(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), str(config.getPosthogApiKey()));
+                                        bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), config.isPosthogEnabled(), settings);
+                                        str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), config.getPosthogApiKey(), settings);
                                     }
                                 };
                             }

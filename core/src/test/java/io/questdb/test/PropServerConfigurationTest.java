@@ -280,6 +280,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(ff.allowMixedIO(root), configuration.getCairoConfiguration().isWriterMixedIOEnabled());
         Assert.assertEquals(CairoConfiguration.O_NONE, configuration.getCairoConfiguration().getWriterFileOpenOpts());
         Assert.assertTrue(configuration.getCairoConfiguration().isIOURingEnabled());
+        Assert.assertEquals(64, configuration.getCairoConfiguration().getPreferencesStringPoolCapacity());
 
         // cannot assert for exact number as it is platform dependant
         Assert.assertTrue(configuration.getCairoConfiguration().getSqlCompilerPoolCapacity() > 0);
@@ -1364,6 +1365,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(23, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
             Assert.assertEquals(33, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
             Assert.assertEquals(33033, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
+
+            Assert.assertEquals(32, configuration.getCairoConfiguration().getPreferencesStringPoolCapacity());
         }
     }
 
@@ -1556,6 +1559,11 @@ public class PropServerConfigurationTest {
                 configuration.getHttpServerConfiguration().getContextPathSettings().toString()
         );
 
+        Assert.assertEquals(
+                "[/new-path/preferences,/new-path/preferences]",
+                configuration.getHttpServerConfiguration().getContextPathPreferences().toString()
+        );
+
         // check the ILP did not move
 
         Assert.assertEquals(
@@ -1577,6 +1585,7 @@ public class PropServerConfigurationTest {
         pathsThatCanBePinned.add(new FuzzItem("http.context.import", "/imp", HttpFullFatServerConfiguration::getContextPathImport));
         pathsThatCanBePinned.add(new FuzzItem("http.context.export", "/exp", HttpFullFatServerConfiguration::getContextPathExport));
         pathsThatCanBePinned.add(new FuzzItem("http.context.settings", "/settings", HttpFullFatServerConfiguration::getContextPathSettings));
+        pathsThatCanBePinned.add(new FuzzItem("http.context.preferences", "/preferences", HttpFullFatServerConfiguration::getContextPathPreferences));
         pathsThatCanBePinned.add(new FuzzItem("http.context.table.status", "/chk", HttpFullFatServerConfiguration::getContextPathTableStatus));
         pathsThatCanBePinned.add(new FuzzItem("http.context.warnings", "/warnings", HttpFullFatServerConfiguration::getContextPathWarnings));
         pathsThatCanBePinned.add(new FuzzItem("http.context.execute", "/exec", HttpFullFatServerConfiguration::getContextPathExec));

@@ -24,7 +24,11 @@
 
 package io.questdb.test.cutlass.http.line;
 
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpChunkedResponse;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpMultipartContentListener;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Chars;
@@ -178,7 +182,7 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
     }
 
     @Override
-    public boolean requiresAuthentication() {
+    public boolean requiresAuthentication(Utf8Sequence method) {
         return false;
     }
 

@@ -24,6 +24,25 @@
 
 package io.questdb.cutlass.http.processors;
 
-public interface TextImportProcessorConfiguration {
-    boolean abortBrokenUploads();
+import io.questdb.std.Mutable;
+import io.questdb.std.str.DirectUtf8Sink;
+
+import java.io.Closeable;
+
+class PreferencesProcessorState implements Mutable, Closeable {
+    final DirectUtf8Sink sink;
+
+    PreferencesProcessorState(int size) {
+        sink = new DirectUtf8Sink(size);
+    }
+
+    @Override
+    public void clear() {
+        sink.clear();
+    }
+
+    @Override
+    public void close() {
+        sink.close();
+    }
 }

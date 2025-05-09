@@ -22,11 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.cutlass.http;
 
-public class DefaultTextImportProcessorConfiguration implements TextImportProcessorConfiguration {
-    @Override
-    public boolean abortBrokenUploads() {
-        return true;
-    }
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.ServerDisconnectException;
+
+public interface HttpContentListener {
+    void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
 }

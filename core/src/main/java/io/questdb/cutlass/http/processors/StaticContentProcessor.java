@@ -62,7 +62,7 @@ import static java.net.HttpURLConnection.HTTP_NOT_FOUND;
 public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
     private static final LocalValue<StaticContentProcessorState> LV = new LocalValue<>();
-    private final Utf8Sequence webConsoleContextPath;
+    private final StaticContentProcessorConfiguration configuration;
     private final FilesFacade ff;
     private final String httpProtocolVersion;
     private final String keepAliveHeader;
@@ -71,7 +71,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     private final HttpRangeParser rangeParser = new HttpRangeParser();
     private final byte requiredAuthType;
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
-    private final StaticContentProcessorConfiguration configuration;
+    private final Utf8Sequence webConsoleContextPath;
 
     public StaticContentProcessor(HttpFullFatServerConfiguration configuration) {
         this.configuration = configuration.getStaticContentProcessorConfiguration();
@@ -90,7 +90,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public byte getRequiredAuthType() {
+    public byte getRequiredAuthType(Utf8Sequence method) {
         return requiredAuthType;
     }
 
@@ -141,7 +141,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public boolean requiresAuthentication() {
+    public boolean requiresAuthentication(Utf8Sequence method) {
         return requiredAuthType == SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 

@@ -38,6 +38,8 @@ public interface RejectProcessor extends HttpRequestProcessor, HttpMultipartCont
 
     void clear();
 
+    Utf16Sink getMessageSink();
+
     boolean isRequestBeingRejected();
 
     default void onChunk(long lo, long hi) {
@@ -53,16 +55,14 @@ public interface RejectProcessor extends HttpRequestProcessor, HttpMultipartCont
 
     RejectProcessor reject(int rejectCode, CharSequence rejectMessage);
 
-    Utf16Sink getMessageSink();
+    default void resumeSend(HttpConnectionContext context)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+        onRequestComplete(context);
+    }
 
     RejectProcessor withAuthenticationType(byte authenticationType);
 
     RejectProcessor withCookie(CharSequence cookieName, CharSequence cookieValue);
 
     RejectProcessor withShutdownWrite();
-
-    default void resumeSend(HttpConnectionContext context)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
-        onRequestComplete(context);
-    }
 }

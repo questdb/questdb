@@ -63,6 +63,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private boolean interruption; // used when a query times out
     private int messagePosition;
     private boolean outOfMemory;
+    private boolean preferencesOutOfDateError = false;
 
     public static CairoException authorization() {
         return nonCritical().setAuthorizationError();
@@ -129,6 +130,15 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public static CairoException partitionManipulationRecoverable() {
         return instance(PARTITION_MANIPULATION_RECOVERABLE);
+    }
+
+    public static CairoException preferencesOutOfDate(long currentVersion, long expectedVersion) {
+        return nonCritical().setPreferencesOutOfDateError()
+                .put("preferences view is out of date [currentVersion=")
+                .put(currentVersion)
+                .put(", expectedVersion=")
+                .put(expectedVersion)
+                .put(']');
     }
 
     public static CairoException queryCancelled(long fd) {
@@ -254,6 +264,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return outOfMemory;
     }
 
+    public boolean isPreferencesOutOfDateError() {
+        return preferencesOutOfDateError;
+    }
+
     public boolean isTableDoesNotExist() {
         return errno == TABLE_DOES_NOT_EXIST;
     }
@@ -309,11 +323,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public CairoException putAsPrintable(CharSequence nonPrintable) {
         message.putAsPrintable(nonPrintable);
-        return this;
-    }
-
-    public CairoException setAuthorizationError() {
-        this.authorizationError = true;
         return this;
     }
 
@@ -377,6 +386,16 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put(message);
         ex.nativeBacktrace.put(nativeBacktrace);
         return ex;
+    }
+
+    private CairoException setAuthorizationError() {
+        this.authorizationError = true;
+        return this;
+    }
+
+    private CairoException setPreferencesOutOfDateError() {
+        this.preferencesOutOfDateError = true;
+        return this;
     }
 
     protected void clear(int errno) {

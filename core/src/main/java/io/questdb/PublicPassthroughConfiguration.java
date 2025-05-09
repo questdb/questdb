@@ -24,15 +24,17 @@
 
 package io.questdb;
 
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.str.Utf8StringSink;
 
 public interface PublicPassthroughConfiguration {
+
+    /**
+     * Appends to the settings sink from passthrough configuration in JSON format.
+     */
+    default void appendToSettingsSink(Utf8StringSink settings) {
+    }
 
     String getPosthogApiKey();
 
     boolean isPosthogEnabled();
-
-    default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-        // no-op
-    }
 }

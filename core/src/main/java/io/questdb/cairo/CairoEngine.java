@@ -97,6 +97,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.preferences.PreferencesStore;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Files;
@@ -147,6 +148,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final MetadataCache metadataCache;
     private final Metrics metrics;
     private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
+    private final PreferencesStore preferencesStore;
     private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
     private final SqlExecutionContext rootExecutionContext;
@@ -200,6 +202,9 @@ public class CairoEngine implements Closeable, WriterSource {
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = createRootExecutionContext();
+
+            preferencesStore = new PreferencesStore(configuration);
+            preferencesStore.init();
 
             tableIdGenerator.open();
             checkpointRecover();
@@ -492,6 +497,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(checkpointAgent);
         Misc.free(metadataCache);
         Misc.free(scoreboardPool);
+        Misc.free(preferencesStore);
     }
 
     @TestOnly
@@ -725,6 +731,10 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public PoolListener getPoolListener() {
         return this.writerPool.getPoolListener();
+    }
+
+    public @NotNull PreferencesStore getPreferencesStore() {
+        return preferencesStore;
     }
 
     public QueryRegistry getQueryRegistry() {

@@ -33,9 +33,22 @@ import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.str.Utf8StringSink;
 
 public interface ServerConfiguration {
     String OSS = "OSS";
+
+    /**
+     * Constructs the config part of settings.
+     * Appends to the settings sink from server configuration in JSON format.
+     */
+    default void appendToSettingsSink(Utf8StringSink settings) {
+        settings.putAscii("\"config\":{");
+        getCairoConfiguration().appendToSettingsSink(settings);
+        getPublicPassthroughConfiguration().appendToSettingsSink(settings);
+        settings.clear(settings.size() - 1);
+        settings.putAscii("},");
+    }
 
     CairoConfiguration getCairoConfiguration();
 
@@ -49,7 +62,11 @@ public interface ServerConfiguration {
 
     LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
 
+    WorkerPoolConfiguration getMatViewRefreshPoolConfiguration();
+
     MemoryConfiguration getMemoryConfiguration();
+
+    Metrics getMetrics();
 
     MetricsConfiguration getMetricsConfiguration();
 
@@ -66,14 +83,10 @@ public interface ServerConfiguration {
         return 0;
     }
 
-    WorkerPoolConfiguration getMatViewRefreshPoolConfiguration();
-
     WorkerPoolConfiguration getWalApplyPoolConfiguration();
 
     WorkerPoolConfiguration getWorkerPoolConfiguration();
 
     default void init(CairoEngine engine, FreeOnExit freeOnExit) {
     }
-
-    Metrics getMetrics();
 }

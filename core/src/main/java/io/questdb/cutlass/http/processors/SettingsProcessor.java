@@ -31,43 +31,45 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.ObjList;
+import io.questdb.preferences.PreferencesStore;
+import io.questdb.std.ThreadLocal;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
-import java.net.HttpURLConnection;
+import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.integer;
+import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
+import static java.net.HttpURLConnection.HTTP_OK;
 
 public class SettingsProcessor implements HttpRequestProcessor {
-    private final Utf8StringSink sink = new Utf8StringSink();
+    private static final String PREFERENCES_VERSION = "preferences.version";
+    private static final ThreadLocal<Utf8StringSink> tlSink = new ThreadLocal<>(Utf8StringSink::new);
+    private final PreferencesStore preferencesStore;
+    private final ServerConfiguration serverConfiguration;
 
-    public SettingsProcessor(ServerConfiguration serverConfiguration) {
-        final CharSequenceObjHashMap<CharSequence> settings = new CharSequenceObjHashMap<>();
-        serverConfiguration.getCairoConfiguration().populateSettings(settings);
-        serverConfiguration.getPublicPassthroughConfiguration().populateSettings(settings);
-        sink.putAscii('{');
-        final ObjList<CharSequence> keys = settings.keys();
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            final CharSequence key = keys.getQuick(i);
-            final CharSequence value = settings.get(key);
-            sink.putQuoted(key).putAscii(':').put(value);
-            if (i != n - 1) {
-                sink.putAscii(',');
-            }
-        }
-        sink.putAscii('}');
+    public SettingsProcessor(ServerConfiguration serverConfiguration, PreferencesStore preferencesStore) {
+        this.serverConfiguration = serverConfiguration;
+        this.preferencesStore = preferencesStore;
     }
 
     @Override
-    public byte getRequiredAuthType() {
+    public byte getRequiredAuthType(Utf8Sequence method) {
         return SecurityContext.AUTH_TYPE_NONE;
     }
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final Utf8StringSink settings = tlSink.get();
+        settings.clear();
+        settings.putAscii('{');
+        serverConfiguration.appendToSettingsSink(settings);
+        integer(PREFERENCES_VERSION, preferencesStore.getVersion(), settings);
+        preferencesStore.appendToSettingsSink(settings);
+        settings.putAscii('}');
+
         final HttpChunkedResponse r = context.getChunkedResponse();
-        r.status(HttpURLConnection.HTTP_OK, "application/json");
+        r.status(HTTP_OK, CONTENT_TYPE_JSON);
         r.sendHeader();
-        r.put(sink);
+        r.put(settings);
         r.sendChunk(true);
     }
 }
