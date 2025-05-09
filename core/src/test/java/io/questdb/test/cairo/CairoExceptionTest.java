@@ -22,37 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm;
+package io.questdb.test.cairo;
 
-import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.str.LPSZ;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
+import io.questdb.test.AbstractTest;
+import org.junit.Assert;
+import org.junit.Test;
 
-public class MemoryFMCRImpl extends MemoryFCRImpl implements MemoryMR {
+public class CairoExceptionTest extends AbstractTest {
 
-    @Override
-    public long detachFdClose() {
-        close();
-        return -1;
+    @Test
+    public void testMatViewDoesNotExistIsNotCritical() {
+        Assert.assertFalse(CairoException.matViewDoesNotExist("foo").isCritical());
     }
 
-    @Override
-    public long getFd() {
-        return -1;
+    @Test
+    public void testTableDoesNotExistIsNotCritical() {
+        Assert.assertFalse(CairoException.tableDoesNotExist("foo").isCritical());
     }
 
-    @Override
-    public boolean isMapped(long offset, long len) {
-        return false;
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
-        throw new UnsupportedOperationException();
+    @Test
+    public void testTableDroppedIsNotCriticial() {
+        Assert.assertFalse(CairoException.tableDropped(new TableToken("x", "x", 123, false, false, false)).isCritical());
     }
 }
