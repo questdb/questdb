@@ -1852,6 +1852,112 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalRefresh() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x ( " +
+                            "sym varchar, price double, ts timestamp " +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create table y (sym varchar)");
+
+            execute(
+                    "create materialized view x_1h with base x as " +
+                            "select x.sym, last(x.price) as price, x.ts " +
+                            "from x join y on (sym) " +
+                            "sample by 1h"
+            );
+
+            final String insertOlderRows = "insert into x values ('gbpusd', 1.320, '2024-09-09T12:01')" +
+                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                    ",('jpyusd', 103.21, '2024-09-11T12:02')" +
+                    ",('gbpusd', 1.321, '2024-09-12T13:02')";
+            execute(insertOlderRows);
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            drainQueues();
+            assertQueryNoLeakCheck("sym\tprice\tts\n", "x_1h order by sym");
+
+            // Insert data into y. Interval refresh should aggregate rows within the interval only.
+            execute("insert into y values ('gbpusd'),('jpyusd')");
+            execute("refresh materialized view x_1h interval from '2024-09-10T12:02' to '2024-09-11T12:02'");
+            drainQueues();
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n",
+                    "x_1h order by sym, ts"
+            );
+
+            // Insert a row with newer timestamp. This time incremental refresh should only aggregate the new row.
+            execute("insert into x (sym, price, ts) values ('gbpusd', 1.320, '2024-09-13T13:13');");
+            drainQueues();
+            final String expected = "sym\tprice\tts\n" +
+                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                    "gbpusd\t1.32\t2024-09-13T13:00:00.000000Z\n" + // newer timestamp
+                    "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n";
+            assertQueryNoLeakCheck(expected, "x_1h order by sym, ts");
+
+            // Make the view invalid. Interval refresh should be ignored.
+            execute("truncate table x;");
+            execute(insertOlderRows);
+            drainQueues();
+            execute("refresh materialized view x_1h interval from '2024-09-10T12:02' to '2024-09-11T12:02';");
+            assertQueryNoLeakCheck(expected, "x_1h order by sym, ts");
+        });
+    }
+
+    @Test
+    public void testIntervalRefreshIgnoresRefreshLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price ( " +
+                            "sym varchar, price double, ts timestamp " +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price values ('gbpusd', 1.320, '2024-09-09T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-11T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-12T13:02')"
+            );
+            currentMicros = parseFloorPartialTimestamp("2024-09-13T00:00:00.000000Z");
+            drainQueues();
+            final String ogExpected = "sym\tprice\tts\n" +
+                    "gbpusd\t1.32\t2024-09-09T12:00:00.000000Z\n" +
+                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                    "gbpusd\t1.321\t2024-09-12T13:00:00.000000Z\n" +
+                    "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n";
+            assertQueryNoLeakCheck(ogExpected, "price_1h order by sym, ts");
+
+            execute("alter materialized view price_1h set refresh limit 8h;");
+
+            // Insert rows with older timestamps. They should be ignored due to the refresh limit.
+            execute(
+                    "insert into base_price values ('gbpusd', 2.431, '2024-09-09T00:01')" +
+                            ",('jpyusd', 214.32, '2024-09-11T00:02')"
+            );
+            drainQueues();
+            assertQueryNoLeakCheck(ogExpected, "price_1h order by sym, ts");
+
+            // Run interval refresh. The newly inserted rows should now be reflected in the mat view.
+            execute("refresh materialized view price_1h interval from '2024-09-09' to '2024-09-12';");
+            drainQueues();
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t2.431\t2024-09-09T00:00:00.000000Z\n" + // new row
+                            "gbpusd\t1.32\t2024-09-09T12:00:00.000000Z\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-12T13:00:00.000000Z\n" +
+                            "jpyusd\t214.32\t2024-09-11T00:00:00.000000Z\n" + // new row
+                            "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n",
+                    "price_1h order by sym, ts"
+            );
+        });
+    }
+
+    @Test
     public void testQueryError() throws Exception {
         assertMemoryLeak(() -> {
             execute(
