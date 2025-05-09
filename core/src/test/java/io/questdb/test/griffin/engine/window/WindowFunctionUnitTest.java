@@ -235,7 +235,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 46, 19, a));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 119, 19, b));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 200, 19, c));
-        Assert.assertEquals((double) (a + b + c), f.getDouble(null), 1e-6);
+        Assert.assertEquals(b, f.getDouble(null), 1e-6);
     }
 
     @Test
@@ -279,7 +279,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
         long b = -1137976524;
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 46, 19, a));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 119, 19, b));
-        Assert.assertEquals((double) (a + b), f.getDouble(null), 1e-6);
+        Assert.assertEquals(b, f.getDouble(null), 1e-6);
     }
 
     @Test
@@ -771,7 +771,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 46, 19, a));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 119, 19, b));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 200, 19, c));
-        Assert.assertEquals(b, f.getDouble(null), 1e-6);
+        Assert.assertEquals((double) (a + b + c), f.getDouble(null), 1e-6);
     }
 
     @Test
@@ -815,7 +815,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
         long b = -1137976524;
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 46, 19, a));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 119, 19, b));
-        Assert.assertEquals(b, f.getDouble(null), 1e-6);
+        Assert.assertEquals((double) (a + b), f.getDouble(null), 1e-6);
     }
 
     @Test

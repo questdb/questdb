@@ -2512,7 +2512,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             }
 
                                             // if we have a hint, we can try to steal the filter from the slave.
-                                            // this downgrades to single-threaded Java-level filtering so it's only worth it if
+                                            // this downgrades to single-threaded Java-level filtering, so it's only worth it if
                                             // the filter selectivity is low. we don't have statistics to tell selectivity, so
                                             // we rely on the user to provide an explicit hint.
                                             if (binarySearchHinted && !created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
@@ -2520,7 +2520,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
 
                                                 // slave.supportsFilterStealing() means slave is nothing but a filter.
-                                                // if slave is just a filter then it must have the same metadata as its base,
+                                                // if slave is just a filter, then it must have the same metadata as its base,
                                                 // that includes the timestamp index.
                                                 assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
 
@@ -3243,13 +3243,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 intHashSet.clear();
 
                 int orderedByTimestampIndex = -1;
-                // column index sign indicates direction
-                // therefore 0 index is not allowed
+                // column index sign indicates a direction;
+                // therefore, 0 index is not allowed
                 for (int i = 0; i < orderByColumnCount; i++) {
                     final CharSequence column = orderByColumnNames.getQuick(i);
                     int index = metadata.getColumnIndexQuiet(column);
 
-                    // check if column type is supported
+                    // check if the column type is supported
                     final int columnType = metadata.getColumnType(index);
                     if (!ColumnType.isComparable(columnType)) {
                         // find position of offending column
@@ -3261,10 +3261,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             }
                         }
-                        throw SqlException.$(position, "unsupported column type: ").put(ColumnType.nameOf(columnType));
+                        throw SqlException.$(position, ColumnType.nameOf(columnType)).put(" is not a supported type in ORDER BY clause");
                     }
 
-                    // we also maintain unique set of column indexes for better performance
+                    // we also maintain a unique set of column indexes for better performance
                     if (intHashSet.add(index)) {
                         if (orderByColumnNameToIndexMap.get(column) == ORDER_DIRECTION_DESCENDING) {
                             listColumnFilterA.add(-index - 1);

@@ -6521,7 +6521,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                13, "unsupported column type: BINARY"
+                13,
+                "BINARY is not a supported type in ORDER BY clause"
         );
     }
 
