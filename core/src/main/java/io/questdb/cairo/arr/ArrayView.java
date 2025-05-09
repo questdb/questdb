@@ -59,7 +59,7 @@ import io.questdb.std.QuietCloseable;
  * Note that this just sums up the contributions at each dimension. We can perform
  * it in any order.
  *
- * <h3>Transpose</h3>
+ * <h2>Transpose</h2>
  * <p>
  * Transposing the array changes the formula so that we apply the strides in
  * reverse:
@@ -71,7 +71,7 @@ import io.questdb.std.QuietCloseable;
  * order doesn't matter to the calculation. It only affects the meaning of each
  * coordinate in the array access expression.
  *
- * <h3>Slice</h3>
+ * <h2>Slice</h2>
  * <p>
  * Slicing the array means limiting the range of an index. Example: `arr[1:2]`.
  * This constrains index `i` to be at least 1. But, we don't expose that to the
@@ -92,7 +92,7 @@ import io.questdb.std.QuietCloseable;
  * <strong>NOTE:</strong> We use zero-based indexes here, but SQL uses one-based
  * array indexes!
  *
- * <h3>Flatten a Dimension</h3>
+ * <h2>Flatten a Dimension</h2>
  * <p>
  * Flattening means eliminating a dimension from our addressing scheme. As an
  * example, let's flatten the dimension 0, but we can do it for any dimension
@@ -115,7 +115,7 @@ import io.questdb.std.QuietCloseable;
  * ("column-major", strides in ascending order), so the next-finer stride must be in
  * one of the neighboring dimensions.
  *
- * <h3>Take a Sub-Array</h3>
+ * <h2>Take a Sub-Array</h2>
  * <p>
  * We can take a sub-array on any dimension. Examples for a 3D-array:
  * <ul>

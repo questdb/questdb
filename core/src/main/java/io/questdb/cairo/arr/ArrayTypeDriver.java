@@ -47,14 +47,14 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * Reads and writes arrays. Arrays are organised as follows:
- * <h1>AUX entries</h1>
+ * <h2>AUX entries</h2>
  *
- * <h2>Data Offset Handling</h2>
+ * <h3>Data Offset Handling</h3>
  * <p>
  * Like the <code>VARCHAR</code> type, <code>ARRAY</code> uses <code>N</code>
  * (not <code>N + 1</code>) entries in the AUX table.
  *
- * <h2>AUX entry format</h2>
+ * <h3>AUX entry format</h3>
  *
  * <pre>
  * 128-bit entries
@@ -67,7 +67,7 @@ import org.jetbrains.annotations.Nullable;
  *     * reserved: 32 bits
  * </pre>
  *
- * <h2>Encoding NULLs</h2>
+ * <h3>Encoding NULLs</h3>
  * <ul>
  *     <li>A null value has zero size.</li>
  *     <li>We however <em>do</em> populate the <code>offset</code> field with
@@ -75,7 +75,7 @@ import org.jetbrains.annotations.Nullable;
  *     <li>This allows mapping the data vector for a specific range of values.</li>
  * </ul>
  *
- * <h2>Data vector</h2>
+ * <h3>Data vector</h3>
  * <pre>
  * variable length encoding, starting at the offset specified in the `aux` entry.
  *     * START ALIGNMENT: the start of each entry in the data vector is aligned at 32 bits.
