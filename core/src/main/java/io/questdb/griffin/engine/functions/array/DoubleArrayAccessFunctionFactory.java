@@ -64,6 +64,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             inputArgPositions.removeIndex(0);
             ObjList<Function> args = null;
             IntList argPositions = null;
+            validateArgs(inputArgs, inputArgPositions);
             // If the array argument is another array slicing function, and if all its arguments are indexes
             // (not ranges for slicing), we can inline it into this function by prepending all its args to
             // our args, and by using its array argument as our array argument.
@@ -105,9 +106,6 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 int argType = args.getQuick(i).getType();
                 if (isIndexArg(argType)) {
                     resultNDims--;
-                } else if (!ColumnType.isInterval(argType)) {
-                    throw SqlException.position(argPositions.get(i))
-                            .put("invalid argument type [type=").put(argType).put(']');
                 }
             }
             if (resultNDims == 0) {
@@ -144,7 +142,8 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     .position(argPos)
                     .put("array index must be positive [dim=").put(dim + 1)
                     .put(", index=").put(indexAtDim + 1)
-                    .put(", dimLen=").put(dimLen).put(']');
+                    .put(", dimLen=").put(dimLen)
+                    .put(']');
         }
         if (indexAtDim >= dimLen) {
             return Numbers.INT_NULL;
@@ -154,6 +153,44 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
 
     private static boolean isIndexArg(int argType) {
         return argType == ColumnType.INT || argType == ColumnType.SHORT || argType == ColumnType.BYTE;
+    }
+
+    private static void validateArgs(ObjList<Function> args, IntList argPositions) throws SqlException {
+        for (int n = args.size(), i = 0; i < n; i++) {
+            Function arg = args.getQuick(i);
+            int argType = arg.getType();
+            if (!isIndexArg(argType) && !ColumnType.isInterval(argType)) {
+                throw SqlException.position(argPositions.get(i))
+                        .put("invalid type for array access [type=").put(argType).put(']');
+            }
+            if (!arg.isConstant()) {
+                continue;
+            }
+            if (ColumnType.isInterval(argType)) {
+                Interval range = arg.getInterval(null);
+                long lo = range.getLo();
+                long hi = range.getHi();
+                if (lo < 1) {
+                    throw SqlException.position(argPositions.getQuick(i))
+                            .put("array slice bounds must be positive [dim=").put(i + 1)
+                            .put(", lowerBound=").put(lo)
+                            .put(']');
+                } else if (hi < 1 && hi != Numbers.LONG_NULL) {
+                    throw SqlException.position(argPositions.getQuick(i))
+                            .put("array slice bounds must be positive [dim=").put(i + 1)
+                            .put(", upperBound=").put(hi)
+                            .put(']');
+                }
+            } else {
+                int index = arg.getInt(null);
+                if (index < 1) {
+                    throw SqlException.position(argPositions.getQuick(i))
+                            .put("array index must be positive [dim=").put(i + 1)
+                            .put(", index=").put(index)
+                            .put(']');
+                }
+            }
+        }
     }
 
     static class AccessDoubleArrayConstantIndexFunction extends DoubleFunction {
@@ -285,14 +322,14 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             for (int n = rangeArgs.size(), i = 0; i < n; i++) {
                 Function rangeFn = rangeArgs.getQuick(i);
                 int argPos = argPositions.get(i);
-                if (rangeFn.getType() == ColumnType.INTERVAL) {
+                if (ColumnType.isInterval(rangeFn.getType())) {
                     Interval range = rangeFn.getInterval(rec);
                     long loLong = range.getLo();
                     long hiLong = range.getHi();
                     int lo = (int) loLong;
                     int hi = (int) hiLong;
                     if (hiLong == Numbers.LONG_NULL) {
-                        hi = Numbers.INT_NULL;
+                        hi = Integer.MAX_VALUE;
                     } else {
                         assert hi == hiLong : "int overflow on interval upper bound: " + hiLong;
                         // Decrement the index in the argument because Postgres uses 1-based array indexing

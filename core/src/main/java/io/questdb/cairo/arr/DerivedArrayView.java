@@ -26,7 +26,6 @@ package io.questdb.cairo.arr;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.Numbers;
 
 /**
  * A view over an array. Does not own the backing flat array. The array contents can't
@@ -123,7 +122,7 @@ public class DerivedArrayView extends ArrayView {
                     .put(", nDims=").put(getDimCount()).put(']');
         }
         int dimLen = getDimLen(dim);
-        if (hi == Numbers.INT_NULL || hi > dimLen) {
+        if (hi > dimLen) {
             hi = dimLen;
         }
         if (lo < 0 || hi < 0) {

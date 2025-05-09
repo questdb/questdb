@@ -107,21 +107,21 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4]] arr FROM long_sequence(1))");
 
             assertExceptionNoLeakCheck("SELECT arr['1', 1] FROM tango",
-                    11, "invalid argument type [type=4]");
+                    11, "invalid type for array access [type=4]");
             assertExceptionNoLeakCheck("SELECT arr[1, 1::long] FROM tango",
-                    15, "invalid argument type [type=6]");
+                    15, "invalid type for array access [type=6]");
             assertExceptionNoLeakCheck("SELECT arr[1, true] FROM tango",
-                    14, "invalid argument type [type=1]");
+                    14, "invalid type for array access [type=1]");
             assertExceptionNoLeakCheck("SELECT arr[1, '1'] FROM tango",
-                    14, "invalid argument type [type=4]");
+                    14, "invalid type for array access [type=4]");
             assertExceptionNoLeakCheck("SELECT arr[1, 1, 1] FROM tango",
                     17, "too many array access arguments [nArgs=3, nDims=2]");
             assertExceptionNoLeakCheck("SELECT arr[0, 1] FROM tango",
-                    11, "array index must be positive [dim=1, index=0, dimLen=2]");
+                    11, "array index must be positive [dim=1, index=0]");
             assertExceptionNoLeakCheck("SELECT arr[1:2, 0] FROM tango",
-                    16, "array index must be positive [dim=2, index=0, dimLen=2]");
+                    16, "array index must be positive [dim=2, index=0]");
             assertExceptionNoLeakCheck("SELECT arr[1, 0] FROM tango",
-                    14, "array index must be positive [dim=2, index=0, dimLen=2]");
+                    14, "array index must be positive [dim=2, index=0]");
         });
     }
 
@@ -143,6 +143,8 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("x\n[]\n", "SELECT arr[1, 2:1] x FROM tango");
             assertSql("x\n[]\n", "SELECT arr[1, 3:3] x FROM tango");
             assertSql("x\n[]\n", "SELECT arr[1, 3:5] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[1, 3:] x FROM tango");
+
             assertSql("x\n[2.0]\n", "SELECT arr[1, 2:5] x FROM tango");
         });
     }
@@ -1300,7 +1302,16 @@ public class ArrayTest extends AbstractCairoTest {
                     11, "undefined bind variable: :1"
             );
             assertExceptionNoLeakCheck("SELECT arr[0:1] FROM tango",
-                    12, "array slice bounds must be positive [dim=1, dimLen=3, lowerBound=0, upperBound=1]"
+                    12, "array slice bounds must be positive [dim=1, lowerBound=0]"
+            );
+            assertExceptionNoLeakCheck("SELECT arr[1:0] FROM tango",
+                    12, "array slice bounds must be positive [dim=1, upperBound=0]"
+            );
+            assertExceptionNoLeakCheck("SELECT arr[1:(arr[1, 1] - 1)::int] FROM tango",
+                    12, "array slice bounds must be positive [dim=1, dimLen=3, lowerBound=1, upperBound=0]"
+            );
+            assertExceptionNoLeakCheck("SELECT arr[(arr[1, 1] - 1)::int : 2] FROM tango",
+                    32, "array slice bounds must be positive [dim=1, dimLen=3, lowerBound=0, upperBound=2]"
             );
         });
     }
@@ -1357,10 +1368,10 @@ public class ArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]]] arr FROM long_sequence(1))");
             assertExceptionNoLeakCheck("SELECT arr[0] FROM tango",
-                    11, "array index must be positive [dim=1, index=0, dimLen=2]"
+                    11, "array index must be positive [dim=1, index=0]"
             );
             assertExceptionNoLeakCheck("SELECT arr[1, 0] FROM tango",
-                    14, "array index must be positive [dim=2, index=0, dimLen=2]"
+                    14, "array index must be positive [dim=2, index=0]"
             );
         });
     }
