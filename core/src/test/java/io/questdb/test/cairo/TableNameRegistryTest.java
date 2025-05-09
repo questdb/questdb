@@ -303,7 +303,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             drainWalQueue();
 
             engine.releaseInactive();
-            runWalPurgeJob();
+            drainPurgeJob();
 
             drainWalQueue();
 
@@ -665,7 +665,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             engine.reconcileTableNameRegistryState();
 
             drainWalQueue();
-            runWalPurgeJob();
+            drainPurgeJob();
 
             createTableWal("tab1");
 
