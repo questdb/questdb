@@ -1866,7 +1866,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         drainWalAndMatViewQueues();
         // purge job may create MatViewRefreshList for existing tables by calling engine.getDependentMatViews();
         // this affects refresh logic in some scenarios, so make sure to run it
-        runWalPurgeJob();
+        drainPurgeJob();
     }
 
     private void testCreateMatViewNoPartitionBy(boolean useParentheses) throws Exception {
