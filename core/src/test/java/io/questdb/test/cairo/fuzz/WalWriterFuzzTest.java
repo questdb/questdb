@@ -137,7 +137,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             execute("insert batch 2 into chunk_seq \n" +
                     "  select x, timestamp_sequence('2024-01-01', 312312) from long_sequence(1000)");
 
-            runWalPurgeJob();
+            drainPurgeJob();
 
             int expectedTxnCount = 500;
             assertSql("count\n" +
@@ -148,7 +148,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             assertSql("count\n" +
                     expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
 
-            runWalPurgeJob();
+            drainPurgeJob();
 
             assertSql("count\n" +
                     (expectedTxnCount - (expectedTxnCount - 1) / chunkSize * chunkSize) + "\n", "select count(*) from wal_transactions('chunk_seq')");

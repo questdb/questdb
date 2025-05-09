@@ -36,6 +36,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
@@ -196,6 +197,18 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, lastRefreshTxn, lastTxn);
             minTs = txnRangeLoader.getMinTimestamp();
             maxTs = txnRangeLoader.getMaxTimestamp();
+            // Check if refresh limit should be applied.
+            try (TableMetadata matViewMeta = engine.getTableMetadata(matViewToken)) {
+                final int limit = matViewMeta.getMatViewRefreshLimitHoursOrMonths();
+                if (limit != 0) {
+                    final long now = microsecondClock.getTicks();
+                    if (limit > 0) { // hours
+                        minTs = Math.max(minTs, now - Timestamps.HOUR_MICROS * limit);
+                    } else { // months
+                        minTs = Math.max(minTs, Timestamps.addMonths(now, -limit));
+                    }
+                }
+            }
         } else {
             // Full table scan.
             // When the table is empty, min timestamp is set to Long.MAX_VALUE,

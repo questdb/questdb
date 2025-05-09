@@ -169,8 +169,8 @@ public class SqlParser {
         CharSequence tok;
         int valuePos = lexer.getPosition();
         tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "missing argument, should be TTL <number> <unit> or <number_with_unit>");
+        if (tok == null || Chars.equals(tok, ';')) {
+            throw SqlException.$(lexer.getPosition(), "missing argument, should be <number> <unit> or <number_with_unit>");
         }
         int tokLength = tok.length();
         int unit = -1;
@@ -184,15 +184,10 @@ public class SqlParser {
                 try {
                     Numbers.parseLong(tok, 0, tokLength - 1);
                 } catch (NumericException e) {
-                    throw SqlException.$(
-                            valuePos,
-                            "invalid argument, should be TTL <number> <unit> or <number_with_unit>"
-                    );
+                    throw SqlException.$(valuePos, "invalid argument, should be <number> <unit> or <number_with_unit>");
                 }
-                throw SqlException.$(
-                        valuePos + tokLength - 1,
-                        "invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was '"
-                ).put(unitChar).put('\'');
+                throw SqlException.$(valuePos + tokLength - 1, "invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was '")
+                        .put(unitChar).put('\'');
             }
         }
         // at this point, unit == -1 means the syntax wasn't of the "1H" form, it can still be of the "1 HOUR" form
@@ -200,32 +195,23 @@ public class SqlParser {
         try {
             long ttlLong = unit == -1 ? Numbers.parseLong(tok) : Numbers.parseLong(tok, 0, tokLength - 1);
             if (ttlLong > Integer.MAX_VALUE || ttlLong < 0) {
-                throw SqlException.$(valuePos, "TTL value out of range: ").put(ttlLong)
+                throw SqlException.$(valuePos, "value out of range: ").put(ttlLong)
                         .put(". Max value: ").put(Integer.MAX_VALUE);
             }
             ttlValue = (int) ttlLong;
         } catch (NumericException e) {
-            throw SqlException.$(
-                    valuePos,
-                    "invalid syntax, should be TTL <number> <unit> but was TTL "
-            ).put(tok);
+            throw SqlException.$(valuePos, "invalid syntax, should be <number> <unit> but was ").put(tok);
         }
         if (unit == -1) {
             unitPos = lexer.getPosition();
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null) {
-                throw SqlException.$(
-                        unitPos,
-                        "missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected"
-                );
+                throw SqlException.$(unitPos, "missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected");
             }
             unit = PartitionBy.ttlUnitFromString(tok, 0, tok.length());
         }
         if (unit == -1) {
-            throw SqlException.$(
-                            unitPos,
-                            "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '"
-                    )
+            throw SqlException.$(unitPos, "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '")
                     .put(tok).put('\'');
         }
         return Timestamps.toHoursOrMonths(ttlValue, unit, valuePos);
@@ -1015,8 +1001,8 @@ public class SqlParser {
         }
 
         if (tok != null && isTtlKeyword(tok)) {
-            int ttlValuePos = lexer.getPosition();
-            int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
+            final int ttlValuePos = lexer.getPosition();
+            final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
             if (partitionBy != -1) {
                 PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
             }
@@ -1175,8 +1161,8 @@ public class SqlParser {
             tok = optTok(lexer);
 
             if (tok != null && isTtlKeyword(tok)) {
-                int ttlValuePos = lexer.getPosition();
-                int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
+                final int ttlValuePos = lexer.getPosition();
+                final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
                 PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
                 builder.setTtlHoursOrMonths(ttlHoursOrMonths);
                 tok = optTok(lexer);
