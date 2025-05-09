@@ -31,16 +31,20 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class ArrayDimLengthFunctionFactory implements FunctionFactory {
+    public static final String FUNCTION_NAME = "dim_length";
+
     @Override
     public String getSignature() {
-        return "dim_length(D[]I)";
+        return FUNCTION_NAME + "(D[]I)";
     }
 
     @Override
@@ -56,6 +60,7 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         int dimArgPos = argPositions.getQuick(1);
         if (dimArg.isConstant()) {
             int dim = dimArg.getInt(null);
+            dimArg.close();
             int nDims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
             if (dim < 1 || dim > nDims) {
                 throw SqlException.position(dimArgPos)
@@ -71,8 +76,8 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
     }
 
     static class ArrayDimLengthConstFunction extends IntFunction {
-        private final Function arrayArg;
         private final int dimConstArg;
+        private Function arrayArg;
 
         ArrayDimLengthConstFunction(Function arrayArg, int dimConstArg) {
             this.arrayArg = arrayArg;
@@ -80,23 +85,39 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void close() {
+            arrayArg = Misc.free(arrayArg);
+        }
+
+        @Override
         public int getInt(Record rec) {
             ArrayView array = arrayArg.getArray(rec);
             return array.getDimLen(dimConstArg - 1);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(FUNCTION_NAME).val('(').val(arrayArg).val(", ").val(dimConstArg).val(')');
+        }
     }
 
     static class ArrayDimLengthFunction extends IntFunction {
-        private final Function arrayArg;
-        private final Function dimArg;
         private final int dimArgPos;
         private final int nDims;
+        private Function arrayArg;
+        private Function dimArg;
 
         ArrayDimLengthFunction(Function arrayArg, Function dimArg, int dimArgPos) {
             this.arrayArg = arrayArg;
             this.dimArg = dimArg;
             this.nDims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
             this.dimArgPos = dimArgPos;
+        }
+
+        @Override
+        public void close() {
+            arrayArg = Misc.free(arrayArg);
+            dimArg = Misc.free(dimArg);
         }
 
         @Override
@@ -113,6 +134,11 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
                         .put(']');
             }
             return array.getDimLen(dim - 1);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(FUNCTION_NAME).val('(').val(arrayArg).val(", ").val(dimArg).val(')');
         }
     }
 }

@@ -383,12 +383,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][], arr3 DOUBLE[][][], a DOUBLE)");
             String commonPart1 = "VirtualRecord\n  functions: [";
             String commonPart2 = "]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: tango\n";
-            assertPlanNoLeakCheck("SELECT arr1[0] FROM tango",
-                    commonPart1 + "arr1[0]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT arr1[0:0] FROM tango",
-                    commonPart1 + "arr1[0:0]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT arr3[0:0, 1:2, 2:] FROM tango",
-                    commonPart1 + "arr3[0:0,1:2,2:]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT arr1[1] FROM tango",
+                    commonPart1 + "arr1[1]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT arr1[1:1] FROM tango",
+                    commonPart1 + "arr1[1:1]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT arr3[1:1, 2:3, 4:] FROM tango",
+                    commonPart1 + "arr3[1:1,2:3,4:]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[1.0, 2] FROM tango",
                     commonPart1 + "ARRAY[1.0,2.0]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[[1.0, 2], [3.0, 4]] FROM tango",
@@ -397,8 +397,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     commonPart1 + "ARRAY[a,a]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[arr1, arr1] FROM tango",
                     commonPart1 + "ARRAY[arr1,arr1]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT ARRAY[arr1[1:2], arr2[0]] FROM tango",
-                    commonPart1 + "ARRAY[arr1[1:2],arr2[0]]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[arr1[1:2], arr2[1]] FROM tango",
+                    commonPart1 + "ARRAY[arr1[1:2],arr2[1]]" + commonPart2);
             assertPlanNoLeakCheck("SELECT transpose(arr2) FROM tango",
                     commonPart1 + "transpose(arr2)" + commonPart2);
             assertPlanNoLeakCheck("SELECT arr2 * transpose(arr2) FROM tango",
