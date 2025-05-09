@@ -102,26 +102,6 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAccessEmptyResult() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4]] arr FROM long_sequence(1))");
-
-            assertSql("x\nnull\n", "SELECT arr[1, 3] x FROM tango");
-            assertSql("x\nnull\n", "SELECT arr[3, 1] x FROM tango");
-
-            assertSql("x\n[]\n", "SELECT arr[1:1] x FROM tango");
-            assertSql("x\n[]\n", "SELECT arr[2:1] x FROM tango");
-            assertSql("x\n[]\n", "SELECT arr[3:3] x FROM tango");
-            assertSql("x\n[]\n", "SELECT arr[3:5] x FROM tango");
-
-            assertSql("x\n[]\n", "SELECT arr[1, 1:1] x FROM tango");
-            assertSql("x\n[]\n", "SELECT arr[1, 2:1] x FROM tango");
-            assertSql("x\n[]\n", "SELECT arr[1, 3:3] x FROM tango");
-            assertSql("x\n[]\n", "SELECT arr[1, 3:5] x FROM tango");
-        });
-    }
-
-    @Test
     public void testAccessInvalid() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4]] arr FROM long_sequence(1))");
@@ -142,6 +122,28 @@ public class ArrayTest extends AbstractCairoTest {
                     16, "array index must be positive [dim=2, index=0, dimLen=2]");
             assertExceptionNoLeakCheck("SELECT arr[1, 0] FROM tango",
                     14, "array index must be positive [dim=2, index=0, dimLen=2]");
+        });
+    }
+
+    @Test
+    public void testAccessOutOfBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4]] arr FROM long_sequence(1))");
+
+            assertSql("x\nnull\n", "SELECT arr[1, 3] x FROM tango");
+            assertSql("x\nnull\n", "SELECT arr[3, 1] x FROM tango");
+
+            assertSql("x\n[]\n", "SELECT arr[1:1] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[2:1] x FROM tango");
+            assertSql("x\n[[3.0,4.0]]\n", "SELECT arr[2:5] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[3:3] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[3:5] x FROM tango");
+
+            assertSql("x\n[]\n", "SELECT arr[1, 1:1] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[1, 2:1] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[1, 3:3] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[1, 3:5] x FROM tango");
+            assertSql("x\n[2.0]\n", "SELECT arr[1, 2:5] x FROM tango");
         });
     }
 
@@ -1270,17 +1272,18 @@ public class ArrayTest extends AbstractCairoTest {
                     11, "undefined bind variable: :1"
             );
             assertExceptionNoLeakCheck("SELECT arr[0:1] FROM tango",
-                    12, "array slice bounds out of range [dim=0, dimLen=3, lowerBound=0, upperBound=1]"
+                    12, "array slice bounds must be positive [dim=1, dimLen=3, lowerBound=0, upperBound=1]"
             );
-            assertExceptionNoLeakCheck("SELECT arr[1:5] FROM tango",
-                    12, "array slice bounds out of range [dim=0, dimLen=3, lowerBound=1, upperBound=5"
-            );
-            assertExceptionNoLeakCheck("SELECT arr[4:5] FROM tango",
-                    12, "array slice bounds out of range [dim=0, dimLen=3, lowerBound=4, upperBound=5"
-            );
-            assertExceptionNoLeakCheck("SELECT arr[2:1] FROM tango",
-                    12, "lower bound is not less than upper bound [dim=0, lowerBound=2, upperBound=1]"
-            );
+        });
+    }
+
+    @Test
+    public void testSliceOutOfBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]] arr FROM long_sequence(1))");
+            assertSql("x\n[[1.0,2.0],[3.0,4.0],[5.0,6.0]]\n", "SELECT arr[1:5] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[4:5] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[2:1] x FROM tango");
         });
     }
 
@@ -1326,17 +1329,21 @@ public class ArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]]] arr FROM long_sequence(1))");
             assertExceptionNoLeakCheck("SELECT arr[0] FROM tango",
-                    11, "array index out of range [dim=0, index=0, dimLen=2]"
-            );
-            assertExceptionNoLeakCheck("SELECT arr[3] FROM tango",
-                    11, "array index out of range [dim=0, index=3, dimLen=2]"
+                    11, "array index must be positive [dim=1, index=0, dimLen=2]"
             );
             assertExceptionNoLeakCheck("SELECT arr[1, 0] FROM tango",
-                    14, "array index out of range [dim=1, index=0, dimLen=2]"
+                    14, "array index must be positive [dim=2, index=0, dimLen=2]"
             );
-            assertExceptionNoLeakCheck("SELECT arr[2, 3] FROM tango",
-                    14, "array index out of range [dim=1, index=3, dimLen=2]"
-            );
+        });
+    }
+
+    @Test
+    public void testSubArrayOutOfBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]]] arr FROM long_sequence(1))");
+
+            assertSql("x\n[]\n", "SELECT arr[3] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[2, 3] x FROM tango");
         });
     }
 

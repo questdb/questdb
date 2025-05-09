@@ -303,9 +303,10 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     lo--;
                     derivedArray.slice(dim++, lo, hi, argPos);
                 } else {
+                    // Decrement the index in the argument because Postgres uses 1-based array indexing
                     int index = rangeFn.getInt(rec) - 1;
                     int dimLen = derivedArray.getDimLen(dim);
-                    if (index < 0 || index >= dimLen) {
+                    if (index < 0) {
                         throw CairoException.nonCritical()
                                 .position(argPos)
                                 .put("array index must be positive [dim=").put(i + 1)
@@ -313,8 +314,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                                 .put(", dimLen=").put(dimLen)
                                 .put(']');
                     }
-                    derivedArray.slice(dim, index, index + 1, argPos);
-                    derivedArray.removeDim(dim);
+                    derivedArray.subArray(dim, index, argPos);
                 }
             }
             return derivedArray;

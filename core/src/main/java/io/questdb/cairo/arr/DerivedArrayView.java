@@ -70,7 +70,7 @@ public class DerivedArrayView extends ArrayView {
         type = ColumnType.encodeArrayType(getElemType(), getDimCount() + count);
     }
 
-    public final void flattenDim(int dim, int argPos) {
+    public void flattenDim(int dim, int argPos) {
         final int nDims = getDimCount();
         assert dim >= 0 && dim < nDims : "dim out of range: " + dim + ", nDims: " + nDims;
         if (getStride(dim) == 1 && getDimLen(dim) > 1) {
@@ -146,6 +146,15 @@ public class DerivedArrayView extends ArrayView {
             shape.set(dim, hi - lo);
         } else {
             shape.set(dim, 0);
+        }
+    }
+
+    public void subArray(int dim, int index, int argPos) {
+        slice(dim, index, index + 1, argPos);
+        if (getDimLen(dim) != 0) {
+            removeDim(dim);
+        } else {
+            shape.set(0, 0);
         }
     }
 
