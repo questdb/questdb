@@ -25,6 +25,7 @@
 package io.questdb.test.std.datetime.microtime;
 
 import io.questdb.cairo.PartitionBy;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
@@ -41,6 +42,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 
 import static io.questdb.cairo.PartitionBy.getPartitionDirFormatMethod;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
@@ -410,6 +412,51 @@ public class TimestampsTest {
         Assert.assertEquals(-2, Timestamps.getIsoYearDayOffset(2020));
         Assert.assertEquals(3, Timestamps.getIsoYearDayOffset(2021));
         Assert.assertEquals(2, Timestamps.getIsoYearDayOffset(2022));
+    }
+
+    @Test
+    public void testGetStrideMultipleUnit() {
+        CharSequence invalidUnit = "15ABCD";
+        try {
+            Timestamps.getStrideMultiple(invalidUnit, 10);
+            Assert.fail("Expected SqlException exception when parsing invalid unit");
+        } catch (SqlException e) {
+            Assert.assertEquals("[10] Invalid stride: 15ABC", e.getMessage());
+        }
+
+        String validStrideMultipleButNotUnit = "1X";
+        try {
+            int stride = Timestamps.getStrideMultiple(validStrideMultipleButNotUnit, 10);
+            Assert.assertEquals(1, stride);
+        } catch (Exception e) {
+            Assert.fail("Expect getStrideMultiple to succeed but fail with exception " + e.getMessage());
+        }
+
+        try {
+            Timestamps.getStrideUnit(validStrideMultipleButNotUnit, 10);
+            Assert.fail("Expected SqlException exception when parsing invalid unit");
+        } catch (Exception e) {
+            Assert.assertEquals("[11] Invalid unit: X", e.getMessage());
+        }
+
+        String notIntegral = "0.5h";
+        try {
+            Timestamps.getStrideMultiple(notIntegral, 10);
+            Assert.fail("Expected SqlException exception when parsing non integral numer");
+        } catch (Exception e) {
+            Assert.assertEquals("[10] Invalid stride: 0.5", e.getMessage());
+        }
+
+        String validUnit = "12";
+        List<Character> validUnits = List.of('M', 'y', 'w', 'd', 'h', 'm', 's', 'T', 'U');
+        for (char unit : validUnits) {
+            try {
+                Assert.assertEquals(12, Timestamps.getStrideMultiple(validUnit + unit, 10));
+                Assert.assertEquals(unit, Timestamps.getStrideUnit(validUnit + unit, 10));
+            } catch (SqlException e) {
+                Assert.fail("Expected unit parsing to succeed but fail with exception " + e.getMessage());
+            }
+        }
     }
 
     @Test
