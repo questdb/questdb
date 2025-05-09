@@ -44,7 +44,7 @@ public interface DirectSequence {
     }
 
     /**
-     * Address of the first character.
+     * Address of the first byte.
      */
     long ptr();
 

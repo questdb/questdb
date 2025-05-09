@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -48,6 +50,7 @@ import io.questdb.std.str.DirectString;
 import io.questdb.std.str.StableStringSource;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -57,6 +60,7 @@ import org.jetbrains.annotations.Nullable;
 public class PageFrameMemoryRecord implements Record, StableStringSource, QuietCloseable, Mutable {
     public static final byte RECORD_A_LETTER = 0;
     public static final byte RECORD_B_LETTER = 1;
+    private final ObjList<BorrowedArray> arrayBuffers = new ObjList<>();
     private final ObjList<MemoryCR.ByteSequenceView> bsViews = new ObjList<>();
     private final ObjList<DirectString> csViewsA = new ObjList<>();
     private final ObjList<DirectString> csViewsB = new ObjList<>();
@@ -111,8 +115,30 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     @Override
     public void close() {
         Misc.freeObjListIfCloseable(symbolTableCache);
+        Misc.freeObjList(arrayBuffers);
         symbolTableCache.clear();
         clear();
+    }
+
+    public ArrayView getArray(int columnIndex, int columnType) {
+        final BorrowedArray array = ensureBorrowedArray(arrayBuffers, columnIndex);
+        final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
+        if (auxPageAddress != 0) {
+            final long auxPageLim = auxPageAddress + auxPageSizes.getQuick(columnIndex);
+            final long dataPageAddress = pageAddresses.getQuick(columnIndex);
+            final long dataPageLim = dataPageAddress + pageSizes.getQuick(columnIndex);
+            array.of(
+                    columnType,
+                    auxPageAddress,
+                    auxPageLim,
+                    dataPageAddress,
+                    dataPageLim,
+                    rowIndex
+            );
+        } else {
+            array.ofNull();
+        }
+        return array;
     }
 
     @Override
@@ -327,6 +353,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     @Override
+    public long getLongIPv4(int columnIndex) {
+        return Numbers.ipv4ToLong(getIPv4(columnIndex));
+    }
+
+    @Override
     public long getRowId() {
         return Rows.toRowID(frameIndex, rowIndex);
     }
@@ -451,6 +482,15 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     public void setRowIndex(long rowIndex) {
         this.rowIndex = rowIndex;
+    }
+
+    private static @NotNull BorrowedArray ensureBorrowedArray(ObjList<BorrowedArray> arrays, int columnIndex) {
+        BorrowedArray array = arrays.getQuiet(columnIndex);
+        if (array == null) {
+            array = new BorrowedArray();
+            arrays.extendAndSet(columnIndex, array);
+        }
+        return array;
     }
 
     private MemoryCR.ByteSequenceView bsView(int columnIndex) {

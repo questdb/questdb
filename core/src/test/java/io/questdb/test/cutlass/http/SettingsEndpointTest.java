@@ -24,19 +24,30 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.*;
+import io.questdb.Bootstrap;
+import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.DefaultPublicPassthroughConfiguration;
+import io.questdb.FactoryProviderImpl;
+import io.questdb.PropBootstrapConfiguration;
+import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
+import io.questdb.PublicPassthroughConfiguration;
+import io.questdb.ServerConfiguration;
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
+import io.questdb.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -47,6 +58,9 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "\"release.type\":\"OSS\"," +
             "\"release.version\":\"[DEVELOPMENT]\"," +
             "\"acl.enabled\":false," +
+            "\"line.proto.default.version\":2," +
+            "\"line.proto.support.versions\":[1,2]," +
+            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
             "\"posthog.enabled\":false," +
             "\"posthog.api.key\":null" +
             "}";
@@ -59,11 +73,33 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "\"posthog.api.key\":null" +
             "}";
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testLineProtocolVersionResponse() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                    request.GET().url("/settings");
+                    try (HttpClient.ResponseHeaders responseHeaders = request.send();
+                         AbstractLineHttpSender.JsonSettingsParser parser = new AbstractLineHttpSender.JsonSettingsParser()) {
+                        responseHeaders.await();
+                        TestUtils.assertEquals(String.valueOf(200), responseHeaders.getStatusCode());
+                        parser.parse(responseHeaders.getResponse());
+                        Assert.assertTrue(parser.isSupportedLineProtoVersion(parser.getDefaultProtocolVersion()));
+                    }
+                }
+            }
+        });
     }
 
     @Test

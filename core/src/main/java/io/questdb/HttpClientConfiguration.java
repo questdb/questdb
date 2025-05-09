@@ -69,11 +69,19 @@ public interface HttpClientConfiguration {
         return SelectFacadeImpl.INSTANCE;
     }
 
+    default String getSettingsPath() {
+        return "/settings";
+    }
+
     default int getTimeout() {
         return 60_000;
     }
 
     default int getWaitQueueCapacity() {
         return 4;
+    }
+
+    default boolean isLineProtoValidateDisabled() {
+        return false;
     }
 }

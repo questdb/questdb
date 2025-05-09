@@ -53,6 +53,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
     @Rule
     public TlsProxyRule tlsProxy = TlsProxyRule.toHostAndPort("localhost", HTTP_PORT);
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -262,6 +263,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         .address(address)
                         .enableTls()
                         .retryTimeoutMillis(1000)
+                        .disableLineProtoValidation()
                         .build()
                 ) {
                     try {
@@ -271,6 +273,29 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                     } catch (LineSenderException ex) {
                         TestUtils.assertContains(ex.getMessage(), "Could not flush buffer");
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testServerNotTrustedAutoDetection() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+                int port = tlsProxy.getListeningPort();
+                String address = "localhost:" + port;
+                try {
+                    Sender ignore = Sender.builder(Sender.Transport.HTTP)
+                            .address(address)
+                            .enableTls()
+                            .retryTimeoutMillis(1000)
+                            .build();
+                    fail("should fail, the server is not trusted");
+                } catch (LineSenderException ex) {
+                    TestUtils.assertContains(ex.getMessage(), "Failed to detect server line protocol version");
                 }
             }
         });

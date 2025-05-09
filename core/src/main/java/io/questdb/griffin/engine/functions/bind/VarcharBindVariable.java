@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.VarcharFunction;
@@ -35,7 +34,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
-public class VarcharBindVariable extends VarcharFunction implements ScalarFunction, Mutable {
+public class VarcharBindVariable extends VarcharFunction implements Mutable {
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private boolean isNull = true;
 
