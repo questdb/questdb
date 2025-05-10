@@ -48,6 +48,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public boolean allowNonDeterministicFunctions() {
+        return true;
+    }
+
+    @Override
     public void clearWindowContext() {
     }
 
@@ -197,6 +202,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void resetFlags() {
+    }
+
+    @Override
+    public void setAllowNonDeterministicFunction(boolean value) {
     }
 
     @Override

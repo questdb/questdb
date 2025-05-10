@@ -52,6 +52,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public interface SqlExecutionContext extends Sinkable, Closeable {
 
+    // Returns true when the context doesn't require all SQL functions to be deterministic.
+    // Deterministic-only functions are enforced e.g. when compiling a mat view.
+    boolean allowNonDeterministicFunctions();
+
     void clearWindowContext();
 
     @Override
@@ -207,6 +211,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void pushTimestampRequiredFlag(boolean flag);
 
     void resetFlags();
+
+    void setAllowNonDeterministicFunction(boolean value);
 
     void setCacheHit(boolean value);
 
