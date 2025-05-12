@@ -2064,11 +2064,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
                 continue;
             }
-//            assert partitionTimestamp == floorTimestamp :
-//                    String.format("partitionTimestamp %s != floor(partitionTimestamp) %s, evictedPartitionTimestamp %s",
-//                            Timestamps.toString(partitionTimestamp),
-//                            Timestamps.toString(floorTimestamp),
-//                            Timestamps.toString(evictedPartitionTimestamp));
             long partitionCeiling = txWriter.getNextPartitionTimestamp(partitionTimestamp);
             // TTL < 0 means it's in months
             boolean shouldEvict = ttl > 0
@@ -5927,6 +5922,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
                 }
 
+                if (isCommitReplaceMode() && srcDataOldPartitionSize > 0 && srcDataNewPartitionSize < srcDataOldPartitionSize && !partitionMutates) {
+                    // Replace resulted in trimming the partition.
+                    // Now trim the column tops so that don't exceed the partition size
+                    o3ConsumePartitionUpdateSink_trimPartitionColumnTops(partitionTimestamp, srcDataNewPartitionSize);
+                }
+
                 if (partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
                     if (partitionMutates) {
                         // Last partition is rewritten.
@@ -6032,11 +6033,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         txWriter.bumpPartitionTableVersion();
                     }
                     txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
-                    if (isCommitReplaceMode() && srcDataOldPartitionSize > 0 && srcDataNewPartitionSize < srcDataOldPartitionSize && !partitionMutates) {
-                        // Replace resulted in trimming the partition.
-                        // Now trim the column tops so that don't exeed the partition size
-                        o3ConsumePartitionUpdateSink_trimPartitionColumnTops(partitionTimestamp, srcDataNewPartitionSize);
-                    }
                 }
             }
         }

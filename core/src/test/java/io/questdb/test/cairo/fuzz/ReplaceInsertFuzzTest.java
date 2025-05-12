@@ -49,8 +49,8 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
                 0.9
         );
         setFuzzCounts(
-                rnd.nextBoolean(), 1000, 100,
-                20, 10, 200, 0, 1
+                rnd.nextBoolean(), 1000, 5 + rnd.nextInt(100),
+                20, 10, 200, rnd.nextInt(100), 1
         );
         runFuzz(rnd);
     }
@@ -73,11 +73,11 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
                 0.01,
                 0.01,
                 0.8,
-                0.15
+                0.05
         );
         setFuzzCounts(
-                rnd.nextBoolean(), 1000, 100,
-                20, 10, 200, 0, 1
+                rnd.nextBoolean(), 1000, 5 + rnd.nextInt(100),
+                20, 10, 200, rnd.nextInt(1000), 1
         );
         runFuzz(rnd);
     }
