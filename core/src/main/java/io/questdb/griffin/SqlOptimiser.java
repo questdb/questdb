@@ -102,7 +102,6 @@ public class SqlOptimiser implements Mutable {
     private static final int NOT_OP_NOT = 1;
     private static final int NOT_OP_NOT_EQ = 9;
     private static final int NOT_OP_OR = 3;
-
     // these are bit flags
     private static final int SAMPLE_BY_REWRITE_NO_WRAP = 0;
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 2;
@@ -116,6 +115,7 @@ public class SqlOptimiser implements Mutable {
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
+    static int PIVOT_COLUMN_OUTPUT_LIMIT = 5000;
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
@@ -6919,6 +6919,13 @@ public class SqlOptimiser implements Mutable {
                         duplicateAggregateFunctions = true;
                     }
                 }
+            }
+
+            int numberOfCols = expectedPivotColumnsPerAggregateFunction * nested.getPivotColumns().size();
+
+
+            if (numberOfCols > PIVOT_COLUMN_OUTPUT_LIMIT) {
+                throw SqlException.$(nested.getModelPosition(), "too many columns in PIVOT output: " + numberOfCols + " > " + PIVOT_COLUMN_OUTPUT_LIMIT);
             }
 
             // for each output pivot column
