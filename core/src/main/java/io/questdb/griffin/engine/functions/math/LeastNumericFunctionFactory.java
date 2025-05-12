@@ -50,7 +50,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Arrays;
 
 public class LeastNumericFunctionFactory implements FunctionFactory {
-    private static final ThreadLocal<int[]> tlCounters = ThreadLocal.withInitial(() -> new int[ColumnType.NULL]);
+    private static final ThreadLocal<int[]> tlCounters = ThreadLocal.withInitial(() -> new int[ColumnType.NULL + 1]);
 
     @Override
     public String getSignature() {
@@ -68,6 +68,8 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         final int[] counters = tlCounters.get();
         Arrays.fill(counters, 0);
 
+        boolean allArgsAreNull = true;
+
         for (int i = 0; i < args.size(); i++) {
             final Function arg = args.getQuick(i);
             final int type = arg.getType();
@@ -82,13 +84,17 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
                 case ColumnType.DATE:
                 case ColumnType.TIMESTAMP:
                     counters[type]++;
+                    allArgsAreNull = false;
+                case ColumnType.NULL:
+                    counters[type]++;
                     continue;
                 default:
-                    if (arg.isNullConstant()) {
-                        return NullConstant.NULL;
-                    }
                     throw SqlException.position(argPositions.getQuick(i)).put("unsupported type: ").put(ColumnType.nameOf(type));
             }
+        }
+
+        if (allArgsAreNull) {
+            return NullConstant.NULL;
         }
 
         // have to copy, args is mutable
@@ -150,14 +156,17 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             double value = Double.MAX_VALUE;
+            boolean allAreNull = true;
             for (int i = 0, n = args.size(); i < n; i++) {
                 final double v = args.getQuick(i).getDouble(rec);
                 if (Numbers.isNull(v)) {
-                    return Double.NaN;
+                    continue;
+                } else {
+                    allAreNull = false;
                 }
                 value = Math.min(value, v);
             }
-            return value;
+            return allAreNull ? Double.NaN : value;
         }
 
         @Override
@@ -181,14 +190,17 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             long value = Long.MAX_VALUE;
+            boolean allAreNull = true;
             for (int i = 0, n = args.size(); i < n; i++) {
                 final long v = args.getQuick(i).getLong(rec);
                 if (v == Long.MIN_VALUE) {
-                    return Long.MIN_VALUE;
+                    continue;
+                } else {
+                    allAreNull = false;
                 }
                 value = Math.min(value, v);
             }
-            return value;
+            return allAreNull ? Long.MIN_VALUE : value;
         }
 
         @Override
