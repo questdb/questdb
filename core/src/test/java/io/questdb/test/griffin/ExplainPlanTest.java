@@ -68,6 +68,7 @@ import io.questdb.griffin.engine.functions.columns.GeoLongColumn;
 import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
 import io.questdb.griffin.engine.functions.columns.IPv4Column;
 import io.questdb.griffin.engine.functions.columns.IntColumn;
+import io.questdb.griffin.engine.functions.columns.IntervalColumn;
 import io.questdb.griffin.engine.functions.columns.Long128Column;
 import io.questdb.griffin.engine.functions.columns.Long256Column;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
@@ -2397,6 +2398,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             colFuncs.put(ColumnType.LONG128, Long128Column.newInstance(1));
             colFuncs.put(ColumnType.UUID, UuidColumn.newInstance(1));
             colFuncs.put(ColumnType.ARRAY, new ArrayColumn(1, ColumnType.encodeArrayType(ColumnType.DOUBLE, 2)));
+            colFuncs.put(ColumnType.INTERVAL, IntervalColumn.newInstance(1));
 
             PlanSink planSink = new TextPlanSink() {
                 @Override
