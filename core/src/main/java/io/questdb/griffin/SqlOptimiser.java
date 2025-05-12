@@ -155,7 +155,6 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
-    private final ObjectPool<StringSink> stringSinkPool = new ObjectPool<>(StringSink::new, 16);
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
@@ -6926,8 +6925,6 @@ public class SqlOptimiser implements Mutable {
                 throw SqlException.$(nested.getModelPosition(), "too many columns in PIVOT output: " + numberOfCols + " > " + PIVOT_COLUMN_OUTPUT_LIMIT);
             }
 
-            final StringSink nameSink = stringSinkPool.next();
-
             // for each output pivot column
             for (int i = 0; i < expectedPivotColumnsPerAggregateFunction; i++) {
 
@@ -6943,6 +6940,8 @@ public class SqlOptimiser implements Mutable {
                     ExpressionNode caseValue = null;
                     ExpressionNode inValue = null;
                     ExpressionNode forInExpr = null;
+
+                    CharacterStoreEntry nameSink = characterStore.newEntry();
 
                     // for each forValue combination
                     for (int k = 0; k < pivotForSize; k++) {
@@ -6981,7 +6980,7 @@ public class SqlOptimiser implements Mutable {
                         nameSink.put(pivotColumnName); // todo: handle duplicate aggregates
                     } else {
                         // remove the '_', since we have finished our name
-                        nameSink.clear(nameSink.length() - 1);
+                        nameSink.trimTo(nameSink.length() - 1);
                     }
 
                     // Since we use two group by factories (one parallel for main aggregation, the second for pivoting)
@@ -7042,11 +7041,9 @@ public class SqlOptimiser implements Mutable {
                     aggExpr.rhs = caseExpr;
 
                     model.addBottomUpColumn(queryColumnPool.next().of(
-                            nameSink.toString(),
+                            nameSink.toImmutable(),
                             aggExpr
                     ));
-
-                    nameSink.clear();
                 }
 
                 for (int z = forDepths.size() - 1; z >= 0; z--) {
@@ -7066,7 +7063,6 @@ public class SqlOptimiser implements Mutable {
 
             intListPool.release(forMaxes);
             intListPool.release(forDepths);
-            stringSinkPool.release(nameSink);
 
             // build the tree - model -> bonusModel -> groupByModel -> nested
             model.getNestedModel().clearPivot();
