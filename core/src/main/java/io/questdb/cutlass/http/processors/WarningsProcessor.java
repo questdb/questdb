@@ -30,6 +30,8 @@ import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -38,7 +40,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -47,7 +48,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.ErrorTag.*;
 
-public class WarningsProcessor implements HttpRequestProcessor {
+public class WarningsProcessor implements HttpRequestProcessor, HttpRequestHandler {
     private static final long RECOMMENDED_FILE_LIMIT = 1048576;
     private static final long RECOMMENDED_MAP_COUNT_LIMIT = 1048576;
     private static final String TAG = "tag";
@@ -134,7 +135,12 @@ public class WarningsProcessor implements HttpRequestProcessor {
     }
 
     @Override
-    public byte getRequiredAuthType(Utf8Sequence method) {
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
         return SecurityContext.AUTH_TYPE_NONE;
     }
 

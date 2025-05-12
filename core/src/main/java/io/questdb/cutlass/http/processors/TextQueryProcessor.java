@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
@@ -72,7 +73,7 @@ import java.io.Closeable;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
 
-public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
+public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
 
     private static final Log LOG = LogFactory.getLog(TextQueryProcessor.class);
     // Factory cache is thread local due to possibility of factory being
@@ -196,7 +197,12 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public byte getRequiredAuthType(Utf8Sequence method) {
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
         return requiredAuthType;
     }
 

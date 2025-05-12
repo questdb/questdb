@@ -25,20 +25,27 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpMultipartContentListener;
+import io.questdb.cutlass.http.HttpMultipartContentProcessor;
+import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
-import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.str.Utf16Sink;
 
-public interface RejectProcessor extends HttpRequestProcessor, HttpMultipartContentListener {
+import static io.questdb.cutlass.http.HttpRequestValidator.ALL;
+
+public interface RejectProcessor extends HttpMultipartContentProcessor, HttpRequestHandler {
 
     void clear();
 
     Utf16Sink getMessageSink();
+
+    @Override
+    default byte getSupportedRequestTypes() {
+        return ALL;
+    }
 
     boolean isRequestBeingRejected();
 

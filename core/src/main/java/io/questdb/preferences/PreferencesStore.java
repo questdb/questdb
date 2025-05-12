@@ -9,10 +9,10 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
@@ -138,7 +138,7 @@ public class PreferencesStore implements Closeable {
     public enum Mode {
         MERGE, OVERWRITE;
 
-        public static Mode of(DirectUtf8Sequence method) {
+        public static Mode of(Utf8Sequence method) {
             if (Utf8s.equalsNcAscii(METHOD_PUT, method)) {
                 return OVERWRITE;
             }

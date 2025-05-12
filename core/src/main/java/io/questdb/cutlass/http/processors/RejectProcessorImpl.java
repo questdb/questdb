@@ -25,7 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpHeaderParser;
+import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpResponseSink;
 import io.questdb.log.Log;
@@ -53,11 +53,6 @@ public class RejectProcessorImpl implements RejectProcessor {
     }
 
     @Override
-    public HttpRequestProcessor checkRequestSupported(HttpHeaderParser headerParser, RejectProcessor rejectProcessor) {
-        return this;
-    }
-
-    @Override
     public void clear() {
         rejectCode = 0;
         authenticationType = AUTH_TYPE_NONE;
@@ -70,6 +65,11 @@ public class RejectProcessorImpl implements RejectProcessor {
     @Override
     public Utf16Sink getMessageSink() {
         return rejectMessage;
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
     }
 
     @Override

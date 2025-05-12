@@ -64,7 +64,6 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
 import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -93,6 +92,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final NetworkFacade nf;
     private final boolean preAllocateBuffers;
     private final RejectProcessor rejectProcessor;
+    private final HttpRequestValidator requestValidator = new HttpRequestValidator();
     private final HttpResponseSink responseSink;
     private final RetryAttemptAttributes retryAttemptAttributes = new RetryAttemptAttributes();
     private final RescheduleContext retryRescheduleContext = retry -> {
@@ -415,8 +415,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                             multipartParserState.start,
                             multipartParserState.buf,
                             multipartParserState.bufRemaining,
-                            (HttpMultipartContentListener) processor,
-                            processor,
+                            (HttpMultipartContentProcessor) processor,
                             retryRescheduleContext
                     )) {
                         LOG.info().$("success retried multipart import [fd=").$(getFd()).I$();
@@ -523,8 +522,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return true;
     }
 
-    private boolean consumeChunked(HttpRequestProcessor processor, long headerEnd, long read, boolean newRequest) throws PeerIsSlowToReadException, ServerDisconnectException, PeerDisconnectedException, QueryPausedException, PeerIsSlowToWriteException {
-        HttpMultipartContentListener contentProcessor = (HttpMultipartContentListener) processor;
+    private boolean consumeChunked(HttpPostPutProcessor processor, long headerEnd, long read, boolean newRequest) throws PeerIsSlowToReadException, ServerDisconnectException, PeerDisconnectedException, QueryPausedException, PeerIsSlowToWriteException {
         if (!newRequest) {
             processor.resumeRecv(this);
         }
@@ -545,7 +543,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
 
             if (read > 0) {
-                lo = chunkedContentParser.handleRecv(lo, hi, contentProcessor);
+                lo = chunkedContentParser.handleRecv(lo, hi, processor);
                 if (lo == Long.MAX_VALUE) {
                     // done
                     processor.onRequestComplete(this);
@@ -585,12 +583,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private boolean consumeContent(
             long contentLength,
             Socket socket,
-            HttpRequestProcessor processor,
+            HttpPostPutProcessor processor,
             long headerEnd,
             int read,
             boolean newRequest
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, PeerIsSlowToWriteException {
-        HttpContentListener contentListener = (HttpContentListener) processor;
         if (!newRequest) {
             processor.resumeRecv(this);
         }
@@ -615,7 +612,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
                 }
 
-                contentListener.onChunk(lo, recvBuffer + read);
+                processor.onChunk(lo, recvBuffer + read);
                 totalReceived += read;
 
                 if (totalReceived == contentLength) {
@@ -652,7 +649,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     private boolean consumeMultipart(
             Socket socket,
-            HttpRequestProcessor processor,
+            HttpMultipartContentProcessor processor,
             long headerEnd,
             int read,
             boolean newRequest,
@@ -669,7 +666,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
         processor.resumeRecv(this);
 
-        final HttpMultipartContentListener multipartListener = (HttpMultipartContentListener) processor;
         final long bufferEnd = recvBuffer + read;
 
         LOG.debug().$("multipart").$();
@@ -690,7 +686,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             receivedBytes = 0;
         }
 
-        return continueConsumeMultipart(socket, start, buf, bufRemaining, multipartListener, processor, rescheduleContext);
+        return continueConsumeMultipart(socket, start, buf, bufRemaining, processor, rescheduleContext);
     }
 
     private boolean continueConsumeMultipart(
@@ -698,15 +694,14 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             long start,
             long buf,
             int bufRemaining,
-            HttpMultipartContentListener multipartListener,
-            HttpRequestProcessor processor,
+            HttpMultipartContentProcessor processor,
             RescheduleContext rescheduleContext
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, PeerIsSlowToWriteException {
         boolean keepGoing = false;
 
         if (buf > start) {
             try {
-                if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {
+                if (parseMultipartResult(start, buf, bufRemaining, processor, rescheduleContext)) {
                     return true;
                 }
 
@@ -739,7 +734,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 // do we have anything in the buffer?
                 if (buf > start) {
                     try {
-                        if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {
+                        if (parseMultipartResult(start, buf, bufRemaining, processor, rescheduleContext)) {
                             keepGoing = true;
                             break;
                         }
@@ -768,7 +763,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             if (bufRemaining == 0) {
                 try {
                     if (buf - start > 1) {
-                        if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {
+                        if (parseMultipartResult(start, buf, bufRemaining, processor, rescheduleContext)) {
                             keepGoing = true;
                             break;
                         }
@@ -834,19 +829,18 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
-        HttpRequestProcessor processor;
-        processor = selector.select(headerParser.getUrl());
+        HttpRequestProcessor processor = selector.select(headerParser);
         if (processor == null) {
-            return selector.getDefaultProcessor();
+            processor = selector.getDefaultProcessor();
         }
-        return processor;
+        return requestValidator.validateRequestType(processor, rejectProcessor);
     }
 
     private boolean handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, PeerIsSlowToWriteException, ServerDisconnectException {
         boolean busyRecv = true;
         try {
-            // this is address of where header ended in our receive buffer
-            // we need to being processing request content starting from this address
+            // this is address of where header ended in our receiving buffer
+            // we need to process request content starting from this address
             long headerEnd = recvBuffer;
             int read = 0;
             final boolean newRequest = headerParser.isIncomplete();
@@ -872,14 +866,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     dumpBuffer(recvBuffer, read);
                     headerEnd = headerParser.parse(recvBuffer, recvBuffer + read, true, false);
                 }
+                requestValidator.of(headerParser);
             }
 
-            final Utf8Sequence url = headerParser.getUrl();
-            if (url == null) {
-                throw HttpException.instance("missing URL");
-            }
+            requestValidator.validateRequestHeader(rejectProcessor);
             HttpRequestProcessor processor = rejectProcessor.isRequestBeingRejected() ? rejectProcessor : getHttpRequestProcessor(selector);
-            processor = processor.checkRequestSupported(headerParser, rejectProcessor);
 
             DirectUtf8Sequence acceptEncoding = headerParser.getHeader(HEADER_CONTENT_ACCEPT_ENCODING);
             if (configuration.getHttpContextConfiguration().allowDeflateBeforeSend()
@@ -890,10 +881,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
 
             try {
-                final Utf8Sequence method = headerParser.getMethod();
                 if (newRequest) {
-                    if (processor.requiresAuthentication(method) && !configureSecurityContext()) {
-                        final byte requiredAuthType = processor.getRequiredAuthType(method);
+                    if (processor.requiresAuthentication() && !configureSecurityContext()) {
+                        final byte requiredAuthType = processor.getRequiredAuthType();
                         processor = rejectProcessor.withAuthenticationType(requiredAuthType).reject(HTTP_UNAUTHORIZED);
                     }
 
@@ -920,12 +910,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 final boolean multipartRequest = Utf8s.equalsNcAscii("multipart/form-data", headerParser.getContentType())
                         || Utf8s.equalsNcAscii("multipart/mixed", headerParser.getContentType());
 
-                if (chunked) {
-                    busyRecv = consumeChunked(processor, headerEnd, read, newRequest);
-                } else if (multipartRequest) {
-                    busyRecv = consumeMultipart(socket, processor, headerEnd, read, newRequest, rescheduleContext);
+                if (multipartRequest) {
+                    busyRecv = consumeMultipart(socket, (HttpMultipartContentProcessor) processor, headerEnd, read, newRequest, rescheduleContext);
+                } else if (chunked) {
+                    busyRecv = consumeChunked((HttpPostPutProcessor) processor, headerEnd, read, newRequest);
                 } else if (contentLength > 0) {
-                    busyRecv = consumeContent(contentLength, socket, processor, headerEnd, read, newRequest);
+                    busyRecv = consumeContent(contentLength, socket, (HttpPostPutProcessor) processor, headerEnd, read, newRequest);
                 } else {
                     // Do not expect any more bytes to be sent to us before
                     // we respond back to client. We will disconnect the client when
@@ -1011,13 +1001,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             long start,
             long buf,
             int bufRemaining,
-            HttpMultipartContentListener multipartListener,
-            HttpRequestProcessor processor,
+            HttpMultipartContentProcessor processor,
             RescheduleContext rescheduleContext
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, TooFewBytesReceivedException {
         boolean parseResult;
         try {
-            parseResult = multipartContentParser.parse(start, buf, multipartListener);
+            parseResult = multipartContentParser.parse(start, buf, processor);
         } catch (RetryOperationException e) {
             this.multipartParserState.saveFdBufferPosition(multipartContentParser.getResumePtr(), buf, bufRemaining);
             throw e;

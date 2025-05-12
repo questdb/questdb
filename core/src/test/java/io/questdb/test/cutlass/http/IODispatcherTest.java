@@ -54,9 +54,10 @@ import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.http.HttpRequestProcessorFactory;
 import io.questdb.cutlass.http.HttpRequestProcessorSelector;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.RescheduleContext;
@@ -121,7 +122,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -488,7 +488,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(DirectUtf8String url) {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
                 };
@@ -2559,14 +2559,14 @@ public class IODispatcherTest extends AbstractTest {
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjList<String> getUrls() {
                         return new ObjList<>("/upload");
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
                     }
                 });
@@ -5744,7 +5744,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(DirectUtf8String url) {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
                 }) {
@@ -6063,8 +6063,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "27\r\n" +
-                        "Method (multipart POST) not supported\r\n" +
+                        "1e\r\n" +
+                        "Multipart POST not supported\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",
@@ -6739,7 +6739,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(DirectUtf8String url) {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
                             public void onHeadersReady(HttpConnectionContext context) {
@@ -6930,7 +6930,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(DirectUtf8String url) {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
                 };
@@ -7085,7 +7085,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(DirectUtf8String url) {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
                 };
@@ -8250,7 +8250,7 @@ public class IODispatcherTest extends AbstractTest {
                                 }
 
                                 @Override
-                                public HttpRequestProcessor select(DirectUtf8String url) {
+                                public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                                     return null;
                                 }
                             }) {
@@ -9966,7 +9966,7 @@ public class IODispatcherTest extends AbstractTest {
         boolean valid;
     }
 
-    private static class TestJsonQueryProcessorFactory implements HttpRequestProcessorFactory {
+    private static class TestJsonQueryProcessorFactory implements HttpRequestHandlerFactory {
         private final CairoEngine engine;
         private final HttpFullFatServerConfiguration httpConfiguration;
         private final int workerCount;
@@ -9983,7 +9983,7 @@ public class IODispatcherTest extends AbstractTest {
         }
 
         @Override
-        public HttpRequestProcessor newInstance() {
+        public HttpRequestHandler newInstance() {
             return new JsonQueryProcessor(
                     httpConfiguration.getJsonQueryProcessorConfiguration(),
                     engine,

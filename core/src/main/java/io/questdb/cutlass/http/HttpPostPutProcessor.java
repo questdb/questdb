@@ -28,8 +28,24 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
 
-public interface HttpMultipartContentListener extends HttpContentListener {
-    void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
+import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_POST;
+import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_PUT;
 
-    void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
+public interface HttpPostPutProcessor extends HttpRequestProcessor {
+//    default HttpRequestProcessor checkRequestSupported(HttpRequestHeader requestHeader, RejectProcessor rejectProcessor) {
+//        if (requestHeader.isGetRequest()) {
+//            return rejectProcessor.reject(HTTP_NOT_FOUND, "Method GET not supported");
+//        }
+//        if (requestHeader.isMultipartRequest()) {
+//            return rejectProcessor.reject(HTTP_NOT_FOUND, "Multipart POST/PUT not supported");
+//        }
+//        return this;
+//    }
+
+    @Override
+    default byte getSupportedRequestTypes() {
+        return METHOD_POST + METHOD_PUT;
+    }
+
+    void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
 }

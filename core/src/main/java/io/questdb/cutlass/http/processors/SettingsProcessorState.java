@@ -22,12 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.cutlass.http.processors;
 
-import io.questdb.std.ObjList;
+import io.questdb.preferences.PreferencesStore;
+import io.questdb.std.Mutable;
+import io.questdb.std.str.DirectUtf8Sink;
 
-public interface HttpRequestProcessorFactory {
-    ObjList<String> getUrls();
+import java.io.Closeable;
 
-    HttpRequestProcessor newInstance();
+class SettingsProcessorState implements Mutable, Closeable {
+    final DirectUtf8Sink sink;
+    PreferencesStore.Mode mode;
+    long version = -1L;
+
+    SettingsProcessorState(int size) {
+        sink = new DirectUtf8Sink(size);
+    }
+
+    @Override
+    public void clear() {
+        sink.clear();
+        mode = null;
+        version = -1L;
+    }
+
+    @Override
+    public void close() {
+        sink.close();
+    }
 }

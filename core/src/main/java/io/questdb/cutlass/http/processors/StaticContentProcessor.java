@@ -29,6 +29,7 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRangeParser;
 import io.questdb.cutlass.http.HttpRawSocket;
+import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpResponseHeader;
@@ -59,7 +60,7 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 import static java.net.HttpURLConnection.HTTP_MOVED_PERM;
 import static java.net.HttpURLConnection.HTTP_NOT_FOUND;
 
-public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
+public class StaticContentProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
     private static final LocalValue<StaticContentProcessorState> LV = new LocalValue<>();
     private final StaticContentProcessorConfiguration configuration;
@@ -90,7 +91,17 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public byte getRequiredAuthType(Utf8Sequence method) {
+    public HttpRequestProcessor getDefaultProcessor() {
+        return this;
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
         return requiredAuthType;
     }
 
@@ -141,7 +152,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public boolean requiresAuthentication(Utf8Sequence method) {
+    public boolean requiresAuthentication() {
         return requiredAuthType == SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
