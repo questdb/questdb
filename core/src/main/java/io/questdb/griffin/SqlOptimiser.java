@@ -125,6 +125,7 @@ public class SqlOptimiser implements Mutable {
     private final CharSequenceObjHashMap<ExpressionNode> constNameToNode = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
     private final ObjectPool<JoinContext> contextPool;
+    private final ObjectPool<CharSequenceHashSet> csHashSetPool = new ObjectPool<>(CharSequenceHashSet::new, 16);
     private final IntHashSet deletedContexts = new IntHashSet();
     private final CharSequenceHashSet existsDependedTokens = new CharSequenceHashSet();
     private final ObjectPool<ExpressionNode> expressionNodePool;
@@ -135,6 +136,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<ExpressionNode> groupByNodes = new ObjList<>();
     private final BoolList groupByUsed = new BoolList();
     private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
+    private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 16);
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
     private final LiteralCheckingVisitor literalCheckingVisitor = new LiteralCheckingVisitor();
@@ -153,6 +155,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
+    private final ObjectPool<StringSink> stringSinkPool = new ObjectPool<>(StringSink::new, 16);
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
@@ -6888,8 +6891,9 @@ public class SqlOptimiser implements Mutable {
             //     country in ('NL, 'US')
             // should give 6 columns.
             int pivotForSize = nested.getPivotFor().size();
-            IntList forMaxes = new IntList(pivotForSize);
-            IntList forDepths = new IntList(pivotForSize);
+            IntList forMaxes = intListPool.next().thenCheckCapacity(pivotForSize);
+            IntList forDepths = intListPool.next().thenCheckCapacity(pivotForSize);
+
             int expectedPivotColumnsPerAggregateFunction = 0;
             for (int i = 0; i < pivotForSize; i++) {
                 // initialise depth to 0
@@ -6903,30 +6907,26 @@ public class SqlOptimiser implements Mutable {
                 expectedPivotColumnsPerAggregateFunction = expectedPivotColumnsPerAggregateFunction == 0 ? numInArgs : expectedPivotColumnsPerAggregateFunction * numInArgs;
             }
 
-            StringSink nameSink = new StringSink();
-            nameSink.clear();
 
             boolean duplicateAggregateFunctions = false;
 
-            ObjList<CharSequence> aggregateFunctionNames = new ObjList<>();
-
-            // todo: improve lazy n^2 algorithm
+            CharSequenceHashSet aggregateFunctionNames = csHashSetPool.next(); // todo(nwoolmer): reuse data structure
             for (int i = 0, n = nested.getPivotColumns().size(); i < n; i++) {
-                aggregateFunctionNames.add(nested.getPivotColumns().get(i).getAst().token);
-
-                for (int j = 0, m = aggregateFunctionNames.size() - 1; j < m; j++) {
-                    if (Chars.equalsIgnoreCase(aggregateFunctionNames.get(i), aggregateFunctionNames.get(j))) {
-                        duplicateAggregateFunctions = true;
-                    }
+                final CharSequence funcName = nested.getPivotColumns().get(i).getAst().token;
+                if (!aggregateFunctionNames.add(funcName)) {
+                    duplicateAggregateFunctions = true;
+                    break;
                 }
             }
 
+            csHashSetPool.release(aggregateFunctionNames);
             int numberOfCols = expectedPivotColumnsPerAggregateFunction * nested.getPivotColumns().size();
-
 
             if (numberOfCols > PIVOT_COLUMN_OUTPUT_LIMIT) {
                 throw SqlException.$(nested.getModelPosition(), "too many columns in PIVOT output: " + numberOfCols + " > " + PIVOT_COLUMN_OUTPUT_LIMIT);
             }
+
+            final StringSink nameSink = stringSinkPool.next();
 
             // for each output pivot column
             for (int i = 0; i < expectedPivotColumnsPerAggregateFunction; i++) {
@@ -7063,6 +7063,10 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
             }
+
+            intListPool.release(forMaxes);
+            intListPool.release(forDepths);
+            stringSinkPool.release(nameSink);
 
             // build the tree - model -> bonusModel -> groupByModel -> nested
             model.getNestedModel().clearPivot();
