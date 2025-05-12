@@ -98,7 +98,7 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
             node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
 
             String tableName = testName.getMethodName();
-            TableToken tableToken = fuzzer.createInitialTable(tableName, true, 100);
+            TableToken tableToken = fuzzer.createInitialTableWal(tableName, 100);
 
             execute("insert into " + tableName + " (ts) values ('2000-01-01')");
             drainWalQueue();

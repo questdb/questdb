@@ -339,14 +339,14 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
             }
 
             String tableNameNonWal = testName.getMethodName() + "_non_wal";
-            fuzzer.createInitialTable(tableNameNonWal, false, fuzzer.initialRowCount);
             String tableNameWal = testName.getMethodName();
-            TableToken walTable = fuzzer.createInitialTable(tableNameWal, true, fuzzer.initialRowCount);
+            TableToken walTable = fuzzer.createInitialTableWal(tableNameWal, fuzzer.initialRowCount);
+            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameWal, rnd);
+
+            fuzzer.createInitialTableNonWal(tableNameNonWal, tableNameWal, transactions);
             if (rnd.nextBoolean()) {
                 drainWalQueue();
             }
-
-            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameNonWal, rnd);
             int snapshotIndex = 1 + rnd.nextInt(transactions.size() - 1);
 
             ObjList<FuzzTransaction> beforeSnapshot = new ObjList<>();

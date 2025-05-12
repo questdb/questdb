@@ -736,8 +736,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableNameDedup = tableNameBase + "_wal";
             String tableNameWalNoDedup = tableNameBase + "_nodedup";
 
-            fuzzer.createInitialTable(tableNameWalNoDedup, true);
-            fuzzer.createInitialTable(tableNameDedup, true);
+            fuzzer.createInitialTableWal(tableNameWalNoDedup);
+            fuzzer.createInitialTableWal(tableNameDedup);
             maybeConvertToParquet(tableNameDedup);
 
             // Add long256 type to have to be a chance of a dedup key
@@ -806,9 +806,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableNameDedup = tableNameBase + "_wal";
             String tableNameNoWal = tableNameBase + "_nonwal";
 
-            TableToken dedupTt = fuzzer.createInitialTable(tableNameDedup, true);
+            TableToken dedupTt = fuzzer.createInitialTableWal(tableNameDedup);
             maybeConvertToParquet(tableNameDedup);
-            fuzzer.createInitialTable(tableNameNoWal, false);
+            fuzzer.createInitialTableNonWal(tableNameNoWal, dedupTt.getTableName(), null);
 
             String timestampColumnName;
             try (TableRecordMetadata meta = engine.getSequencerMetadata(dedupTt)) {

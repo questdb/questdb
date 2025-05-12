@@ -2046,9 +2046,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (ttl == 0) {
             return;
         }
-        PartitionBy.PartitionFloorMethod floorFn = PartitionBy.getPartitionFloorMethod(metadata.getPartitionBy());
-        PartitionBy.PartitionCeilMethod ceilFn = PartitionBy.getPartitionCeilMethod(metadata.getPartitionBy());
-        if (floorFn == null || ceilFn == null) {
+        if (metadata.getPartitionBy() == PartitionBy.NONE) {
             LOG.error().$("TTL set on a non-partitioned table. Ignoring");
             return;
         }
@@ -2060,18 +2058,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean dropped = false;
         do {
             long partitionTimestamp = getPartitionTimestamp(0);
-            long floorTimestamp = floorFn.floor(partitionTimestamp);
+            long floorTimestamp = txWriter.getPartitionFloor(partitionTimestamp);
             if (evictedPartitionTimestamp != -1 && floorTimestamp == evictedPartitionTimestamp) {
                 assert partitionTimestamp != floorTimestamp : "Expected a higher part of a split partition";
                 dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
                 continue;
             }
-            assert partitionTimestamp == floorTimestamp :
-                    String.format("partitionTimestamp %s != floor(partitionTimestamp) %s, evictedPartitionTimestamp %s",
-                            Timestamps.toString(partitionTimestamp),
-                            Timestamps.toString(floorTimestamp),
-                            Timestamps.toString(evictedPartitionTimestamp));
-            long partitionCeiling = ceilFn.ceil(partitionTimestamp);
+//            assert partitionTimestamp == floorTimestamp :
+//                    String.format("partitionTimestamp %s != floor(partitionTimestamp) %s, evictedPartitionTimestamp %s",
+//                            Timestamps.toString(partitionTimestamp),
+//                            Timestamps.toString(floorTimestamp),
+//                            Timestamps.toString(evictedPartitionTimestamp));
+            long partitionCeiling = txWriter.getNextPartitionTimestamp(partitionTimestamp);
             // TTL < 0 means it's in months
             boolean shouldEvict = ttl > 0
                     ? maxTimestamp - partitionCeiling >= Timestamps.HOUR_MICROS * ttl
@@ -6034,10 +6032,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         txWriter.bumpPartitionTableVersion();
                     }
                     txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
+                    if (isCommitReplaceMode() && srcDataOldPartitionSize > 0 && srcDataNewPartitionSize < srcDataOldPartitionSize && !partitionMutates) {
+                        // Replace resulted in trimming the partition.
+                        // Now trim the column tops so that don't exeed the partition size
+                        o3ConsumePartitionUpdateSink_trimPartitionColumnTops(partitionTimestamp, srcDataNewPartitionSize);
+                    }
                 }
             }
         }
         txWriter.transientRowCount = commitTransientRowCount;
+    }
+
+    private void o3ConsumePartitionUpdateSink_trimPartitionColumnTops(long partitionTimestamp, long newPartitionSize) {
+        int columnCount = metadata.getColumnCount();
+        for (int column = 0; column < columnCount; column++) {
+            long colTop = getColumnTop(partitionTimestamp, column, -1);
+            if (colTop > newPartitionSize) {
+                columnVersionWriter.upsertColumnTop(partitionTimestamp, column, newPartitionSize);
+            }
+        }
     }
 
     private void o3ConsumePartitionUpdates() {

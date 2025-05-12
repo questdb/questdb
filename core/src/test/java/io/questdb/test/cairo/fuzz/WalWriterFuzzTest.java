@@ -95,7 +95,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0.0,
                 0.8,
-                0.1
+                0.01
         );
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
         runFuzz(rnd);
@@ -384,6 +384,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         );
         setFuzzProperties(rnd);
         runFuzz(rnd, getTestName(), 1);
+
+        // exp 2022-02-24T00:00:00.000000Z
+        // was 2022-02-25T16:36:11.174736Z
     }
 
     @Test
@@ -467,7 +470,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalWriteRollbackHeavy() throws Exception {
-        Rnd rnd = generateRandom(LOG, 1045398272126583L, 1743701791272L);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(
                 0.5,
                 0.5,
@@ -518,7 +521,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         final int o3MemorySize = 256;
         node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, o3MemorySize);
         Assert.assertEquals(o3MemorySize, node1.getConfiguration().getO3ColumnMemorySize());
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 757919322995166L, 1747058301584L);
         setFuzzProbabilities(
                 0,
                 0.2,

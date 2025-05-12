@@ -323,7 +323,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private ObjList<FuzzTransaction> createTransactionsAndMv(Rnd rnd, String tableNameBase, String matViewName, String viewSql) throws SqlException, NumericException {
-        fuzzer.createInitialTable(tableNameBase, true);
+        fuzzer.createInitialTableWal(tableNameBase);
         createMatView(viewSql, matViewName);
 
         ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd);
@@ -484,7 +484,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     private void testMvFuzz(String baseTableName, long start, Rnd rnd, String... mvNamesAndSqls) throws Exception {
         assertMemoryLeak(() -> {
-            fuzzer.createInitialTable(baseTableName, true);
+            fuzzer.createInitialTableWal(baseTableName);
 
             for (int i = 0, n = mvNamesAndSqls.length / 2; i < n; i += 2) {
                 final String mvName = mvNamesAndSqls[i];
