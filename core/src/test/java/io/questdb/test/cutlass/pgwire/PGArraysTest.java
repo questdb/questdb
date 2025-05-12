@@ -265,6 +265,24 @@ public class PGArraysTest extends BasePGTest {
     }
 
     @Test
+    public void testArrayStringResult() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("select current_schemas(true) from long_sequence(1)")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("current_schemas[VARCHAR]\n" +
+                                    "{public}\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+
+    }
+
+    @Test
     public void testArrayUpdateBind() throws Exception {
         // todo: binding array vars in UPDATE statement does not work in WAL mode!
         skipOnWalRun();

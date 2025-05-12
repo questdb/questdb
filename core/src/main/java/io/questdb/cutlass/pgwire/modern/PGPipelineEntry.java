@@ -2241,6 +2241,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     case BINARY_TYPE_VARCHAR:
                         outColVarchar(utf8Sink, record, i);
                         break;
+                    case ColumnType.ARRAY_STRING:
+                    case BINARY_TYPE_ARRAY_STRING:
+                        // intentional fall-through
+                        // ARRAY_STRING is not a first-class type. it's a hack to implement certain postgresql
+                        // metadata functions, we send it as if it was a STRING
                     case ColumnType.STRING:
                     case BINARY_TYPE_STRING:
                         outColString(utf8Sink, record, i);
@@ -2336,7 +2341,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     case BINARY_TYPE_ARRAY:
                         outColBinArr(utf8Sink, record, i, type);
                         break;
-
                     default:
                         assert false;
                 }

@@ -32,6 +32,7 @@ import io.questdb.std.Numbers;
 public class PGOids {
 
     public static final int BINARY_TYPE_ARRAY = (1 << 31) | ColumnType.ARRAY;
+    public static final int BINARY_TYPE_ARRAY_STRING = (1 << 31) | ColumnType.ARRAY_STRING;
     public static final int BINARY_TYPE_BINARY = (1 << 31) | ColumnType.BINARY;
     public static final int BINARY_TYPE_BOOLEAN = (1 << 31) | ColumnType.BOOLEAN;
     public static final int BINARY_TYPE_BYTE = (1 << 31) | ColumnType.BYTE;
@@ -157,13 +158,23 @@ public class PGOids {
         return -1;
     }
 
-    public static int toColumnBinaryType(short code, int type) {
-        return (((int) code) << 31) | type;
-    }
-
-    public static int toColumnType(int type) {
-        // clear format flag
-        return type & (~(1 << 31));
+    /**
+     * Returns PostgreSQL element type OID for given PostgreSQL array type OID.
+     * <p>
+     * When a given array type OID is not supported, 0 is returned.
+     *
+     * @param pgOid PostgreSQL array type OID
+     * @return PostgreSQL element type OID
+     */
+    public static int pgArrayToElementType(int pgOid) {
+        switch (pgOid) {
+            case PG_ARR_FLOAT8:
+                return PG_FLOAT8;
+            case PG_ARR_INT8:
+                return PG_INT8;
+            default:
+                return 0;
+        }
     }
 
     /**
@@ -183,23 +194,13 @@ public class PGOids {
         }
     }
 
-    /**
-     * Returns PostgreSQL element type OID for given PostgreSQL array type OID.
-     * <p>
-     * When a given array type OID is not supported, 0 is returned.
-     *
-     * @param pgOid PostgreSQL array type OID
-     * @return PostgreSQL element type OID
-     */
-    public static int pgArrayToElementType(int pgOid) {
-        switch (pgOid) {
-            case PG_ARR_FLOAT8:
-                return PG_FLOAT8;
-            case PG_ARR_INT8:
-                return PG_INT8;
-            default:
-                return 0;
-        }
+    public static int toColumnBinaryType(short code, int type) {
+        return (((int) code) << 31) | type;
+    }
+
+    public static int toColumnType(int type) {
+        // clear format flag
+        return type & (~(1 << 31));
     }
 
     public static int toParamBinaryType(short code, int type) {
@@ -237,6 +238,7 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.IPv4, PG_VARCHAR); //IPv4
         TYPE_OIDS.extendAndSet(ColumnType.VARCHAR, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.INTERVAL, PG_VARCHAR); // VARCHAR
+        TYPE_OIDS.extendAndSet(ColumnType.ARRAY_STRING, PG_VARCHAR); // ARRAY_STRING is a hack, we send results as VARCHAR
 
         TYPE_ARR_OIDS.extendAndSet(ColumnType.DOUBLE, PG_ARR_FLOAT8); // FLOAT8[]
         TYPE_ARR_OIDS.extendAndSet(ColumnType.LONG, PG_ARR_INT8); // INT8[]
