@@ -127,13 +127,6 @@ public class GroupByUtils {
                     outRecordFunctions.add(function);
 
                     try {
-
-                        if (model.isMatView() && function.isNonDeterministic()) {
-                            throw SqlException.nonDeterministicColumn(node.position, node.token);
-                        }
-
-                        // record functions will have all model functions, including consecutive duplicates
-
                         if (function instanceof GroupByFunction) {
                             // configure map value columns for group-by functions
                             // some functions may need more than one column in values,
