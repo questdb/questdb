@@ -123,6 +123,7 @@ public class GroupByUtils {
                             executionContext
                     );
 
+                    // record functions will have all model function, including consecutive duplicates
                     outRecordFunctions.add(function);
 
                     try {
