@@ -192,17 +192,11 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             long value = Long.MIN_VALUE;
-            boolean allAreNull = true;
             for (int i = 0, n = args.size(); i < n; i++) {
                 final long v = args.getQuick(i).getLong(rec);
-                if (v == Long.MIN_VALUE) {
-                    continue;
-                } else {
-                    allAreNull = false;
-                }
                 value = Math.max(value, v);
             }
-            return allAreNull ? Long.MIN_VALUE : value;
+            return value;
         }
 
         @Override

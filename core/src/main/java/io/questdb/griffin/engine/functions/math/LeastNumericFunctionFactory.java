@@ -85,6 +85,7 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
                 case ColumnType.TIMESTAMP:
                     counters[type]++;
                     allArgsAreNull = false;
+                    continue;
                 case ColumnType.NULL:
                     counters[type]++;
                     continue;
