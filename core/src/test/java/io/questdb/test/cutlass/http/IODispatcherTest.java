@@ -3051,7 +3051,7 @@ public class IODispatcherTest extends AbstractTest {
                             "\r\n";
                     new SendAndReceiveRequestBuilder().execute(
                             request,
-                            "HTTP/1.1 400 Bad request\r\n" +
+                            "HTTP/1.1 404 Not Found\r\n" +
                                     "Server: questDB/1.0\r\n" +
                                     "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                     "Transfer-Encoding: chunked\r\n" +

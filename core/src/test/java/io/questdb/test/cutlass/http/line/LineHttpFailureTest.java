@@ -427,7 +427,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                                     .send()
                     ) {
                         resp.await();
-                        TestUtils.assertEquals("400", resp.getStatusCode());
+                        TestUtils.assertEquals("404", resp.getStatusCode());
                     }
                 }
 

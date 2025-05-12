@@ -1,6 +1,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.processors.RejectProcessor;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
@@ -68,12 +69,13 @@ public class HttpRequestValidator {
 
     HttpRequestProcessor validateRequestType(HttpRequestProcessor processor, RejectProcessor rejectProcessor) {
         if (processor.getSupportedRequestTypes() != ALL && (processor.getSupportedRequestTypes() & requestType) == 0) {
+            final Utf8Sequence method = requestHeader.getMethod();
             rejectProcessor.getMessageSink()
                     .put(requestHeader.isPostRequest() || requestHeader.isPutRequest()
                             ? (multipart ? "Multipart " : "Non-multipart ")
                             : "Method ")
-                    .put(requestHeader.getMethod())
-                    .put(" not supported");
+                    .put(method)
+                    .put(!Utf8s.equalsAscii("", method) ? " not supported" : "not supported");
             return rejectProcessor.reject(HTTP_NOT_FOUND);
         }
         return processor;
