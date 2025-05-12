@@ -2573,12 +2573,12 @@ public class SqlParser {
 
     private CharSequence parsePivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok;
+        ExpressionNode expr = null;
+        QueryColumn col;
+
         expectTok(lexer, '(');
 
-        ExpressionNode expr;
-
         while (true) {
-            expr = null;
 
             while (expr == null && lexer.hasNext()) {
                 expr = expr(lexer, model, sqlParserCallback);
@@ -2596,58 +2596,49 @@ public class SqlParser {
             }
 
             CharSequence alias = null;
-
-            lexer.unparseLast();
-
             tok = optTok(lexer);
-
-            QueryColumn col;
-
             col = queryColumnPool.next().of(null, expr);
 
-            if (tok != null && columnAliasStop.excludes(tok)) {
-                assertNotDot(lexer, tok);
+            if (tok != null && !isForKeyword(tok)) {
+                if (columnAliasStop.excludes(tok)) {
+                    assertNotDot(lexer, tok);
+                    // verify that * wildcard is not aliased
 
-                // verify that * wildcard is not aliased
-
-                if (isAsKeyword(tok)) {
-                    tok = tok(lexer, "alias");
                     if (isAsKeyword(tok)) {
                         tok = tok(lexer, "alias");
+                        SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                        CharSequence aliasTok = GenericLexer.immutableOf(tok);
+                        validateIdentifier(lexer, aliasTok);
+                        alias = unquote(aliasTok);
+                    } else {
+                        validateIdentifier(lexer, tok);
+                        SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                        alias = GenericLexer.immutableOf(unquote(tok));
                     }
-                    SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-                    CharSequence aliasTok = GenericLexer.immutableOf(tok);
-                    validateIdentifier(lexer, aliasTok);
-                    alias = unquote(aliasTok);
-                } else {
-                    validateIdentifier(lexer, tok);
-                    SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-                    alias = GenericLexer.immutableOf(unquote(tok));
+
+                    if (col.getAst().isWildcard()) {
+                        throw err(lexer, null, "wildcard cannot have alias");
+                    }
+
+                    tok = optTok(lexer);
+                    aliasMap.put(alias, col);
+                    col.setAlias(alias);
                 }
 
-                if (col.getAst().isWildcard()) {
-                    throw err(lexer, null, "wildcard cannot have alias");
+                model.addPivotColumn(col);
+
+                if (tok == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected end of expression");
                 }
 
-                tok = optTok(lexer);
+                if (isForKeyword(tok)) {
+                    break;
+                }
 
-                aliasMap.put(alias, col);
-                col.setAlias(alias);
-            }
-
-            model.addPivotColumn(col);
-
-
-            if (tok == null) {
-                throw SqlException.$(lexer.lastTokenPosition(), "unexpected end of expression");
-            }
-
-            if (isForKeyword(tok)) {
-                break;
-            } else if (Chars.equals(tok, ",") && alias == null) {
-                optTok(lexer);
+                expr = null;
             } else {
-                lexer.unparseLast();
+                model.addPivotColumn(col);
+                break;
             }
         }
 
@@ -3430,19 +3421,13 @@ public class SqlParser {
 
         // Check for include/exclude nulls syntax
         if (isIncludeKeyword(tok) || isExcludeKeyword(tok)) {
-
-            if (isIncludeKeyword(tok)) {
-                model.setUnpivotIncludeNulls(true);
-            }
-
+            model.setUnpivotIncludeNulls(isIncludeKeyword(tok));
             expectTok(lexer, "nulls");
             expectTok(lexer, '(');
         }
 
         // Get column expr
-        ExpressionNode expr;
-
-        expr = expr(lexer, model, sqlParserCallback);
+        ExpressionNode expr = expr(lexer, model, sqlParserCallback);
 
         if (expr == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "missing column expression");
@@ -3450,7 +3435,6 @@ public class SqlParser {
 
         QueryColumn col = queryColumnPool.next().of(expr.token, expr);
         model.addUnpivotColumn(col);
-        lexer.unparseLast();
 
         tok = SqlUtil.fetchNext(lexer);
 
@@ -3466,15 +3450,9 @@ public class SqlParser {
         }
 
         model.addUnpivotFor(expr);
+        expectTok(lexer, ')');
 
         tok = SqlUtil.fetchNext(lexer);
-
-        if (tok != ")") {
-            throw SqlException.$(lexer.lastTokenPosition(), "expected `)`");
-        }
-
-        tok = SqlUtil.fetchNext(lexer);
-
         return tok;
     }
 
