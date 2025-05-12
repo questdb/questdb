@@ -511,22 +511,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         fillStride = null;
         fillValues = null;
         skipped = false;
-        if (pivotColumns != null) {
-            pivotColumns.clear();
-        }
-        if (pivotFor != null) {
-            pivotFor.clear();
-        }
-        pivotColumns = null;
-        pivotFor = null;
-        if (unpivotColumns != null) {
-            unpivotColumns.clear();
-        }
-        unpivotColumns = null;
-        if (unpivotFor != null) {
-            unpivotFor.clear();
-        }
-        unpivotFor = null;
+        Misc.clear(pivotColumns);
+        Misc.clear(pivotFor);
+        Misc.clear(unpivotColumns);
+        Misc.clear(unpivotFor);
         unpivotIncludeNulls = false;
         allowPropagationOfOrderByAdvice = true;
         decls.clear();
@@ -550,8 +538,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void clearPivot() {
-        pivotFor = null;
-        pivotColumns = null;
+        Misc.clear(pivotFor);
+        Misc.clear(pivotColumns);
     }
 
     public void clearSampleBy() {
@@ -1288,23 +1276,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         model.clearOrderBy();
     }
 
-    public void movePivotFrom(QueryModel model) {
-        assert model.getPivotColumns() != null && model.getPivotColumns().size() > 0;
-        assert model.getPivotFor() != null && model.getPivotFor().size() > 0;
-
-        if (pivotColumns == null) {
-            pivotColumns = new ObjList<>(model.getPivotColumns().size());
-        }
-        pivotColumns.addAll(model.getPivotColumns());
-
-        if (pivotFor == null) {
-            pivotFor = new ObjList<>(model.getPivotFor().size());
-        }
-        pivotFor.addAll(model.getPivotFor());
-
-        model.clearPivot();
-    }
-
     public void moveSampleByFrom(QueryModel model) {
         this.sampleBy = model.sampleBy;
         this.sampleByUnit = model.sampleByUnit;
@@ -1333,6 +1304,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         IntList ordered = orderedJoinModels == orderedJoinModels1 ? orderedJoinModels2 : orderedJoinModels1;
         ordered.clear();
         return ordered;
+    }
+
+    public QueryModel ofSelectType(int selectModelType) {
+        this.selectModelType = selectModelType;
+        return this;
     }
 
     /*

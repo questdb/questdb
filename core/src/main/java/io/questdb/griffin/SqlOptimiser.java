@@ -6803,19 +6803,18 @@ public class SqlOptimiser implements Mutable {
         if (model.getSelectModelType() == SELECT_MODEL_CHOOSE
                 && nested != null
                 && nested.getSelectModelType() == SELECT_MODEL_NONE
-                && nested.getPivotColumns() != null
-                && nested.getPivotFor() != null
+                && nested.getPivotColumns() != null && nested.getPivotColumns().size() > 0
+                && nested.getPivotFor() != null && nested.getPivotFor().size() > 0
                 && model.getBottomUpColumns().size() == 1
                 && Chars.equals(model.getBottomUpColumns().getQuick(0).getAlias(), '*')) {
 
+
             // inner group by to perform initial aggregation
             // if we just use one group by and case, first/last won't work properly with nulls
-            QueryModel groupByModel = queryModelPool.next();
-            groupByModel.setSelectModelType(SELECT_MODEL_CHOOSE);
+            QueryModel groupByModel = queryModelPool.next().ofSelectType(SELECT_MODEL_CHOOSE);
 
             // needed because rewriteSelectClause assumes there's an extra model and clear things out
-            QueryModel bonusModel = queryModelPool.next();
-            bonusModel.setSelectModelType(SELECT_MODEL_CHOOSE);
+            QueryModel bonusModel = queryModelPool.next().ofSelectType(SELECT_MODEL_CHOOSE);
 
             // we need to remove any columns that are already featured in the query
             // clear out the '*'
@@ -6922,6 +6921,8 @@ public class SqlOptimiser implements Mutable {
             int numberOfCols = expectedPivotColumnsPerAggregateFunction * nested.getPivotColumns().size();
 
             if (numberOfCols > PIVOT_COLUMN_OUTPUT_LIMIT) {
+                intListPool.release(forDepths);
+                intListPool.release(forMaxes);
                 throw SqlException.$(nested.getModelPosition(), "too many columns in PIVOT output: " + numberOfCols + " > " + PIVOT_COLUMN_OUTPUT_LIMIT);
             }
 
@@ -7071,7 +7072,8 @@ public class SqlOptimiser implements Mutable {
             model.setNestedModel(bonusModel);
         } else {
             // Only allow wildcard or subqueries
-            if (model.getPivotColumns() != null || model.getPivotFor() != null) {
+            if ((model.getPivotColumns() != null && model.getPivotColumns().size() > 0) ||
+                    model.getPivotFor() != null && model.getPivotFor().size() > 0) {
                 throw SqlException.$(model.getModelPosition(), "PIVOT queries must use SELECT '*'");
             }
             // recurse
