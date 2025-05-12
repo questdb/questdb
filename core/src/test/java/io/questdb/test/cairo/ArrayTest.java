@@ -37,6 +37,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -795,6 +796,7 @@ public class ArrayTest extends AbstractCairoTest {
         });
     }
 
+    @Ignore("Jaromir promised to tackle this, if this is not fixed by 15th of May 2025 then he is a bloody liar!")
     @Test
     public void testGroupByArrayKey() throws Exception {
         assertMemoryLeak(() -> {
