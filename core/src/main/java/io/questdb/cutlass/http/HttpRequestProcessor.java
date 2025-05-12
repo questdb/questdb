@@ -35,13 +35,6 @@ import io.questdb.network.ServerDisconnectException;
 import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_GET;
 
 public interface HttpRequestProcessor {
-//    default HttpRequestProcessor checkRequestSupported(HttpRequestHeader requestHeader, RejectProcessor rejectProcessor) {
-//        if (requestHeader.isPostOrPutRequest()) {
-//            return rejectProcessor.reject(HTTP_NOT_FOUND, "Method POST/PUT not supported");
-//        }
-//        return this;
-//    }
-
     default AtomicLongGauge connectionCountGauge(Metrics metrics) {
         return metrics.jsonQueryMetrics().connectionCountGauge();
     }

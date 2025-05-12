@@ -32,16 +32,6 @@ import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_POST;
 import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_PUT;
 
 public interface HttpPostPutProcessor extends HttpRequestProcessor {
-//    default HttpRequestProcessor checkRequestSupported(HttpRequestHeader requestHeader, RejectProcessor rejectProcessor) {
-//        if (requestHeader.isGetRequest()) {
-//            return rejectProcessor.reject(HTTP_NOT_FOUND, "Method GET not supported");
-//        }
-//        if (requestHeader.isMultipartRequest()) {
-//            return rejectProcessor.reject(HTTP_NOT_FOUND, "Multipart POST/PUT not supported");
-//        }
-//        return this;
-//    }
-
     @Override
     default byte getSupportedRequestTypes() {
         return METHOD_POST + METHOD_PUT;
