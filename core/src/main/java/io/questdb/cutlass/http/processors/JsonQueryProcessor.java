@@ -628,7 +628,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         sendConfirmation(state, keepAliveHeader);
     }
 
-    // same as select new but disallows caching of explain plans
+    // same as select new but disallows caching of EXPLAIN plans
     private void executeExplain(
             JsonQueryProcessorState state,
             CompiledQuery cq,
@@ -725,12 +725,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 state.setOperationFuture(fut);
                 throw EntryUnavailableException.instance("retry update table wait");
             }
-            // All good, finished update
+            // All good, finished updates
             final long updatedCount = fut.getAffectedRowsCount();
             metrics.jsonQueryMetrics().markComplete();
             sendUpdateConfirmation(state, keepAliveHeader, updatedCount);
         } catch (CairoException e) {
-            // close e.g. when query has been cancelled, or we got an OOM
+            // close e.g., when the query has been cancelled, or we got an OOM
             if (e.isInterruption() || e.isOutOfMemory()) {
                 Misc.free(cq.getUpdateOperation());
             }
@@ -756,14 +756,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             Metrics metrics
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         logInternalError(e, state, metrics);
+        final int messagePosition = e instanceof CairoException ? ((CairoException) e).getPosition() : 0;
         if (bytesSent > 0) {
-            state.querySuffixWithError(response, code, message);
+            state.querySuffixWithError(response, code, message, messagePosition);
         } else {
-            final int position = e instanceof CairoException ? ((CairoException) e).getPosition() : 0;
             sendException(
                     response,
                     state.getHttpConnectionContext(),
-                    position,
+                    messagePosition,
                     message,
                     state.getQuery(),
                     configuration.getKeepAliveHeader(),
@@ -785,7 +785,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 state.configure(header, null, 0, Long.MAX_VALUE);
             } catch (Utf8Exception e) {
                 // This should never happen.
-                // since we are not parsing query text, we should not have any encoding issues.
+                // Since we are not parsing query text, we should not have any encoding issues.
             }
             state.info().$("Empty query header received. Sending empty reply.").$();
             sendEmptyQueryNotice(state, null, keepAliveHeader);

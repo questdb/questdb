@@ -613,6 +613,71 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
     @Test
     public void testCreateMatViewNonDeterministicFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+
+            // nested in SELECT
+            assertExceptionNoLeakCheck(
+                    "create materialized view test as select coalesce(ts, now()) ts, avg(v) from " + TABLE1 + " sample by 30s",
+                    53,
+                    "non-deterministic function cannot be used in materialized view: now"
+            );
+            assertNull(getMatViewDefinition("test"));
+
+            // WHERE clause
+            assertExceptionNoLeakCheck(
+                    "create materialized view test as (select ts, avg(v) from " + TABLE1 + " where ts in today() sample by 30s) partition by month",
+                    76,
+                    "non-deterministic function cannot be used in materialized view: today"
+            );
+            assertNull(getMatViewDefinition("test"));
+
+            assertExceptionNoLeakCheck(
+                    "create materialized view test as select ts, avg(v) from " + TABLE1 + " where k is not null and now() = '2020-01-01' sample by 30s",
+                    87,
+                    "non-deterministic function cannot be used in materialized view: now"
+            );
+            assertNull(getMatViewDefinition("test"));
+
+            // IN (cursor)
+            assertExceptionNoLeakCheck(
+                    "create materialized view test as select ts, avg(v) from " + TABLE1 + " where ts in (select now()) sample by 30s",
+                    83,
+                    "non-deterministic function cannot be used in materialized view: now"
+            );
+            assertNull(getMatViewDefinition("test"));
+
+            // JOIN
+            assertExceptionNoLeakCheck(
+                    "create materialized view test with base " + TABLE1 + " as select t1.ts, max(t2.dt) from " + TABLE1 + " t1 " +
+                            "left outer join (select k, sysdate() dt from " + TABLE2 + ") t2 on (k) sample by 30s",
+                    117,
+                    "non-deterministic function cannot be used in materialized view: sysdate"
+            );
+            assertNull(getMatViewDefinition("test"));
+
+            // UNION
+            assertExceptionNoLeakCheck(
+                    "create materialized view test with base " + TABLE1 + " as select t1.ts, max(t2.ts) from " + TABLE1 + " t1 " +
+                            "left outer join (select 'a' k, '2020-01-01' ts union all select 'b' k, systimestamp() ts) t2 on (k) sample by 30s",
+                    161,
+                    "non-deterministic function cannot be used in materialized view: systimestamp"
+            );
+            assertNull(getMatViewDefinition("test"));
+
+            // ORDER BY
+            assertExceptionNoLeakCheck(
+                    "create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s order by rnd_int(), ts)",
+                    87,
+                    "non-deterministic function cannot be used in materialized view: rnd_int"
+            );
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewNonDeterministicFunctionInSelect() throws Exception {
         final String[][] functions = new String[][]{
                 {"sysdate()", "sysdate"},
                 {"systimestamp()", "systimestamp"},
@@ -654,9 +719,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 {"rnd_geohash(5)", "rnd_geohash"}
         };
 
-        for (String[] func : functions) {
-            testCreateMatViewNonDeterministicFunction(func[0], func[1]);
-        }
+        assertMemoryLeak(() -> {
+            for (String[] func : functions) {
+                testCreateMatViewNonDeterministicFunctionInSelect(func[0], func[1]);
+            }
+        });
     }
 
     @Test
@@ -899,6 +966,29 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery0("ts\tavg\n", "test", "ts");
             assertMatViewDefinition("test", query, TABLE1, 1, 'd', null, offset);
             assertMatViewMetadata("test", query, TABLE1, 1, 'd', null, offset);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSetRefreshLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s";
+            execute("CREATE MATERIALIZED VIEW test AS (" + query + ") PARTITION BY WEEK TTL 3 WEEKS;");
+            execute("ALTER MATERIALIZED VIEW test SET REFRESH LIMIT 1m;");
+            drainWalQueue();
+            assertMatViewDefinition("test", query, TABLE1, 30, 's');
+            assertMatViewMetadata("test", query, TABLE1, 30, 's');
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertEquals(0, metadata.getTimestampIndex());
+                assertTrue(metadata.isDedupKey(0));
+                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(2));
+                assertEquals(3 * 7 * 24, metadata.getTtlHoursOrMonths());
+                assertEquals(-1, metadata.getMatViewRefreshLimitHoursOrMonths());
+            }
         });
     }
 
@@ -1843,7 +1933,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         drainWalAndMatViewQueues();
         // purge job may create MatViewRefreshList for existing tables by calling engine.getDependentMatViews();
         // this affects refresh logic in some scenarios, so make sure to run it
-        runWalPurgeJob();
+        drainPurgeJob();
     }
 
     private void testCreateMatViewNoPartitionBy(boolean useParentheses) throws Exception {
@@ -1878,16 +1968,22 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMatViewMetadata(matViewName, query, TABLE1, samplingInterval, samplingIntervalUnit);
     }
 
-    private void testCreateMatViewNonDeterministicFunction(String func, String columnName) throws Exception {
-        assertMemoryLeak(() -> {
-            createTable(TABLE1);
-            assertExceptionNoLeakCheck(
-                    "create materialized view test as (select ts, " + func + ", avg(v) from " + TABLE1 + " sample by 30s) partition by month",
-                    45,
-                    "Non-deterministic column: " + columnName
-            );
-            assertNull(getMatViewDefinition("test"));
-        });
+    private void testCreateMatViewNonDeterministicFunctionInSelect(String func, String columnName) throws Exception {
+        createTable(TABLE1);
+
+        assertExceptionNoLeakCheck(
+                "create materialized view test as (select ts, " + func + ", avg(v) from " + TABLE1 + " sample by 30s) partition by month",
+                45,
+                "non-deterministic function cannot be used in materialized view: " + columnName
+        );
+        assertNull(getMatViewDefinition("test"));
+
+        assertExceptionNoLeakCheck(
+                "create materialized view test as (select ts, f, a from (select ts, " + func + " f, avg(v) a from " + TABLE1 + " sample by 30s)) partition by month",
+                67,
+                "non-deterministic function cannot be used in materialized view: " + columnName
+        );
+        assertNull(getMatViewDefinition("test"));
     }
 
     private void testCreateMatViewWithNonDedupBaseKeys(String[] queries, String errorMessage, int[] errorPositions) throws Exception {
