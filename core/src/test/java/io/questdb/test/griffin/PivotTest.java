@@ -241,6 +241,38 @@ public class PivotTest extends AbstractSqlParserTest {
 
 
     @Test
+    public void testPivotImplicitGroupByWithAliasNoAs() throws Exception {
+        assertQueryAndPlan(
+                "2000_sum\t2010_sum\t2020_sum\n" +
+                        "null\tnull\tnull\n",
+                "SELECT *\n" +
+                        "FROM cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population) sum\n" +
+                        "    FOR\n" +
+                        "        year IN (2000, 2010, 2020)\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "2000_sum\t2010_sum\t2020_sum\n" +
+                        "9584\t9848\t10668\n",
+                false,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  values: [sum(case([sum,nullL,year])),sum(case([sum,nullL,year])),sum(case([sum,nullL,year]))]\n" +
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [year]\n" +
+                        "      values: [sum(population)]\n" +
+                        "      filter: year in [2000,2010,2020]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: cities\n");
+    }
+
+
+    @Test
     public void testPivotImplicitGroupByWithOrderBy() throws Exception {
         assertQueryAndPlan(
                 "2000\t2010\t2020\n" +
