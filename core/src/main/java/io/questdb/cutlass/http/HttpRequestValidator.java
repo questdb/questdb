@@ -1,8 +1,6 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.processors.RejectProcessor;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
@@ -17,7 +15,6 @@ public class HttpRequestValidator {
     public static final byte METHOD_POST = 8;
     public static final byte METHOD_PUT = 16;
     public static final byte ALL = METHOD_GET | METHOD_MULTIPART_POST | METHOD_MULTIPART_PUT | METHOD_POST | METHOD_PUT;
-    private static final Log LOG = LogFactory.getLog(HttpRequestValidator.class);
     private boolean chunked;
     private long contentLength;
     private boolean multipart;
@@ -66,16 +63,15 @@ public class HttpRequestValidator {
             } else {
                 requestType = requestHeader.isPostRequest() ? METHOD_MULTIPART_POST : METHOD_MULTIPART_PUT;
             }
-        } else {
-            LOG.error().$("Method not supported [method=").$(requestHeader.getMethod()).I$();
-            rejectProcessor.reject(HTTP_BAD_REQUEST, "Method not supported");
         }
     }
 
     HttpRequestProcessor validateRequestType(HttpRequestProcessor processor, RejectProcessor rejectProcessor) {
-        if ((processor.getSupportedRequestTypes() & requestType) == 0) {
+        if (processor.getSupportedRequestTypes() != ALL && (processor.getSupportedRequestTypes() & requestType) == 0) {
             rejectProcessor.getMessageSink()
-                    .put(requestHeader.isGetRequest() ? "Method " : (multipart ? "Multipart " : "Non-multipart "))
+                    .put(requestHeader.isPostRequest() || requestHeader.isPutRequest()
+                            ? (multipart ? "Multipart " : "Non-multipart ")
+                            : "Method ")
                     .put(requestHeader.getMethod())
                     .put(" not supported");
             return rejectProcessor.reject(HTTP_NOT_FOUND);
