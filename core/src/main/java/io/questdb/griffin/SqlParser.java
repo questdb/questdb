@@ -2031,17 +2031,17 @@ public class SqlParser {
         }
 
         if (tok != null && isPivotKeyword(tok)) {
-            lexer.unparseLast();
+            if (model.getUnpivotFor() != null && model.getUnpivotFor().size() > 0) {
+                throw SqlException.$((lexer.lastTokenPosition()), "only a single PIVOT or UNPIVOT clause can be used in an individual query");
+            }
             tok = parsePivot(lexer, model, sqlParserCallback);
-            if (tok != null && (isPivotKeyword(tok) || isUnpivotKeyword(tok))) {
+        }
+
+        if (tok != null && isUnpivotKeyword(tok)) {
+            if (model.getPivotFor() != null && model.getPivotFor().size() > 0) {
                 throw SqlException.$((lexer.lastTokenPosition()), "only a single PIVOT or UNPIVOT clause can be used in an individual query");
             }
-        } else if (tok != null && isUnpivotKeyword(tok)) {
-            lexer.unparseLast();
             tok = parseUnpivot(lexer, model, sqlParserCallback);
-            if (tok != null && (isPivotKeyword(tok) || isUnpivotKeyword(tok))) {
-                throw SqlException.$((lexer.lastTokenPosition()), "only a single PIVOT or UNPIVOT clause can be used in an individual query");
-            }
         }
 
         // expect multiple [[inner | outer | cross] join]
@@ -2572,17 +2572,8 @@ public class SqlParser {
     }
 
     private CharSequence parsePivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
-        lexer.unparseLast();
-
         CharSequence tok;
-        expectTok(lexer, "pivot");
-
-        tok = tok(lexer, "'('");
-
-        // this corrects some issue where PIVOT is returned twice by the lexer
-        if (isPivotKeyword(tok)) {
-            optTok(lexer);
-        }
+        expectTok(lexer, '(');
 
         ExpressionNode expr;
 
@@ -3434,31 +3425,18 @@ public class SqlParser {
         // monthly_sales UNPIVOT (
         //      sales
         //      FOR month IN (jan, feb, mar, apr, may, jun)
-        lexer.unparseLast();
-
         CharSequence tok;
-        expectTok(lexer, "unpivot");
-
-        tok = optTok(lexer);
-
-        // this corrects some issue where UNPIVOT is returned twice by the lexer
-        if (tok != null && isUnpivotKeyword(tok)) {
-            tok = optTok(lexer);
-        }
+        tok = tok(lexer, "'include' or 'exclude' or '('");
 
         // Check for include/exclude nulls syntax
-        if (tok != null && (isIncludeKeyword(tok) || isExcludeKeyword(tok))) {
+        if (isIncludeKeyword(tok) || isExcludeKeyword(tok)) {
 
             if (isIncludeKeyword(tok)) {
                 model.setUnpivotIncludeNulls(true);
             }
 
             expectTok(lexer, "nulls");
-            tok = SqlUtil.fetchNext(lexer);
-        }
-
-        if (tok == null || !Chars.equals(tok, "(")) {
-            throw SqlException.$(lexer.lastTokenPosition(), "expected `(`");
+            expectTok(lexer, '(');
         }
 
         // Get column expr
