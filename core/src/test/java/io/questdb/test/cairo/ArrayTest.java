@@ -1139,7 +1139,7 @@ public class ArrayTest extends AbstractCairoTest {
         assertException("select * from tab order by arr",
                 "create table tab as (select rnd_double_array(2, 1) arr from long_sequence(10))",
                 27,
-                "unsupported column type: DOUBLE[][]"
+                "DOUBLE[][] is not a supported type in ORDER BY clause"
         );
     }
 
