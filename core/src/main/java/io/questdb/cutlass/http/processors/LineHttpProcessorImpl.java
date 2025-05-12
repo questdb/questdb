@@ -30,11 +30,10 @@ import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpException;
-import io.questdb.cutlass.http.HttpPostPutProcessor;
+import io.questdb.cutlass.http.HttpMultipartContentProcessor;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.http.HttpRequestValidator;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -50,8 +49,9 @@ import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
 import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.ENCODING_NOT_SUPPORTED;
 import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.PRECISION_NOT_SUPPORTED;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.*;
+import static io.questdb.cutlass.http.HttpRequestValidator.*;
 
-public class LineHttpProcessorImpl implements HttpPostPutProcessor, HttpRequestHandler {
+public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, HttpRequestHandler {
     private static final Utf8String CONTENT_ENCODING = new Utf8String("Content-Encoding");
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
     private static final LocalValue<LineHttpProcessorState> LV = new LocalValue<>();
@@ -86,7 +86,15 @@ public class LineHttpProcessorImpl implements HttpPostPutProcessor, HttpRequestH
 
     @Override
     public byte getSupportedRequestTypes() {
-        return HttpRequestValidator.METHOD_POST;
+        return METHOD_POST + METHOD_MULTIPART_POST;
+    }
+
+    @Override
+    public void onPartBegin(HttpRequestHeader partHeader) {
+    }
+
+    @Override
+    public void onPartEnd() {
     }
 
     @Override
