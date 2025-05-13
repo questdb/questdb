@@ -352,6 +352,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         if (recvBuffer == 0) {
             // re-read recv buffer size in case the config was reloaded
             recvBufferSize = configuration.getRecvBufferSize();
+            recvBufferReadSize = Math.min(forceFragmentationReceiveChunkSize, recvBufferSize);
             recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
         }
         // re-read buffer sizes in case the config was reloaded
