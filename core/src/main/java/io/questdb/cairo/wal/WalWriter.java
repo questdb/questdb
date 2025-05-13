@@ -315,6 +315,15 @@ public class WalWriter implements TableWriterAPI {
     }
 
     // Called as the last transaction of a materialized view refresh.
+
+    /**
+     * Commit the materialized view with the last refresh transaction number and
+     *
+     * @param lastRefreshBaseTxn    the base table seqTxn the mat view is refreshed at
+     * @param lastRefreshTimestamp  the wall clock timestamp when the refresh is done
+     * @param lastReplaceRangeLowTs the low timestamp of the range to be replaced, inclusive
+     * @param lastReplaceRangeHiTs  the high timestamp of the range to be replaced, exclusive
+     */
     public void commitMatView(long lastRefreshBaseTxn, long lastRefreshTimestamp, long lastReplaceRangeLowTs, long lastReplaceRangeHiTs) {
         assert lastRefreshBaseTxn != Numbers.LONG_NULL;
         if (!(lastReplaceRangeLowTs == 0 && lastReplaceRangeHiTs == 0)) {
@@ -951,7 +960,7 @@ public class WalWriter implements TableWriterAPI {
     private void commit0(long lastRefreshBaseTxn, long lastRefreshTimestamp, long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
         checkDistressed();
         try {
-            if (inTransaction()) {
+            if (inTransaction() || replaceRangeHiTs > replaceRangeLowTs) {
                 isCommittingData = true;
                 final long rowsToCommit = getUncommittedRowCount();
                 lastReplaceRangeLowTs = replaceRangeLowTs;

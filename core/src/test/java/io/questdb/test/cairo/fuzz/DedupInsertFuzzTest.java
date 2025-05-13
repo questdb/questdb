@@ -808,7 +808,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             TableToken dedupTt = fuzzer.createInitialTableWal(tableNameDedup);
             maybeConvertToParquet(tableNameDedup);
-            fuzzer.createInitialTableNonWal(tableNameNoWal, dedupTt.getTableName(), null);
+            fuzzer.createInitialTableNonWal(tableNameNoWal, null);
 
             String timestampColumnName;
             try (TableRecordMetadata meta = engine.getSequencerMetadata(dedupTt)) {

@@ -370,7 +370,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
             TableToken walTable = fuzzer.createInitialTableWal(tableNameWal, fuzzer.initialRowCount);
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameWal, rnd);
 
-            fuzzer.createInitialTableNonWal(tableNameNonWal, tableNameWal, transactions);
+            fuzzer.createInitialTableNonWal(tableNameNonWal, transactions);
             if (rnd.nextBoolean()) {
                 drainWalQueue();
             }

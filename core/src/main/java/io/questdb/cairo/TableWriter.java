@@ -1313,6 +1313,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             housekeep();
             shrinkO3Mem();
 
+
+            assert txWriter.getPartitionCount() == 0 || txWriter.getMinTimestamp() >= txWriter.getPartitionTimestampByIndex(0);
             LOG.info().$("============== table=").$(tableToken)
                     .$(", minTs=").$ts(txWriter.getMinTimestamp()).$();
         }
@@ -2083,7 +2085,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
                 continue;
             }
-            long partitionCeiling = txWriter.getNextPartitionTimestamp(partitionTimestamp);
+            long partitionCeiling = txWriter.getNextLogicalPartitionTimestamp(partitionTimestamp);
             // TTL < 0 means it's in months
             boolean shouldEvict = ttl > 0
                     ? maxTimestamp - partitionCeiling >= Timestamps.HOUR_MICROS * ttl
@@ -6035,6 +6037,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         LOG.info().$("partition is fully removed in range replace [table=").$(tableToken)
                                 .$(", ts=").$ts(partitionTimestamp)
                                 .I$();
+
+                        if (partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(txWriter.getMinTimestamp())) {
+                            // TODO: this will not work if the replace commit does not have any data
+                            // Replace table min ts with max value to be updated with next partition
+                            LOG.debug().$("min partition removed in range replace").$();
+                            txWriter.minTimestamp = Long.MAX_VALUE;
+                        }
+
                         txWriter.removeAttachedPartitions(partitionTimestamp);
                         partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
 
@@ -6043,11 +6053,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // Max timestamp is already re-calculated and set in processO3Block
                             txWriter.finishPartitionSizeUpdate(txWriter.getMinTimestamp(), txWriter.getMaxTimestamp());
                             commitTransientRowCount = txWriter.transientRowCount;
-                        }
-                        if (partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(txWriter.getMinTimestamp())) {
-                            // TODO: this will not work if the replace commit does not have any data
-                            // Replace table min ts with max value to be updated with next partition
-                            txWriter.minTimestamp = Long.MAX_VALUE;
                         }
                         txWriter.bumpPartitionTableVersion();
                     } else {

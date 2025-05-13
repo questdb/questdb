@@ -404,6 +404,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long refreshStartTimestamp = microsecondClock.getTicks();
         state.setLastRefreshStartTimestamp(refreshStartTimestamp);
         final TableToken viewTableToken = viewDef.getMatViewToken();
+        long refreshFinishTimestamp = 0;
+
         try {
             factory = state.acquireRecordFactory();
             copier = state.getRecordToRowCopier();
@@ -466,7 +468,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             }
 
                             if (rowCount >= commitTarget) {
-                                walWriter.commitMatView(baseTableTxn, refreshTimestamp, replacementTimestampLo, replacementTimestampHi);
+                                refreshFinishTimestamp = microsecondClock.getTicks();
+                                walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
                                 replacementTimestampLo = intervalIterator.getTimestampHi();
                                 commitTarget = rowCount + batchSize;
                                 rowsCommitted = rowCount;
@@ -475,7 +478,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
 
                     if (rowCount > rowsCommitted) {
-                        walWriter.commitMatView(baseTableTxn, refreshTimestamp, replacementTimestampLo, replacementTimestampHi);
+                        refreshFinishTimestamp = microsecondClock.getTicks();
+                        walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
                         rowsCommitted = rowCount;
                     }
                     break;
@@ -506,10 +510,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
             if (rowsCommitted == 0) {
                 // No data was written, but we should mark the view as refreshed anyway.
-                walWriter.commitMatView(baseTableTxn, refreshTimestamp, 0, 0);
+                refreshFinishTimestamp = microsecondClock.getTicks();
+                walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp, 0, 0);
             }
-            final long refreshFinishTimestamp = microsecondClock.getTicks();
-            walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp);
             state.refreshSuccess(factory, copier, walWriter.getMetadata().getMetadataVersion(), refreshFinishTimestamp, refreshTriggerTimestamp, baseTableTxn);
             state.setLastRefreshBaseTableTxn(baseTableTxn);
         } catch (Throwable th) {

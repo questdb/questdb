@@ -112,6 +112,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void cancelRow() {
+        boolean allRowsCancelled = transientRowCount <= 1 && fixedRowCount == 0;
         if (transientRowCount == 1 && txPartitionCount > 1) {
             // we have to undo creation of partition
             txPartitionCount--;
@@ -121,8 +122,16 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             prevTransientRowCount = getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
         }
 
-        maxTimestamp = prevMaxTimestamp;
-        minTimestamp = prevMinTimestamp;
+        if (allRowsCancelled) {
+            maxTimestamp = Long.MIN_VALUE;
+            minTimestamp = Long.MAX_VALUE;
+            prevMinTimestamp = minTimestamp;
+            prevMaxTimestamp = maxTimestamp;
+        } else {
+            maxTimestamp = prevMaxTimestamp;
+            minTimestamp = prevMinTimestamp;
+        }
+
         recordStructureVersion++;
     }
 

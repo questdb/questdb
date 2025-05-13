@@ -269,6 +269,20 @@ class WalEventWriter implements Closeable {
         eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
     }
 
+    /**
+     * Append data to the WAL. This method is used for both regular and materialized view data.
+     * The method takes various parameters to specify the data range, timestamps, and other options.
+     *
+     * @param startRowID           the starting row ID of the data in the segment.
+     * @param endRowID             the ending row ID of the data  in the segment.
+     * @param minTimestamp         the minimum timestamp of the data, inclusive
+     * @param maxTimestamp         the maximum timestamp of the data, inclusive
+     * @param outOfOrder           indicates if the data is out of order
+     * @param lastRefreshBaseTxn   seqTxn of base transaction ID when refresh is performed
+     * @param lastRefreshTimestamp wall clock mat view refresh timestamp
+     * @param replaceRangeLowTs    the low timestamp for the range to be replaced, inclusive
+     * @param replaceRangeHiTs     the high timestamp for the range to be replaced, exclusive
+     */
     int appendData(
             long startRowID,
             long endRowID,

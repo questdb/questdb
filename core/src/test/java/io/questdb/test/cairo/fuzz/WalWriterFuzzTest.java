@@ -387,7 +387,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalWriteEqualTimestamp() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, true);
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 791787160415166L, 1747139715773L);
         setUpScoreboardVersion(rnd);
 
         setFuzzProbabilities(
@@ -419,9 +419,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         );
         setFuzzProperties(rnd);
         runFuzz(rnd, getTestName(), 1);
-
-        // exp 2022-02-24T00:00:00.000000Z
-        // was 2022-02-25T16:36:11.174736Z
     }
 
     @Test

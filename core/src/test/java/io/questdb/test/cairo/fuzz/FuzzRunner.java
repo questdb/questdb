@@ -425,7 +425,7 @@ public class FuzzRunner {
         return createInitialTable(tableName, false, 0);
     }
 
-    public TableToken createInitialTableNonWal(String tableName, String copyFrom, ObjList<FuzzTransaction> transactions) throws SqlException {
+    public TableToken createInitialTableNonWal(String tableName, ObjList<FuzzTransaction> transactions) throws SqlException {
         return createInitialTable(tableName, transactions);
     }
 
@@ -749,21 +749,32 @@ public class FuzzRunner {
         return engine.verifyTableName(tableName);
     }
 
-    @NotNull
-    private ObjList<FuzzTransaction> createTransactions(Rnd rnd, String tableNameBase) throws SqlException, NumericException {
-        String tableNameNoWal = tableNameBase + "_nonwal";
+    private void assertMinMaxTimestamp(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String tableName) throws SqlException {
+        try (TableReader reader = getReader(tableName)) {
+            if (reader.getMinTimestamp() != Long.MAX_VALUE) {
+                TestUtils.assertSql(
+                        compiler,
+                        sqlExecutionContext,
+                        "select ts from " + tableName + " order by ts limit 1",
+                        sink,
+                        "ts\n" +
+                                Timestamps.toUSecString(reader.getMinTimestamp())
+                                + "\n"
+                );
+            }
 
-        TableToken walTableToken = createInitialTableWal(tableNameBase, initialRowCount);
-
-        ObjList<FuzzTransaction> transactions = generateTransactions(tableNameBase, rnd);
-        createInitialTableNonWal(tableNameNoWal, walTableToken.getTableName(), transactions);
-
-        applyNonWal(transactions, tableNameNoWal, rnd);
-
-        // Release TW to reduce memory pressure
-        engine.releaseInactive();
-
-        return transactions;
+            if (reader.getMaxTimestamp() != Long.MIN_VALUE) {
+                TestUtils.assertSql(
+                        compiler,
+                        sqlExecutionContext,
+                        "select ts from " + tableName + " order by ts limit -1",
+                        sink,
+                        "ts\n" +
+                                Timestamps.toUSecString(reader.getMaxTimestamp())
+                                + "\n"
+                );
+            }
+        }
     }
 
     @NotNull
@@ -1064,6 +1075,23 @@ public class FuzzRunner {
         return symbols;
     }
 
+    @NotNull
+    private ObjList<FuzzTransaction> createTransactions(Rnd rnd, String tableNameBase) throws SqlException, NumericException {
+        String tableNameNoWal = tableNameBase + "_nonwal";
+
+        TableToken walTableToken = createInitialTableWal(tableNameBase, initialRowCount);
+
+        ObjList<FuzzTransaction> transactions = generateTransactions(tableNameBase, rnd);
+        createInitialTableNonWal(tableNameNoWal, transactions);
+
+        applyNonWal(transactions, tableNameNoWal, rnd);
+
+        // Release TW to reduce memory pressure
+        engine.releaseInactive();
+
+        return transactions;
+    }
+
     protected void runFuzz(String tableName, Rnd rnd) throws Exception {
         String tableNameWal = tableName + "_wal";
         String tableNameWal2 = tableName + "_wal_parallel";
@@ -1073,7 +1101,7 @@ public class FuzzRunner {
         createInitialTableWal(tableNameWal2, initialRowCount);
         ObjList<FuzzTransaction> transactions = generateTransactions(tableNameWal, rnd);
 
-        TableToken nonWalTt = createInitialTableNonWal(tableNameNoWal, tableNameWal, transactions);
+        TableToken nonWalTt = createInitialTableNonWal(tableNameNoWal, transactions);
 
         String timestampColumnName;
         try (TableMetadata meta = engine.getTableMetadata(nonWalTt)) {
@@ -1084,6 +1112,9 @@ public class FuzzRunner {
         applyNonWal(transactions, tableNameNoWal, rnd);
         long endNonWalMicro = System.nanoTime() / 1000;
         long nonWalTotal = endNonWalMicro - startMicro;
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameNoWal);
+        }
 
         applyWal(transactions, tableNameWal, 1, rnd);
 
@@ -1091,6 +1122,8 @@ public class FuzzRunner {
         long walTotal = endWalMicro - endNonWalMicro;
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameWal);
+
             String limit = "";
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
             assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
@@ -1103,6 +1136,8 @@ public class FuzzRunner {
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
             assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
             LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
+
+            assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameWal2);
         }
 
         assertCounts(tableNameWal, timestampColumnName);
@@ -1163,6 +1198,8 @@ public class FuzzRunner {
                 String limit = "";
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
                 assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+                assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameNoWal);
+                assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameWal);
             }
         }
     }
