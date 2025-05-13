@@ -108,6 +108,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private int receivedBytes;
     private long recvBuffer;
     private int recvBufferSize;
+    private int recvBufferReadSize;
     private long recvPos;
     private HttpRequestProcessor resumeProcessor = null;
     private SecurityContext securityContext;
@@ -164,6 +165,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.authenticator = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
         this.rejectProcessor = contextConfiguration.getFactoryProvider().getRejectProcessorFactory().getRejectProcessor(this);
         this.forceFragmentationReceiveChunkSize = contextConfiguration.getForceRecvFragmentationChunkSize();
+        this.recvBufferReadSize = Math.min(forceFragmentationReceiveChunkSize, recvBufferSize);
         this.selectCache = selectCache;
     }
 
@@ -598,9 +600,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 processor.onHeadersReady(this);
                 totalReceived -= headerEnd - recvBuffer;
                 lo = headerEnd;
-                newRequest = false;
             } else {
-                read = socket.recv(recvBuffer, recvBufferSize);
+                read = socket.recv(recvBuffer, recvBufferReadSize);
                 lo = recvBuffer;
             }
 
@@ -637,7 +638,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         return disconnectHttp(processor, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
                     }
                 }
-            } else if (read == 0) {
+            }
+
+            if (read == 0 || read == forceFragmentationReceiveChunkSize) {
                 // Schedule for read
                 throw registerDispatcherRead();
             } else {
@@ -847,7 +850,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             if (newRequest) {
                 while (headerParser.isIncomplete()) {
                     // read headers
-                    read = socket.recv(recvBuffer, recvBufferSize);
+                    read = socket.recv(recvBuffer, recvBufferReadSize);
                     LOG.debug().$("recv [fd=").$(getFd()).$(", count=").$(read).I$();
                     if (read < 0 && !headerParser.onRecvError(read)) {
                         LOG.debug()

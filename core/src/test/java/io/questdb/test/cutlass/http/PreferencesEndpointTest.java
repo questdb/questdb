@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
 import io.questdb.preferences.PreferencesStore;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
@@ -38,11 +39,14 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.HashMap;
+
 import static io.questdb.preferences.PreferencesStore.Mode.MERGE;
 import static io.questdb.preferences.PreferencesStore.Mode.OVERWRITE;
 import static io.questdb.test.tools.TestUtils.*;
 import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 import static java.net.HttpURLConnection.HTTP_OK;
+import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 
 public class PreferencesEndpointTest extends AbstractBootstrapTest {
 
@@ -53,6 +57,53 @@ public class PreferencesEndpointTest extends AbstractBootstrapTest {
         super.setUp();
         unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testFragmentedRequest() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "17");
+            }})
+            ) {
+                serverMain.start();
+
+                final PreferencesStore preferencesStore = serverMain.getEngine().getPreferencesStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    savePreferences(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", OVERWRITE, 0L);
+                    assertPreferencesStore(preferencesStore, 1, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}");
+
+                    final StringSink sink = new StringSink();
+                    for (int i = 0; i < 5000; i++) {
+                        sink.put("\"key").put(i).put("\":\"value").put(i).put("\",");
+                    }
+                    sink.clear(sink.length() - 1);
+
+                    savePreferences(httpClient, "{" + sink + ",\"instance_desc\":\"desc222\"}", MERGE, 1L);
+                    assertPreferencesStore(preferencesStore, 2, "\"preferences\":{" +
+                            "\"instance_name\":\"instance1\"," +
+                            "\"instance_desc\":\"desc222\"," +
+                            sink +
+                            "}");
+
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null" +
+                            "}," +
+                            "\"preferences.version\":2," +
+                            "\"preferences\":{" +
+                            "\"instance_name\":\"instance1\"," +
+                            "\"instance_desc\":\"desc222\"," +
+                            sink +
+                            "}" +
+                            "}"
+                    );
+                }
+            }
+        });
     }
 
     @Test
@@ -166,7 +217,7 @@ public class PreferencesEndpointTest extends AbstractBootstrapTest {
         try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
             responseHeaders.await();
 
-            //assertEquals(String.valueOf(expectedStatusCode), responseHeaders.getStatusCode());
+            assertEquals(String.valueOf(expectedStatusCode), responseHeaders.getStatusCode());
 
             final Utf8StringSink sink = new Utf8StringSink();
 
