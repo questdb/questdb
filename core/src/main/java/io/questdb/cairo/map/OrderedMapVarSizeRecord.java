@@ -569,8 +569,11 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             if (size > 0) {
                 // Fixed-size type.
                 addr += size;
+            } else if (ColumnType.isArray(columnType)) {
+                addr += ArrayTypeDriver.getSingleMemValueSize(addr);
             } else {
-                // Var-size type: string or varchar or binary.
+                // var-size type: string or varchar, binary
+                assert columnType == ColumnType.STRING || columnType == ColumnType.VARCHAR || columnType == ColumnType.BINARY;
                 final int len = Unsafe.getUnsafe().getInt(addr);
                 addr += Integer.BYTES;
                 if (len != TableUtils.NULL_LEN) {

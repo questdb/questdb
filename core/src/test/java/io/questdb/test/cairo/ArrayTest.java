@@ -796,7 +796,6 @@ public class ArrayTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore("Jaromir promised to tackle this, if this is not fixed by 15th of May 2025 then he is a bloody liar!")
     @Test
     public void testGroupByArrayKey() throws Exception {
         assertMemoryLeak(() -> {

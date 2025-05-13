@@ -173,10 +173,6 @@ public class GroupByUtils {
                             if (outKeyFunctions == null || outKeyFunctionNodes == null) {
                                 throw SqlException.$(node.position, "key functions are supported in GROUP BY only [function=").put(node).put(']');
                             }
-
-                            if (ColumnType.isArray(function.getType())) {
-                                throw SqlException.$(node.position, "array is not supported as a key [function=").put(node).put(']');
-                            }
                             outKeyFunctions.add(function);
                             outKeyFunctionNodes.add(node);
                         }
@@ -222,9 +218,6 @@ public class GroupByUtils {
                     int index = baseMetadata.getColumnIndexQuiet(node.token);
                     type = baseMetadata.getColumnType(index);
 
-                    if (ColumnType.isArray(type)) {
-                        throw SqlException.$(node.position, "array is not supported as a key [column=").put(node).put(']');
-                    }
                     if (index != timestampIndex || timestampUnimportant) {
                         if (lastIndex != index) {
                             outColumnFilter.add(index + 1);

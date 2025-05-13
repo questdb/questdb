@@ -39,16 +39,22 @@ public class ArrayAsMapKeyTest extends AbstractCairoTest {
                         "   ('vod3', ARRAY[[3., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123)\n" +
                         "   ;\n"
         );
-        assertException(
+        assertQuery("[]\tk\tcount\n" +
+                        "[[9.0,1000.0],[10.0,10000.0]]\tvod\t1\n" +
+                        "[[4.0,1000.0],[10.0,10000.0]]\tvod2\t1\n" +
+                        "[[3.0,1000.0],[10.0,10000.0]]\tvod3\t1\n",
                 "select ob_buy[1:], k, count() from array_test;",
-                13,
-                "array is not supported as a key [function=[](ob_buy,:(1))]"
+                true,
+                true
         );
 
-        assertException(
+        assertQuery("ob_buy\tk\tcount\n" +
+                        "[[9.0,1000.0],[10.0,10000.0]]\tvod\t1\n" +
+                        "[[4.0,1000.0],[10.0,10000.0]]\tvod2\t1\n" +
+                        "[[3.0,1000.0],[10.0,10000.0]]\tvod3\t1\n",
                 "select ob_buy, k, count() from array_test;",
-                7,
-                "array is not supported as a key [column=ob_buy]"
+                true,
+                true
         );
     }
 

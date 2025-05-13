@@ -316,11 +316,28 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         if (value.isNull()) {
             return Short.BYTES;
         }
+        return calculateSize(value.getDimCount(), value.getElemType(), value.getCardinality());
+    }
+
+    public static int getSingleMemValueSize(long arrayAddress) {
+        short elementType = Unsafe.getUnsafe().getShort(arrayAddress);
+        if (elementType == ColumnType.NULL) {
+            return Short.BYTES;
+        }
+        arrayAddress += Short.BYTES;
+        int nDim = Unsafe.getUnsafe().getInt(arrayAddress);
+        arrayAddress += Integer.BYTES;
+        int cardinality = Unsafe.getUnsafe().getInt(arrayAddress);
+
+        return calculateSize(nDim, elementType, cardinality);
+    }
+
+    private static int calculateSize(int nDim, short elementType, int cardinality) {
         return Short.BYTES // element type
                 + Integer.BYTES // number of dimensions
-                + value.getDimCount() * Integer.BYTES // dimension sizes
+                + nDim * Integer.BYTES // dimension sizes
                 + Integer.BYTES // size of the data vector
-                + ColumnType.sizeOf(value.getElemType()) * value.getCardinality();
+                + ColumnType.sizeOf(elementType) * cardinality;
     }
 
     @Override

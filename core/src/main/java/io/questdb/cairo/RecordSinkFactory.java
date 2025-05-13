@@ -253,6 +253,7 @@ public class RecordSinkFactory {
         final int fGetBin = asm.poolInterfaceMethod(Function.class, "getBin", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/BinarySequence;");
         final int fGetRecord = asm.poolInterfaceMethod(Function.class, "getRecord", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/cairo/sql/Record;");
         final int fGetInterval = asm.poolInterfaceMethod(Function.class, "getInterval", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/Interval;");
+        final int fGetArray = asm.poolInterfaceMethod(Function.class, "getArray", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/cairo/arr/ArrayView;");
 
         final int wSkip = asm.poolInterfaceMethod(RecordSinkSPI.class, "skip", "(I)V");
         final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
@@ -748,6 +749,14 @@ public class RecordSinkFactory {
                     asm.aload(1);
                     asm.invokeInterface(fGetInterval, 1);
                     asm.invokeInterface(wPutInterval, 1);
+                    break;
+                case ColumnType.ARRAY:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetArray, 1);
+                    asm.invokeInterface(wPutArray, 1);
                     break;
                 default:
                     throw new IllegalArgumentException("Unexpected function type: " + ColumnType.nameOf(type));

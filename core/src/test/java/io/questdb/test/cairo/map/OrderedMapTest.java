@@ -519,6 +519,45 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayKeyFollowedByLongKey() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd();
+            int N = 1000;
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
+            keyTypes.add(ColumnType.LONG);
+
+            try (OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, new SingleColumnType(ColumnType.LONG), N / 2, 0.5f, 1);
+                 DirectArray array = new DirectArray(configuration)) {
+                for (int i = 0; i < N; i++) {
+                    array.clear();
+                    rnd.nextDoubleArray(2, array, 0, 8, -1);
+                    MapKey key = map.withKey();
+                    key.putArray(array);
+                    key.putLong(rnd.nextLong());
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putLong(0, i + 1);
+                }
+
+                rnd.reset();
+
+                for (int i = 0; i < N; i++) {
+                    array.clear();
+                    rnd.nextDoubleArray(2, array, 0, 8, -1);
+                    MapKey key = map.withKey();
+                    key.putArray(array);
+                    key.putLong(rnd.nextLong());
+                    MapValue value = key.createValue();
+                    Assert.assertFalse(value.isNew());
+                    Assert.assertEquals(i + 1, value.getLong(0));
+                }
+
+            }
+        });
+    }
+
+    @Test
     public void testAppendUnique() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
