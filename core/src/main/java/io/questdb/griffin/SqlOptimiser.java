@@ -6908,7 +6908,7 @@ public class SqlOptimiser implements Mutable {
 
             boolean duplicateAggregateFunctions = false;
 
-            CharSequenceHashSet aggregateFunctionNames = csHashSetPool.next(); // todo(nwoolmer): reuse data structure
+            CharSequenceHashSet aggregateFunctionNames = csHashSetPool.next();
             for (int i = 0, n = nested.getPivotColumns().size(); i < n; i++) {
                 final CharSequence funcName = nested.getPivotColumns().get(i).getAst().token;
                 if (!aggregateFunctionNames.add(funcName)) {
@@ -6978,7 +6978,7 @@ public class SqlOptimiser implements Mutable {
                             nameSink.put(pivotColumnParamToken).put('_'); // to handle duplicate aggregate i.e sum twice
                         }
                         // then add the pivot column
-                        nameSink.put(pivotColumnName); // todo: handle duplicate aggregates
+                        nameSink.put(pivotColumnName);
                     } else {
                         // remove the '_', since we have finished our name
                         nameSink.trimTo(nameSink.length() - 1);
@@ -6988,7 +6988,6 @@ public class SqlOptimiser implements Mutable {
                     // We cannot directly translate some aggregates
                     // First/Last need to support skipping nulls
                     // Count needs to be a sum, since the final row will always be single.
-                    ExpressionNode coalesceExpr = null;
                     CharSequence aggExprName = pivotColumnName;
                     if (isFirstKeyword(pivotColumnName)) {
                         aggExprName = "first_not_null";
@@ -7018,16 +7017,13 @@ public class SqlOptimiser implements Mutable {
                     caseExpr.args.add(defaultValueExpr);
 
                     // population
-                    if (coalesceExpr != null) {
-                        caseExpr.args.add(coalesceExpr);
-                    } else {
-                        caseExpr.args.add(expressionNodePool.next().of(
-                                LITERAL,
-                                pivotColumnAlias == null ? pivotColumn.getAst().token : pivotColumnAlias,
-                                0,
-                                0
-                        ));
-                    }
+                    caseExpr.args.add(expressionNodePool.next().of(
+                            LITERAL,
+                            pivotColumnAlias == null ? pivotColumn.getAst().token : pivotColumnAlias,
+                            0,
+                            0
+                    ));
+
 
                     // case
                     if (pivotForSize == 1) {

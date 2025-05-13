@@ -2642,7 +2642,7 @@ public class SqlParser {
             }
         }
 
-        if (!isForKeyword(tok)) {
+        if (tok == null || !isForKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "expected `FOR`");
         }
 
