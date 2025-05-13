@@ -644,7 +644,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             if (read == 0 || read == forceFragmentationReceiveChunkSize) {
                 // Schedule for read
                 throw registerDispatcherRead();
-            } else {
+            } else if (read < 0) {
                 // client disconnected
                 return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
             }
