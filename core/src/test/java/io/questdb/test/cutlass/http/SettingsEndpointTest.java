@@ -319,10 +319,10 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
 
                 final PreferencesStore preferencesStore = serverMain.getEngine().getPreferencesStore();
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    assertPreferencesStore(preferencesStore, 0, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}");
+                    assertPreferencesStore(preferencesStore, 1, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}");
 
-                    savePreferences(httpClient, "{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}", MERGE, 0L);
-                    assertPreferencesStore(preferencesStore, 1, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}");
+                    savePreferences(httpClient, "{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}", MERGE, 1L);
+                    assertPreferencesStore(preferencesStore, 2, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}");
                 }
             }
 
@@ -332,7 +332,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
 
                 final PreferencesStore preferencesStore = serverMain.getEngine().getPreferencesStore();
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    assertPreferencesStore(preferencesStore, 0, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}");
+                    assertPreferencesStore(preferencesStore, 2, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}");
 
                     assertSettingsRequest(httpClient, "{" +
                             "\"config\":{" +
@@ -341,7 +341,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null" +
                             "}," +
-                            "\"preferences.version\":0," +
+                            "\"preferences.version\":2," +
                             "\"preferences\":{" +
                             "\"instance_name\":\"instance1\"," +
                             "\"instance_desc\":\"desc222\"," +

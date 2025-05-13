@@ -162,7 +162,7 @@ public class SettingsProcessor implements HttpRequestHandler {
             try {
                 return Numbers.parseLong(version);
             } catch (NumericException e) {
-                LOG.error().$("could not parse version, numeric value expected [version='").$(version).$("']");
+                LOG.error().$("could not parse version, numeric value expected [version='").$(version).$('\'').I$();
                 throw CairoException.nonCritical().put("Invalid version, numeric value expected [version='").put(version).put("']");
             }
         }

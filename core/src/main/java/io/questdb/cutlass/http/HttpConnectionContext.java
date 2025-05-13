@@ -107,8 +107,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private boolean pendingRetry = false;
     private int receivedBytes;
     private long recvBuffer;
-    private int recvBufferSize;
     private int recvBufferReadSize;
+    private int recvBufferSize;
     private long recvPos;
     private HttpRequestProcessor resumeProcessor = null;
     private SecurityContext securityContext;

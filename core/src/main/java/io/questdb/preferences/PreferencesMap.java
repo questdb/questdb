@@ -60,7 +60,9 @@ class PreferencesMap {
         }
     }
 
-    void readFromBlock(BlockFileReader.BlockCursor cursor) {
+    long readFromBlock(BlockFileReader.BlockCursor cursor) {
+        long version = 0L;
+
         long offset = 0;
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
@@ -68,6 +70,9 @@ class PreferencesMap {
                 // ignore unknown block
                 continue;
             }
+
+            version = block.getLong(offset);
+            offset += Long.BYTES;
 
             final int size = block.getInt(offset);
             offset += Integer.BYTES;
@@ -87,9 +92,11 @@ class PreferencesMap {
                 map.put(keySink, valueSink);
             }
         }
+        return version;
     }
 
-    void writeToBlock(AppendableBlock block) {
+    void writeToBlock(AppendableBlock block, long version) {
+        block.putLong(version);
         block.putInt(map.size());
         final ObjList<CharSequence> keys = map.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {

@@ -75,9 +75,9 @@ public class PreferencesStore implements Closeable {
     }
 
     public synchronized void init() {
-        final LPSZ configPath = configFilePath();
-        if (configuration.getFilesFacade().exists(configPath)) {
-            load(configPath, preferencesMap);
+        final LPSZ preferencesPath = preferencesFilePath();
+        if (configuration.getFilesFacade().exists(preferencesPath)) {
+            load(preferencesPath, preferencesMap);
         }
     }
 
@@ -106,20 +106,13 @@ public class PreferencesStore implements Closeable {
             default:
                 throw CairoException.nonCritical().put("Invalid mode [mode=").put(mode.name()).put(']');
         }
-        version++;
     }
 
-    private LPSZ configFilePath() {
-        return path.trimTo(rootLen).concat(PREFERENCES_FILE_NAME).$();
-    }
-
-    private void load(LPSZ configPath, PreferencesMap map) {
+    private void load(LPSZ preferencesPath, PreferencesMap map) {
         map.clear();
         try (BlockFileReader reader = blockFileReader) {
-            reader.of(configPath);
-
-            final BlockFileReader.BlockCursor cursor = reader.getCursor();
-            map.readFromBlock(cursor);
+            reader.of(preferencesPath);
+            version = map.readFromBlock(reader.getCursor());
         }
     }
 
@@ -135,11 +128,15 @@ public class PreferencesStore implements Closeable {
 
     private void persist(PreferencesMap map) {
         try (BlockFileWriter writer = blockFileWriter) {
-            writer.of(configFilePath());
+            writer.of(preferencesFilePath());
             final AppendableBlock block = writer.append();
-            map.writeToBlock(block);
+            map.writeToBlock(block, ++version);
             writer.commit();
         }
+    }
+
+    private LPSZ preferencesFilePath() {
+        return path.trimTo(rootLen).concat(PREFERENCES_FILE_NAME).$();
     }
 
     public enum Mode {
