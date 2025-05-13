@@ -601,6 +601,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 processor.onHeadersReady(this);
                 totalReceived -= headerEnd - recvBuffer;
                 lo = headerEnd;
+                newRequest = false;
             } else {
                 read = socket.recv(recvBuffer, recvBufferReadSize);
                 lo = recvBuffer;

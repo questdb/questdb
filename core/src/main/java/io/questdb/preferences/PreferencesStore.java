@@ -81,13 +81,20 @@ public class PreferencesStore implements Closeable {
         }
     }
 
-    public synchronized void save(DirectUtf8Sink sink, Mode mode, long expectedVersion) throws JsonException {
+    public synchronized void save(DirectUtf8Sink sink, Mode mode, long expectedVersion) {
         if (version != expectedVersion) {
             throw CairoException.preferencesOutOfDate(version, expectedVersion);
         }
 
-        preferencesParser.clear();
-        preferencesParser.parse(sink);
+        try {
+            preferencesParser.clear();
+            preferencesParser.parse(sink);
+        } catch (JsonException e) {
+            throw CairoException.nonCritical()
+                    .put("Malformed preferences message [error=").put(e.getFlyweightMessage())
+                    .put(", preferences=").put(sink)
+                    .put(']');
+        }
 
         switch (mode) {
             case OVERWRITE:

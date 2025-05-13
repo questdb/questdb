@@ -26,7 +26,6 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpChunkedResponse;
@@ -36,7 +35,6 @@ import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
-import io.questdb.cutlass.json.JsonException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
@@ -46,7 +44,6 @@ import io.questdb.preferences.PreferencesStore;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 
@@ -117,11 +114,7 @@ public class SettingsProcessor implements HttpRequestHandler {
         @Override
         public void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
             if (hi > lo) {
-                try {
-                    transientState.sink.putNonAscii(lo, hi);
-                } catch (CairoException | CairoError e) {
-                    sendErr(e.getFlyweightMessage());
-                }
+                transientState.sink.putNonAscii(lo, hi);
             }
         }
 
@@ -136,12 +129,8 @@ public class SettingsProcessor implements HttpRequestHandler {
 
             transientState.mode = PreferencesStore.Mode.of(context.getRequestHeader().getMethod());
 
-            final Utf8Sequence versionStr = context.getRequestHeader().getUrlParam(URL_PARAM_VERSION);
-            try {
-                transientState.version = Numbers.parseLong(versionStr);
-            } catch (NumericException e) {
-                throw CairoException.nonCritical().put("Could not parse version, numeric value expected [version=").put(versionStr).put(']');
-            }
+            transientState.version.clear();
+            transientState.version.put(context.getRequestHeader().getUrlParam(URL_PARAM_VERSION));
         }
 
         @Override
@@ -149,11 +138,8 @@ public class SettingsProcessor implements HttpRequestHandler {
             try {
                 context.getSecurityContext().authorizeSystemAdmin();
 
-                preferencesStore.save(transientState.sink, transientState.mode, transientState.version);
+                preferencesStore.save(transientState.sink, transientState.mode, parseVersion(transientState.version));
                 sendOk();
-            } catch (JsonException | CairoError e) {
-                LOG.error().$("could not save preferences").$((Throwable) e).$();
-                sendErr(e.getFlyweightMessage());
             } catch (CairoException e) {
                 LOG.error().$("could not save preferences").$((Throwable) e).$();
                 sendErr(e.isAuthorizationError() ? HTTP_UNAUTHORIZED : HTTP_BAD_REQUEST, e.getFlyweightMessage());
@@ -172,12 +158,17 @@ public class SettingsProcessor implements HttpRequestHandler {
             context.resumeResponseSend();
         }
 
-        private void sendErr(int statusCode, CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            transientContext.simpleResponse().sendStatusJsonContent(statusCode, message);
+        private long parseVersion(CharSequence version) {
+            try {
+                return Numbers.parseLong(version);
+            } catch (NumericException e) {
+                LOG.error().$("could not parse version, numeric value expected [version='").$(version).$("']");
+                throw CairoException.nonCritical().put("Invalid version, numeric value expected [version='").put(version).put("']");
+            }
         }
 
-        private void sendErr(CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendErr(HTTP_BAD_REQUEST, message);
+        private void sendErr(int statusCode, CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            transientContext.simpleResponse().sendStatusJsonContent(statusCode, message);
         }
 
         private void sendOk() throws PeerDisconnectedException, PeerIsSlowToReadException {
