@@ -50,6 +50,10 @@ public class O3Basket implements Mutable {
         partCounterPointer = 0;
     }
 
+    public boolean isClear() {
+        return indexerPointer == 0 && partCounterPointer == 0;
+    }
+
     public BitmapIndexWriter nextIndexer() {
         return indexers.getQuick(indexerPointer++);
     }

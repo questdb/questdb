@@ -856,7 +856,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         if (prefixType == O3_BLOCK_NONE && suffixType == O3_BLOCK_NONE) {
                             // full partition removal
-                            updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, newMinPartitionTimestamp, 0, oldPartitionSize, 1);
+                            updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, Long.MAX_VALUE, 0, oldPartitionSize, 1);
 
                             O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
                             O3Utils.close(ff, srcTimestampFd);
@@ -2078,6 +2078,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
 
         try {
+            assert o3Basket.isClear();
             for (int i = 0; i < columnCount; i++) {
                 final int columnType = metadata.getColumnType(i);
                 if (columnType < 0) {

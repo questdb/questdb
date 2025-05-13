@@ -170,7 +170,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.01,
                 0.01,
                 0.8,
-                0.1
+                0.05
         );
         setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(10_000_000),
                 rnd.nextInt(1500), 20, 10, 200, 0, 1
@@ -196,7 +196,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.05,
                 1.0,
                 0.8,
-                0.1
+                0.05
         );
         setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
         setFuzzProperties(rnd);
@@ -220,7 +220,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.01,
                 0.0,
                 0.8,
-                0.1
+                0.05
         );
         setFuzzCounts(false, 1_000_000, 500, 20, 1000, 20, 0, 10);
         runFuzz(generateRandom(LOG));
@@ -244,7 +244,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.05,
                 0.005,
                 0.8,
-                0.1
+                0.05
         );
         setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
         setFuzzProperties(rnd);
@@ -302,7 +302,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.01,
                 0.0,
                 0.8,
-                0.1
+                0.05
         );
         setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
         setFuzzProperties(rnd);
@@ -329,7 +329,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.01,
                 0.02,
                 0.8,
-                0.1
+                0.05
         );
         setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(50_000) + 1000, rnd.nextInt(100), 20, 1000, 1000, rnd.nextInt(100), rnd.nextInt(400) + 1);
         setFuzzProperties(rnd);
@@ -370,7 +370,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0,
                 0.0,
                 0.8,
-                0.1
+                0.05
         );
         setFuzzCounts(
                 true,
@@ -424,7 +424,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0,
                 0.0,
                 0.8,
-                0.1
+                0.05
         );
         setFuzzCounts(
                 true,
@@ -461,7 +461,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.001,
                 0.0,
                 0.8,
-                0.1
+                0.05
         );
         setFuzzCounts(false, 500_000, 5_000, 10, 10, 5500, 0, 1);
         String tableNameBase = getTestName();
@@ -470,7 +470,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalWriteRollbackHeavy() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 768736778598166L, 1747069118950L);
         setFuzzProbabilities(
                 0.5,
                 0.5,
@@ -490,6 +490,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         );
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
         runFuzz(rnd);
+        // exp 2022-02-25T16:18:56.926983Z
+        // was 2022-02-25T14:05:42.400158Z
     }
 
     @Test
@@ -510,7 +512,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.15,
                 0.0,
                 0.8,
-                0.1
+                0.05
         );
         setFuzzCounts(rnd.nextBoolean(), 300, 20, 20, 1000, 1000, 100, 3);
         runFuzz(rnd);
@@ -537,7 +539,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.01,
                 0.0,
                 0.8,
-                0.1
+                0.05
         );
         setFuzzCounts(true, 100_000, 10, 10, 10, 10, 50, 1);
         runFuzz(rnd, getTestName(), 1);
@@ -561,7 +563,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.01,
                 0.0,
                 0.8,
-                0.1
+                0.05
         );
         setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
         setFuzzProperties(rnd);

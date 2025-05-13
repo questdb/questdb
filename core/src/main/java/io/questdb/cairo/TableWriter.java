@@ -1296,6 +1296,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
             housekeep();
             shrinkO3Mem();
+
+            LOG.info().$("============== table=").$(tableToken)
+                    .$(", minTs=").$ts(txWriter.getMinTimestamp()).$();
         }
 
         // Nothing was committed to the table, only copied to LAG.
@@ -3805,6 +3808,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             noOpRowCount = 0L;
+
+            LOG.info().$("============== table=").$(tableToken)
+                    .$(", minTs=").$ts(txWriter.getMinTimestamp()).$();
         }
     }
 
@@ -5905,9 +5911,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final boolean isLastWrittenPartition = o3PartitionUpdateSink.nextBlockIndex(blockIndex) == -1;
                 final long o3SplitPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 5 * Long.BYTES);
 
-                boolean isFirstPartitionReplaced = isCommitReplaceMode()
-                        && partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(txWriter.getMinTimestamp())
+                boolean isMinPartitionUpdate = partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(txWriter.getMinTimestamp())
                         && partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(timestampMin);
+                boolean isFirstPartitionReplaced = isCommitReplaceMode() && isMinPartitionUpdate;
 
                 txWriter.minTimestamp = isFirstPartitionReplaced ? timestampMin : Math.min(timestampMin, txWriter.minTimestamp);
                 int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
@@ -5962,7 +5968,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$(", last=").$(partitionTimestamp == lastPartitionTimestamp)
                         .$(", partitionTimestamp=").$ts(partitionTimestamp)
                         .$(", partitionMutates=").$(partitionMutates)
-                        .$(", lastPartitionTimestamp=").$(lastPartitionTimestamp)
+                        .$(", lastPartitionTimestamp=").$ts(lastPartitionTimestamp)
                         .$(", srcDataOldPartitionSize=").$(srcDataOldPartitionSize)
                         .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
                         .$(", o3SplitPartitionSize=").$(o3SplitPartitionSize)
@@ -6015,6 +6021,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // Max timestamp is already re-calculated and set in processO3Block
                             txWriter.finishPartitionSizeUpdate(txWriter.getMinTimestamp(), txWriter.getMaxTimestamp());
                             commitTransientRowCount = txWriter.transientRowCount;
+                        }
+                        if (partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(txWriter.getMinTimestamp())) {
+                            // TODO: this will not work if the replace commit does not have any data
+                            // Replace table min ts with max value to be updated with next partition
+                            txWriter.minTimestamp = Long.MAX_VALUE;
                         }
                         txWriter.bumpPartitionTableVersion();
                     } else {
