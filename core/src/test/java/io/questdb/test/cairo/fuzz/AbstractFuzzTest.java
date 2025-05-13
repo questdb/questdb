@@ -302,6 +302,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     protected void setRandomAppendPageSize(Rnd rnd) {
         int minPage = 18;
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1L << (minPage + rnd.nextInt(22 - minPage))); // MAX page size 4Mb
-        LOG.info().$("dataAppendPageSize=").$(configuration.getDataAppendPageSize()).$();
+        long dataAppendPageSize = configuration.getDataAppendPageSize();
+        LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
     }
 }

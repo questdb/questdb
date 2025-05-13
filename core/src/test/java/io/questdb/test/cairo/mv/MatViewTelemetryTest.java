@@ -250,7 +250,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
         }
         drainWalQueue();
         currentMicros = parseFloorPartialTimestamp(currentTime);
-        refreshJob.run(0);
+        drainMatViewQueue(refreshJob);
         drainWalQueue();
         telemetryJob.runSerially();
     }

@@ -284,7 +284,7 @@ public class FuzzRunner {
                     int failures = ff.failureGenerated();
                     if (failures > failuresObserved) {
                         failuresObserved = failures;
-                        LOG.info().$("expected IO failure observed: ").$(e).$();
+                        LOG.info().$("expected IO failure observed: ").$((Throwable) e).$();
                         writer = Misc.free(writer);
 
                         transaction = transactions.getQuick(i);
@@ -320,7 +320,7 @@ public class FuzzRunner {
                     int failures = ff.failureGenerated();
                     if (failures > failuresObserved) {
                         failuresObserved = failures;
-                        LOG.info().$("expected IO failure observed: ").$(e).$();
+                        LOG.info().$("expected IO failure observed: ").$((Throwable) e).$();
                         rdr1 = Misc.free(rdr1);
                         rdr2 = Misc.free(rdr2);
                         rdr1 = getReader(tableName);

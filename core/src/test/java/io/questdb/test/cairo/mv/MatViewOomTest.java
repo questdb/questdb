@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
@@ -57,15 +56,6 @@ public class MatViewOomTest extends AbstractCairoTest {
         testOom(true);
     }
 
-    private void drainQueues() {
-        drainWalQueue();
-        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-            while (refreshJob.run(0)) {
-            }
-            drainWalQueue();
-        }
-    }
-
     private void testOom(boolean enableParallelSql) throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 1);
         setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(enableParallelSql));
@@ -83,7 +73,7 @@ public class MatViewOomTest extends AbstractCairoTest {
                             "  timestamp_sequence(400000000000, 500000) ts " +
                             "from long_sequence(100000);"
             );
-            drainQueues();
+            drainWalAndMatViewQueues();
 
             execute(
                     "create materialized view price_1h as (" +
@@ -93,7 +83,7 @@ public class MatViewOomTest extends AbstractCairoTest {
 
             // Set RSS limit, so that the refresh will fail due to OOM.
             Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 500 * 1024); // 500KB gap
-            drainQueues();
+            drainWalAndMatViewQueues();
             assertQueryNoLeakCheck(
                     "view_name\tview_status\n" +
                             "price_1h\tinvalid\n",
@@ -105,7 +95,7 @@ public class MatViewOomTest extends AbstractCairoTest {
             // Now, remove the limit and run full refresh. This time, it should succeed.
             Unsafe.setRssMemLimit(0);
             execute("refresh materialized view price_1h full;");
-            drainQueues();
+            drainWalAndMatViewQueues();
             assertQueryNoLeakCheck(
                     "view_name\tview_status\n" +
                             "price_1h\tvalid\n",

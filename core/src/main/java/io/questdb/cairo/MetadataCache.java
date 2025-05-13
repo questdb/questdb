@@ -199,6 +199,7 @@ public class MetadataCache implements QuietCloseable {
             table.setO3MaxLag(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
             table.setTimestampIndex(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
+            table.setMatViewRefreshLimitHoursOrMonths(TableUtils.getMatViewRefreshLimitHoursOrMonths(metaMem));
             table.setIsSoftLink(isSoftLink);
 
             TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, columnCount);
@@ -532,6 +533,7 @@ public class MetadataCache implements QuietCloseable {
             int timestampIndex = tableMetadata.getTimestampIndex();
             table.setTimestampIndex(timestampIndex);
             table.setTtlHoursOrMonths(tableMetadata.getTtlHoursOrMonths());
+            table.setMatViewRefreshLimitHoursOrMonths(tableMetadata.getMatViewRefreshLimitHoursOrMonths());
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
             table.setIsSoftLink(engine.getConfiguration().getFilesFacade().isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 

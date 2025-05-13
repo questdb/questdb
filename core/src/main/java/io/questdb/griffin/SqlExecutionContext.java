@@ -42,14 +42,20 @@ import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.log.LogRecord;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public interface SqlExecutionContext extends Closeable {
+public interface SqlExecutionContext extends Sinkable, Closeable {
+
+    // Returns true when the context doesn't require all SQL functions to be deterministic.
+    // Deterministic-only functions are enforced e.g. when compiling a mat view.
+    boolean allowNonDeterministicFunctions();
 
     void clearWindowContext();
 
@@ -210,6 +216,8 @@ public interface SqlExecutionContext extends Closeable {
 
     void resetFlags();
 
+    void setAllowNonDeterministicFunction(boolean value);
+
     void setCacheHit(boolean value);
 
     void setCancelledFlag(AtomicBoolean cancelled);
@@ -236,5 +244,8 @@ public interface SqlExecutionContext extends Closeable {
     void setUseSimpleCircuitBreaker(boolean value);
 
     default void storeTelemetry(short event, short origin) {
+    }
+
+    default void toSink(@NotNull CharSink<?> sink) {
     }
 }

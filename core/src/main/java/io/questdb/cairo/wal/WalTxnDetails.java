@@ -110,7 +110,7 @@ public class WalTxnDetails implements QuietCloseable {
         try {
             walEventCursor = eventReader.of(tempPath, segmentTxn);
         } catch (CairoException ex) {
-            throw CairoException.critical(ex.getErrno()).put("cannot read WAL even file for seqTxn=").put(seqTxn)
+            throw CairoException.critical(ex.getErrno()).put("cannot read WAL event file for seqTxn=").put(seqTxn)
                     .put(", ").put(ex.getFlyweightMessage()).put(']');
         }
         return walEventCursor;

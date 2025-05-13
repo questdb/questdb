@@ -50,6 +50,11 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default void changeSymbolCapacity(CharSequence columnName, int symbolCapacity, SecurityContext securityContext) {
+        throw CairoException.critical(0).put("change symbol capacity does not update sequencer metadata");
+    }
+
+    @Override
     default boolean convertPartitionNativeToParquet(long partitionTimestamp) {
         throw CairoException.critical(0).put("convert native partition to parquet does not update sequencer metadata");
     }
@@ -57,11 +62,6 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default boolean convertPartitionParquetToNative(long partitionTimestamp) {
         throw CairoException.critical(0).put("convert parquet partition to native does not update sequencer metadata");
-    }
-
-    @Override
-    default void changeSymbolCapacity(CharSequence columnName, int symbolCapacity, SecurityContext securityContext) {
-        throw CairoException.critical(0).put("change symbol capacity does not update sequencer metadata");
     }
 
     @Override
@@ -108,6 +108,11 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default void setMetaMatViewRefreshLimit(int limitHoursOrMonths) {
+        throw CairoException.critical(0).put("change of materialized view refresh limit does not update sequencer metadata");
+    }
+
+    @Override
     default void setMetaMaxUncommittedRows(int maxUncommittedRows) {
         throw CairoException.critical(0).put("change of max uncommitted does not update sequencer metadata");
     }
@@ -118,7 +123,7 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default void setMetaTtlHoursOrMonths(int metaTtlHoursOrMonths) {
+    default void setMetaTtl(int ttlHoursOrMonths) {
         throw CairoException.critical(0).put("change of TTL does not update sequencer metadata");
     }
 

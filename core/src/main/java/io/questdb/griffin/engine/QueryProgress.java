@@ -117,9 +117,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 log.$("fin");
             }
             log.$(" [id=").$(sqlId)
-                    .$(", sql=`").utf8(sqlText).$('`')
-                    .$(", principal=").$(principal)
-                    .$(", cache=").$(executionContext.isCacheHit())
+                    .$(", sql=`").utf8(sqlText)
+                    .$("`, ").$(executionContext)
                     .$(", jit=").$(isJit)
                     .$(", time=").$(durationNanos);
 
@@ -171,8 +170,6 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             // causing log sequence leaks.
             long durationNanos =
                     executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos;
-            CharSequence principal = executionContext.getSecurityContext().getPrincipal();
-            boolean cacheHit = executionContext.isCacheHit();
             log = LOG.errorW();
             if (leakedReadersCount > 0) {
                 log.$("brk");
@@ -187,9 +184,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 // We need guaranteed logging for errors, hence errorW() call.
 
                 log.$(" [id=").$(sqlId)
-                        .$(", sql=`").utf8(sqlText).$('`')
-                        .$(", principal=").$(principal)
-                        .$(", cache=").$(cacheHit)
+                        .$(", sql=`").utf8(sqlText)
+                        .$("`, ").$(executionContext)
                         .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
                         .$(", time=").$(durationNanos)
                         .$(", msg=").$(message)
@@ -198,9 +194,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             } else {
                 // This is unknown exception, can be OOM that can cause exception in logging.
                 log.$(" [id=").$(sqlId)
-                        .$(", sql=`").utf8(sqlText).$('`')
-                        .$(", principal=").$(principal)
-                        .$(", cache=").$(cacheHit)
+                        .$(", sql=`").utf8(sqlText)
+                        .$("`, ").$(executionContext)
                         .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
                         .$(", time=").$(durationNanos)
                         .$(", exception=").$(e);

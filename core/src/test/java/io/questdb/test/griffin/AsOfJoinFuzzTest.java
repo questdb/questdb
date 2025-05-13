@@ -88,7 +88,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                         ", exerciseIntervals=" + exerciseIntervals +
                         ", limitType=" + limitType +
                         ", exerciseFilters=" + exerciseFilters +
-                        ", projectionType=" + projectionType, e);
+                        ", projectionType=" + projectionType +
+                        ", applyOuterProjection = " + applyOuterProjection,
+                        e);
             }
         }
     }
@@ -176,7 +178,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             char mainProjectionSuffix = projectionType == ProjectionType.RENAME_COLUMN ? '2' : ' ';
             outerProjection = "t1.ts, t2.i" + mainProjectionSuffix;
         }
-        String query = "select " + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
+
+        // we can always hint to use BINARY_SEARCH, it's ignored in cases where it doesn't apply
+        String query = "select /*+ USE_ASOF_BINARY_SEARCH(t1 t2) */ " + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
         int limit;
         switch (limitType) {
             case POSITIVE_LIMIT:

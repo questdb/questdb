@@ -503,6 +503,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                     failureCounter.incrementAndGet();
                 }
             } finally {
+                Path.clearThreadLocals();
                 done.countDown();
             }
         }).start();

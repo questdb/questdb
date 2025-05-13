@@ -79,6 +79,7 @@ import io.questdb.tasks.O3PartitionPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 
@@ -117,6 +118,7 @@ public final class TableUtils {
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
+    public static final long META_OFFSET_MAT_VIEW_REFRESH_LIMIT_HOURS_OR_MONTHS = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     /**
      * TXN file structure
@@ -1100,7 +1102,7 @@ public final class TableUtils {
     }
 
     public static long mapAppendColumnBuffer(FilesFacade ff, long fd, long offset, long size, boolean rw, int memoryTag) {
-        assert !Vm.PARANOIA_MODE || ff.length(fd) >= offset + size : "mmap ro buffer is beyond EOF";
+        assert !VM_PARANOIA_MODE || ff.length(fd) >= offset + size : "mmap ro buffer is beyond EOF";
 
         // Linux requires the mmap offset to be page aligned
         long alignedOffset = Files.floorPageSize(offset);
@@ -1851,8 +1853,9 @@ public final class TableUtils {
         mem.putBool(tableStruct.isWalEnabled());
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
-        mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
+        mem.putInt(tableStruct.getMatViewRefreshLimitHoursOrMonths());
 
+        mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
 
         for (int i = 0; i < count; i++) {
@@ -1972,6 +1975,10 @@ public final class TableUtils {
 
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
+    }
+
+    static int getMatViewRefreshLimitHoursOrMonths(MemoryR metaMem) {
+        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_MAT_VIEW_REFRESH_LIMIT_HOURS_OR_MONTHS) : 0;
     }
 
     static int getTtlHoursOrMonths(MemoryR metaMem) {
