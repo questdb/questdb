@@ -39,6 +39,7 @@ import io.questdb.cairo.SymbolAsIntTypes;
 import io.questdb.cairo.SymbolAsStrTypes;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
@@ -340,6 +341,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             keyTypes.add(ColumnType.LONG256);
             keyTypes.add(ColumnType.UUID);
             keyTypes.add(ColumnType.INTERVAL);
+            keyTypes.add(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
 
             ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             valueTypes.add(ColumnType.BYTE);
@@ -356,7 +358,8 @@ public class OrderedMapTest extends AbstractCairoTest {
             valueTypes.add(ColumnType.LONG256);
             valueTypes.add(ColumnType.UUID);
 
-            try (OrderedMap map = new OrderedMap(128, keyTypes, valueTypes, 64, 0.8, 24)) {
+            try (OrderedMap map = new OrderedMap(128, keyTypes, valueTypes, 64, 0.8, 24);
+                 DirectArray array = new DirectArray(configuration)) {
                 final Utf8StringSink utf8Sink = new Utf8StringSink();
                 final int N = 100000;
                 for (int i = 0; i < N; i++) {
@@ -391,6 +394,9 @@ public class OrderedMapTest extends AbstractCairoTest {
                     key.putLong256(long256);
                     key.putLong128(rnd.nextLong(), rnd.nextLong()); // UUID
                     key.putInterval(new Interval().of(rnd.nextPositiveInt(), rnd.nextPositiveInt()));
+                    array.clear();
+                    rnd.nextDoubleArray(1, array, 0, 8, -1);
+                    key.putArray(array);
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -445,6 +451,9 @@ public class OrderedMapTest extends AbstractCairoTest {
                     key.putLong256(long256);
                     key.putLong128(rnd.nextLong(), rnd.nextLong()); // UUID
                     key.putInterval(new Interval().of(rnd.nextPositiveInt(), rnd.nextPositiveInt()));
+                    array.clear();
+                    rnd.nextDoubleArray(1, array, 0, 8, -1);
+                    key.putArray(array);
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -467,11 +476,11 @@ public class OrderedMapTest extends AbstractCairoTest {
 
                 try (RecordCursor cursor = map.getCursor()) {
                     rnd.reset();
-                    assertCursorAllTypesVarSizeKey(rnd, cursor);
+                    assertCursorAllTypesVarSizeKey(rnd, cursor, array);
 
                     rnd.reset();
                     cursor.toTop();
-                    assertCursorAllTypesVarSizeKey(rnd, cursor);
+                    assertCursorAllTypesVarSizeKey(rnd, cursor, array);
                 }
             }
         });
@@ -2106,7 +2115,7 @@ public class OrderedMapTest extends AbstractCairoTest {
         Assert.assertFalse(cursor.hasNext());
     }
 
-    private void assertCursorAllTypesVarSizeKey(Rnd rnd, RecordCursor cursor) {
+    private void assertCursorAllTypesVarSizeKey(Rnd rnd, RecordCursor cursor, DirectArray array) {
         final Utf8StringSink utf8Sink = new Utf8StringSink();
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
@@ -2145,9 +2154,13 @@ public class OrderedMapTest extends AbstractCairoTest {
             Assert.assertEquals(long256, record.getLong256A(col++));
             Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
             Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col++));
-            Interval interval = record.getInterval(col);
+            Interval interval = record.getInterval(col++);
             Assert.assertEquals(rnd.nextPositiveInt(), interval.getLo());
             Assert.assertEquals(rnd.nextPositiveInt(), interval.getHi());
+
+            array.clear();
+            rnd.nextDoubleArray(1, array, 0, 8, -1);
+            Assert.assertTrue(array.arrayEquals(record.getArray(col, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))));
 
             // value part, it comes first in record
             col = 0;
