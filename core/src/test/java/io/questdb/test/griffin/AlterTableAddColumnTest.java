@@ -81,7 +81,9 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                         if (!isWal) {
                             throw e;
                         }
-                        assertContains(e.getFlyweightMessage(), "statements containing multiple transactions, such as 'alter table add column col1, col2' are currently not supported for WAL tables [table=x, oldStructureVersion=0, newStructureVersion=2]");
+                        assertContains(e.getFlyweightMessage(), "statement is either no-op," +
+                                " or contains multiple transactions, such as 'alter table add column col1, col2'," +
+                                " and currently not supported for WAL tables [table=x, oldStructureVersion=0, newStructureVersion=2]");
                     }
 
                     final String originalColumns =
@@ -699,7 +701,9 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                         if (!isWal) {
                             throw e;
                         }
-                        assertContains(e.getFlyweightMessage(), "statements containing multiple transactions, such as 'alter table add column col1, col2' are currently not supported for WAL tables [table=x, oldStructureVersion=0, newStructureVersion=2]");
+                        assertContains(e.getFlyweightMessage(), "statement is either no-op," +
+                                " or contains multiple transactions, such as 'alter table add column col1, col2'," +
+                                " and currently not supported for WAL tables [table=x, oldStructureVersion=0, newStructureVersion=2]");
                     }
 
                     final String originalColumns =
