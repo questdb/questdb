@@ -25,8 +25,6 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpRequestHeader;
-import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpResponseSink;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -65,11 +63,6 @@ public class RejectProcessorImpl implements RejectProcessor {
     @Override
     public Utf16Sink getMessageSink() {
         return rejectMessage;
-    }
-
-    @Override
-    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
-        return this;
     }
 
     @Override

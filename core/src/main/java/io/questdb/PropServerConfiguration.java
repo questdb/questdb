@@ -2539,12 +2539,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         };
 
         @Override
-        public void appendToSettingsSink(Utf8StringSink settings) {
+        public boolean appendToSettingsSink(Utf8StringSink settings) {
             str(RELEASE_TYPE, getReleaseType(), settings);
             str(RELEASE_VERSION, getBuildInformation().getSwVersion(), settings);
             if (!Chars.empty(httpUsername)) {
                 bool(ACL_ENABLED, true, settings);
             }
+            return true;
         }
 
         @Override
@@ -5233,9 +5234,10 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     class PropPublicPassthroughConfiguration implements PublicPassthroughConfiguration {
         @Override
-        public void appendToSettingsSink(Utf8StringSink settings) {
+        public boolean appendToSettingsSink(Utf8StringSink settings) {
             bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), isPosthogEnabled(), settings);
             str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), getPosthogApiKey(), settings);
+            return true;
         }
 
         @Override

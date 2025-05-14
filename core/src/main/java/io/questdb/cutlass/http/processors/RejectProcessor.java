@@ -26,7 +26,6 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpMultipartContentProcessor;
-import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -36,7 +35,7 @@ import io.questdb.std.str.Utf16Sink;
 
 import static io.questdb.cutlass.http.HttpRequestValidator.ALL;
 
-public interface RejectProcessor extends HttpMultipartContentProcessor, HttpRequestHandler {
+public interface RejectProcessor extends HttpMultipartContentProcessor {
 
     void clear();
 

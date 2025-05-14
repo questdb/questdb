@@ -44,9 +44,11 @@ public interface ServerConfiguration {
      */
     default void appendToSettingsSink(Utf8StringSink settings) {
         settings.putAscii("\"config\":{");
-        getCairoConfiguration().appendToSettingsSink(settings);
-        getPublicPassthroughConfiguration().appendToSettingsSink(settings);
-        settings.clear(settings.size() - 1);
+        // bitwise OR below is intentional, always want to append passthrough config
+        if (getCairoConfiguration().appendToSettingsSink(settings)
+                | getPublicPassthroughConfiguration().appendToSettingsSink(settings)) {
+            settings.clear(settings.size() - 1);
+        }
         settings.putAscii("},");
     }
 

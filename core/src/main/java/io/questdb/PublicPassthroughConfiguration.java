@@ -30,8 +30,11 @@ public interface PublicPassthroughConfiguration {
 
     /**
      * Appends to the settings sink from passthrough configuration in JSON format.
+     *
+     * @return true if added anything to settings
      */
-    default void appendToSettingsSink(Utf8StringSink settings) {
+    default boolean appendToSettingsSink(Utf8StringSink settings) {
+        return false;
     }
 
     String getPosthogApiKey();

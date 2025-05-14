@@ -66,8 +66,11 @@ public interface CairoConfiguration {
 
     /**
      * Appends to the settings sink from cairo configuration in JSON format.
+     *
+     * @return true if added anything to settings
      */
-    default void appendToSettingsSink(Utf8StringSink settings) {
+    default boolean appendToSettingsSink(Utf8StringSink settings) {
+        return false;
     }
 
     boolean attachPartitionCopy();

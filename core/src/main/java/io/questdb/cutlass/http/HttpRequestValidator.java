@@ -9,12 +9,12 @@ import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 import static java.net.HttpURLConnection.HTTP_NOT_FOUND;
 
 public class HttpRequestValidator {
-    public static final byte INVALID = 0;
-    public static final byte METHOD_GET = 1;
-    public static final byte METHOD_MULTIPART_POST = 2;
-    public static final byte METHOD_MULTIPART_PUT = 4;
-    public static final byte METHOD_POST = 8;
-    public static final byte METHOD_PUT = 16;
+    public static final byte INVALID = 1;
+    public static final byte METHOD_GET = 2;
+    public static final byte METHOD_MULTIPART_POST = 4;
+    public static final byte METHOD_MULTIPART_PUT = 8;
+    public static final byte METHOD_POST = 16;
+    public static final byte METHOD_PUT = 32;
     public static final byte ALL = METHOD_GET | METHOD_MULTIPART_POST | METHOD_MULTIPART_PUT | METHOD_POST | METHOD_PUT;
     private boolean chunked;
     private long contentLength;
@@ -68,7 +68,7 @@ public class HttpRequestValidator {
     }
 
     HttpRequestProcessor validateRequestType(HttpRequestProcessor processor, RejectProcessor rejectProcessor) {
-        if (processor.getSupportedRequestTypes() != ALL && (processor.getSupportedRequestTypes() & requestType) == 0) {
+        if ((processor.getSupportedRequestTypes() & requestType) == 0) {
             final Utf8Sequence method = requestHeader.getMethod();
             rejectProcessor.getMessageSink()
                     .put(requestHeader.isPostRequest() || requestHeader.isPutRequest()

@@ -62,8 +62,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public void appendToSettingsSink(Utf8StringSink settings) {
-        getDelegate().appendToSettingsSink(settings);
+    public boolean appendToSettingsSink(Utf8StringSink settings) {
+        return getDelegate().appendToSettingsSink(settings);
     }
 
     @Override

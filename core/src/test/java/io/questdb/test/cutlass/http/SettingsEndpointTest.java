@@ -61,6 +61,14 @@ import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 import static java.net.HttpURLConnection.HTTP_OK;
 
 public class SettingsEndpointTest extends AbstractBootstrapTest {
+    private static final String DEFAULT_PAYLOAD = "{" +
+            "\"config\":{" +
+            "}," +
+            "\"preferences.version\":0," +
+            "\"preferences\":{" +
+            "}" +
+            "}";
+
     private static final String OSS_PAYLOAD = "{" +
             "\"config\":{" +
             "\"release.type\":\"OSS\"," +
@@ -367,6 +375,48 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testSettingsWithDefaultProps() throws Exception {
+        final Bootstrap bootstrap = new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
+                        return new PropServerConfiguration(
+                                bootstrap.getRootDirectory(),
+                                bootstrap.loadProperties(),
+                                getEnv(),
+                                bootstrap.getLog(),
+                                bootstrap.getBuildInformation(),
+                                new FilesFacadeImpl(),
+                                bootstrap.getMicrosecondClock(),
+                                (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration)
+                        ) {
+                            @Override
+                            public CairoConfiguration getCairoConfiguration() {
+                                return new DefaultCairoConfiguration(bootstrap.getRootDirectory());
+                            }
+
+                            @Override
+                            public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
+                                return new DefaultPublicPassthroughConfiguration();
+                            }
+                        };
+                    }
+                },
+                getServerMainArgs()
+        );
+
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(bootstrap)) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertSettingsRequest(httpClient, DEFAULT_PAYLOAD);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSettingsWithProps() throws Exception {
         final Bootstrap bootstrap = new Bootstrap(
                 new PropBootstrapConfiguration() {
@@ -386,11 +436,12 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             public CairoConfiguration getCairoConfiguration() {
                                 return new DefaultCairoConfiguration(bootstrap.getRootDirectory()) {
                                     @Override
-                                    public void appendToSettingsSink(Utf8StringSink settings) {
+                                    public boolean appendToSettingsSink(Utf8StringSink settings) {
                                         final CairoConfiguration config = getCairoConfiguration();
                                         str(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID.getPropertyPath(), config.getDbDirectory(), settings);
                                         integer(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.getPropertyPath(), config.getMaxFileNameLength(), settings);
                                         bool(PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath(), config.isWalSupported(), settings);
+                                        return true;
                                     }
                                 };
                             }
@@ -399,10 +450,11 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
                                 return new DefaultPublicPassthroughConfiguration() {
                                     @Override
-                                    public void appendToSettingsSink(Utf8StringSink settings) {
+                                    public boolean appendToSettingsSink(Utf8StringSink settings) {
                                         final PublicPassthroughConfiguration config = getPublicPassthroughConfiguration();
                                         bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), config.isPosthogEnabled(), settings);
                                         str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), config.getPosthogApiKey(), settings);
+                                        return true;
                                     }
                                 };
                             }
