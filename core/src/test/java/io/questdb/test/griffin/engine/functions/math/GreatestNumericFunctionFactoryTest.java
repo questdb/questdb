@@ -93,6 +93,11 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
     @Test
     public void testGreatestNumericFunctionFactoryNulls() throws Exception {
         assertSqlWithTypes("greatest\n2:LONG\n", "select greatest(1L, null, 2L)");
+        assertSqlWithTypes("greatest\n2:LONG\n", "select greatest(null, 1L, 2L)");
+        assertSqlWithTypes("greatest\n2:LONG\n", "select greatest(1L, 2L, null)");
+        assertSqlWithTypes("greatest\n2.0:DOUBLE\n", "select greatest(1.0, null, 2.0)");
+        assertSqlWithTypes("greatest\n2.0:DOUBLE\n", "select greatest(null, 1.0, 2.0)");
+        assertSqlWithTypes("greatest\n2.0:DOUBLE\n", "select greatest(1.0, 2.0, null)");
         // verify that we've cleaned up the counter array after the NULL returned earlier
         assertSqlWithTypes("greatest\n2:INT\n", "select greatest(1, 2)");
     }

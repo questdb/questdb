@@ -93,6 +93,11 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
     @Test
     public void testLeastNumericFunctionFactoryNulls() throws Exception {
         assertSqlWithTypes("least\n1:LONG\n", "select least(1L, null, 2L)");
+        assertSqlWithTypes("least\n1:LONG\n", "select least(null, 1L, 2L)");
+        assertSqlWithTypes("least\n1:LONG\n", "select least(1L, 2L, null)");
+        assertSqlWithTypes("least\n1.0:DOUBLE\n", "select least(1.0, null, 2.0)");
+        assertSqlWithTypes("least\n1.0:DOUBLE\n", "select least(null, 1.0, 2.0)");
+        assertSqlWithTypes("least\n1.0:DOUBLE\n", "select least(1.0, 2.0, null)");
         // verify that we've cleaned up the counter array after the NULL returned earlier
         assertSqlWithTypes("least\n1:INT\n", "select least(1, 2)");
     }
