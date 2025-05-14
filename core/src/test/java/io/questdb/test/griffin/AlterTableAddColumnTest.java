@@ -87,23 +87,23 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     }
 
                     final String originalColumns =
-                            "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                            "i\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                            "sym\tSYMBOL\tfalse\t0\ttrue\t128\tfalse\tfalse\n" +
-                            "amt\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                            "timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
-                            "b\tBOOLEAN\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                            "c\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                            "d\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                            "e\tFLOAT\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                            "f\tSHORT\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                            "g\tDATE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                            "ik\tSYMBOL\tfalse\t0\ttrue\t128\tfalse\tfalse\n" +
-                            "j\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                            "k\tTIMESTAMP\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                            "l\tBYTE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                            "m\tBINARY\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                            "n\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n";
+                                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                                    "i\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\tfalse\tfalse\n" +
+                                    "amt\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                                    "timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                                    "b\tBOOLEAN\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                                    "c\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                                    "d\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                                    "e\tFLOAT\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                                    "f\tSHORT\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                                    "g\tDATE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                                    "ik\tSYMBOL\tfalse\t0\ttrue\t128\tfalse\tfalse\n" +
+                                    "j\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                                    "k\tTIMESTAMP\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                                    "l\tBYTE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                                    "m\tBINARY\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                                    "n\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n";
 
                     assertQueryNoLeakCheck(
                             isWal
