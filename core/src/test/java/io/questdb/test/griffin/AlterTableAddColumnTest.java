@@ -87,7 +87,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     }
 
                     final String originalColumns =
-                                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                            "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
                                     "i\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
                                     "sym\tSYMBOL\tfalse\t0\ttrue\t128\tfalse\tfalse\n" +
                                     "amt\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
