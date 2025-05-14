@@ -292,6 +292,48 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    public void rewritePivotGenerateAliases(QueryModel model, ObjList<CharSequence> aliasList) {
+        QueryModel nested = model.getNestedModel();
+        assert nested.getPivotColumns() != null;
+
+        boolean alreadyAliased = false;
+
+        // 0. - check for aliases
+        for (int i = 0, n = nested.getPivotColumns().size(); i < n; i++) {
+            alreadyAliased |= nested.getPivotColumns().getQuick(i).getAlias() != null;
+        }
+
+        if (alreadyAliased) {
+            // rule out any accidental dupes
+            CharSequenceHashSet aliasDedupe = csHashSetPool.next();
+            for (int i = 0, n = nested.getPivotColumns().size(); i < n; i++) {
+                final QueryColumn pc = nested.getPivotColumns().getQuick(i);
+                if (!aliasDedupe.add(pc.getAlias())) {
+                    throw SqlException.$(pc.getAst().position, "duplicate alias in pivot definition [alias=").put(pc.getAlias()).$();
+                }
+                aliasList.add(pc.getAlias());
+            }
+            // do nothing and break
+            // todo:
+            return;
+        }
+
+        // 1.
+        for (int i = 0)
+
+
+        // naming rules
+        // 0. the alias provided by the user
+        // 1. Named after the column values
+        // i.e. 2000, 2010, 2020
+        // 2. Suffixed with aggregate columns, if multiple
+        // i.e 2000_sum, 2000_first
+        // 3. Suffixed with the parameter inside if multiple
+        // i.e. 2000_price, 2000_amount
+        // 4. suffixed with both if multiple
+        // i.e. 2000_sum_price, 2000_first_amount
+    }
+
     public @Nullable ExpressionNode rewritePivotGetAppropriateNameFromInExpr(ExpressionNode forInExpr) {
         if (forInExpr.paramCount == 2) {
             return forInExpr.lhs;
@@ -6808,7 +6850,6 @@ public class SqlOptimiser implements Mutable {
                 && model.getBottomUpColumns().size() == 1
                 && Chars.equals(model.getBottomUpColumns().getQuick(0).getAlias(), '*')) {
 
-
             // inner group by to perform initial aggregation
             // if we just use one group by and case, first/last won't work properly with nulls
             QueryModel groupByModel = queryModelPool.next().ofSelectType(SELECT_MODEL_CHOOSE);
@@ -6875,13 +6916,44 @@ public class SqlOptimiser implements Mutable {
                 }
             }
 
+
+            // naming rules
+            // 0. the alias provided by the user
+            // 1. Named after the column values
+            // i.e. 2000, 2010, 2020
+            // 2. Suffixed with aggregate columns, if multiple
+            // i.e 2000_sum, 2000_first
+            // 3. Suffixed with the parameter inside if multiple
+            // i.e. 2000_price, 2000_amount
+            // 4. suffixed with both if multiple
+            // i.e. 2000_sum_price, 2000_first_amount
+
             // add group by columns
             for (int i = 0, n = nested.getPivotColumns().size(); i < n; i++) {
                 QueryColumn pivotColumn = nested.getPivotColumns().getQuick(i);
-                groupByModel.addBottomUpColumn(queryColumnPool.next().of(
-                        pivotColumn.getAlias() == null ? pivotColumn.getAst().token : pivotColumn.getAlias(),
-                        pivotColumn.getAst()
-                ));
+                CharSequence alias = pivotColumn.getAlias() == null ? pivotColumn.getAst().token : pivotColumn.getAlias();
+                try {
+                    groupByModel.addBottomUpColumn(queryColumnPool.next().of(
+                            alias,
+                            pivotColumn.getAst()
+                    ));
+                } catch (SqlException e) {
+                    assert e.getMessage().contains("Duplicate");
+                    // backup plan, we need to alias
+                    int suffix = 1;
+                    int aliasLength = alias.length();
+                    CharacterStoreEntry cse = characterStore.newEntry();
+                    cse.put(alias);
+                    do {
+                        cse.trimTo(aliasLength);
+                        cse.put(suffix++);
+                    } while (groupByModel.getColumnAliasIndex(cse.toImmutable()) >= 0 && suffix < 500);
+                    groupByModel.addBottomUpColumn(queryColumnPool.next().of(
+                            cse.toImmutable(),
+                            pivotColumn.getAst()
+                    ));
+                    pivotColumn.setAlias(cse.toImmutable());
+                }
             }
 
             // need to permute all of the FOR exprs
@@ -6902,7 +6974,9 @@ public class SqlOptimiser implements Mutable {
                 int numInArgs = for_.paramCount - 1; // skip the LHS of the IN expr
                 int maxIndex = numInArgs - 1; // index is 1 less than list length
                 forMaxes.add(maxIndex);
-                expectedPivotColumnsPerAggregateFunction = expectedPivotColumnsPerAggregateFunction == 0 ? numInArgs : expectedPivotColumnsPerAggregateFunction * numInArgs;
+                expectedPivotColumnsPerAggregateFunction = expectedPivotColumnsPerAggregateFunction == 0
+                        ? numInArgs
+                        : expectedPivotColumnsPerAggregateFunction * numInArgs;
             }
 
 
@@ -6984,6 +7058,19 @@ public class SqlOptimiser implements Mutable {
                         nameSink.trimTo(nameSink.length() - 1);
                     }
 
+                    CharSequence name = nameSink.toImmutable();
+                    if (model.getColumnAliasIndex(name) >= 0) {
+                        // there is already a duplicate
+                        for (int _i = 0; _i < PIVOT_COLUMN_OUTPUT_LIMIT; _i++) {
+                            nameSink.put(_i);
+                            if (model.getColumnAliasIndex(nameSink.toImmutable()) < 0) {
+                                break;
+                            } else {
+                                nameSink.trimTo(nameSink.length() - 1);
+                            }
+                        }
+                    }
+
                     // Since we use two group by factories (one parallel for main aggregation, the second for pivoting)
                     // We cannot directly translate some aggregates
                     // First/Last need to support skipping nulls
@@ -7038,7 +7125,7 @@ public class SqlOptimiser implements Mutable {
                     aggExpr.rhs = caseExpr;
 
                     model.addBottomUpColumn(queryColumnPool.next().of(
-                            nameSink.toImmutable(),
+                            name,
                             aggExpr
                     ));
                 }

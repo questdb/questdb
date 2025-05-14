@@ -178,6 +178,75 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotDefaultNamingRules() throws Exception {
+        assertQueryAndPlan(
+                "side\tBTC-USD_price_first\tBTC-USD_price_first0\n",
+                "trades PIVOT (\n" +
+                        "first(price),\n" +
+                        "first(price)\n" +
+                        "FOR symbol IN ('BTC-USD')\n" +
+                        "GROUP BY side\n" +
+                        ");",
+                ddlTrades,
+                null,
+                dmlTrades,
+                "side\tBTC-USD_price_first\tBTC-USD_price_first0\n" +
+                        "buy\t101502.2\t101502.2\n" +
+                        "sell\t101502.1\t101502.1\n",
+                true,
+                true,
+                false,
+                "VirtualRecord\n" +
+                        "  functions: [side,BTC-USD_price_first,BTC-USD_price_first]\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [side]\n" +
+                        "      values: [first_not_null(case([first,NaN,symbol]))]\n" +
+                        "        VirtualRecord\n" +
+                        "          functions: [side,first,symbol]\n" +
+                        "            Async JIT Group By workers: 1\n" +
+                        "              keys: [side,symbol]\n" +
+                        "              values: [first(price)]\n" +
+                        "              filter: symbol in [BTC-USD]\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: trades\n");
+    }
+
+
+    @Test
+    public void testPivotDefaultNamingRules2() throws Exception {
+        assertQueryAndPlan(
+                "side\tBTC-USD_price_first\tBTC-USD_amount_first\n",
+                "trades PIVOT (\n" +
+                        "first(price),\n" +
+                        "first(amount)\n" +
+                        "FOR symbol IN ('BTC-USD')\n" +
+                        "GROUP BY side\n" +
+                        ");",
+                ddlTrades,
+                null,
+                dmlTrades,
+                "side\tBTC-USD_price_first\tBTC-USD_amount_first\n" +
+                        "buy\t101502.2\t101502.2\n" +
+                        "sell\t101502.1\t101502.1\n",
+                true,
+                true,
+                false,
+                "VirtualRecord\n" +
+                        "  functions: [side,BTC-USD_price_first,BTC-USD_price_first]\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [side]\n" +
+                        "      values: [first_not_null(case([first,NaN,symbol]))]\n" +
+                        "        Async JIT Group By workers: 1\n" +
+                        "          keys: [side,symbol]\n" +
+                        "          values: [first(price)]\n" +
+                        "          filter: symbol in [BTC-USD]\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: trades\n");
+    }
+
+    @Test
     public void testPivotImplicitGroupBy() throws Exception {
         assertQueryAndPlan(
                 "2000\t2010\t2020\n" +
@@ -238,7 +307,6 @@ public class PivotTest extends AbstractSqlParserTest {
                         "            Row forward scan\n" +
                         "            Frame forward scan on: cities\n");
     }
-
 
     @Test
     public void testPivotImplicitGroupByWithAliasNoAs() throws Exception {
