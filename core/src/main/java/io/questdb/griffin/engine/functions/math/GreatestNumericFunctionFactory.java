@@ -191,10 +191,9 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            long value = Long.MIN_VALUE;
-            for (int i = 0, n = args.size(); i < n; i++) {
-                final long v = args.getQuick(i).getLong(rec);
-                value = Math.max(value, v);
+            long value = args.getQuick(0).getLong(rec);
+            for (int i = 1, n = args.size(); i < n; i++) {
+                value = Math.max(value, args.getQuick(i).getLong(rec));
             }
             return value;
         }
