@@ -68,13 +68,15 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         final int[] counters = tlCounters.get();
         Arrays.fill(counters, 0);
 
-        boolean allArgsAreNull = true;
+        if (args == null || args.size() == 0) {
+            throw SqlException.$(position, "at least one argument is required by GREATEST(V)");
+        }
 
-        for (int i = 0; i < args.size(); i++) {
+        for (int i = 0, n = args.size(); i < n; i++) {
             final Function arg = args.getQuick(i);
             final int type = arg.getType();
 
-            switch (type) {
+            switch (ColumnType.tagOf(type)) {
                 case ColumnType.FLOAT:
                 case ColumnType.DOUBLE:
                 case ColumnType.LONG:
@@ -83,9 +85,6 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
                 case ColumnType.BYTE:
                 case ColumnType.DATE:
                 case ColumnType.TIMESTAMP:
-                    counters[type]++;
-                    allArgsAreNull = false;
-                    continue;
                 case ColumnType.NULL:
                     counters[type]++;
                     continue;
@@ -94,7 +93,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
             }
         }
 
-        if (allArgsAreNull) {
+        if (counters[ColumnType.NULL] == args.size()) {
             return NullConstant.NULL;
         }
 

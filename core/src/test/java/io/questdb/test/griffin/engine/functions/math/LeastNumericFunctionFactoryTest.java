@@ -122,6 +122,12 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
+    public void testLeastNumericFunctionFactoryWith1Arg() throws Exception {
+        assertSqlWithTypes("least\n40:LONG\n", "select least(40::long)");
+        assertSqlWithTypes("least\n40.2:DOUBLE\n", "select least(40.2::double)");
+    }
+
+    @Test
     public void testLeastNumericFunctionFactoryWithData() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_int() a, rnd_int() b from long_sequence(20))");
@@ -151,6 +157,11 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
                     "select least(a, b) from x"
             );
         });
+    }
+
+    @Test
+    public void testLeastNumericFunctionFactoryWithNoArgs() throws Exception {
+        assertException("select least();", 7, "at least one argument is required ");
     }
 
     @Test

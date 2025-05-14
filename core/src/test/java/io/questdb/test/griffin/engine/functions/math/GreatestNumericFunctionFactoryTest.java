@@ -122,6 +122,12 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
     }
 
     @Test
+    public void testGreatestNumericFunctionFactoryWith1Arg() throws Exception {
+        assertSqlWithTypes("greatest\n40:LONG\n", "select greatest(40::long)");
+        assertSqlWithTypes("greatest\n40.2:DOUBLE\n", "select greatest(40.2::double)");
+    }
+
+    @Test
     public void testGreatestNumericFunctionFactoryWithData() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_int() a, rnd_int() b from long_sequence(20))");
@@ -151,6 +157,11 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
                     "select greatest(a, b) from x"
             );
         });
+    }
+
+    @Test
+    public void testGreatestNumericFunctionFactoryWithNoArgs() throws Exception {
+        assertException("select greatest();", 7, "at least one argument is required ");
     }
 
     @Test
