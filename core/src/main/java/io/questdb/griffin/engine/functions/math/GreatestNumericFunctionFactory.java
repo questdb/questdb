@@ -159,14 +159,18 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            double value = args.getQuick(0).getDouble(rec);
-            for (int i = 1; i < n; i++) {
+            double value = Double.MIN_VALUE;
+            boolean allAreNull = true;
+            for (int i = 0; i < n; i++) {
                 final double v = args.getQuick(i).getDouble(rec);
-                if (!Numbers.isNull(v)) {
-                    value = Math.max(value, v);
+                if (Numbers.isNull(v)) {
+                    continue;
+                } else {
+                    allAreNull = false;
                 }
+                value = Math.max(value, v);
             }
-            return value;
+            return allAreNull ? Double.NaN : value;
         }
 
         @Override
