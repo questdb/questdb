@@ -86,7 +86,15 @@ public class WithinGeohashFunctionFactory implements FunctionFactory {
             return new WithinGeohashConstConstFunction(args);
         }
 
-        // todo(nwoolmer): WithinGeohashVarConstFunction (precalculate rhs args)
+        if (constCount == argCount && runtimeConstCount == 0) {
+            try {
+                return new WithinGeohashVarConstFunction(new ObjList<>(args));
+            } catch (NumericException ex) {
+                // fall back to default impl
+                return new WithinGeohashVarVarFunction(new ObjList<>(args));
+            }
+        }
+
         // todo(nwoolmer): WithinGeohashRuntimeConstFunction
 
         // have to copy, args is mutable
@@ -213,7 +221,7 @@ public class WithinGeohashFunctionFactory implements FunctionFactory {
             final int geoHashType = geoHashFunc.getType();
             final long geoHashValue = getGeoHashAsLong(rec, geoHashFunc, geoHashType);
 
-            for (int i = 0, n = hashesAndMasks.size(); i < n; i++) {
+            for (int i = 0, n = hashesAndMasks.size(); i < n; i += 2) {
                 final long prefixValue = hashesAndMasks.getQuick(i);
                 final long prefixMask = hashesAndMasks.getQuick(i + 1);
                 if ((geoHashValue & prefixMask) == prefixValue) {
