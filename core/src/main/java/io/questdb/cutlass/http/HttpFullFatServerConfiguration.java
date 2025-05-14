@@ -59,11 +59,6 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
         return new ObjList<>("/imp");
     }
 
-    // todo: remove this
-    default ObjList<String> getContextPathPreferences() {
-        return new ObjList<>("/preferences");
-    }
-
     default ObjList<String> getContextPathSettings() {
         return new ObjList<>("/settings");
     }

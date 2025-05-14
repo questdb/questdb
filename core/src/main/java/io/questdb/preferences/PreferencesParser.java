@@ -33,24 +33,17 @@ public final class PreferencesParser extends AbstractJsonParser {
                 if (state == STATE_START) { // expecting root object
                     state = STATE_ROOT;
                 } else {
-                    throw CairoException.critical(0).put("unexpected input format [code=").put(code)
-                            .put(", state=").put(state).put(']');
+                    throw CairoException.critical(0).put("unexpected input format [code=").put(code).put(", state=").put(state).put(']');
                 }
                 break;
             case JsonLexer.EVT_OBJ_END:
                 if (state == STATE_ROOT) { // the end
                     state = STATE_START;
-                } else {
-                    throw CairoException.critical(0).put("unexpected input format [code=").put(code)
-                            .put(", state=").put(state).put(']');
                 }
                 break;
             case JsonLexer.EVT_NAME:
                 if (state == STATE_ROOT) {
                     key = copy(tag);
-                } else {
-                    throw CairoException.critical(0).put("unexpected input format [code=").put(code)
-                            .put(", tag=").put(tag).put(", state=").put(state).put(']');
                 }
                 break;
             case JsonLexer.EVT_VALUE:

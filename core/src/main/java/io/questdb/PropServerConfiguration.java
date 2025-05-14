@@ -210,7 +210,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final ObjList<String> httpContextPathILP = new ObjList<>();
     private final ObjList<String> httpContextPathILPPing = new ObjList<>();
     private final ObjList<String> httpContextPathImport = new ObjList<>();
-    private final ObjList<String> httpContextPathPreferences = new ObjList<>();
     private final ObjList<String> httpContextPathSettings = new ObjList<>();
     private final ObjList<String> httpContextPathTableStatus = new ObjList<>();
     private final ObjList<String> httpContextPathWarnings = new ObjList<>();
@@ -969,7 +968,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_IMPORT, this.httpContextPathImport, httpContextWebConsole + "/imp");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXPORT, this.httpContextPathExport, httpContextWebConsole + "/exp");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_SETTINGS, this.httpContextPathSettings, httpContextWebConsole + "/settings");
-            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_PREFERENCES, this.httpContextPathPreferences, httpContextWebConsole + "/preferences");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_TABLE_STATUS, this.httpContextPathTableStatus, httpContextWebConsole + "/chk");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathExec, httpContextWebConsole + "/exec");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_WARNINGS, this.httpContextPathWarnings, httpContextWebConsole + "/warnings");
@@ -993,7 +991,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             httpContextPathImport.add(httpContextWebConsole + "/imp");
             httpContextPathExport.add(httpContextWebConsole + "/exp");
             httpContextPathSettings.add(httpContextWebConsole + "/settings");
-            httpContextPathPreferences.add(httpContextWebConsole + "/preferences");
             httpContextPathTableStatus.add(httpContextWebConsole + "/chk");
             httpContextPathExec.add(httpContextWebConsole + "/exec");
             httpContextPathWarnings.add(httpContextWebConsole + "/warnings");
@@ -4078,11 +4075,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public ObjList<String> getContextPathImport() {
             return httpContextPathImport;
-        }
-
-        @Override
-        public ObjList<String> getContextPathPreferences() {
-            return httpContextPathPreferences;
         }
 
         @Override
