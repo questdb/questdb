@@ -377,7 +377,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalSmallWalLag() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 821114101035000L, 1747214113231L);
         setUpScoreboardVersion(rnd);
 
         setFuzzProperties(rnd);
@@ -387,7 +387,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalWriteEqualTimestamp() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, true);
-        Rnd rnd = generateRandom(LOG, 791787160415166L, 1747139715773L);
+        Rnd rnd = generateRandom(LOG);
         setUpScoreboardVersion(rnd);
 
         setFuzzProbabilities(
@@ -510,7 +510,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalWriteRollbackHeavy() throws Exception {
-        Rnd rnd = generateRandom(LOG, 768736778598166L, 1747069118950L);
+        Rnd rnd = generateRandom(LOG);
         setUpScoreboardVersion(rnd);
         setFuzzProbabilities(
                 0.5,
@@ -531,8 +531,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         );
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
         runFuzz(rnd);
-        // exp 2022-02-25T16:18:56.926983Z
-        // was 2022-02-25T14:05:42.400158Z
     }
 
     @Test

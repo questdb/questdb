@@ -2693,15 +2693,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // For example, partition daily '2024-02-24' can be stored as 2 pieces '2024-02-24' and '2024-02-24T12'
         long logicalPartitionTimestampToDelete = txWriter.getLogicalPartitionTimestamp(timestamp);
         int partitionIndex = txWriter.getPartitionIndex(logicalPartitionTimestampToDelete);
+        if (partitionIndex < 0) {
+            // A partition slit can exist without the partition itself.
+            // For example, it is allowed to have partition '2024-02-24T12' without partition '2024-02-24'
+            // To delete all the splits, start from the index that is next or equal to the timestamp parameter.
+            partitionIndex = -partitionIndex - 1;
+        }
+
         boolean dropped = false;
-        if (partitionIndex >= 0) {
-            long partitionTimestamp;
-            while (partitionIndex < txWriter.getPartitionCount() &&
-                    txWriter.getLogicalPartitionTimestamp(
-                            partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex)
-                    ) == logicalPartitionTimestampToDelete) {
-                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
-            }
+        long partitionTimestamp;
+        while (partitionIndex < txWriter.getPartitionCount() &&
+                txWriter.getLogicalPartitionTimestamp(
+                        partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex)
+                ) == logicalPartitionTimestampToDelete) {
+            dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
         }
 
         if (dropped) {
@@ -9200,17 +9205,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private long squashPartitionTimestamp(long ts) {
-        int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(ts);
-        if (partitionIndex < 0) {
-            partitionIndex = -partitionIndex - 1;
-        }
-        if (partitionIndex >= txWriter.getPartitionCount()) {
-            return Long.MAX_VALUE;
-        }
-        return txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex));
-    }
-
     private void squashSplitPartitions(long timestampMin, long timestampMax, int maxLastSubPartitionCount) {
         if (timestampMin > txWriter.getMaxTimestamp() || txWriter.getPartitionCount() < 2) {
             return;
@@ -9219,36 +9213,44 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Take control of the split partition population here.
         // When the number of split partitions is too big, start merging them together.
         // This is to avoid having too many partitions / files in the system which penalizes the reading performance.
-        long logicalPartition = squashPartitionTimestamp(timestampMin);
-        int partitionIndex = txWriter.getPartitionIndex(logicalPartition);
-        if (partitionIndex > -1) {
-            int partitionIndexLo = partitionIndex;
-            int partitionCount = txWriter.getPartitionCount();
+        long logicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(timestampMin);
+        int partitionIndexLo = squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(logicalPartitionTimestamp);
 
-            while (logicalPartition < timestampMax && ++partitionIndex < partitionCount) {
-                long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                long newLogicalPartition = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        if (partitionIndexLo < txWriter.getPartitionCount()) {
+            int partitionIndexHi = Math.min(squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(timestampMax) + 1, txWriter.getPartitionCount());
+            int partitionIndex = partitionIndexLo + 1;
 
-                if (logicalPartition != newLogicalPartition) {
-                    squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex);
+            for (; partitionIndex < partitionIndexHi; partitionIndex++) {
 
-                    // txn records can be changed by squashing. Reset the position and the partition count.
-                    partitionCount = txWriter.getPartitionCount();
-                    partitionIndex = txWriter.getPartitionIndex(newLogicalPartition);
+                long nextPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+                long nextPartitionLogicalTimestamp = txWriter.getLogicalPartitionTimestamp(nextPartitionTimestamp);
 
-                    // switch to the next logical partition
-                    logicalPartition = newLogicalPartition;
-                    partitionIndexLo = partitionIndex;
+                if (nextPartitionLogicalTimestamp > logicalPartitionTimestamp) {
+                    if (partitionIndex - partitionIndexLo > 1) {
+                        squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex);
+                        logicalPartitionTimestamp = nextPartitionTimestamp;
+
+                        // Squashing changes the partitions, re-calculate the loop index and boundaries
+                        partitionIndexLo = partitionIndex = squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(nextPartitionTimestamp);
+                        partitionIndexHi = Math.min(squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(timestampMax) + 1, txWriter.getPartitionCount());
+                    } else {
+                        partitionIndexLo = partitionIndex;
+                    }
                 }
             }
 
-            // This can shift the last partition timestamp, save what was the last partition timestamp before squashing
-            long lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-            squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex);
-            if (lastPartitionTimestamp != txWriter.getLastPartitionTimestamp()) {
-                openLastPartition();
+            if (partitionIndex - partitionIndexLo > 1) {
+                squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex);
             }
         }
+    }
+
+    private int squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(long timestampMax) {
+        int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(timestampMax);
+        if (partitionIndex < 0) {
+            return -partitionIndex - 1;
+        }
+        return partitionIndex;
     }
 
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {

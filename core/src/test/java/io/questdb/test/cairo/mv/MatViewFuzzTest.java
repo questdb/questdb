@@ -40,7 +40,6 @@ import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -182,7 +181,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testManyTablesRefreshJobRace() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG);
+            Rnd rnd = fuzzer.generateRandom(LOG, 821117698154500L, 1747214116828L);
             setFuzzParams(rnd, 2_000, 1_000, 0, 0.0);
             setFuzzProperties(rnd);
             // use sleep(1) to make sure that the view is not refreshed too quickly
