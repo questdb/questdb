@@ -61,14 +61,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private UpdateOperation updateOp;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        // type inference fails on java 8 if <UpdateOperation> is removed
         updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution") {
             @Override
             protected long apply(UpdateOperation operation, TableWriterAPI writerAPI) {
                 return writerAPI.apply(operation);
             }
         };
-        // type inference fails on java 8 if <AlterOperation> is removed
         alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute") {
             @Override
             protected long apply(AlterOperation operation, TableWriterAPI writerAPI) {
