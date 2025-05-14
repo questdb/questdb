@@ -5401,31 +5401,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.deepCopyOf(metadata);
         final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, myMeta);
         final TableToken tableToken = metadata.getTableToken();
+        ExpressionNode withinExtracted = null;
 
-        final ExpressionNode withinExtracted = whereClauseParser.extractWithin(
-                model,
-                model.getWhereClause(),
-                myMeta,
-                functionParser,
-                executionContext,
-                prefixes
-        );
+        if (latestByColumnCount > 0) {
+            withinExtracted = whereClauseParser.extractWithin(
+                    model,
+                    model.getWhereClause(),
+                    myMeta,
+                    functionParser,
+                    executionContext,
+                    prefixes
+            );
 
-        if (prefixes.size() > 0) {
-            if (latestByColumnCount < 1) {
-                throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause requires LATEST BY clause");
-            } else {
-                for (int i = 0; i < latestByColumnCount; i++) {
-                    int idx = listColumnFilterA.getColumnIndexFactored(i);
-                    if (!ColumnType.isSymbol(myMeta.getColumnType(idx)) || !myMeta.isColumnIndexed(idx)) {
-                        throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause requires LATEST BY using only indexed symbol columns");
+            model.setWhereClause(withinExtracted);
+
+            if (prefixes.size() > 0) {
+                if (latestByColumnCount < 1) {
+                    throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause requires LATEST BY clause");
+                } else {
+                    for (int i = 0; i < latestByColumnCount; i++) {
+                        int idx = listColumnFilterA.getColumnIndexFactored(i);
+                        if (!ColumnType.isSymbol(myMeta.getColumnType(idx)) || !myMeta.isColumnIndexed(idx)) {
+                            throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause requires LATEST BY using only indexed symbol columns");
+                        }
                     }
                 }
             }
         }
-
-        model.setWhereClause(withinExtracted);
-
+        
         if (withinExtracted != null || executionContext.isOverriddenIntrinsics(reader.getTableToken())) {
             final IntrinsicModel intrinsicModel;
             if (withinExtracted != null) {

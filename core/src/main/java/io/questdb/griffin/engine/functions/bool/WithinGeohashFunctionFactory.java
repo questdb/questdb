@@ -43,10 +43,10 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 
-public class InGeohashFunctionFactory implements FunctionFactory {
+public class WithinGeohashFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "in(GV)";
+        return "within(GV)";
     }
 
     @Override
@@ -77,7 +77,7 @@ public class InGeohashFunctionFactory implements FunctionFactory {
         }
 
         if (firstArg.isConstant() && constCount == 0 && runtimeConstCount == 0) {
-            return new InGeohashConstVarFunction(new ObjList<>(args));
+            return new WithinGeohashConstVarFunction(new ObjList<>(args));
         }
 
 
@@ -96,7 +96,7 @@ public class InGeohashFunctionFactory implements FunctionFactory {
 //        }
 
         // have to copy, args is mutable
-        return new InGeohashVarVarFunction(new ObjList<>(args));
+        return new WithinGeohashVarVarFunction(new ObjList<>(args));
     }
 
 //    private static class InDoubleRuntimeConstFunction extends NegatableBooleanFunction implements MultiArgFunction {
@@ -159,10 +159,10 @@ public class InGeohashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static abstract class AbstractInGeohashFunction extends NegatableBooleanFunction implements MultiArgFunction {
+    private static abstract class AbstractWithinGeohashFunction extends NegatableBooleanFunction implements MultiArgFunction {
         protected final ObjList<Function> args;
 
-        public AbstractInGeohashFunction(ObjList<Function> args) {
+        public AbstractWithinGeohashFunction(ObjList<Function> args) {
             this.args = args;
         }
 
@@ -183,12 +183,12 @@ public class InGeohashFunctionFactory implements FunctionFactory {
     }
 
     // Const LHS
-    private static class InGeohashConstVarFunction extends AbstractInGeohashFunction {
+    private static class WithinGeohashConstVarFunction extends AbstractWithinGeohashFunction {
         final Function geoHashFunc;
         final int geoHashType;
         final long geoHashValue;
 
-        public InGeohashConstVarFunction(ObjList<Function> args) {
+        public WithinGeohashConstVarFunction(ObjList<Function> args) {
             super(args);
             geoHashFunc = args.getQuick(0);
             geoHashType = geoHashFunc.getType();
@@ -212,10 +212,10 @@ public class InGeohashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class InGeohashVarConstFunction extends AbstractInGeohashFunction {
+    private static class WithinGeohashVarConstFunction extends AbstractWithinGeohashFunction {
         final LongList hashesAndMasks;
 
-        public InGeohashVarConstFunction(ObjList<Function> args) throws NumericException {
+        public WithinGeohashVarConstFunction(ObjList<Function> args) throws NumericException {
             super(args);
             hashesAndMasks = new LongList(args.size() - 1);
             for (int i = 1, n = args.size(); i < n; i++) {
@@ -245,9 +245,9 @@ public class InGeohashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class InGeohashVarVarFunction extends AbstractInGeohashFunction {
+    private static class WithinGeohashVarVarFunction extends AbstractWithinGeohashFunction {
 
-        public InGeohashVarVarFunction(ObjList<Function> args) {
+        public WithinGeohashVarVarFunction(ObjList<Function> args) {
             super(args);
         }
 
