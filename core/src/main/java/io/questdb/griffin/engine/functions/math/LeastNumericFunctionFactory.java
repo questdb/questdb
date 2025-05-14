@@ -68,11 +68,12 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         final int[] counters = tlCounters.get();
         Arrays.fill(counters, 0);
 
-        if (args == null || args.size() == 0) {
+        final int argCount;
+        if (args == null || (argCount = args.size()) == 0) {
             throw SqlException.$(position, "at least one argument is required by LEAST(V)");
         }
 
-        for (int i = 0, n = args.size(); i < n; i++) {
+        for (int i = 0; i < argCount; i++) {
             final Function arg = args.getQuick(i);
             final int type = arg.getType();
 
@@ -93,7 +94,7 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
             }
         }
 
-        if (counters[ColumnType.NULL] == args.size()) {
+        if (counters[ColumnType.NULL] == argCount) {
             return NullConstant.NULL;
         }
 
@@ -143,9 +144,11 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
 
     private static class LeastDoubleRecordFunction extends DoubleFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final int n;
 
         public LeastDoubleRecordFunction(ObjList<Function> args) {
             this.args = args;
+            this.n = args.size();
         }
 
         @Override
@@ -155,18 +158,14 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            double value = Double.MAX_VALUE;
-            boolean allAreNull = true;
-            for (int i = 0, n = args.size(); i < n; i++) {
+            double value = args.getQuick(0).getDouble(rec);
+            for (int i = 1; i < n; i++) {
                 final double v = args.getQuick(i).getDouble(rec);
-                if (Numbers.isNull(v)) {
-                    continue;
-                } else {
-                    allAreNull = false;
+                if (!Numbers.isNull(v)) {
+                    value = Math.min(value, v);
                 }
-                value = Math.min(value, v);
             }
-            return allAreNull ? Double.NaN : value;
+            return value;
         }
 
         @Override
@@ -177,9 +176,11 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
 
     private static class LeastLongRecordFunction extends LongFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final int n;
 
         public LeastLongRecordFunction(ObjList<Function> args) {
             this.args = args;
+            this.n = args.size();
         }
 
         @Override
@@ -189,18 +190,14 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            long value = Long.MAX_VALUE;
-            boolean allAreNull = true;
-            for (int i = 0, n = args.size(); i < n; i++) {
+            long value = args.getQuick(0).getLong(rec);
+            for (int i = 1; i < n; i++) {
                 final long v = args.getQuick(i).getLong(rec);
-                if (v == Long.MIN_VALUE) {
-                    continue;
-                } else {
-                    allAreNull = false;
+                if (v != Numbers.LONG_NULL) {
+                    value = Math.min(value, v);
                 }
-                value = Math.min(value, v);
             }
-            return allAreNull ? Long.MIN_VALUE : value;
+            return value;
         }
 
         @Override

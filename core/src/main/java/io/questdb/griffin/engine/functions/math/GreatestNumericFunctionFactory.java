@@ -68,11 +68,12 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         final int[] counters = tlCounters.get();
         Arrays.fill(counters, 0);
 
-        if (args == null || args.size() == 0) {
+        final int argCount;
+        if (args == null || (argCount = args.size()) == 0) {
             throw SqlException.$(position, "at least one argument is required by GREATEST(V)");
         }
 
-        for (int i = 0, n = args.size(); i < n; i++) {
+        for (int i = 0; i < argCount; i++) {
             final Function arg = args.getQuick(i);
             final int type = arg.getType();
 
@@ -93,7 +94,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
             }
         }
 
-        if (counters[ColumnType.NULL] == args.size()) {
+        if (counters[ColumnType.NULL] == argCount) {
             return NullConstant.NULL;
         }
 
@@ -144,9 +145,11 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
 
     private static class GreatestDoubleRecordFunction extends DoubleFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final int n;
 
         public GreatestDoubleRecordFunction(ObjList<Function> args) {
             this.args = args;
+            this.n = args.size();
         }
 
         @Override
@@ -156,18 +159,14 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            double value = Double.MIN_VALUE;
-            boolean allAreNull = true;
-            for (int i = 0, n = args.size(); i < n; i++) {
+            double value = args.getQuick(0).getDouble(rec);
+            for (int i = 1; i < n; i++) {
                 final double v = args.getQuick(i).getDouble(rec);
-                if (Numbers.isNull(v)) {
-                    continue;
-                } else {
-                    allAreNull = false;
+                if (!Numbers.isNull(v)) {
+                    value = Math.max(value, v);
                 }
-                value = Math.max(value, v);
             }
-            return allAreNull ? Double.NaN : value;
+            return value;
         }
 
         @Override
@@ -178,9 +177,11 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
 
     private static class GreatestLongRecordFunction extends LongFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final int n;
 
         public GreatestLongRecordFunction(ObjList<Function> args) {
             this.args = args;
+            this.n = args.size();
         }
 
         @Override
@@ -191,7 +192,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             long value = args.getQuick(0).getLong(rec);
-            for (int i = 1, n = args.size(); i < n; i++) {
+            for (int i = 1; i < n; i++) {
                 value = Math.max(value, args.getQuick(i).getLong(rec));
             }
             return value;
