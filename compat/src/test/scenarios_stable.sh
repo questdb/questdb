@@ -179,3 +179,22 @@ if [[ $CLIENTS == 'ALL' || $CLIENTS == *'nodejs-postgres'* ]]; then
 else
   echo "skipping nodejs postgres driver tests"
 fi
+
+if [[ $CLIENTS == 'ALL' || $CLIENTS == *'golang'* ]]; then
+  echo "starting golang tests with the pgx driver"
+
+  echo "$base_dir/compat/src/test/golang"
+  cd "$base_dir/compat/src/test/golang" || exit
+
+  go build
+
+  # run
+  ./gorunner ../resources/test_cases.yaml
+  if [ $? -ne 0 ]; then
+      echo "golang pgx driver tests failed"
+      exit 1
+  fi
+  echo "golang pgx driver tests finished"
+else
+  echo "skipping golang pgx driver tests"
+fi
