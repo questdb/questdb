@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -36,6 +37,8 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -56,6 +59,7 @@ public class InGeohashFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         int constCount = 0;
         int runtimeConstCount = 0;
+        final Function firstArg = args.getQuick(0);
         final int argCount = args.size() - 1;
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
@@ -71,6 +75,12 @@ public class InGeohashFunctionFactory implements FunctionFactory {
                 runtimeConstCount++;
             }
         }
+
+        if (firstArg.isConstant() && constCount == 0 && runtimeConstCount == 0) {
+            return new InGeohashConstVarFunction(new ObjList<>(args));
+        }
+
+
 //
 //        if (constCount == argCount) {
 //            // bind variable will not be constant
@@ -86,7 +96,7 @@ public class InGeohashFunctionFactory implements FunctionFactory {
 //        }
 
         // have to copy, args is mutable
-        return new InGeohashVarFunction(new ObjList<>(args));
+        return new InGeohashVarVarFunction(new ObjList<>(args));
     }
 
 //    private static class InDoubleRuntimeConstFunction extends NegatableBooleanFunction implements MultiArgFunction {
@@ -132,16 +142,113 @@ public class InGeohashFunctionFactory implements FunctionFactory {
 //        }
 //    }
 
-    private static class InGeohashVarFunction extends NegatableBooleanFunction implements MultiArgFunction {
-        private final ObjList<Function> args;
+    private static long getGeoHashAsLong(Record rec, Function geoHashFunc, int geoHashType) {
+        assert ColumnType.isGeoHash(geoHashType);
 
-        public InGeohashVarFunction(ObjList<Function> args) {
+        switch (ColumnType.tagOf(geoHashType)) {
+            case ColumnType.GEOBYTE:
+                return geoHashFunc.getGeoByte(rec);
+            case ColumnType.GEOSHORT:
+                return geoHashFunc.getGeoShort(rec);
+            case ColumnType.GEOINT:
+                return geoHashFunc.getGeoInt(rec);
+            case ColumnType.GEOLONG:
+                return geoHashFunc.getGeoLong(rec);
+            default:
+                throw new UnsupportedOperationException();
+        }
+    }
+
+    private static abstract class AbstractInGeohashFunction extends NegatableBooleanFunction implements MultiArgFunction {
+        protected final ObjList<Function> args;
+
+        public AbstractInGeohashFunction(ObjList<Function> args) {
             this.args = args;
         }
 
         @Override
         public ObjList<Function> getArgs() {
             return args;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(args.getQuick(0));
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ");
+            sink.val(args, 1);
+        }
+    }
+
+    // Const LHS
+    private static class InGeohashConstVarFunction extends AbstractInGeohashFunction {
+        final Function geoHashFunc;
+        final int geoHashType;
+        final long geoHashValue;
+
+        public InGeohashConstVarFunction(ObjList<Function> args) {
+            super(args);
+            geoHashFunc = args.getQuick(0);
+            geoHashType = geoHashFunc.getType();
+            geoHashValue = getGeoHashAsLong(null, geoHashFunc, geoHashType);
+        }
+
+        // all hashes must be higher or same precision as comparator
+        @Override
+        public boolean getBool(Record rec) {
+            for (int i = 1, n = args.size(); i < n; i++) {
+                final Function prefixFunc = args.getQuick(i);
+                final int prefixFuncType = prefixFunc.getType();
+                final long prefixValue = getGeoHashAsLong(rec, prefixFunc, prefixFuncType);
+                final long convertedGeoHashValue = SqlUtil.implicitCastGeoHashAsGeoHash(geoHashValue, geoHashType, prefixFuncType);
+                if (prefixValue == convertedGeoHashValue) {
+                    return !negated;
+                }
+            }
+
+            return negated;
+        }
+    }
+
+    private static class InGeohashVarConstFunction extends AbstractInGeohashFunction {
+        final LongList hashesAndMasks;
+
+        public InGeohashVarConstFunction(ObjList<Function> args) throws NumericException {
+            super(args);
+            hashesAndMasks = new LongList(args.size() - 1);
+            for (int i = 1, n = args.size(); i < n; i++) {
+                final Function prefixFunc = args.getQuick(i);
+                final int prefixFuncType = prefixFunc.getType();
+                final long prefixValue = getGeoHashAsLong(null, prefixFunc, prefixFuncType);
+                GeoHashes.addNormalizedGeoPrefix(prefixValue, prefixFuncType, args.getQuick(0).getType(), hashesAndMasks);
+
+            }
+        }
+
+        // all hashes must be higher or same precision as comparator
+        @Override
+        public boolean getBool(Record rec) {
+            final Function geoHashFunc = args.getQuick(0);
+            final int geoHashType = geoHashFunc.getType();
+            final long geoHashValue = getGeoHashAsLong(rec, geoHashFunc, geoHashType);
+
+            for (int i = 0, n = hashesAndMasks.size(); i < n; i++) {
+                final long prefixValue = hashesAndMasks.getQuick(i);
+                final long prefixMask = hashesAndMasks.getQuick(i + 1);
+                if ((geoHashValue & prefixMask) == prefixValue) {
+                    return !negated;
+                }
+            }
+            return negated;
+        }
+    }
+
+    private static class InGeohashVarVarFunction extends AbstractInGeohashFunction {
+
+        public InGeohashVarVarFunction(ObjList<Function> args) {
+            super(args);
         }
 
         // all hashes must be higher or same precision as comparator
@@ -160,9 +267,10 @@ public class InGeohashFunctionFactory implements FunctionFactory {
                     return !negated;
                 }
             }
-
             return negated;
         }
+    }
+}
 
 
 //        final int bits = ColumnType.getGeoHashBits(prefixType);
@@ -181,34 +289,7 @@ public class InGeohashFunctionFactory implements FunctionFactory {
 //        prefixes.add(norm);
 //        prefixes.add(mask);
 
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(args.getQuick(0));
-            if (negated) {
-                sink.val(" not");
-            }
-            sink.val(" in ");
-            sink.val(args, 1);
-        }
 
-        private long getGeoHashAsLong(Record rec, Function geoHashFunc, int geoHashType) {
-            assert ColumnType.isGeoHash(geoHashType);
-
-            switch (ColumnType.tagOf(geoHashType)) {
-                case ColumnType.GEOBYTE:
-                    return geoHashFunc.getGeoByte(rec);
-                case ColumnType.GEOSHORT:
-                    return geoHashFunc.getGeoShort(rec);
-                case ColumnType.GEOINT:
-                    return geoHashFunc.getGeoInt(rec);
-                case ColumnType.GEOLONG:
-                    return geoHashFunc.getGeoLong(rec);
-                default:
-                    throw new UnsupportedOperationException();
-            }
-        }
-    }
-}
 //
 //private static class InlinedInGeohashVarFunction extends NegatableBooleanFunction implements MultiArgFunction {
 //    private final ObjList<Function> args;
