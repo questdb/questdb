@@ -297,7 +297,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         dataVersion++;
     }
 
-    public void removeAttachedPartitions(long timestamp) {
+    public int removeAttachedPartitions(long timestamp) {
         recordStructureVersion++;
         final long partitionTimestampLo = getPartitionTimestampByTimestamp(timestamp);
         int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo);
@@ -309,8 +309,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             }
             attachedPartitions.setPos(lim);
             partitionTableVersion++;
+            return indexRaw / LONGS_PER_TX_ATTACHED_PARTITION;
         } else {
             assert false;
+            return -1;
         }
     }
 

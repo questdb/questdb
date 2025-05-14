@@ -377,7 +377,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalSmallWalLag() throws Exception {
-        Rnd rnd = generateRandom(LOG, 821114101035000L, 1747214113231L);
+        Rnd rnd = generateRandom(LOG);
         setUpScoreboardVersion(rnd);
 
         setFuzzProperties(rnd);
@@ -564,7 +564,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         final int o3MemorySize = 256;
         node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, o3MemorySize);
         Assert.assertEquals(o3MemorySize, node1.getConfiguration().getO3ColumnMemorySize());
-        Rnd rnd = generateRandom(LOG, 757919322995166L, 1747058301584L);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(
                 0,
                 0.2,

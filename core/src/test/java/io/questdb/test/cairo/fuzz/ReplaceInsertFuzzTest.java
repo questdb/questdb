@@ -57,7 +57,7 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testSimpleDataTransactionSmallReplaceProb() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 850890866138166L, 1747243889818L);
         setFuzzProbabilities(
                 0.01,
                 0.2,

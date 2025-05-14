@@ -5926,6 +5926,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long blockIndex = -1;
 
         long commitTransientRowCount = txWriter.transientRowCount;
+        boolean partitionsRemoved = false, firstPartitionRemoved = false, lastPartitionRemoved = false;
 
         while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
             final long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
@@ -6043,23 +6044,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", ts=").$ts(partitionTimestamp)
                                 .I$();
 
-                        if (partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(txWriter.getMinTimestamp())) {
-                            // TODO: this will not work if the replace commit does not have any data
-                            // Replace table min ts with max value to be updated with next partition
-                            LOG.debug().$("min partition removed in range replace").$();
-                            txWriter.minTimestamp = Long.MAX_VALUE;
-                        }
 
-                        txWriter.removeAttachedPartitions(partitionTimestamp);
+                        int removedIndex = txWriter.removeAttachedPartitions(partitionTimestamp);
+                        columnVersionWriter.removePartition(partitionTimestamp);
                         partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                        partitionsRemoved = true;
+                        firstPartitionRemoved = removedIndex == 0;
+                        lastPartitionRemoved = removedIndex == txWriter.getPartitionCount();
 
-                        if (partitionTimestamp == lastPartitionTimestamp) {
-                            // Recalculate fixed/transient row count
-                            // Max timestamp is already re-calculated and set in processO3Block
-                            txWriter.finishPartitionSizeUpdate(txWriter.getMinTimestamp(), txWriter.getMaxTimestamp());
-                            commitTransientRowCount = txWriter.transientRowCount;
+                        if (lastPartitionRemoved) {
+                            if (removedIndex > 0) {
+                                int newLastPartitionIndex = removedIndex - 1;
+                                long newLastPartitionTimestamp = txWriter.getPartitionTimestampByIndex(newLastPartitionIndex);
+                                long newLastPartitionSize = txWriter.getPartitionRowCountByTimestamp(newLastPartitionTimestamp);
+                                columnVersionWriter.replaceInitialPartitionRecords(newLastPartitionTimestamp, newLastPartitionSize);
+                            } else {
+                                // All partitions are removed
+                                columnVersionWriter.truncate();
+                            }
                         }
-                        txWriter.bumpPartitionTableVersion();
                     } else {
                         final long parquetFileSize = Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES);
                         if (parquetFileSize > -1) {
@@ -6079,7 +6082,42 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
-        txWriter.transientRowCount = commitTransientRowCount;
+        if (partitionsRemoved) {
+            // Replace commit removed some of the partitions
+            if (txWriter.getPartitionCount() > 0) {
+                try {
+                    if (firstPartitionRemoved) {
+                        // First partition is removed and no data added in the replace commit
+                        // We need to read the min timestamp from the next partition
+                        long firstPartitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
+                        long partitionSize = txWriter.getPartitionSize(0);
+                        setPathForNativePartition(path, partitionBy, firstPartitionTimestamp, txWriter.getPartitionNameTxn(0));
+                        readPartitionMinMaxTimestamps(firstPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), -1, partitionSize);
+                        txWriter.minTimestamp = attachMinTimestamp;
+                    }
+
+                    if (lastPartitionRemoved) {
+                        int lastPartitionIndex = txWriter.getPartitionCount() - 1;
+                        long lastPartitionTimestamp = txWriter.getPartitionTimestampByIndex(lastPartitionIndex);
+                        long partitionSize = txWriter.getPartitionSize(lastPartitionIndex);
+                        setPathForNativePartition(path.trimTo(pathSize), partitionBy, lastPartitionTimestamp, txWriter.getPartitionNameTxn(lastPartitionIndex));
+                        readPartitionMinMaxTimestamps(lastPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), -1, partitionSize);
+                        txWriter.maxTimestamp = attachMaxTimestamp;
+                    }
+
+                    txWriter.finishPartitionSizeUpdate(txWriter.getMinTimestamp(), txWriter.getMaxTimestamp());
+                } finally {
+                    path.trimTo(pathSize);
+                }
+            } else {
+                // All partitions are removed.
+                // TODO: clean tx values, cv values
+                columnVersionWriter.truncate();
+            }
+            txWriter.bumpPartitionTableVersion();
+        } else {
+            txWriter.transientRowCount = commitTransientRowCount;
+        }
     }
 
     private void o3ConsumePartitionUpdateSink_trimPartitionColumnTops(long partitionTimestamp, long newPartitionSize) {
@@ -6848,7 +6886,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         long o3TimestampLo, o3TimestampHi;
                         if (isCommitReplaceMode()) {
-                            // TODO: handle muti parition commit
                             o3TimestampLo = (partitionTimestamp == minO3PartitionTimestamp) ? o3TimestampMin : partitionTimestamp;
                             o3TimestampHi = (partitionTimestamp == maxO3PartitionTimestamp) ? o3TimestampMax :
                                     txWriter.getNextPartitionTimestamp(partitionTimestamp) - 1;
@@ -7978,9 +8015,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long replaceRangeTsHiExcl
     ) {
         assert txWriter.getLagRowCount() == 0;
-        assert replaceRangeTsLow <= o3TimestampMin;
+        assert replaceRangeTsHiExcl <= replaceRangeTsLow || replaceRangeTsLow <= o3TimestampMin;
+        assert replaceRangeTsHiExcl <= replaceRangeTsLow || replaceRangeTsHiExcl > o3TimestampMax;
         long replaceRangeTsHi = replaceRangeTsHiExcl - 1;
-        assert replaceRangeTsHi >= o3TimestampMax;
 
         int initialSize = segmentFileCache.getWalMappedColumns().size();
         int timestampIndex = metadata.getTimestampIndex();
@@ -9377,11 +9414,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             other.trimTo(pathSize);
         }
 
+        if (lastPartitionSquashed) {
+            openLastPartition();
+        }
+
         // Commit the new transaction with the partitions squashed
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.commit(denseSymbolMapWriters);
-        processPartitionRemoveCandidates();
     }
 
     private void swapO3ColumnsExcept(int timestampIndex) {
