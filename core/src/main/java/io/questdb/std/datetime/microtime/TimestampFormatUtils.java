@@ -52,6 +52,7 @@ public class TimestampFormatUtils {
     public static final DateFormat MONTH_FORMAT;
     public static final String MONTH_PATTERN = "yyyy-MM";
     public static final DateFormat NANOS_UTC_FORMAT;
+    public static final DateFormat PG_TIMESTAMPZ_FORMAT;
     public static final DateFormat PG_TIMESTAMP_FORMAT;
     public static final DateFormat PG_TIMESTAMP_MILLI_TIME_Z_FORMAT;
     public static final DateFormat PG_TIMESTAMP_TIME_Z_FORMAT;
@@ -417,6 +418,7 @@ public class TimestampFormatUtils {
 
         final TimestampFormatCompiler compiler = new TimestampFormatCompiler();
         PG_TIMESTAMP_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.SSSUUU");
+        PG_TIMESTAMPZ_FORMAT = compiler.compile("y-MM-ddTHH:mm:ss.SSSUUUz");
         PG_TIMESTAMP_TIME_Z_FORMAT = compiler.compile("y-MM-dd HH:mm:ssz");
         NANOS_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz");
 

@@ -4,3 +4,4 @@ DateTime
 pytz
 PyYAML
 zope.interface
+python-dateutil

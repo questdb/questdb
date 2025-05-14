@@ -164,7 +164,7 @@ public class PGOids {
 
     static {
         TYPE_OIDS.extendAndSet(ColumnType.STRING, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.TIMESTAMP, PG_TIMESTAMP); // TIMESTAMP
+        TYPE_OIDS.extendAndSet(ColumnType.TIMESTAMP, PG_TIMESTAMP_TZ); // TIMESTAMP
         TYPE_OIDS.extendAndSet(ColumnType.DOUBLE, PG_FLOAT8); // FLOAT8
         TYPE_OIDS.extendAndSet(ColumnType.FLOAT, PG_FLOAT4); // FLOAT4
         TYPE_OIDS.extendAndSet(ColumnType.INT, PG_INT4); // INT4

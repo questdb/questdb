@@ -1909,7 +1909,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.setNullValue();
         } else {
             a = utf8Sink.skipInt();
-            TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, utf8Sink);
+            TimestampFormatUtils.PG_TIMESTAMPZ_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, "+00", utf8Sink);
             utf8Sink.putLenEx(a);
         }
     }

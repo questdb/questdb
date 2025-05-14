@@ -3596,6 +3596,8 @@ public class SqlParser {
                 node.rhs.token = "long";
             } else if (isInt2Keyword(node.rhs.token)) {
                 node.rhs.token = "short";
+            } else if (isTimestamptzKeyword(node.rhs.token)) {
+                node.rhs.token = "timestamp";
             }
         }
     }
