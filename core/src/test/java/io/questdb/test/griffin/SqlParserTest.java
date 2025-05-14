@@ -10993,6 +10993,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
 
+    @Test
+    public void testWithCastIn() throws Exception {
+        assertSyntaxError(
+                "SELECT * FROM trips WHERE pickup_latitude = CAST((SELECT MAX(pickup_latitude) FROM trips) AS DOUBLE PRECISION)",
+                44,
+                "there is no matching function `cast` with the argument types: (CURSOR, DOUBLE)",
+                modelOf("trips").col("pickup_latitude", ColumnType.DOUBLE)
+        );
+    }
+
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {
         assertModel(expected, ddl, ExecutionModel.CREATE_TABLE, tableModels);
     }
