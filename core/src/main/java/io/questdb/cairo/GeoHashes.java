@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
@@ -282,6 +283,22 @@ public class GeoHashes {
             }
         }
         return start < len;
+    }
+
+    public static String toString0(long hash, int columnType) {
+        CharSink<?> sink = Misc.getThreadLocalSink();
+        if (hash == GeoHashes.NULL) {
+            return "null";
+        }
+        sink.put('#');
+        int bits = ColumnType.getGeoHashBits(columnType);
+        if (bits % 5 == 0) {
+            GeoHashes.appendCharsUnsafe(hash, bits / 5, sink);
+        } else {
+            sink.put('#');
+            GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);
+        }
+        return sink.toString();
     }
 
     public static long widen(long hash, int fromBits, int toBits) {
