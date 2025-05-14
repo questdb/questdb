@@ -94,6 +94,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position(position).put("Invalid column: ").put(column);
     }
 
+    public static SqlException invalidColumnName(int position, CharSequence columnName) {
+        return position(position).put("Invalid column name: ").put(columnName);
+    }
+
     public static SqlException invalidDate(CharSequence str, int position) {
         return position(position).put("Invalid date [str=").put(str).put(']');
     }
