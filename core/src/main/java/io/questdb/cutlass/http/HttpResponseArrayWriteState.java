@@ -30,7 +30,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.str.CharSink;
 
 public class HttpResponseArrayWriteState implements ArrayWriteState, Mutable {
-    // array view that was partially sent
+    // array that is being partially sent, resuming at the correct spot after a retry
     private ArrayView arrayView;
     private int flatIndexAlreadyWritten;
     private HttpChunkedResponse response;
@@ -54,14 +54,12 @@ public class HttpResponseArrayWriteState implements ArrayWriteState, Mutable {
     }
 
     @Override
-    public boolean isNotWritten(int flatIndex) {
+    public boolean isNew(int flatIndex) {
         return this.flatIndexAlreadyWritten <= flatIndex;
     }
 
     /**
-     * Zero state is when nothing has been successfully sent to the buffer.
-     *
-     * @return false when something has been written to the buffer, anything.
+     * Returns true if nothing has been successfully sent to the buffer.
      */
     public boolean isNothingWritten() {
         return flatIndexAlreadyWritten + symbolsAlreadyWritten == 0;

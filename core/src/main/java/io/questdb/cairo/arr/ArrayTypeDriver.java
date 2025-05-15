@@ -684,23 +684,23 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             @NotNull ArrayValueAppender appender,
             char openChar,
             char closeChar,
-            ArrayWriteState arrayState
+            ArrayWriteState writeState
     ) {
         final int count = array.getDimLen(dim);
         final int stride = array.getStride(dim);
         final boolean atDeepestDim = dim == array.getDimCount() - 1;
 
-        arrayState.putAsciiIfNew(sink, openChar);
+        writeState.putAsciiIfNew(sink, openChar);
 
         if (atDeepestDim) {
             for (int i = 0; i < count; i++) {
                 if (i != 0) {
-                    arrayState.putAsciiIfNew(sink, ',');
+                    writeState.putAsciiIfNew(sink, ',');
                 }
-                if (arrayState.isNotWritten(flatIndex)) {
-                    appender.appendFromFlatIndex(array, flatIndex, sink);
+                if (writeState.isNew(flatIndex)) {
+                    appender.appendItemAtFlatIndex(array, flatIndex, sink);
                     flatIndex += stride;
-                    arrayState.wroteFlatIndex(flatIndex);
+                    writeState.wroteFlatIndex(flatIndex);
                 } else {
                     flatIndex += stride;
                 }
@@ -708,13 +708,13 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         } else {
             for (int i = 0; i < count; i++) {
                 if (i != 0) {
-                    arrayState.putAsciiIfNew(sink, ',');
+                    writeState.putAsciiIfNew(sink, ',');
                 }
-                arrayToText(array, dim + 1, flatIndex, sink, appender, openChar, closeChar, arrayState);
+                arrayToText(array, dim + 1, flatIndex, sink, appender, openChar, closeChar, writeState);
                 flatIndex += stride;
             }
         }
-        arrayState.putAsciiIfNew(sink, closeChar);
+        writeState.putAsciiIfNew(sink, closeChar);
     }
 
     private static void padTo(@NotNull MemoryA dataMem, int byteAlignment) {
@@ -823,21 +823,13 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return offset + size;
     }
 
-    static void appendLongFromArrayToSink(
-            @NotNull ArrayView array,
-            int index,
-            @NotNull CharSink<?> sink
-    ) {
+    static void appendLongFromArrayToSink(@NotNull ArrayView array, int index, @NotNull CharSink<?> sink) {
         long d = array.getLong(index);
         sink.put(d);
     }
 
     @FunctionalInterface
     public interface ArrayValueAppender {
-        void appendFromFlatIndex(
-                @NotNull ArrayView array,
-                int index,
-                @NotNull CharSink<?> sink
-        );
+        void appendItemAtFlatIndex(@NotNull ArrayView array, int index, @NotNull CharSink<?> sink);
     }
 }

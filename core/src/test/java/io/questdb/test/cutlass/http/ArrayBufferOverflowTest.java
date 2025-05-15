@@ -99,7 +99,7 @@ public class ArrayBufferOverflowTest extends AbstractTest {
                 int target;
 
                 @Override
-                public boolean isNotWritten(int flatIndex) {
+                public boolean isNew(int flatIndex) {
                     return this.flatIndex <= flatIndex;
                 }
 

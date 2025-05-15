@@ -33,7 +33,7 @@ public class NoopArrayWriteState implements ArrayWriteState {
     }
 
     @Override
-    public boolean isNotWritten(int flatIndex) {
+    public boolean isNew(int flatIndex) {
         return true;
     }
 
