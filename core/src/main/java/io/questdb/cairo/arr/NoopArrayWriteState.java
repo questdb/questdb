@@ -33,16 +33,17 @@ public class NoopArrayWriteState implements ArrayWriteState {
     }
 
     @Override
-    public boolean isNew(int flatIndex) {
+    public boolean incAndSayIfNewOp() {
         return true;
     }
 
     @Override
-    public void putAsciiIfNew(CharSink<?> sink, char symbol) {
-        sink.put(symbol);
+    public void performedOp() {
     }
 
     @Override
-    public void wroteFlatIndex(int flatIndex) {
+    public void putCharIfNew(CharSink<?> sink, char symbol) {
+        sink.put(symbol);
     }
+
 }

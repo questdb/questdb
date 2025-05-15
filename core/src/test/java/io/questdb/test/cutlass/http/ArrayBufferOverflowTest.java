@@ -51,7 +51,7 @@ public class ArrayBufferOverflowTest extends AbstractTest {
         configuration = new DefaultCairoConfiguration(root) {
             @Override
             public @NotNull MicrosecondClock getMicrosecondClock() {
-                // we are effectively fixing random seeds here
+                // this fixes the random seeds used by rnd_array()
                 return () -> 1234;
             }
 
@@ -93,29 +93,28 @@ public class ArrayBufferOverflowTest extends AbstractTest {
             };
 
             var statePrototype = new ArrayWriteState() {
-                int flatIndexAlreadyWritten;
+                int opsAlreadyDone;
+                int opsSeenSinceRestart;
                 int sinkLen = 0;
-                int symbolsAlreadyWritten;
-                int symbolsSeenSinceRestart;
 
                 @Override
-                public boolean isNew(int flatIndex) {
-                    return this.flatIndexAlreadyWritten <= flatIndex;
+                public boolean incAndSayIfNewOp() {
+                    opsSeenSinceRestart++;
+                    return opsSeenSinceRestart > opsAlreadyDone;
                 }
 
                 @Override
-                public void putAsciiIfNew(CharSink<?> sink, char symbol) {
-                    if (++symbolsSeenSinceRestart > symbolsAlreadyWritten) {
+                public void performedOp() {
+                    opsAlreadyDone = Math.max(opsAlreadyDone, opsSeenSinceRestart);
+                    sinkLen = sinkActual.length();
+                }
+
+                @Override
+                public void putCharIfNew(CharSink<?> sink, char symbol) {
+                    if (incAndSayIfNewOp()) {
                         sink.put(symbol);
-                        this.sinkLen = sinkActual.length();
-                        symbolsAlreadyWritten = symbolsSeenSinceRestart;
                     }
-                }
-
-                @Override
-                public void wroteFlatIndex(int flatIndex) {
-                    this.sinkLen = sinkActual.length();
-                    this.flatIndexAlreadyWritten = flatIndex;
+                    performedOp();
                 }
             };
 
@@ -130,7 +129,7 @@ public class ArrayBufferOverflowTest extends AbstractTest {
                     break;
                 } catch (Throwable e) {
                     sinkActual.trimTo(statePrototype.sinkLen);
-                    statePrototype.symbolsSeenSinceRestart = 0;
+                    statePrototype.opsSeenSinceRestart = 0;
                 }
             }
 

@@ -27,9 +27,9 @@ package io.questdb.cairo.arr;
 import io.questdb.std.str.CharSink;
 
 public interface ArrayWriteState {
-    boolean isNew(int flatIndex);
+    boolean incAndSayIfNewOp();
 
-    void putAsciiIfNew(CharSink<?> sink, char symbol);
+    void performedOp();
 
-    void wroteFlatIndex(int flatIndex);
+    void putCharIfNew(CharSink<?> sink, char symbol);
 }

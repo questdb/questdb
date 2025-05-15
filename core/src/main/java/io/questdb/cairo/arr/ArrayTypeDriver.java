@@ -332,14 +332,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return calculateSize(nDim, elementType, cardinality);
     }
 
-    private static int calculateSize(int nDim, short elementType, int cardinality) {
-        return Short.BYTES // element type
-                + Integer.BYTES // number of dimensions
-                + nDim * Integer.BYTES // dimension sizes
-                + Integer.BYTES // size of the data vector
-                + ColumnType.sizeOf(elementType) * cardinality;
-    }
-
     @Override
     public void appendNull(MemoryA auxMem, MemoryA dataMem) {
         appendNullImpl(auxMem, dataMem);
@@ -690,17 +682,17 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         final int stride = array.getStride(dim);
         final boolean atDeepestDim = dim == array.getDimCount() - 1;
 
-        writeState.putAsciiIfNew(sink, openChar);
+        writeState.putCharIfNew(sink, openChar);
 
         if (atDeepestDim) {
             for (int i = 0; i < count; i++) {
                 if (i != 0) {
-                    writeState.putAsciiIfNew(sink, ',');
+                    writeState.putCharIfNew(sink, ',');
                 }
-                if (writeState.isNew(flatIndex)) {
+                if (writeState.incAndSayIfNewOp()) {
                     appender.appendItemAtFlatIndex(array, flatIndex, sink);
                     flatIndex += stride;
-                    writeState.wroteFlatIndex(flatIndex);
+                    writeState.performedOp();
                 } else {
                     flatIndex += stride;
                 }
@@ -708,13 +700,21 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         } else {
             for (int i = 0; i < count; i++) {
                 if (i != 0) {
-                    writeState.putAsciiIfNew(sink, ',');
+                    writeState.putCharIfNew(sink, ',');
                 }
                 arrayToText(array, dim + 1, flatIndex, sink, appender, openChar, closeChar, writeState);
                 flatIndex += stride;
             }
         }
-        writeState.putAsciiIfNew(sink, closeChar);
+        writeState.putCharIfNew(sink, closeChar);
+    }
+
+    private static int calculateSize(int nDim, short elementType, int cardinality) {
+        return Short.BYTES // element type
+                + Integer.BYTES // number of dimensions
+                + nDim * Integer.BYTES // dimension sizes
+                + Integer.BYTES // size of the data vector
+                + ColumnType.sizeOf(elementType) * cardinality;
     }
 
     private static void padTo(@NotNull MemoryA dataMem, int byteAlignment) {

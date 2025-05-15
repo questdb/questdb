@@ -32,16 +32,14 @@ import io.questdb.std.str.CharSink;
 public class HttpResponseArrayWriteState implements ArrayWriteState, Mutable {
     // array that is being partially sent, resuming at the correct spot after a retry
     private ArrayView arrayView;
-    private int flatIndexAlreadyWritten;
+    private int opsAlreadyDone;
+    private int opsSeenSinceRestart;
     private HttpChunkedResponse response;
-    private int symbolsAlreadyWritten;
-    private int symbolsSeenSinceRestart;
 
     @Override
     public void clear() {
-        this.flatIndexAlreadyWritten = 0;
-        this.symbolsSeenSinceRestart = 0;
-        this.symbolsAlreadyWritten = 0;
+        this.opsSeenSinceRestart = 0;
+        this.opsAlreadyDone = 0;
         arrayView = null;
     }
 
@@ -49,20 +47,21 @@ public class HttpResponseArrayWriteState implements ArrayWriteState, Mutable {
         return arrayView;
     }
 
-    public boolean isClear() {
-        return arrayView == null;
+    @Override
+    public boolean incAndSayIfNewOp() {
+        opsSeenSinceRestart++;
+        return opsSeenSinceRestart > opsAlreadyDone;
     }
 
-    @Override
-    public boolean isNew(int flatIndex) {
-        return this.flatIndexAlreadyWritten <= flatIndex;
+    public boolean isClear() {
+        return arrayView == null;
     }
 
     /**
      * Returns true if nothing has been successfully sent to the buffer.
      */
     public boolean isNothingWritten() {
-        return flatIndexAlreadyWritten + symbolsAlreadyWritten == 0;
+        return opsAlreadyDone == 0;
     }
 
     public void of(HttpChunkedResponse response) {
@@ -70,23 +69,21 @@ public class HttpResponseArrayWriteState implements ArrayWriteState, Mutable {
     }
 
     @Override
-    public void putAsciiIfNew(CharSink<?> sink, char symbol) {
-        if (++symbolsSeenSinceRestart <= symbolsAlreadyWritten) {
-            return;
-        }
-        sink.put(symbol);
+    public void performedOp() {
+        opsAlreadyDone = Math.max(opsAlreadyDone, opsSeenSinceRestart);
         response.bookmark();
-        symbolsAlreadyWritten = symbolsSeenSinceRestart;
-    }
-
-    public void reset(ArrayView arrayView) {
-        this.symbolsSeenSinceRestart = 0;
-        this.arrayView = arrayView;
     }
 
     @Override
-    public void wroteFlatIndex(int flatIndex) {
-        response.bookmark();
-        this.flatIndexAlreadyWritten = flatIndex;
+    public void putCharIfNew(CharSink<?> sink, char symbol) {
+        if (incAndSayIfNewOp()) {
+            sink.put(symbol);
+        }
+        performedOp();
+    }
+
+    public void reset(ArrayView arrayView) {
+        this.opsSeenSinceRestart = 0;
+        this.arrayView = arrayView;
     }
 }
