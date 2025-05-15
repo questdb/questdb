@@ -431,7 +431,6 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private int autoFlushIntervalMillis = PARAMETER_NOT_SET_EXPLICITLY;
         private int autoFlushRows = PARAMETER_NOT_SET_EXPLICITLY;
         private int bufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
-        private boolean disableLineProtoValidate = false;
         private String host;
         private String httpPath;
         private String httpSettingsPath;
@@ -458,11 +457,6 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             @Override
             public int getTimeout() {
                 return httpTimeout == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_HTTP_TIMEOUT : httpTimeout;
-            }
-
-            @Override
-            public boolean isLineProtoValidateDisabled() {
-                return disableLineProtoValidate;
             }
         };
         private long minRequestThroughput = PARAMETER_NOT_SET_EXPLICITLY;
@@ -753,33 +747,6 @@ public interface Sender extends Closeable, ArraySender<Sender> {
 
             this.autoFlushRows = AUTO_FLUSH_DISABLED;
             this.autoFlushIntervalMillis = Integer.MAX_VALUE;
-            return this;
-        }
-
-        /**
-         * Disables automatic server protocol version detection.
-         *
-         * <p>Use with caution: By default, the client performs an initial HTTP request
-         * to auto-detect the server's supported line protocol version. Disabling this validation
-         * eliminates the handshake round-trip but introduces version compatibility risks.</p>
-         *
-         * <p>
-         * When using this method, you must either:
-         * <ul>
-         * <li>Explicitly set the protocol version via {@link #protocolVersion(int)}, or
-         * <li>Ensure the client's default version ({@link #PROTOCOL_VERSION_V2}) exactly matches the server's expected version
-         * </ul>
-         * <p>
-         * Improper use may cause protocol version mismatches resulting in ingestion
-         * failures or data corruption.
-         *
-         * @return this builder instance for method chaining
-         */
-        public LineSenderBuilder disableLineProtoValidation() {
-            if (this.protocol == PROTOCOL_TCP) {
-                throw new LineSenderException("TCP transport does not support disable line protocol validation");
-            }
-            this.disableLineProtoValidate = true;
             return this;
         }
 
@@ -1125,7 +1092,8 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 tlsValidationMode = TlsValidationMode.DEFAULT;
             }
             if (protocol == PROTOCOL_TCP && protocolVersion == PARAMETER_NOT_SET_EXPLICITLY) {
-                protocolVersion = PROTOCOL_VERSION_V2;
+                // keep protocol_version = 1 as default when use does not set protocol_version explicit for tcp/tcps protocol.
+                protocolVersion = PROTOCOL_VERSION_V1;
             }
         }
 
@@ -1339,14 +1307,9 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                     minRequestThroughput(requestMinThroughput);
                 } else if (Chars.equals("protocol_version", sink)) {
                     pos = getValue(configurationString, pos, sink, "protocol_version");
-                    int protocolVersion = parseIntValue(sink, "protocol_version");
-                    protocolVersion(protocolVersion);
-                } else if (Chars.equals("disable_line_protocol_validation", sink)) {
-                    pos = getValue(configurationString, pos, sink, "auto_flush");
-                    if (Chars.equalsIgnoreCase("on", sink)) {
-                        disableLineProtoValidation();
-                    } else if (!Chars.equalsIgnoreCase("off", sink)) {
-                        throw new LineSenderException("invalid disable_line_protocol_validation [value=").put(sink).put(", allowed-values=[on, off]]");
+                    if (!Chars.equalsIgnoreCase("auto", sink)) {
+                        int protocolVersion = parseIntValue(sink, "protocol_version");
+                        protocolVersion(protocolVersion);
                     }
                 } else {
                     // ignore unknown keys, unless they are malformed

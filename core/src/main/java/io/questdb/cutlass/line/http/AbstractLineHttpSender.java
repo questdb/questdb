@@ -172,11 +172,9 @@ public abstract class AbstractLineHttpSender implements Sender {
             int protocolVersion
     ) {
         HttpClient cli = null;
-        if (clientConfiguration.isLineProtoValidateDisabled()) {
-            if (protocolVersion == PROTOCOL_VERSION_NOT_SET_EXPLICIT) {
-                protocolVersion = PROTOCOL_VERSION_V2;
-            }
-        } else {
+
+        // if user does not set protocol version explicit, client will try to detect it from server
+        if (protocolVersion == PROTOCOL_VERSION_NOT_SET_EXPLICIT) {
             if (tlsConfig != null) {
                 cli = HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig);
             } else {
@@ -189,12 +187,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                 if (Utf8s.equalsNcAscii("200", responseHeaders.getStatusCode())) {
                     try (JsonSettingsParser parser = new JsonSettingsParser()) {
                         parser.parse(responseHeaders.getResponse());
-                        if (protocolVersion == PROTOCOL_VERSION_NOT_SET_EXPLICIT) {
-                            protocolVersion = parser.getDefaultProtocolVersion();
-                        } else if (!parser.isSupportedLineProtoVersion(protocolVersion)) {
-                            throw new LineSenderException("Server does not support line protocol version: ")
-                                    .put(protocolVersion);
-                        }
+                        protocolVersion = parser.getDefaultProtocolVersion();
                     }
                 } else if (Utf8s.equalsNcAscii("404", responseHeaders.getStatusCode())) {
                     // The client is unable to differentiate between a server shutdown and connecting to an older version.
@@ -826,11 +819,9 @@ public abstract class AbstractLineHttpSender implements Sender {
     }
 
     public static class JsonSettingsParser implements JsonParser, Closeable {
-        private final static byte LINE_PROTO_DEFAULT_VERSION = 1;
-        private final static byte LINE_PROTO_SUPPORT_VERSIONS = 2;
+        private final static byte LINE_PROTO_SUPPORT_VERSIONS = 1;
         private final JsonLexer lexer = new JsonLexer(1024, 1024);
         private final IntList supportVersions = new IntList(8);
-        private int defaultProtocolVersion = PROTOCOL_VERSION_V1;
         private byte nextJsonValueFlag = 0;
 
         @Override
@@ -839,44 +830,26 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
 
         public int getDefaultProtocolVersion() {
-            if (defaultProtocolVersion == PROTOCOL_VERSION_V2) {
+            if (supportVersions.size() == 0) {
+                return PROTOCOL_VERSION_V1;
+            }
+            if (supportVersions.contains(PROTOCOL_VERSION_V2)) {
                 return PROTOCOL_VERSION_V2;
-            } else if (defaultProtocolVersion == PROTOCOL_VERSION_V1) {
+            } else if (supportVersions.contains(PROTOCOL_VERSION_V1)) {
                 return PROTOCOL_VERSION_V1;
             } else {
-                if (supportVersions.contains(PROTOCOL_VERSION_V2)) {
-                    return PROTOCOL_VERSION_V2;
-                } else if (supportVersions.contains(PROTOCOL_VERSION_V1)) {
-                    return PROTOCOL_VERSION_V1;
-                } else {
-                    throw new LineSenderException("Server does not support current client");
-                }
+                throw new LineSenderException("Server does not support current client");
             }
-        }
-
-        public boolean isSupportedLineProtoVersion(int protocolVersion) {
-            return (supportVersions.size() == 0 && protocolVersion == PROTOCOL_VERSION_V1) || supportVersions.contains(protocolVersion);
         }
 
         @Override
         public void onEvent(int code, CharSequence tag, int position) {
             switch (code) {
                 case JsonLexer.EVT_NAME:
-                    if (tag.equals("line.proto.default.version")) {
-                        nextJsonValueFlag = LINE_PROTO_DEFAULT_VERSION;
-                    } else if (tag.equals("line.proto.support.versions")) {
+                    if (tag.equals("line.proto.support.versions")) {
                         nextJsonValueFlag = LINE_PROTO_SUPPORT_VERSIONS;
                     } else {
                         nextJsonValueFlag = 0;
-                    }
-                    break;
-                case JsonLexer.EVT_VALUE:
-                    if (nextJsonValueFlag == LINE_PROTO_DEFAULT_VERSION) {
-                        try {
-                            defaultProtocolVersion = Numbers.parseInt(tag);
-                        } catch (NumericException e) {
-                            defaultProtocolVersion = 2;
-                        }
                     }
                     break;
                 case JsonLexer.EVT_ARRAY_VALUE:

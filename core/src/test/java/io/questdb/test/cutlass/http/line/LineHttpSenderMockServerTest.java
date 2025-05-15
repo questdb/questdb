@@ -51,11 +51,13 @@ import java.util.concurrent.CountDownLatch;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class LineHttpSenderMockServerTest extends AbstractTest {
     public static final Function<Integer, Sender.LineSenderBuilder> DEFAULT_FACTORY =
-            port -> Sender.builder(Sender.Transport.HTTP).address("localhost:" + port).protocolVersion(Sender.PROTOCOL_VERSION_V1);
+            port -> Sender.builder(Sender.Transport.HTTP).address("localhost:" + port).protocolVersion(PROTOCOL_VERSION_V1);
 
     private static final CharSequence QUESTDB_VERSION = new BuildInformationHolder().getSwVersion();
 
@@ -232,20 +234,6 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @Test
-    public void testInvalidProtocolVersion() throws Exception {
-        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
-        MockSettingsProcessorOldServer settingsProcessor = new MockSettingsProcessorOldServer();
-        try {
-            testWithMock(mockHttpProcessor, settingsProcessor, sender -> sender.table("test")
-                    .symbol("sym", "bol")
-                    .doubleColumn("x", 1.0)
-                    .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";protocol_version=2;"));
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "Server does not support line protocol version: 2");
-        }
-    }
-
-    @Test
     public void testJsonError() throws Exception {
         String jsonResponse = "{\"code\": \"invalid\",\n" +
                 "                    \"message\": \"failed to parse line protocol: invalid field format\",\n" +
@@ -263,7 +251,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testMaxRequestBufferSizeExceeded() {
         try (Sender sender = Sender.builder(Sender.Transport.HTTP).address("localhost:1")
                 .maxBufferCapacity(65536)
-                .disableLineProtoValidation()
+                .protocolVersion(PROTOCOL_VERSION_V2)
                 .autoFlushRows(Integer.MAX_VALUE)
                 .build()
         ) {
@@ -291,7 +279,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                             .atNow();
 
                     sender.flush();
-                }, DEFAULT_FACTORY.andThen(b -> b.httpTimeoutMillis(1).minRequestThroughput(1).retryTimeoutMillis(0).disableLineProtoValidation()) // 1ms base timeout and 1 byte per second to extend the timeout
+                }, DEFAULT_FACTORY.andThen(b -> b.httpTimeoutMillis(1).minRequestThroughput(1).retryTimeoutMillis(0)) // 1ms base timeout and 1 byte per second to extend the timeout
         );
     }
 
@@ -307,7 +295,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                             .atNow();
 
                     sender.flush();
-                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=1;request_min_throughput=1;retry_timeout=0;disable_line_protocol_validation=on;") // 1ms base timeout and 1 byte per second to extend the timeout
+                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=1;request_min_throughput=1;retry_timeout=0;protocol_version=2;") // 1ms base timeout and 1 byte per second to extend the timeout
         );
     }
 
@@ -316,7 +304,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                 .address("127.0.0.1:1")
                 .retryTimeoutMillis(1000)
-                .disableLineProtoValidation()
+                .protocolVersion(PROTOCOL_VERSION_V1)
                 .build()) {
             sender.table("test")
                     .symbol("sym", "bol")

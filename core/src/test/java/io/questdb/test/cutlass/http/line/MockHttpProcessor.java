@@ -273,7 +273,7 @@ class MockSettingsProcessor implements HttpRequestProcessor {
         r.status(HttpURLConnection.HTTP_OK, "application/json");
         r.sendHeader();
         r.put("{\"release.type\":\"OSS\",\"release.version\":\"[DEVELOPMENT]\",\"acl.enabled\":false," +
-                "\"line.proto.default.version\":2,\"line.proto.support.versions\":[1,2]," +
+                "\"line.proto.support.versions\":[1,2]," +
                 "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                 "\"posthog.enabled\":false,\"posthog.api.key\":null}");
         r.sendChunk(true);

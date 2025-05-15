@@ -52,13 +52,13 @@ import org.junit.Before;
 import org.junit.Test;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 
 public class SettingsEndpointTest extends AbstractBootstrapTest {
     private static final String OSS_PAYLOAD = "{" +
             "\"release.type\":\"OSS\"," +
             "\"release.version\":\"[DEVELOPMENT]\"," +
             "\"acl.enabled\":false," +
-            "\"line.proto.default.version\":2," +
             "\"line.proto.support.versions\":[1,2]," +
             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
             "\"posthog.enabled\":false," +
@@ -95,7 +95,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                         responseHeaders.await();
                         TestUtils.assertEquals(String.valueOf(200), responseHeaders.getStatusCode());
                         parser.parse(responseHeaders.getResponse());
-                        Assert.assertTrue(parser.isSupportedLineProtoVersion(parser.getDefaultProtocolVersion()));
+                        Assert.assertEquals(PROTOCOL_VERSION_V2, parser.getDefaultProtocolVersion());
                     }
                 }
             }

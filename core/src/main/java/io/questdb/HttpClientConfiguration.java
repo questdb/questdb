@@ -80,8 +80,4 @@ public interface HttpClientConfiguration {
     default int getWaitQueueCapacity() {
         return 4;
     }
-
-    default boolean isLineProtoValidateDisabled() {
-        return false;
-    }
 }

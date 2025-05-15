@@ -62,6 +62,7 @@ import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Consumer;
 
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createDoubleArray;
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -102,6 +103,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build();
                  DoubleArray a1 = new DoubleArray(1, 1, 2, 1).setAll(1);
             ) {
@@ -127,6 +129,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build();
                  DoubleArray a4 = new DoubleArray(1, 1, 2, 1).setAll(4);
                  DoubleArray a5 = new DoubleArray(3, 2, 1, 4, 1).setAll(5);
@@ -202,6 +205,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address(address)
                     .enableAuth(AUTH_KEY_ID1).authToken(TOKEN)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
                 sender.table("mytable").longColumn("my int field", 42).atNow();
                 sender.flush();
@@ -215,7 +219,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         String address = "127.0.0.1:" + bindPort;
         runInContext(r -> {
-            try (Sender sender = Sender.fromConfig("tcp::addr=" + address + ";user=" + AUTH_KEY_ID1 + ";token=" + TOKEN + ";")) {
+            try (Sender sender = Sender.fromConfig("tcp::addr=" + address + ";user=" + AUTH_KEY_ID1 + ";token=" + TOKEN + ";protocol_version=2;")) {
                 sender.table("mytable").longColumn("my int field", 42).atNow();
                 sender.flush();
             }
@@ -229,6 +233,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
                 sender.table("mytable").longColumn("my int field", 42).atNow();
                 sender.flush();
@@ -243,6 +248,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         runInContext(r -> {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address(address)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
                 sender.table("mytable").longColumn("my int field", 42).atNow();
                 sender.flush();
@@ -257,6 +263,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         runInContext(r -> {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address(address)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
                 sender.table("mytable").longColumn("my int field", 42).atNow();
                 sender.flush();
@@ -301,6 +308,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
                 sender.table("mytable").longColumn("my int field", 42).atNow();
             }
@@ -312,8 +320,9 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     public void testConfString() throws Exception {
         authKeyId = AUTH_KEY_ID1;
         runInContext(r -> {
-            String confString = "tcp::addr=127.0.0.1:" + bindPort + ";user=" + AUTH_KEY_ID1 + ";token=" + TOKEN + ";";
+            String confString = "tcp::addr=127.0.0.1:" + bindPort + ";user=" + AUTH_KEY_ID1 + ";token=" + TOKEN + ";protocol_version=2;";
             try (Sender sender = Sender.fromConfig(confString)) {
+
                 long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
                 CountDownLatch released = createTableCommitNotifier("mytable");
                 sender.table("mytable")
@@ -337,7 +346,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testConfString_autoFlushBytes() throws Exception {
-        String confString = "tcp::addr=localhost:" + bindPort + ";auto_flush_bytes=1;"; // the minimal allowed buffer size
+        String confString = "tcp::addr=localhost:" + bindPort + ";auto_flush_bytes=1;protocol_version=2;"; // the minimal allowed buffer size
         runInContext(r -> {
             try (Sender sender = Sender.fromConfig(confString)) {
                 // just 2 rows must be enough to trigger flush
@@ -368,6 +377,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
 
                 CountDownLatch released = createTableCommitNotifier("mytable");
@@ -396,6 +406,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
 
                 CountDownLatch released = createTableCommitNotifier("poison");
@@ -437,6 +448,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()
             ) {
                 CountDownLatch released = createTableCommitNotifier(tableName);
@@ -467,6 +479,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
 
                 long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
@@ -507,6 +520,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
 
                 long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
@@ -538,6 +552,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
 
                 sender.table("mytable")
@@ -567,6 +582,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
 
                 long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2023-09-18T12:01:01.01Z");
@@ -633,6 +649,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 try (Sender sender = Sender.builder(Sender.Transport.TCP)
                         .address("127.0.0.1")
                         .port(bindPort)
+                        .protocolVersion(PROTOCOL_VERSION_V2)
                         .build()) {
                     // well-formed row first
                     sender.table(tableName).longColumn("field0", 42)
@@ -753,6 +770,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()
             ) {
                 String table = "string_table";
@@ -782,6 +800,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
                 CountDownLatch released = createTableCommitNotifier("mytable");
                 long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
@@ -812,6 +831,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
 
                 long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2023-02-22");
@@ -889,6 +909,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
                 sender.table("mytable");
                 otherTypeWriter.accept(sender);
@@ -916,6 +937,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
 
                 long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
@@ -929,6 +951,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
 
                 long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");

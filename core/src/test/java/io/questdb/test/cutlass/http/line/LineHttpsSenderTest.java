@@ -44,6 +44,7 @@ import org.junit.Test;
 
 import java.util.UUID;
 
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
@@ -263,7 +264,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         .address(address)
                         .enableTls()
                         .retryTimeoutMillis(1000)
-                        .disableLineProtoValidation()
+                        .protocolVersion(PROTOCOL_VERSION_V1)
                         .build()
                 ) {
                     try {
