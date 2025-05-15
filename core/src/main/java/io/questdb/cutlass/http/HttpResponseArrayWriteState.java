@@ -33,12 +33,12 @@ public class HttpResponseArrayWriteState implements ArrayWriteState, Mutable {
     // array that is being partially sent, resuming at the correct spot after a retry
     private ArrayView arrayView;
     private int opsAlreadyDone;
-    private int opsSeenSinceRestart;
+    private int opsSinceReset;
     private HttpChunkedResponse response;
 
     @Override
     public void clear() {
-        this.opsSeenSinceRestart = 0;
+        this.opsSinceReset = 0;
         this.opsAlreadyDone = 0;
         arrayView = null;
     }
@@ -49,8 +49,8 @@ public class HttpResponseArrayWriteState implements ArrayWriteState, Mutable {
 
     @Override
     public boolean incAndSayIfNewOp() {
-        opsSeenSinceRestart++;
-        return opsSeenSinceRestart > opsAlreadyDone;
+        opsSinceReset++;
+        return opsSinceReset > opsAlreadyDone;
     }
 
     public boolean isClear() {
@@ -70,7 +70,7 @@ public class HttpResponseArrayWriteState implements ArrayWriteState, Mutable {
 
     @Override
     public void performedOp() {
-        opsAlreadyDone = Math.max(opsAlreadyDone, opsSeenSinceRestart);
+        opsAlreadyDone = Math.max(opsAlreadyDone, opsSinceReset);
         response.bookmark();
     }
 
@@ -83,7 +83,7 @@ public class HttpResponseArrayWriteState implements ArrayWriteState, Mutable {
     }
 
     public void reset(ArrayView arrayView) {
-        this.opsSeenSinceRestart = 0;
+        this.opsSinceReset = 0;
         this.arrayView = arrayView;
     }
 }
