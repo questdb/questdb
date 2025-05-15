@@ -132,6 +132,18 @@ public class GeoHashes {
         }
     }
 
+    public static void appendNoQuotes(long hash, int bits, CharSink<?> sink) {
+        if (hash == GeoHashes.NULL) {
+            sink.putAscii("null");
+        } else {
+            if (bits < 0) {
+                GeoHashes.appendCharsUnsafe(hash, -bits, sink);
+            } else {
+                GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);
+            }
+        }
+    }
+
     public static long bitmask(int count, int shift) {
         // e.g. 3, 4 -> 1110000
         return ((1L << count) - 1) << shift;
