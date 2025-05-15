@@ -56,7 +56,6 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.CompiledQuery;
@@ -1348,8 +1347,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return createWalApplyJob(engine);
     }
 
-    protected static void drainWalAndMatViewQueue() {
-        drainWalAndMatViewQueue(engine);
+    protected static void drainPurgeJob() {
+        TestUtils.drainPurgeJob(engine);
+    }
+
+    protected static void drainWalAndMatViewQueues() {
+        drainWalAndMatViewQueues(engine);
     }
 
     protected static void drainWalQueue(QuestDBTestNode node) {
@@ -1582,17 +1585,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             replicate(tableName, walName, node1, node);
             drainWalQueue(node);
         }
-    }
-
-    protected static void runWalPurgeJob(FilesFacade ff) {
-        try (WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock())) {
-            engine.setWalPurgeJobRunLock(job.getRunLock());
-            job.drain(0);
-        }
-    }
-
-    protected static void runWalPurgeJob() {
-        runWalPurgeJob(engine.getConfiguration().getFilesFacade());
     }
 
     protected static RecordCursorFactory select(CharSequence selectSql, SqlExecutionContext sqlExecutionContext) throws SqlException {

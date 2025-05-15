@@ -37,6 +37,7 @@ public class CairoTable implements Sinkable {
     public final ObjList<CairoColumn> columns;
     private boolean isDedup;
     private boolean isSoftLink;
+    private int matViewRefreshLimitHoursOrMonths;
     private int maxUncommittedRows;
     private long metadataVersion = -1;
     private long o3MaxLag;
@@ -46,17 +47,17 @@ public class CairoTable implements Sinkable {
     private int ttlHoursOrMonths;
 
     public CairoTable(@NotNull TableToken token) {
-        setTableToken(token);
-        columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
-        columnOrderMap = new IntList();
-        columns = new ObjList<>();
+        this.token = token;
+        this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
+        this.columnOrderMap = new IntList();
+        this.columns = new ObjList<>();
     }
 
     public CairoTable(@NotNull TableToken token, CairoTable fromTab) {
-        setTableToken(token);
-        columnOrderMap = fromTab.columnOrderMap;
-        columns = fromTab.columns;
-        columnNameIndexMap = fromTab.columnNameIndexMap;
+        this.token = token;
+        this.columnOrderMap = fromTab.columnOrderMap;
+        this.columns = fromTab.columns;
+        this.columnNameIndexMap = fromTab.columnNameIndexMap;
         this.metadataVersion = fromTab.getMetadataVersion();
         this.partitionBy = fromTab.getPartitionBy();
         this.maxUncommittedRows = fromTab.getMaxUncommittedRows();
@@ -65,11 +66,7 @@ public class CairoTable implements Sinkable {
         this.ttlHoursOrMonths = fromTab.getTtlHoursOrMonths();
         this.isSoftLink = fromTab.getIsSoftLink();
         this.isDedup = fromTab.getIsDedup();
-    }
-
-    public void clear() {
-        columns.clear();
-        columnOrderMap.clear();
+        this.matViewRefreshLimitHoursOrMonths = fromTab.getMatViewRefreshLimitHoursOrMonths();
     }
 
     public int getColumnCount() {
@@ -109,6 +106,10 @@ public class CairoTable implements Sinkable {
         return isSoftLink;
     }
 
+    public int getMatViewRefreshLimitHoursOrMonths() {
+        return matViewRefreshLimitHoursOrMonths;
+    }
+
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }
@@ -142,8 +143,8 @@ public class CairoTable implements Sinkable {
     }
 
     public CharSequence getTimestampName() {
-        if (this.timestampIndex != -1) {
-            final CairoColumn timestampColumn = getColumnQuiet(this.timestampIndex);
+        if (timestampIndex != -1) {
+            final CairoColumn timestampColumn = getColumnQuiet(timestampIndex);
             if (timestampColumn != null) {
                 return timestampColumn.getName();
             }
@@ -169,6 +170,10 @@ public class CairoTable implements Sinkable {
 
     public void setIsSoftLink(boolean isSoftLink) {
         this.isSoftLink = isSoftLink;
+    }
+
+    public void setMatViewRefreshLimitHoursOrMonths(int matViewRefreshLimitHoursOrMonths) {
+        this.matViewRefreshLimitHoursOrMonths = matViewRefreshLimitHoursOrMonths;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {
@@ -213,7 +218,7 @@ public class CairoTable implements Sinkable {
         sink.put("partitionBy=").put(getPartitionByName()).put(", ");
         sink.put("timestampIndex=").put(getTimestampIndex()).put(", ");
         sink.put("timestampName=").put(getTimestampName()).put(", ");
-        int ttlHoursOrMonths = getTtlHoursOrMonths();
+        final int ttlHoursOrMonths = getTtlHoursOrMonths();
         if (ttlHoursOrMonths >= 0) {
             sink.put("ttlHours=").put(ttlHoursOrMonths).put(", ");
         } else {

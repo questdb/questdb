@@ -73,7 +73,7 @@ public class MatViewOomTest extends AbstractCairoTest {
                             "  timestamp_sequence(400000000000, 500000) ts " +
                             "from long_sequence(100000);"
             );
-            drainWalAndMatViewQueue();
+            drainWalAndMatViewQueues();
 
             execute(
                     "create materialized view price_1h as (" +
@@ -83,7 +83,7 @@ public class MatViewOomTest extends AbstractCairoTest {
 
             // Set RSS limit, so that the refresh will fail due to OOM.
             Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 500 * 1024); // 500KB gap
-            drainWalAndMatViewQueue();
+            drainWalAndMatViewQueues();
             assertQueryNoLeakCheck(
                     "view_name\tview_status\n" +
                             "price_1h\tinvalid\n",
@@ -95,7 +95,7 @@ public class MatViewOomTest extends AbstractCairoTest {
             // Now, remove the limit and run full refresh. This time, it should succeed.
             Unsafe.setRssMemLimit(0);
             execute("refresh materialized view price_1h full;");
-            drainWalAndMatViewQueue();
+            drainWalAndMatViewQueues();
             assertQueryNoLeakCheck(
                     "view_name\tview_status\n" +
                             "price_1h\tvalid\n",

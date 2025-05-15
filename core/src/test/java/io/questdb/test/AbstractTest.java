@@ -117,13 +117,13 @@ public class AbstractTest {
         }
     }
 
-    protected static void drainWalAndMatViewQueue(CairoEngine engine) {
+    protected static void drainWalAndMatViewQueues(CairoEngine engine) {
         drainWalQueue(engine);
         drainMatViewQueue(engine);
         drainWalQueue(engine);
     }
 
-    protected static void drainWalAndMatViewQueue(MatViewRefreshJob refreshJob, CairoEngine engine) {
+    protected static void drainWalAndMatViewQueues(MatViewRefreshJob refreshJob, CairoEngine engine) {
         drainWalQueue(engine);
         drainMatViewQueue(refreshJob);
         drainWalQueue(engine);
