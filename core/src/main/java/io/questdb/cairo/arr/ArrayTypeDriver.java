@@ -204,7 +204,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             @NotNull ArrayView array,
             @NotNull CharSink<?> sink,
             @NotNull ArrayValueAppender appender,
-            ArrayState arrayState
+            ArrayWriteState arrayState
     ) {
         arrayToText(array, sink, appender, '[', ']', "null", arrayState);
     }
@@ -215,7 +215,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static void arrayToJson(
             @Nullable ArrayView arrayView,
             @NotNull CharSink<?> sink,
-            @NotNull ArrayState arrayState
+            @NotNull ArrayWriteState arrayState
     ) {
         if (arrayView == null) {
             sink.put("null");
@@ -238,7 +238,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
                 '{',
                 '}',
                 "NULL",
-                NoopArrayState.INSTANCE
+                NoopArrayWriteState.INSTANCE
         );
     }
 
@@ -260,7 +260,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             char openChar,
             char closeChar,
             @NotNull String nullLiteral,
-            ArrayState arrayState
+            ArrayWriteState arrayState
     ) {
         if (array.isNull()) {
             sink.putAscii(nullLiteral);
@@ -684,23 +684,23 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             @NotNull ArrayValueAppender appender,
             char openChar,
             char closeChar,
-            ArrayState arrayState
+            ArrayWriteState arrayState
     ) {
         final int count = array.getDimLen(dim);
         final int stride = array.getStride(dim);
         final boolean atDeepestDim = dim == array.getDimCount() - 1;
 
-        arrayState.putAsciiIfNotRecorded(ArrayState.STATE_OPEN_BRACKET, sink, openChar);
+        arrayState.putAsciiIfNew(sink, openChar);
 
         if (atDeepestDim) {
             for (int i = 0; i < count; i++) {
                 if (i != 0) {
-                    arrayState.putAsciiIfNotRecorded(ArrayState.STATE_COMMA_VALUES, sink, ',');
+                    arrayState.putAsciiIfNew(sink, ',');
                 }
-                if (arrayState.notRecorded(flatIndex)) {
+                if (arrayState.isNotWritten(flatIndex)) {
                     appender.appendFromFlatIndex(array, flatIndex, sink);
                     flatIndex += stride;
-                    arrayState.record(flatIndex);
+                    arrayState.wroteFlatIndex(flatIndex);
                 } else {
                     flatIndex += stride;
                 }
@@ -708,13 +708,13 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         } else {
             for (int i = 0; i < count; i++) {
                 if (i != 0) {
-                    arrayState.putAsciiIfNotRecorded(ArrayState.STATE_COMMA_DIMS, sink, ',');
+                    arrayState.putAsciiIfNew(sink, ',');
                 }
                 arrayToText(array, dim + 1, flatIndex, sink, appender, openChar, closeChar, arrayState);
                 flatIndex += stride;
             }
         }
-        arrayState.putAsciiIfNotRecorded(ArrayState.STATE_CLOSE_BRACKET, sink, closeChar);
+        arrayState.putAsciiIfNew(sink, closeChar);
     }
 
     private static void padTo(@NotNull MemoryA dataMem, int byteAlignment) {

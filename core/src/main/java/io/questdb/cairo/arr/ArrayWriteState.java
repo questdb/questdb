@@ -26,18 +26,10 @@ package io.questdb.cairo.arr;
 
 import io.questdb.std.str.CharSink;
 
-public interface ArrayState {
-    int STATE_CLOSE_BRACKET = 3;
-    int STATE_CLOSE_QUOTE = 5;
-    int STATE_COMMA_DIMS = 2;
-    int STATE_COMMA_VALUES = 1;
-    int STATE_MAX = STATE_CLOSE_QUOTE + 1;
-    int STATE_OPEN_BRACKET = 0;
-    int STATE_OPEN_QUOTE = 4;
+public interface ArrayWriteState {
+    boolean isNotWritten(int flatIndex);
 
-    boolean notRecorded(int flatIndex);
+    void putAsciiIfNew(CharSink<?> sink, char symbol);
 
-    void putAsciiIfNotRecorded(int eventType, CharSink<?> sink, char symbol);
-
-    void record(int flatIndex);
+    void wroteFlatIndex(int flatIndex);
 }

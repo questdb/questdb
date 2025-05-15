@@ -24,26 +24,24 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cairo.arr.ArrayState;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.ArrayWriteState;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.CharSink;
 
-import java.util.Arrays;
-
-public class HttpResponseArrayState implements ArrayState, Mutable {
-    private final int[] contender = new int[STATE_MAX];
-    private final int[] target = new int[STATE_MAX];
+public class HttpResponseArrayWriteState implements ArrayWriteState, Mutable {
     // array view that was partially sent
     private ArrayView arrayView;
-    private int flatIndex;
+    private int flatIndexAlreadyWritten;
     private HttpChunkedResponse response;
+    private int symbolsAlreadyWritten;
+    private int symbolsSeenSinceRestart;
 
     @Override
     public void clear() {
-        this.flatIndex = 0;
-        Arrays.fill(contender, 0);
-        Arrays.fill(target, 0);
+        this.flatIndexAlreadyWritten = 0;
+        this.symbolsSeenSinceRestart = 0;
+        this.symbolsAlreadyWritten = 0;
         arrayView = null;
     }
 
@@ -56,32 +54,8 @@ public class HttpResponseArrayState implements ArrayState, Mutable {
     }
 
     @Override
-    public boolean notRecorded(int flatIndex) {
-        return this.flatIndex <= flatIndex;
-    }
-
-    public void of(HttpChunkedResponse response) {
-        this.response = response;
-    }
-
-    @Override
-    public void putAsciiIfNotRecorded(int eventType, CharSink<?> sink, char symbol) {
-        if (++contender[eventType] > target[eventType]) {
-            sink.put(symbol);
-            response.bookmark();
-            target[eventType] = contender[eventType];
-        }
-    }
-
-    @Override
-    public void record(int flatIndex) {
-        response.bookmark();
-        this.flatIndex = flatIndex;
-    }
-
-    public void reset(ArrayView arrayView) {
-        Arrays.fill(contender, 0);
-        this.arrayView = arrayView;
+    public boolean isNotWritten(int flatIndex) {
+        return this.flatIndexAlreadyWritten <= flatIndex;
     }
 
     /**
@@ -89,14 +63,32 @@ public class HttpResponseArrayState implements ArrayState, Mutable {
      *
      * @return false when something has been written to the buffer, anything.
      */
-    public boolean zeroState() {
-        long sum = flatIndex;
-        for (int i = 0, n = target.length; i < n; i++) {
-            sum += target[i];
-            if (sum > 0) {
-                return false;
-            }
+    public boolean isNothingWritten() {
+        return flatIndexAlreadyWritten + symbolsAlreadyWritten == 0;
+    }
+
+    public void of(HttpChunkedResponse response) {
+        this.response = response;
+    }
+
+    @Override
+    public void putAsciiIfNew(CharSink<?> sink, char symbol) {
+        if (++symbolsSeenSinceRestart <= symbolsAlreadyWritten) {
+            return;
         }
-        return sum == 0;
+        sink.put(symbol);
+        response.bookmark();
+        symbolsAlreadyWritten = symbolsSeenSinceRestart;
+    }
+
+    public void reset(ArrayView arrayView) {
+        this.symbolsSeenSinceRestart = 0;
+        this.arrayView = arrayView;
+    }
+
+    @Override
+    public void wroteFlatIndex(int flatIndex) {
+        response.bookmark();
+        this.flatIndexAlreadyWritten = flatIndex;
     }
 }

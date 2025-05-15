@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.arr.ArrayTypeDriver;
-import io.questdb.cairo.arr.NoopArrayState;
+import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -170,7 +170,7 @@ public class CursorPrinter {
                 }
                 break;
             case ColumnType.ARRAY:
-                ArrayTypeDriver.arrayToJson(record.getArray(columnIndex, columnType), sink, NoopArrayState.INSTANCE);
+                ArrayTypeDriver.arrayToJson(record.getArray(columnIndex, columnType), sink, NoopArrayWriteState.INSTANCE);
                 break;
             case ColumnType.ARRAY_STRING:
                 sink.put(record.getStrA(columnIndex));

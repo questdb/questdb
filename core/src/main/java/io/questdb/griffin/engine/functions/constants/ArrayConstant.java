@@ -29,7 +29,7 @@ import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FunctionArray;
-import io.questdb.cairo.arr.NoopArrayState;
+import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
@@ -111,7 +111,7 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
     @Override
     public void toPlan(PlanSink sink) {
         StringSink strSink = new StringSink();
-        ArrayTypeDriver.arrayToJson(array, strSink, NoopArrayState.INSTANCE);
+        ArrayTypeDriver.arrayToJson(array, strSink, NoopArrayWriteState.INSTANCE);
         sink.val("ARRAY" + strSink);
     }
 

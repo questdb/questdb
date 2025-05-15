@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.NoopArrayState;
+import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -72,7 +72,7 @@ public class CastDoubleArrayToStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             sink.clear();
-            ArrayTypeDriver.arrayToJson(arrayView, sink, NoopArrayState.INSTANCE);
+            ArrayTypeDriver.arrayToJson(arrayView, sink, NoopArrayWriteState.INSTANCE);
             return sink;
         }
     }

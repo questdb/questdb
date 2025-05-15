@@ -26,10 +26,10 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.arr.ArrayState;
 import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayWriteState;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.arr.NoopArrayState;
+import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.std.NanosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.CharSink;
@@ -41,8 +41,6 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
-
-import java.util.Arrays;
 
 public class ArrayBufferOverflowTest extends AbstractTest {
     private static CairoConfiguration configuration;
@@ -94,28 +92,28 @@ public class ArrayBufferOverflowTest extends AbstractTest {
                 }
             };
 
-            var statePrototype = new ArrayState() {
-                final int[] contender = new int[STATE_MAX];
-                final int[] target = new int[STATE_MAX];
+            var statePrototype = new ArrayWriteState() {
+                int contender;
                 int flatIndex;
                 int sinkLen = 0;
+                int target;
 
                 @Override
-                public boolean notRecorded(int flatIndex) {
+                public boolean isNotWritten(int flatIndex) {
                     return this.flatIndex <= flatIndex;
                 }
 
                 @Override
-                public void putAsciiIfNotRecorded(int eventType, CharSink<?> sink, char symbol) {
-                    if (++contender[eventType] > target[eventType]) {
+                public void putAsciiIfNew(CharSink<?> sink, char symbol) {
+                    if (++contender > target) {
                         sink.put(symbol);
                         this.sinkLen = sinkActual.length();
-                        target[eventType] = contender[eventType];
+                        target = contender;
                     }
                 }
 
                 @Override
-                public void record(int flatIndex) {
+                public void wroteFlatIndex(int flatIndex) {
                     this.sinkLen = sinkActual.length();
                     this.flatIndex = flatIndex;
                 }
@@ -132,7 +130,7 @@ public class ArrayBufferOverflowTest extends AbstractTest {
                     break;
                 } catch (Throwable e) {
                     sinkActual.trimTo(statePrototype.sinkLen);
-                    Arrays.fill(statePrototype.contender, 0);
+                    statePrototype.contender = 0;
                 }
             }
 
@@ -140,7 +138,7 @@ public class ArrayBufferOverflowTest extends AbstractTest {
                     arrayView,
                     sinkExpected,
                     ArrayTypeDriver::appendDoubleFromArrayToSinkFiniteOnly,
-                    NoopArrayState.INSTANCE
+                    NoopArrayWriteState.INSTANCE
             );
 
             TestUtils.assertEquals(sinkExpected, sinkActual);

@@ -39,8 +39,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
-import io.questdb.cutlass.http.HttpResponseArrayState;
-import io.questdb.cutlass.http.HttpResponseSink;
+import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -87,7 +86,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_SUFFIX = 7;
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
-    private final HttpResponseArrayState arrayState = new HttpResponseArrayState();
+    private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     private final ObjList<String> columnNames = new ObjList<>();
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
@@ -902,7 +901,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         } catch (Throwable e) {
             // we have to disambiguate here if this is very first attempt to send the value, which failed
             // and we have any partial value we can send to the clint, or our state did not bookmark anything?
-            columnValueFullySent = arrayState.zeroState();
+            columnValueFullySent = arrayState.isNothingWritten();
             arrayState.reset(arrayView);
             throw e;
         }

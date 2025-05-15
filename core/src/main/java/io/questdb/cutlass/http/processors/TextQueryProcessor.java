@@ -33,7 +33,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.arr.ArrayState;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
@@ -574,15 +573,15 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         state.arrayState.of(response);
         var arrayView = state.arrayState.getArrayView() == null ? record.getArray(columnIdx, columnType) : state.arrayState.getArrayView();
         try {
-            state.arrayState.putAsciiIfNotRecorded(ArrayState.STATE_OPEN_QUOTE, response, '"');
+            state.arrayState.putAsciiIfNew(response, '"');
             ArrayTypeDriver.arrayToJson(arrayView, response, state.arrayState);
-            state.arrayState.putAsciiIfNotRecorded(ArrayState.STATE_CLOSE_QUOTE, response, '"');
+            state.arrayState.putAsciiIfNew(response, '"');
             state.arrayState.clear();
             state.columnValueFullySent = true;
         } catch (Throwable e) {
             // we have to disambiguate here if this is very first attempt to send the value, which failed
             // and we have any partial value we can send to the clint, or our state did not bookmark anything?
-            state.columnValueFullySent = state.arrayState.zeroState();
+            state.columnValueFullySent = state.arrayState.isNothingWritten();
             state.arrayState.reset(arrayView);
             throw e;
         }

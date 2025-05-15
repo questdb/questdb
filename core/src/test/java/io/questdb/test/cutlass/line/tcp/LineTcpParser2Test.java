@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.arr.NoopArrayState;
+import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.line.LineException;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
@@ -540,7 +540,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                     sink.put(entity.getValue()).put('i');
                     break;
                 case LineTcpParser.ENTITY_TYPE_ARRAY:
-                    ArrayTypeDriver.arrayToJson(entity.getArray(), sink, NoopArrayState.INSTANCE);
+                    ArrayTypeDriver.arrayToJson(entity.getArray(), sink, NoopArrayWriteState.INSTANCE);
                     break;
                 default:
                     Utf8s.utf8ToUtf16(entity.getValue().lo(), entity.getValue().hi(), sink);

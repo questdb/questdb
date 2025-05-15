@@ -27,7 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.arr.NoopArrayState;
+import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.line.tcp.ArrayBinaryFormatParser;
@@ -520,7 +520,7 @@ public class ArrayTest extends AbstractCairoTest {
             array.setDimLen(0, 0);
             array.applyShape();
             sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayWriteState.INSTANCE);
             assertEquals("[]", sink.toString());
         }
     }
@@ -1035,7 +1035,7 @@ public class ArrayTest extends AbstractCairoTest {
             memA.putDouble(5);
             memA.putDouble(6);
             sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayWriteState.INSTANCE);
             String textViewStr = sink.toString();
 
             long start = mem;
@@ -1049,7 +1049,7 @@ public class ArrayTest extends AbstractCairoTest {
                 start += size;
             } while (!finish);
 
-            ArrayTypeDriver.arrayToJson(parserNative.getArray(), sink, NoopArrayState.INSTANCE);
+            ArrayTypeDriver.arrayToJson(parserNative.getArray(), sink, NoopArrayWriteState.INSTANCE);
             assertEquals(textViewStr, sink.toString());
         } catch (ArrayBinaryFormatParser.ParseException e) {
             throw new RuntimeException(e);
@@ -1410,7 +1410,7 @@ public class ArrayTest extends AbstractCairoTest {
             memA.putDouble(3.0);
             memA.putDouble(4.0);
             sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayWriteState.INSTANCE);
             assertEquals("[[1.0,2.0],[3.0,4.0]]", sink.toString());
         }
     }

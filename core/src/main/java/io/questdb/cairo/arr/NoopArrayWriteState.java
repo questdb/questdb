@@ -26,23 +26,23 @@ package io.questdb.cairo.arr;
 
 import io.questdb.std.str.CharSink;
 
-public class NoopArrayState implements ArrayState {
-    public static final NoopArrayState INSTANCE = new NoopArrayState();
+public class NoopArrayWriteState implements ArrayWriteState {
+    public static final NoopArrayWriteState INSTANCE = new NoopArrayWriteState();
 
-    private NoopArrayState() {
+    private NoopArrayWriteState() {
     }
 
     @Override
-    public boolean notRecorded(int flatIndex) {
+    public boolean isNotWritten(int flatIndex) {
         return true;
     }
 
     @Override
-    public void putAsciiIfNotRecorded(int eventType, CharSink<?> sink, char symbol) {
+    public void putAsciiIfNew(CharSink<?> sink, char symbol) {
         sink.put(symbol);
     }
 
     @Override
-    public void record(int flatIndex) {
+    public void wroteFlatIndex(int flatIndex) {
     }
 }
