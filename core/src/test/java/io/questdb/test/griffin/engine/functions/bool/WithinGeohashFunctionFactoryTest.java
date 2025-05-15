@@ -173,6 +173,24 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullAllArgs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlTrips);
+            drainWalQueue();
+            assertException("trips WHERE null WITHIN (null, null);", 25, "cannot compare GEOHASH");
+        });
+    }
+
+    @Test
+    public void testNullRhs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlTrips);
+            drainWalQueue();
+            assertException("trips WHERE pickup_geohash WITHIN (null, null);", 35, "cannot compare GEOHASH");
+        });
+    }
+
+    @Test
     public void testVarConstFilter() throws Exception {
         assertQueryAndPlan(
                 "pickup_datetime\tpickup_geohash\n",
