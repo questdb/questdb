@@ -441,7 +441,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcOooHi,
                     srcOooMax,
                     o3TimestampMin,
-                    o3TimestampLo,
                     partitionTimestamp,
                     partitionTimestamp,
                     // below parameters are unused by this type of append
@@ -526,9 +525,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // so for prefix and suffix we will need a flag indicating source of the data
                 // as well as range of rows in that source
 
-                prefixType = O3_BLOCK_NONE;
-                prefixLo = -1;
-                prefixHi = -1;
                 mergeType = O3_BLOCK_NONE;
                 mergeDataLo = -1;
                 mergeDataHi = -1;
@@ -798,6 +794,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
 
+                // Save inital overlap state, mergeType can be re-written in commit replace mode
                 boolean overlaps = mergeType == O3_BLOCK_MERGE;
                 if (tableWriter.isCommitReplaceMode()) {
                     if (prefixHi < prefixLo) {
@@ -826,7 +823,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     );
                 }
 
-                // Save inital overlap state, mergeType can be re-written in commit replace mode
                 if (tableWriter.isCommitReplaceMode()) {
                     if (srcOooLo <= srcOooHi) {
                         if (mergeType == O3_BLOCK_MERGE) {
@@ -1002,9 +998,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (tableWriter.isCommitReplaceMode()) {
                     canAppendOnly &= (!overlaps && suffixType == O3_BLOCK_O3);
                 } else {
-                    boolean canAppendOnly1 = mergeType == O3_BLOCK_NONE && (prefixType == O3_BLOCK_NONE || prefixType == O3_BLOCK_DATA);
-                    boolean canAppendOnly2 = prefixType == O3_BLOCK_NONE;
-                    canAppendOnly &= canAppendOnly1;
+                    canAppendOnly &= mergeType == O3_BLOCK_NONE && (prefixType == O3_BLOCK_NONE || prefixType == O3_BLOCK_DATA);
                 }
                 if (canAppendOnly) {
                     // We do not need to create a copy of partition when we simply need to append
@@ -1045,7 +1039,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcOooHi,
                     srcOooMax,
                     newMinPartitionTimestamp,
-                    o3TimestampLo,
                     partitionTimestamp,
                     oldPartitionTimestamp,
                     prefixType,
@@ -1974,7 +1967,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcOooHi,
             long srcOooMax,
             long oooTimestampMin,
-            long oooTimestampLo,
             long partitionTimestamp,
             long oldPartitionTimestamp,
             int prefixType,
@@ -2119,7 +2111,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
 
         try {
-            assert o3Basket.isClear();
             for (int i = 0; i < columnCount; i++) {
                 final int columnType = metadata.getColumnType(i);
                 if (columnType < 0) {

@@ -6049,8 +6049,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         columnVersionWriter.removePartition(partitionTimestamp);
                         partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
                         partitionsRemoved = true;
-                        firstPartitionRemoved = removedIndex == 0;
-                        lastPartitionRemoved = removedIndex == txWriter.getPartitionCount();
+                        firstPartitionRemoved |= removedIndex == 0;
+                        lastPartitionRemoved |= removedIndex == txWriter.getPartitionCount();
 
                         if (lastPartitionRemoved) {
                             if (removedIndex > 0) {
