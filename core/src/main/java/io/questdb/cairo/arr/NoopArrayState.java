@@ -33,10 +33,6 @@ public class NoopArrayState implements ArrayState {
     }
 
     @Override
-    public void record(int flatIndex) {
-    }
-
-    @Override
     public boolean notRecorded(int flatIndex) {
         return true;
     }
@@ -44,5 +40,9 @@ public class NoopArrayState implements ArrayState {
     @Override
     public void putAsciiIfNotRecorded(int eventType, int eventDelta, CharSink<?> sink, char symbol) {
         sink.put(symbol);
+    }
+
+    @Override
+    public void record(int flatIndex) {
     }
 }

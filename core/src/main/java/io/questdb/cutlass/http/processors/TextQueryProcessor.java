@@ -76,12 +76,12 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 
 public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
+    private static final Log LOG = LogFactory.getLog(TextQueryProcessor.class);
     // Factory cache is thread local due to possibility of factory being
     // closed by another thread. Peer disconnect is a typical example of this.
     // Being asynchronous we may need to be able to return factory to the cache
     // by the same thread that executes the dispatcher.
     private static final LocalValue<TextQueryProcessorState> LV = new LocalValue<>();
-    private static final Log LOG = LogFactory.getLog(TextQueryProcessor.class);
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final MillisecondClock clock;
     private final JsonQueryProcessorConfiguration configuration;
