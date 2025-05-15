@@ -217,9 +217,7 @@ public class TxReader implements Closeable, Mutable {
 
     public long getLastPartitionTimestamp() {
         if (PartitionBy.isPartitioned(partitionBy)) {
-            return attachedPartitions.size() > 0
-                    ? attachedPartitions.get(attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION)
-                    : getPartitionTimestampByTimestamp(maxTimestamp);
+            return getPartitionTimestampByTimestamp(maxTimestamp);
         }
         return DEFAULT_PARTITION_TIMESTAMP;
     }

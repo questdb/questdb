@@ -130,10 +130,6 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
     private void mergeAllPartitions(TableToken merged) {
         FilesFacade ff = configuration.getFilesFacade();
-        try (TableWriter writer = getWriter(merged)) {
-            writer.squashAllPartitionsIntoOne();
-        }
-
         engine.releaseInactive();
 
         // Force overwrite partitioning to by YEAR
@@ -149,6 +145,10 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
         Unsafe.free(addr, 4, MemoryTag.NATIVE_DEFAULT);
         ff.close(metaFd);
+
+        try (TableWriter writer = getWriter(merged)) {
+            writer.squashAllPartitionsIntoOne();
+        }
     }
 
     @Override
