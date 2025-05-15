@@ -161,7 +161,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
         TableToken merged = fuzzer.createInitialTableEmptyNonWal(tableNameMerged);
 
         assertMemoryLeak(() -> {
-            TableToken src = fuzzer.createInitialTableWal(tableName, 0);
+            TableToken src = fuzzer.createInitialTableNonWal(tableName, null);
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd);
 
             fuzzer.applyNonWal(transactions, tableName, rnd);

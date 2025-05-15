@@ -318,7 +318,6 @@ public class WalWriter implements TableWriterAPI {
 
     /**
      * Commit the materialized view with the last refresh transaction number and
-     *
      * @param lastRefreshBaseTxn    the base table seqTxn the mat view is refreshed at
      * @param lastRefreshTimestamp  the wall clock timestamp when the refresh is done
      * @param lastReplaceRangeLowTs the low timestamp of the range to be replaced, inclusive

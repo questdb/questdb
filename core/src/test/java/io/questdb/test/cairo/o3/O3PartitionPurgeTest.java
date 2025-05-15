@@ -695,8 +695,8 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 // Open a reader to not make partition remove trivial
                 try (TableReader ignored = getReader("tbl")) {
                     // In order inserts partition 1970-01-09
-                    execute("insert into tbl select 4, '1970-01-09T10:01'");
                     execute("insert into tbl select 4, '1970-01-09T10'");
+                    execute("insert into tbl select 4, '1970-01-09T09:59'");
 
                     // Simulate a rolled back commit, add a directory with name 1970-01-09.2
                     try {

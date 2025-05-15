@@ -1,4 +1,3 @@
-
 /*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
@@ -4214,7 +4213,7 @@ public class WalWriterTest extends AbstractCairoTest {
         TableToken tableToken = createTable(model);
         try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
             for (int i = 0; i < 10; i++) {
-                TableWriter.Row row = walWriter.newRow(0);
+                TableWriter.Row row = walWriter.newRow(i);
                 row.putByte(0, (byte) i);
                 row.putSym(1, "sym" + i);
                 row.append();
@@ -4223,7 +4222,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     walWriter.commit();
                 } else {
                     if (newFormat) {
-                        walWriter.commitMatView(refreshTxn + i, i, 0, 0);
+                        walWriter.commitMatView(refreshTxn + i, i, i, i + 1);
                     } else {
                         walWriter.commit();
                     }

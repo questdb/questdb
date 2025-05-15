@@ -6808,6 +6808,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         setPathForNativePartition(pathToPartition, partitionBy, txWriter.getPartitionTimestampByTimestamp(o3TimestampMin), srcNameTxn);
                         final int plen = pathToPartition.size();
                         int columnsPublished = 0;
+                        long minTimestamp = isCommitReplaceMode() ? txWriter.getMinTimestamp() : o3TimestampMin;
                         for (int i = 0; i < columnCount; i++) {
                             final int columnType = metadata.getColumnType(i);
                             if (columnType < 0) {
@@ -6852,7 +6853,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         srcOooLo,
                                         srcOooHi,
                                         srcOooMax,
-                                        o3TimestampMin,
+                                        minTimestamp,
                                         partitionTimestamp,
                                         srcDataTop,
                                         srcDataMax,
