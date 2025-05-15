@@ -36,6 +36,11 @@ jobs:
         with:
           toolchain: 1.79.0
           cache-workspaces: compat/src/test/rust/scenarios
+      - name: Setup golang toolchain
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+          cache-dependency-path: compat/src/test/golang/go.sum
       - name: Setup .NET
         uses: actions/setup-dotnet@v3
         with:
