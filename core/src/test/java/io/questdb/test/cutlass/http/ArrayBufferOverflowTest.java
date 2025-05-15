@@ -93,29 +93,29 @@ public class ArrayBufferOverflowTest extends AbstractTest {
             };
 
             var statePrototype = new ArrayWriteState() {
-                int contender;
-                int flatIndex;
+                int flatIndexAlreadyWritten;
                 int sinkLen = 0;
-                int target;
+                int symbolsAlreadyWritten;
+                int symbolsSeenSinceRestart;
 
                 @Override
                 public boolean isNew(int flatIndex) {
-                    return this.flatIndex <= flatIndex;
+                    return this.flatIndexAlreadyWritten <= flatIndex;
                 }
 
                 @Override
                 public void putAsciiIfNew(CharSink<?> sink, char symbol) {
-                    if (++contender > target) {
+                    if (++symbolsSeenSinceRestart > symbolsAlreadyWritten) {
                         sink.put(symbol);
                         this.sinkLen = sinkActual.length();
-                        target = contender;
+                        symbolsAlreadyWritten = symbolsSeenSinceRestart;
                     }
                 }
 
                 @Override
                 public void wroteFlatIndex(int flatIndex) {
                     this.sinkLen = sinkActual.length();
-                    this.flatIndex = flatIndex;
+                    this.flatIndexAlreadyWritten = flatIndex;
                 }
             };
 
@@ -130,7 +130,7 @@ public class ArrayBufferOverflowTest extends AbstractTest {
                     break;
                 } catch (Throwable e) {
                     sinkActual.trimTo(statePrototype.sinkLen);
-                    statePrototype.contender = 0;
+                    statePrototype.symbolsSeenSinceRestart = 0;
                 }
             }
 
@@ -213,7 +213,7 @@ public class ArrayBufferOverflowTest extends AbstractTest {
 
     @Ignore
     @Test
-    public void testTextHttpWithNonDefaultStrides() throws Exception {
+    public void testTextHttpWithNonVanilla() throws Exception {
         var rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
             HttpServerConfigurationBuilder httpServerConfigurationBuilder = new HttpServerConfigurationBuilder();
