@@ -8195,6 +8195,58 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRefreshMatView10() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW 'x_view' INTERVAL FROM '2020-09-10T20:00:00.000000Z';",
+                    78,
+                    "'to' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView11() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "refresh materialized view 'x_view' interval from '2020-09-10T20:00:00.000000Z' to",
+                    81,
+                    "TO timestamp expected"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView12() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "refresh materialized view 'x_view' interval from '2020-09-10T20:00:00.000000Z' to 'foobar'",
+                    82,
+                    "invalid TO timestamp value"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView13() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "refresh materialized view 'x_view' interval from '2020-09-10T20:00:00.000000Z' to '2020-09-10T19:00:00.000000Z'",
+                    82,
+                    "TO timestamp must not be earlier than FROM timestamp"
+            );
+        });
+    }
+
+    @Test
     public void testRefreshMatView2() throws Exception {
         assertSyntaxError(
                 "REFRESH MATERIALIZED VIEW",
@@ -8242,7 +8294,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertException(
                     "REFRESH MATERIALIZED VIEW 'x_view' foobar",
                     35,
-                    "'full' or 'incremental' expected"
+                    "'full' or 'incremental' or 'interval' expected"
             );
         });
     }
@@ -8256,6 +8308,45 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     "REFRESH MATERIALIZED VIEW 'x_view' INCREMENTAL foobar",
                     47,
                     "unexpected token"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView7() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW 'x_view' INTERVAL;",
+                    43,
+                    "'from' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView8() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW 'x_view' INTERVAL FROM",
+                    48,
+                    "FROM timestamp expected"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView9() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW 'x_view' INTERVAL FROM foobar;",
+                    49,
+                    "invalid FROM timestamp value"
             );
         });
     }
