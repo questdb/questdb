@@ -690,13 +690,12 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         final int stride = array.getStride(dim);
         final boolean atDeepestDim = dim == array.getDimCount() - 1;
 
-        arrayState.putAsciiIfNotRecorded(ArrayState.STATE_OPEN_BRACKET, 1, sink, openChar);
+        arrayState.putAsciiIfNotRecorded(ArrayState.STATE_OPEN_BRACKET, sink, openChar);
 
         if (atDeepestDim) {
-            int elementCommaCount = 0;
             for (int i = 0; i < count; i++) {
                 if (i != 0) {
-                    arrayState.putAsciiIfNotRecorded(ArrayState.STATE_COMMA_VALUES, ++elementCommaCount, sink, ',');
+                    arrayState.putAsciiIfNotRecorded(ArrayState.STATE_COMMA_VALUES, sink, ',');
                 }
                 if (arrayState.notRecorded(flatIndex)) {
                     appender.appendFromFlatIndex(array, flatIndex, sink);
@@ -707,16 +706,15 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
                 }
             }
         } else {
-            int dimCommaCount = 0;
             for (int i = 0; i < count; i++) {
                 if (i != 0) {
-                    arrayState.putAsciiIfNotRecorded(ArrayState.STATE_COMMA_DIMS, ++dimCommaCount, sink, ',');
+                    arrayState.putAsciiIfNotRecorded(ArrayState.STATE_COMMA_DIMS, sink, ',');
                 }
                 arrayToText(array, dim + 1, flatIndex, sink, appender, openChar, closeChar, arrayState);
                 flatIndex += stride;
             }
         }
-        arrayState.putAsciiIfNotRecorded(ArrayState.STATE_CLOSE_BRACKET, 1, sink, closeChar);
+        arrayState.putAsciiIfNotRecorded(ArrayState.STATE_CLOSE_BRACKET, sink, closeChar);
     }
 
     private static void padTo(@NotNull MemoryA dataMem, int byteAlignment) {

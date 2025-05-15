@@ -65,8 +65,8 @@ public class HttpResponseArrayState implements ArrayState, Mutable {
     }
 
     @Override
-    public void putAsciiIfNotRecorded(int eventType, int eventDelta, CharSink<?> sink, char symbol) {
-        if ((contender[eventType] += eventDelta) > target[eventType]) {
+    public void putAsciiIfNotRecorded(int eventType, CharSink<?> sink, char symbol) {
+        if (++contender[eventType] > target[eventType]) {
             sink.put(symbol);
             response.bookmark();
             target[eventType] = contender[eventType];

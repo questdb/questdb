@@ -38,7 +38,7 @@ public class NoopArrayState implements ArrayState {
     }
 
     @Override
-    public void putAsciiIfNotRecorded(int eventType, int eventDelta, CharSink<?> sink, char symbol) {
+    public void putAsciiIfNotRecorded(int eventType, CharSink<?> sink, char symbol) {
         sink.put(symbol);
     }
 

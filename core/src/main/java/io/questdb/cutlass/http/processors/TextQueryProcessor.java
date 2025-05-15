@@ -574,9 +574,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         state.arrayState.of(response);
         var arrayView = state.arrayState.getArrayView() == null ? record.getArray(columnIdx, columnType) : state.arrayState.getArrayView();
         try {
-            state.arrayState.putAsciiIfNotRecorded(ArrayState.STATE_OPEN_QUOTE, 1, response, '"');
+            state.arrayState.putAsciiIfNotRecorded(ArrayState.STATE_OPEN_QUOTE, response, '"');
             ArrayTypeDriver.arrayToJson(arrayView, response, state.arrayState);
-            state.arrayState.putAsciiIfNotRecorded(ArrayState.STATE_CLOSE_QUOTE, 1, response, '"');
+            state.arrayState.putAsciiIfNotRecorded(ArrayState.STATE_CLOSE_QUOTE, response, '"');
             state.arrayState.clear();
             state.columnValueFullySent = true;
         } catch (Throwable e) {

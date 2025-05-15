@@ -37,7 +37,7 @@ public interface ArrayState {
 
     boolean notRecorded(int flatIndex);
 
-    void putAsciiIfNotRecorded(int eventType, int eventDelta, CharSink<?> sink, char symbol);
+    void putAsciiIfNotRecorded(int eventType, CharSink<?> sink, char symbol);
 
     void record(int flatIndex);
 }

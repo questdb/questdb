@@ -106,8 +106,8 @@ public class ArrayBufferOverflowTest extends AbstractTest {
                 }
 
                 @Override
-                public void putAsciiIfNotRecorded(int eventType, int eventDelta, CharSink<?> sink, char symbol) {
-                    if ((contender[eventType] += eventDelta) > target[eventType]) {
+                public void putAsciiIfNotRecorded(int eventType, CharSink<?> sink, char symbol) {
+                    if (++contender[eventType] > target[eventType]) {
                         sink.put(symbol);
                         this.sinkLen = sinkActual.length();
                         target[eventType] = contender[eventType];
