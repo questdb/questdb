@@ -158,18 +158,14 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            double value = Double.MAX_VALUE;
-            boolean allAreNull = true;
+            double value = Double.POSITIVE_INFINITY;
             for (int i = 0; i < n; i++) {
                 final double v = args.getQuick(i).getDouble(rec);
-                if (Numbers.isNull(v)) {
-                    continue;
-                } else {
-                    allAreNull = false;
+                if (!Numbers.isNull(v)) {
+                    value = Math.min(value, v);
                 }
-                value = Math.min(value, v);
             }
-            return allAreNull ? Double.NaN : value;
+            return value;
         }
 
         @Override
@@ -195,17 +191,15 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             long value = Long.MAX_VALUE;
-            boolean allAreNull = true;
+            boolean foundValidValue = false;
             for (int i = 0; i < n; i++) {
                 final long v = args.getQuick(i).getLong(rec);
-                if (v == Numbers.LONG_NULL) {
-                    continue;
-                } else {
-                    allAreNull = false;
+                if (v != Numbers.LONG_NULL) {
+                    foundValidValue = true;
+                    value = Math.min(value, v);
                 }
-                value = Math.min(value, v);
             }
-            return allAreNull ? Long.MIN_VALUE : value;
+            return foundValidValue ? value : Numbers.LONG_NULL;
         }
 
         @Override
