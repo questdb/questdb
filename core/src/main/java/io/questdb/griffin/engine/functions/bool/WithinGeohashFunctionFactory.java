@@ -25,10 +25,12 @@
 package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -44,6 +46,21 @@ import io.questdb.std.Transient;
 
 
 public class WithinGeohashFunctionFactory implements FunctionFactory {
+    public static long getGeoHashAsLong(Record rec, Function geoHashFunc, int geoHashType) {
+        switch (ColumnType.tagOf(geoHashType)) {
+            case ColumnType.GEOBYTE:
+                return geoHashFunc.getGeoByte(rec);
+            case ColumnType.GEOSHORT:
+                return geoHashFunc.getGeoShort(rec);
+            case ColumnType.GEOINT:
+                return geoHashFunc.getGeoInt(rec);
+            case ColumnType.GEOLONG:
+                return geoHashFunc.getGeoLong(rec);
+            default:
+                throw new UnsupportedOperationException();
+        }
+    }
+
     @Override
     public String getSignature() {
         return "within(GV)";
@@ -61,10 +78,14 @@ public class WithinGeohashFunctionFactory implements FunctionFactory {
         int runtimeConstCount = 0;
         final Function firstArg = args.getQuick(0);
         final int argCount = args.size() - 1;
-        for (int i = 1, n = args.size(); i < n; i++) {
+
+        for (int i = 1; i <= argCount; i++) {
             Function func = args.getQuick(i);
-            if (!ColumnType.isGeoHash(func.getType())) {
-                throw SqlException.position(argPositions.getQuick(i)).put("cannot compare GEOHASH with type ").put(ColumnType.nameOf(func.getType()));
+            int funcType = ColumnType.tagOf(func.getType());
+            if (!(funcType >= ColumnType.GEOBYTE && funcType <= ColumnType.GEOLONG) && func.getType() != ColumnType.UNDEFINED) {
+                throw SqlException.position(argPositions.getQuick(i))
+                        .put("cannot compare GEOHASH with type ")
+                        .put(ColumnType.nameOf(funcType));
             }
 
             if (func.isConstant()) {
@@ -95,34 +116,29 @@ public class WithinGeohashFunctionFactory implements FunctionFactory {
             }
         }
 
-        // todo(nwoolmer): WithinGeohashRuntimeConstFunction
+        if (runtimeConstCount == argCount || runtimeConstCount + constCount == argCount) {
+            final IntList positions = new IntList();
+            positions.addAll(argPositions);
+            return new WithinGeohashRuntimeConstFunction(new ObjList<>(args), positions);
+        }
+
 
         // have to copy, args is mutable
         return new WithinGeohashVarVarFunction(new ObjList<>(args));
     }
 
-    private static long getGeoHashAsLong(Record rec, Function geoHashFunc, int geoHashType) {
-        assert ColumnType.isGeoHash(geoHashType);
-
-        switch (ColumnType.tagOf(geoHashType)) {
-            case ColumnType.GEOBYTE:
-                return geoHashFunc.getGeoByte(rec);
-            case ColumnType.GEOSHORT:
-                return geoHashFunc.getGeoShort(rec);
-            case ColumnType.GEOINT:
-                return geoHashFunc.getGeoInt(rec);
-            case ColumnType.GEOLONG:
-                return geoHashFunc.getGeoLong(rec);
-            default:
-                throw new UnsupportedOperationException();
-        }
-    }
-
     private static abstract class AbstractWithinGeohashFunction extends NegatableBooleanFunction implements MultiArgFunction {
+        protected final int argCount;
         protected final ObjList<Function> args;
+        protected final Function geoHashFunc;
+        protected final int geoHashType;
+        protected long geoHashValue;
 
         public AbstractWithinGeohashFunction(ObjList<Function> args) {
             this.args = args;
+            this.argCount = args.size() - 1;
+            this.geoHashFunc = args.getQuick(0);
+            this.geoHashType = geoHashFunc.getType();
         }
 
         @Override
@@ -147,10 +163,8 @@ public class WithinGeohashFunctionFactory implements FunctionFactory {
 
         public WithinGeohashConstConstFunction(ObjList<Function> args) {
             super(args);
-            final Function geoHashFunc = args.getQuick(0);
-            final int geoHashType = geoHashFunc.getType();
-            final long geoHashValue = getGeoHashAsLong(null, geoHashFunc, geoHashType);
-            for (int i = 1, n = args.size(); i < n; i++) {
+            geoHashValue = getGeoHashAsLong(null, geoHashFunc, geoHashType);
+            for (int i = 1; i <= argCount; i++) {
                 final Function prefixFunc = args.getQuick(i);
                 final int prefixFuncType = prefixFunc.getType();
                 final long prefixValue = getGeoHashAsLong(null, prefixFunc, prefixFuncType);
@@ -171,21 +185,17 @@ public class WithinGeohashFunctionFactory implements FunctionFactory {
 
     // Const LHS
     private static class WithinGeohashConstVarFunction extends AbstractWithinGeohashFunction {
-        final Function geoHashFunc;
-        final int geoHashType;
         final long geoHashValue;
 
         public WithinGeohashConstVarFunction(ObjList<Function> args) {
             super(args);
-            geoHashFunc = args.getQuick(0);
-            geoHashType = geoHashFunc.getType();
             geoHashValue = getGeoHashAsLong(null, geoHashFunc, geoHashType);
         }
 
         // all hashes must be higher or same precision as comparator
         @Override
         public boolean getBool(Record rec) {
-            for (int i = 1, n = args.size(); i < n; i++) {
+            for (int i = 1; i <= argCount; i++) {
                 final Function prefixFunc = args.getQuick(i);
                 final int prefixFuncType = prefixFunc.getType();
                 final long prefixValue = getGeoHashAsLong(rec, prefixFunc, prefixFuncType);
@@ -194,36 +204,81 @@ public class WithinGeohashFunctionFactory implements FunctionFactory {
                     return !negated;
                 }
             }
-
             return negated;
         }
     }
 
-    private static class WithinGeohashVarConstFunction extends AbstractWithinGeohashFunction {
-        final LongList hashesAndMasks;
+    private static class WithinGeohashRuntimeConstFunction extends AbstractWithinGeohashFunction {
+        IntList argPositions;
+        long geoHashValue;
+        ObjList<Function> prefixFuncs;
+        LongList prefixList;
+        int prefixListSize;
 
-        public WithinGeohashVarConstFunction(ObjList<Function> args) throws NumericException {
+        public WithinGeohashRuntimeConstFunction(ObjList<Function> args, IntList argPositions) {
             super(args);
-            hashesAndMasks = new LongList(args.size() - 1);
-            for (int i = 1, n = args.size(); i < n; i++) {
-                final Function prefixFunc = args.getQuick(i);
-                final int prefixFuncType = prefixFunc.getType();
-                final long prefixValue = getGeoHashAsLong(null, prefixFunc, prefixFuncType);
-                GeoHashes.addNormalizedGeoPrefix(prefixValue, prefixFuncType, args.getQuick(0).getType(), hashesAndMasks);
-
-            }
+            this.prefixFuncs = args;
+            this.argPositions = argPositions;
         }
 
         // all hashes must be higher or same precision as comparator
         @Override
         public boolean getBool(Record rec) {
-            final Function geoHashFunc = args.getQuick(0);
-            final int geoHashType = geoHashFunc.getType();
-            final long geoHashValue = getGeoHashAsLong(rec, geoHashFunc, geoHashType);
+            geoHashValue = getGeoHashAsLong(rec, geoHashFunc, geoHashType);
+            for (int i = 0; i < prefixListSize; i += 2) {
+                final long prefixValue = prefixList.getQuick(i);
+                final long prefixMask = prefixList.getQuick(i + 1);
+                if ((geoHashValue & prefixMask) == prefixValue) {
+                    return !negated;
+                }
+            }
+            return negated;
+        }
 
-            for (int i = 0, n = hashesAndMasks.size(); i < n; i += 2) {
-                final long prefixValue = hashesAndMasks.getQuick(i);
-                final long prefixMask = hashesAndMasks.getQuick(i + 1);
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            prefixList = new LongList((argCount) * 2);
+            for (int i = 1; i <= argCount; i++) {
+                final Function prefixFunc = args.getQuick(i);
+                final int prefixFuncType = prefixFunc.getType();
+                final long prefixValue = getGeoHashAsLong(null, prefixFunc, prefixFuncType);
+                try {
+                    GeoHashes.addNormalizedGeoPrefix(prefixValue, prefixFuncType, geoHashType, prefixList);
+                } catch (NumericException ex) {
+                    throw CairoException.nonCritical()
+                            .position(argPositions.getQuick(0))
+                            .put("could not process geohash: ")
+                            .put(GeoHashes.toString0(prefixValue, prefixFuncType));
+                }
+            }
+            prefixListSize = prefixList.size();
+        }
+    }
+
+    private static class WithinGeohashVarConstFunction extends AbstractWithinGeohashFunction {
+        final LongList prefixList;
+        final int preflixListSize;
+
+        public WithinGeohashVarConstFunction(ObjList<Function> args) throws NumericException {
+            super(args);
+            prefixList = new LongList((args.size() - 1) * 2);
+            for (int i = 1; i <= argCount; i++) {
+                final Function prefixFunc = args.getQuick(i);
+                final int prefixFuncType = prefixFunc.getType();
+                final long prefixValue = getGeoHashAsLong(null, prefixFunc, prefixFuncType);
+                GeoHashes.addNormalizedGeoPrefix(prefixValue, prefixFuncType, args.getQuick(0).getType(), prefixList);
+            }
+            preflixListSize = prefixList.size();
+        }
+
+        // all hashes must be higher or same precision as comparator
+        @Override
+        public boolean getBool(Record rec) {
+            geoHashValue = getGeoHashAsLong(rec, geoHashFunc, geoHashType);
+            for (int i = 0; i < preflixListSize; i += 2) {
+                final long prefixValue = prefixList.getQuick(i);
+                final long prefixMask = prefixList.getQuick(i + 1);
                 if ((geoHashValue & prefixMask) == prefixValue) {
                     return !negated;
                 }
@@ -241,11 +296,8 @@ public class WithinGeohashFunctionFactory implements FunctionFactory {
         // all hashes must be higher or same precision as comparator
         @Override
         public boolean getBool(Record rec) {
-            final Function geoHashFunc = args.getQuick(0);
-            final int geoHashType = geoHashFunc.getType();
-            final long geoHashValue = getGeoHashAsLong(rec, geoHashFunc, geoHashType);
-
-            for (int i = 1, n = args.size(); i < n; i++) {
+            geoHashValue = getGeoHashAsLong(rec, geoHashFunc, geoHashType);
+            for (int i = 1; i <= argCount; i++) {
                 final Function prefixFunc = args.getQuick(i);
                 final int prefixFuncType = prefixFunc.getType();
                 final long prefixValue = getGeoHashAsLong(rec, prefixFunc, prefixFuncType);
