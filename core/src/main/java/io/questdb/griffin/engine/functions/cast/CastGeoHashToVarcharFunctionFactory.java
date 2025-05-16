@@ -40,6 +40,8 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
+import java.util.Objects;
+
 public class CastGeoHashToVarcharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
@@ -69,26 +71,29 @@ public class CastGeoHashToVarcharFunctionFactory implements FunctionFactory {
             argType = arg.getType();
         }
 
+        public void getVarchar(Record rec, Utf8StringSink sink) {
+            long hash = WithinGeohashFunctionFactory.getGeoHashAsLong(rec, arg, argType);
+            sink.clear();
+            if (hash != GeoHashes.NULL) {
+                GeoHashes.appendNoQuotes(hash, GeoHashes.getBitFlags(argType), sink);
+            }
+        }
+
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            long hash = WithinGeohashFunctionFactory.getGeoHashAsLong(null, arg, argType);
-            if (hash == GeoHashes.NULL) {
-                return null;
-            }
-            sinkA.clear();
-            GeoHashes.appendNoQuotes(hash, GeoHashes.getBitFlags(argType), sinkA);
+            getVarchar(rec, sinkA);
             return sinkA;
         }
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
-            long hash = WithinGeohashFunctionFactory.getGeoHashAsLong(null, arg, argType);
-            if (hash == GeoHashes.NULL) {
-                return null;
-            }
-            sinkB.clear();
-            GeoHashes.appendNoQuotes(hash, GeoHashes.getBitFlags(argType), sinkB);
-            return sinkA;
+            getVarchar(rec, sinkB);
+            return sinkB;
+        }
+
+        @Override
+        public int getVarcharSize(Record rec) {
+            return Objects.requireNonNull(getVarcharA(rec)).size();
         }
     }
 }

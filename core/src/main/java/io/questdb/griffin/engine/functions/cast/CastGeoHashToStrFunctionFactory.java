@@ -38,6 +38,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
+import java.util.Objects;
+
 public class CastGeoHashToStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
@@ -67,26 +69,29 @@ public class CastGeoHashToStrFunctionFactory implements FunctionFactory {
             argType = arg.getType();
         }
 
+        public void getStr(Record rec, StringSink sink) {
+            long hash = WithinGeohashFunctionFactory.getGeoHashAsLong(rec, arg, argType);
+            sink.clear();
+            if (hash != GeoHashes.NULL) {
+                GeoHashes.appendNoQuotes(hash, GeoHashes.getBitFlags(argType), sink);
+            }
+        }
+
         @Override
         public CharSequence getStrA(Record rec) {
-            long hash = WithinGeohashFunctionFactory.getGeoHashAsLong(null, arg, argType);
-            if (hash == GeoHashes.NULL) {
-                return null;
-            }
-            sinkA.clear();
-            GeoHashes.appendNoQuotes(hash, GeoHashes.getBitFlags(argType), sinkA);
+            getStr(rec, sinkA);
             return sinkA;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            long hash = WithinGeohashFunctionFactory.getGeoHashAsLong(null, arg, argType);
-            if (hash == GeoHashes.NULL) {
-                return null;
-            }
-            sinkB.clear();
-            GeoHashes.appendNoQuotes(hash, GeoHashes.getBitFlags(argType), sinkB);
-            return sinkA;
+            getStr(rec, sinkB);
+            return sinkB;
+        }
+
+        @Override
+        public int getStrLen(Record rec) {
+            return Objects.requireNonNull(getStrA(rec)).length();
         }
     }
 }
