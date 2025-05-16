@@ -33,8 +33,35 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
+import static org.junit.Assert.assertEquals;
 
 public class PreferencesParserTest extends AbstractCairoTest {
+
+    @Test
+    public void testFragmentedInput() throws Exception {
+        assertMemoryLeak(() -> {
+            final CharSequenceObjHashMap<CharSequence> parserMap = new CharSequenceObjHashMap<>();
+            try (PreferencesParser parser = new PreferencesParser(engine.getConfiguration(), parserMap)) {
+                try (DirectUtf8Sink sink = new DirectUtf8Sink(1024)) {
+                    sink.put("{\"key1\":\"v");
+                    parser.parse(sink);
+
+                    sink.clear();
+                    sink.put("alue1\",\"key2\":\"valu");
+                    parser.parse(sink);
+
+                    sink.clear();
+                    sink.put("e2\",\"key3\":\"value3\"}");
+                    parser.parse(sink);
+                }
+
+                assertEquals(3, parserMap.size());
+                assertEquals("value1", parserMap.get("key1").toString());
+                assertEquals("value2", parserMap.get("key2").toString());
+                assertEquals("value3", parserMap.get("key3").toString());
+            }
+        });
+    }
 
     @Test
     public void testParser() throws Exception {
