@@ -68,6 +68,11 @@ public class HttpRequestValidator {
     }
 
     HttpRequestProcessor validateRequestType(HttpRequestProcessor processor, RejectProcessor rejectProcessor) {
+        if (processor.getSupportedRequestTypes() == ALL) {
+            // ALL request types are supported, these are usually error/reject processors
+            // validation can pass without checking actual request type
+            return processor;
+        }
         if ((processor.getSupportedRequestTypes() & requestType) == 0) {
             final Utf8Sequence method = requestHeader.getMethod();
             rejectProcessor.getMessageSink()
