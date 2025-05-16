@@ -35,6 +35,9 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.std.datetime.CommonFormatUtils.HOUR_24;
+import static io.questdb.std.datetime.CommonFormatUtils.HOUR_AM;
+
 public class GenericDateFormat extends AbstractDateFormat {
     private final IntList compiledOps;
     private final ObjList<String> delimiters;
@@ -365,7 +368,7 @@ public class GenericDateFormat extends AbstractDateFormat {
         int era = 1;
         int timezone = -1;
         long offset = Long.MIN_VALUE;
-        int hourType = DateFormatUtils.HOUR_24;
+        int hourType = HOUR_24;
         int pos = lo;
         long l;
         int len;
@@ -449,8 +452,8 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
                     DateFormatUtils.assertRemaining(pos, hi);
                     hour = Numbers.parseInt(in, pos, ++pos);
-                    if (hourType == DateFormatUtils.HOUR_24) {
-                        hourType = DateFormatUtils.HOUR_AM;
+                    if (hourType == HOUR_24) {
+                        hourType = HOUR_AM;
                     }
                     break;
 
@@ -458,8 +461,8 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
                     DateFormatUtils.assertRemaining(pos + 1, hi);
                     hour = Numbers.parseInt(in, pos, pos += 2);
-                    if (hourType == DateFormatUtils.HOUR_24) {
-                        hourType = DateFormatUtils.HOUR_AM;
+                    if (hourType == HOUR_24) {
+                        hourType = HOUR_AM;
                     }
                     break;
 
@@ -468,8 +471,8 @@ public class GenericDateFormat extends AbstractDateFormat {
                     l = Numbers.parseIntSafely(in, pos, hi);
                     hour = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
-                    if (hourType == DateFormatUtils.HOUR_24) {
-                        hourType = DateFormatUtils.HOUR_AM;
+                    if (hourType == HOUR_24) {
+                        hourType = HOUR_AM;
                     }
                     break;
 

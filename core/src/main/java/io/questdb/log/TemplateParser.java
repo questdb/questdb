@@ -29,9 +29,9 @@ import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonFormatUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8StringSink;
@@ -121,7 +121,7 @@ public class TemplateParser implements Sinkable {
         templateNodes.add(new TemplateNode(TemplateNode.TYPE_DATE, DATE_FORMAT_KEY) {
             @Override
             public void toSink(@NotNull CharSink<?> sink) {
-                dateFormat.format(dateValue.get(), TimestampFormatUtils.EN_LOCALE, null, sink);
+                dateFormat.format(dateValue.get(), CommonFormatUtils.EN_LOCALE, null, sink);
             }
         });
     }

@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.std.datetime.microtime;
+package io.questdb.test.std.datetime.nanotime;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -198,14 +198,9 @@ public class TimeZoneRulesMicrosTest {
         long micros = Timestamps.toMicros(1900, 1, 1, 0, 0);
         final long deadline = Timestamps.toMicros(2115, 12, 31, 0, 0);
         final long step = Math.max(1, rnd.nextLong(30)) * Timestamps.DAY_MICROS;
-        LocalDateTime dt;
+
         while (micros < deadline) {
-            try {
-                dt = LocalDateTime.parse(Timestamps.toString(micros), localDateTimeFormat);
-            } catch (Throwable e) {
-                System.out.println(micros);
-                throw e;
-            }
+            LocalDateTime dt = LocalDateTime.parse(Timestamps.toString(micros), localDateTimeFormat);
 
             for (int i = 0, n = zones.size(); i < n; i++) {
                 ZoneId zone = zones.get(i);
@@ -221,7 +216,6 @@ public class TimeZoneRulesMicrosTest {
                 try {
                     Assert.assertEquals(expected, actual);
                 } catch (Throwable e) {
-                    System.out.println(micros);
                     System.out.println(zone.getId() + "; " + zdt + "; " + Timestamps.toString(actual));
                     System.out.println("e: " + expected + "; a: " + actual);
                     System.out.println(dt);

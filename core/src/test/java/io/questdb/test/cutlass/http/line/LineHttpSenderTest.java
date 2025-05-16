@@ -40,7 +40,6 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -54,6 +53,7 @@ import java.time.temporal.ChronoUnit;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
+import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
 
 public class LineHttpSenderTest extends AbstractBootstrapTest {
 
@@ -643,8 +643,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     // technically, we the storage layer supports dates up to 294247-01-10T04:00:54.775807Z
                     // but DateFormat does reliably support only 4 digit years. thus we use 9999-12-31T23:59:59.999Z
                     // is the maximum date that can be reliably worked with.
-                    long nonDsTs = format.parse("9999-12-31 23:59:59.999999", DateFormatUtils.EN_LOCALE);
-                    long dsTs = format.parse("9999-12-31 23:59:59.999999", DateFormatUtils.EN_LOCALE);
+                    long nonDsTs = format.parse("9999-12-31 23:59:59.999999", EN_LOCALE);
+                    long dsTs = format.parse("9999-12-31 23:59:59.999999", EN_LOCALE);
 
                     // first try with ChronoUnit
                     sender.table("tab")

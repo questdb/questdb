@@ -32,9 +32,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.CommonFormatUtils;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.Dates;
 
 import java.io.Closeable;
 
@@ -95,12 +95,12 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
         final CharSequence tz = timezoneNameFunc.getStrA(null);
         if (tz != null) {
             try {
-                long opt = Timestamps.parseOffset(tz);
+                long opt = Dates.parseOffset(tz);
                 if (opt == Long.MIN_VALUE) {
                     // this is timezone name
                     // fixed rules means the timezone does not have historical or daylight time changes
-                    rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                            Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
+                    rules = CommonFormatUtils.EN_LOCALE.getZoneRules(
+                            Numbers.decodeLowInt(CommonFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
                             RESOLUTION_MICROS
                     );
                 } else {
@@ -118,7 +118,7 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
 
         final CharSequence offset = offsetFunc.getStrA(null);
         if (offset != null) {
-            final long val = Timestamps.parseOffset(offset);
+            final long val = Dates.parseOffset(offset);
             if (val == Numbers.LONG_NULL) {
                 // bad value for offset
                 throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
