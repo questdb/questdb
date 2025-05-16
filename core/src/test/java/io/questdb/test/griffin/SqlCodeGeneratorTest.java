@@ -8354,15 +8354,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testWithinClauseWithoutLatestByFails() throws Exception {
-        assertException(
+        assertQuery("x\tsym\tgeo\tts\n",
                 "select * from tab where geo within(#zz)",
                 "create table tab as " +
                         "(" +
                         " select  x, rnd_symbol('a', 'b') sym, rnd_geohash(10) geo, x::timestamp ts " +
                         " from long_sequence(20) " +
                         "), index(sym) timestamp(ts)",
-                28,
-                "WITHIN clause requires LATEST BY clause"
+                "ts",
+                true,
+                false
         );
     }
 
