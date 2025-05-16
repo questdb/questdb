@@ -49,7 +49,7 @@ public interface ServerConfiguration {
         // bitwise OR below is intentional, always want to append passthrough config
         if (
                 getCairoConfiguration().exportConfiguration(sink)
-                | getPublicPassthroughConfiguration().exportConfiguration(sink)
+                        | getPublicPassthroughConfiguration().exportConfiguration(sink)
         ) {
             sink.clear(sink.size() - 1);
         }
