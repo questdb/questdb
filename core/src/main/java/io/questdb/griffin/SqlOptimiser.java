@@ -292,7 +292,7 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-    public void rewritePivotGenerateAliases(QueryModel model, ObjList<CharSequence> aliasList) {
+    public void rewritePivotGenerateAliases(QueryModel model, ObjList<CharSequence> aliasList) throws SqlException {
         QueryModel nested = model.getNestedModel();
         assert nested.getPivotColumns() != null;
 
@@ -309,7 +309,7 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, n = nested.getPivotColumns().size(); i < n; i++) {
                 final QueryColumn pc = nested.getPivotColumns().getQuick(i);
                 if (!aliasDedupe.add(pc.getAlias())) {
-                    throw SqlException.$(pc.getAst().position, "duplicate alias in pivot definition [alias=").put(pc.getAlias()).$();
+                    throw SqlException.$(pc.getAst().position, "duplicate alias in pivot definition [alias=").put(pc.getAlias());
                 }
                 aliasList.add(pc.getAlias());
             }
