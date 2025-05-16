@@ -40,17 +40,14 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
  * Timing Wheels: data structures to efficiently implement a timer facility".
  */
 // TODOs:
-// - 1 sec interval
-// - deadlines should expire within the bucket
 // - sort timers within bucket
-// - is tail needed?
 public class RefreshIntervalTimingWheel {
     private final MicrosecondClock clock;
     private final int mask;
     private final ObjList<Timer> pendingTimers = new ObjList<>();
     private final long tickDuration;
     private final Bucket[] wheel;
-    private long nextTick;
+    private long tickDeadline;
 
     public RefreshIntervalTimingWheel(MicrosecondClock clock, long tickDuration, int ticksPerWheel) {
         this.clock = clock;
@@ -61,7 +58,7 @@ public class RefreshIntervalTimingWheel {
         }
         this.mask = wheel.length - 1;
         final long now = clock.getTicks();
-        this.nextTick = now - now % tickDuration;
+        this.tickDeadline = now - now % tickDuration;
     }
 
     public Timer addRefreshInterval(MatViewDefinition viewDefinition) {
@@ -80,20 +77,20 @@ public class RefreshIntervalTimingWheel {
     public boolean tick(ObjList<Timer> expired) {
         expired.clear();
 
-        final long now = clock.getTicks();
-        if (now < nextTick) {
+        if (clock.getTicks() < tickDeadline) {
             return false;
         }
 
-        final long tickIdx = now / tickDuration;
+        final long tick = tickDeadline;
+        final long tickIdx = tick / tickDuration;
         final int idx = (int) (tickIdx & mask);
         final Bucket bucket = wheel[idx];
-        addTimers(pendingTimers, tickIdx, now);
+        addTimers(pendingTimers, tickIdx, tick);
         pendingTimers.clear();
-        bucket.expireTimers(expired, now);
+        bucket.expireTimers(expired, tick);
         // reschedule expired timers
-        addTimers(expired, tickIdx, now);
-        nextTick = (now - now % tickDuration) + tickDuration;
+        addTimers(expired, tickIdx, tick);
+        tickDeadline += tickDuration;
         return true;
     }
 
@@ -177,6 +174,7 @@ public class RefreshIntervalTimingWheel {
         private Timer(MatViewDefinition viewDefinition, TimestampSampler sampler) {
             this.viewDefinition = viewDefinition;
             this.sampler = sampler;
+            sampler.setStart(viewDefinition.getIntervalStart());
         }
 
         public MatViewDefinition getViewDefinition() {
@@ -190,11 +188,13 @@ public class RefreshIntervalTimingWheel {
         }
 
         private long nextDeadline(long now) {
-            if (deadline == Long.MIN_VALUE) {
-                sampler.setStart(viewDefinition.getIntervalStart());
-                deadline = sampler.round(now);
+            if (deadline != Long.MIN_VALUE) {
+                deadline = sampler.nextTimestamp(deadline);
             } else {
-                deadline = sampler.nextTimestamp(now);
+                // The timer is added for the first time, so it's fine if it triggers immediately.
+                deadline = now > viewDefinition.getIntervalStart()
+                        ? sampler.nextTimestamp(sampler.round(now - 1))
+                        : viewDefinition.getIntervalStart();
             }
             return deadline;
         }

@@ -2008,61 +2008,46 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntervalRefreshMatView() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-            final String start = "2024-12-12T12:00:00.000000Z";
-            execute(
-                    "create materialized view price_1h refresh interval start '" + start + "' every 1h as (" +
-                            "select sym, last(price) as price, ts from base_price sample by 1h" +
-                            ") partition by day"
-            );
+    public void testIntervalRefreshMatViewBigJumpsClockAfterTickBoundary() throws Exception {
+        testIntervalRefreshMatViewBigJumps("2024-12-12T12:00:01.000000Z", "2024-12-12T13:00:01.000000Z", 2 * Timestamps.HOUR_MICROS);
+    }
 
-            execute(
-                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
-            );
+    @Test
+    public void testIntervalRefreshMatViewBigJumpsClockAtTickBoundary() throws Exception {
+        testIntervalRefreshMatViewBigJumps("2024-12-12T12:00:00.000000Z", "2024-12-12T12:00:00.000000Z", Timestamps.HOUR_MICROS);
+    }
 
-            currentMicros = parseFloorPartialTimestamp(start);
-            final MatViewRefreshIntervalJob refreshIntervalJob = new MatViewRefreshIntervalJob(engine);
-            drainMatViewIntervalQueue(refreshIntervalJob);
-            drainQueues();
+    @Test
+    public void testIntervalRefreshMatViewSmallHourJumps() throws Exception {
+        testIntervalRefreshMatViewSmallJumps(
+                "2024-12-12T00:00:00.000000Z",
+                "2d",
+                "2024-12-11T00:00:00.000000Z",
+                Timestamps.HOUR_MICROS,
+                23
+        );
+    }
 
-            assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
-                    "price_1h order by sym"
-            );
-            assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\trefresh_limit_value\trefresh_limit_unit\n" +
-                            "price_1h\tinterval\tbase_price\t2024-12-12T12:00:00.000000Z\t2024-12-12T12:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\t0\tHOUR\n",
-                    "materialized_views",
-                    null
-            );
+    @Test
+    public void testIntervalRefreshMatViewSmallMinuteJumps1() throws Exception {
+        testIntervalRefreshMatViewSmallJumps(
+                "2024-12-12T01:30:00.000000Z",
+                "30m",
+                "2024-12-12T01:00:00.000000Z",
+                Timestamps.MINUTE_MICROS,
+                29
+        );
+    }
 
-            execute("insert into base_price(sym, price, ts) values('jpyusd', 104.57, '2024-09-10T13:02')");
-
-            currentMicros += Timestamps.HOUR_MICROS;
-            drainMatViewIntervalQueue(refreshIntervalJob);
-            drainQueues();
-
-            assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                            "jpyusd\t104.57\t2024-09-10T13:00:00.000000Z\n",
-                    "price_1h order by sym"
-            );
-        });
+    @Test
+    public void testIntervalRefreshMatViewSmallMinuteJumps2() throws Exception {
+        testIntervalRefreshMatViewSmallJumps(
+                "2024-12-12T01:30:00.000000Z",
+                "30m",
+                "2024-12-12T01:45:00.000000Z",
+                Timestamps.MINUTE_MICROS,
+                14
+        );
     }
 
     @Test
@@ -3338,6 +3323,123 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertViewMatchesSqlOverBaseTable(viewSql);
+        });
+    }
+
+    private void testIntervalRefreshMatViewBigJumps(String start, String initialClock, long clockJump) throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh interval start '" + start + "' every 1h as (" +
+                            "select sym, last(price) as price, ts from base_price sample by 1h" +
+                            ") partition by day"
+            );
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp(initialClock);
+            final MatViewRefreshIntervalJob refreshIntervalJob = new MatViewRefreshIntervalJob(engine);
+            drainMatViewIntervalQueue(refreshIntervalJob);
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\trefresh_limit_value\trefresh_limit_unit\n" +
+                            "price_1h\tinterval\tbase_price\t" + initialClock + "\t" + initialClock + "\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\t0\tHOUR\n",
+                    "materialized_views",
+                    null
+            );
+
+            execute("insert into base_price(sym, price, ts) values('jpyusd', 104.57, '2024-09-10T13:02')");
+
+            currentMicros += clockJump;
+            drainMatViewIntervalQueue(refreshIntervalJob);
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                            "jpyusd\t104.57\t2024-09-10T13:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+        });
+    }
+
+    private void testIntervalRefreshMatViewSmallJumps(String start, String every, String initialClock, long clockJump, int ticksBeforeRefresh) throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh interval start '" + start + "' every " + every + " as (" +
+                            "select sym, last(price) as price, ts from base_price sample by 1h" +
+                            ") partition by day"
+            );
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp(initialClock);
+            final MatViewRefreshIntervalJob refreshIntervalJob = new MatViewRefreshIntervalJob(engine);
+
+            for (int i = 0; i < ticksBeforeRefresh; i++) {
+                drainMatViewIntervalQueue(refreshIntervalJob);
+                drainQueues();
+
+                assertQueryNoLeakCheck(
+                        "sym\tprice\tts\n",
+                        "price_1h order by sym"
+                );
+                assertQueryNoLeakCheck(
+                        "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
+                                "price_1h\tbase_price\tvalid\t\n",
+                        "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
+                        null
+                );
+
+                currentMicros += clockJump;
+            }
+
+            currentMicros += clockJump;
+            drainMatViewIntervalQueue(refreshIntervalJob);
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+            assertQueryNoLeakCheck(
+                    "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
+                            "price_1h\tbase_price\tvalid\t\n",
+                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
+                    null
+            );
         });
     }
 
