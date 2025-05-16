@@ -105,7 +105,6 @@ import io.questdb.std.Vect;
 import io.questdb.std.WeakMutableObjectPool;
 import io.questdb.std.WeakSelfReturningObjectPool;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StdoutSink;
@@ -117,6 +116,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 import static io.questdb.cutlass.pgwire.PGOids.*;
+import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 /**
@@ -809,7 +809,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final long longValue = record.getDate(columnIndex);
         if (longValue != Numbers.LONG_NULL) {
             final long a = responseUtf8Sink.skip();
-            PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, responseUtf8Sink);
+            PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, EN_LOCALE, null, responseUtf8Sink);
             responseUtf8Sink.putLenEx(a);
         } else {
             responseUtf8Sink.setNullValue();
@@ -1126,7 +1126,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             responseUtf8Sink.setNullValue();
         } else {
             a = responseUtf8Sink.skip();
-            TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, responseUtf8Sink);
+            TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, EN_LOCALE, null, responseUtf8Sink);
             responseUtf8Sink.putLenEx(a);
         }
     }

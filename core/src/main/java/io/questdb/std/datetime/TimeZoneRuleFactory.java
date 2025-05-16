@@ -31,6 +31,7 @@ import io.questdb.std.datetime.microtime.TimeZoneRulesMicros;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.datetime.millitime.TimeZoneRulesMillis;
+import io.questdb.std.datetime.nanotime.TimeZoneRulesNanos;
 
 import java.time.ZoneId;
 import java.time.zone.ZoneRules;
@@ -39,6 +40,7 @@ import java.util.Map;
 
 public class TimeZoneRuleFactory {
     public static final TimeZoneRuleFactory INSTANCE = new TimeZoneRuleFactory();
+    public static final int RESOLUTION_NANOS = 2;
     public static final int RESOLUTION_MICROS = 1;
     public static final int RESOLUTION_MILLIS = 0;
     private final ObjList<TimeZoneRules> ruleList = new ObjList<>();
@@ -50,6 +52,7 @@ public class TimeZoneRuleFactory {
             final ZoneRules rules = ZoneRulesProvider.getRules(z, true);
             ruleList.add(new TimeZoneRulesMillis(rules));
             ruleList.add(new TimeZoneRulesMicros(rules));
+            ruleList.add(new TimeZoneRulesNanos(rules));
             ruleMap.put(z, index++);
         }
 
@@ -82,6 +85,6 @@ public class TimeZoneRuleFactory {
     }
 
     public TimeZoneRules getTimeZoneRulesQuick(int index, int resolution) {
-        return ruleList.getQuick(2 * index + resolution);
+        return ruleList.getQuick(3 * index + resolution);
     }
 }

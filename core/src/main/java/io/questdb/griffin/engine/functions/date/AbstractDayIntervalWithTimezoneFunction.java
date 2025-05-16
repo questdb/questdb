@@ -32,9 +32,10 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.CommonFormatUtils;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.Dates;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
@@ -79,7 +80,7 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
         }
 
         try {
-            final long l = Timestamps.parseOffset(tz);
+            final long l = Dates.parseOffset(tz);
             if (l != Long.MIN_VALUE) {
                 // the timezone is in numeric offset format
                 final long offset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;
@@ -90,8 +91,8 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
             }
 
             // the timezone is a timezone name string
-            final TimeZoneRules tzRules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                    Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
+            final TimeZoneRules tzRules = CommonFormatUtils.EN_LOCALE.getZoneRules(
+                    Numbers.decodeLowInt(CommonFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
                     RESOLUTION_MICROS
             );
             final long offset = tzRules.getOffset(now);

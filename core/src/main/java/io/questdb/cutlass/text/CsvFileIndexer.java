@@ -35,15 +35,30 @@ import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.LongObjHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.SwarUtils;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+
+import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
 
 
 /**
@@ -445,7 +460,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     private Path getPartitionIndexDir(long partitionKey) {
         path.of(importRoot).slash();
-        partitionDirFormatMethod.format(partitionKey, DateFormatUtils.EN_LOCALE, null, path);
+        partitionDirFormatMethod.format(partitionKey, EN_LOCALE, null, path);
         return path;
     }
 

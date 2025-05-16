@@ -29,23 +29,18 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
+import static io.questdb.std.datetime.CommonFormatUtils.*;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MILLIS;
 
 public class DateFormatUtils {
-    public static final DateLocale EN_LOCALE = DateLocaleFactory.INSTANCE.getLocale("en");
-    public static final int HOUR_24 = 2;
-    public static final int HOUR_AM = 0;
-    public static final int HOUR_PM = 1;
     public static final DateFormat PG_DATE_FORMAT;
     public static final DateFormat PG_DATE_MILLI_TIME_Z_FORMAT;
     public static final DateFormat PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
     public static final DateFormat PG_DATE_Z_FORMAT;
     public static final DateFormat UTC_FORMAT;
-    public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     private static final DateFormat[] DATE_FORMATS;
     private static final int DATE_FORMATS_SIZE;
     private static final DateFormat HTTP_FORMAT;
@@ -284,7 +279,7 @@ public class DateFormatUtils {
         final int hi = value.length();
         for (int i = 0; i < DATE_FORMATS_SIZE; i++) {
             try {
-                return DATE_FORMATS[i].parse(value, 0, hi, DateFormatUtils.EN_LOCALE);
+                return DATE_FORMATS[i].parse(value, 0, hi, EN_LOCALE);
             } catch (NumericException ignore) {
             }
         }

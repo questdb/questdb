@@ -58,7 +58,6 @@ import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
@@ -74,6 +73,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
+import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
 
 public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietCloseable {
 
@@ -496,7 +496,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 } else {
                     txn = Numbers.parseLong(utf8Sink, txnSep + 1, utf8Sink.size());
                 }
-                long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, DateFormatUtils.EN_LOCALE);
+                long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, EN_LOCALE);
                 if (txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp) == txn) {
                     return;
                 }

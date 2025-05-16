@@ -29,7 +29,9 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.AbstractDateFormat;
+import io.questdb.std.datetime.CommonFormatUtils;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -404,7 +406,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
         int era = 1;
         int timezone = -1;
         long offset = Long.MIN_VALUE;
-        int hourType = TimestampFormatUtils.HOUR_24;
+        int hourType = CommonFormatUtils.HOUR_24;
         int pos = lo;
         long l;
         int len;
@@ -532,8 +534,8 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                 case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
                     TimestampFormatUtils.assertRemaining(pos, hi);
                     hour = Numbers.parseInt(in, pos, ++pos);
-                    if (hourType == TimestampFormatUtils.HOUR_24) {
-                        hourType = TimestampFormatUtils.HOUR_AM;
+                    if (hourType == CommonFormatUtils.HOUR_24) {
+                        hourType = CommonFormatUtils.HOUR_AM;
                     }
                     break;
 
@@ -541,8 +543,8 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                 case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
                     TimestampFormatUtils.assertRemaining(pos + 1, hi);
                     hour = Numbers.parseInt(in, pos, pos += 2);
-                    if (hourType == TimestampFormatUtils.HOUR_24) {
-                        hourType = TimestampFormatUtils.HOUR_AM;
+                    if (hourType == CommonFormatUtils.HOUR_24) {
+                        hourType = CommonFormatUtils.HOUR_AM;
                     }
                     break;
 
@@ -551,8 +553,8 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     l = Numbers.parseIntSafely(in, pos, hi);
                     hour = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
-                    if (hourType == TimestampFormatUtils.HOUR_24) {
-                        hourType = TimestampFormatUtils.HOUR_AM;
+                    if (hourType == CommonFormatUtils.HOUR_24) {
+                        hourType = CommonFormatUtils.HOUR_AM;
                     }
                     break;
 
@@ -679,7 +681,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                 case TimestampFormatCompiler.OP_TIME_ZONE_LONG:
                 case TimestampFormatCompiler.OP_TIME_ZONE_RFC_822:
 
-                    l = Timestamps.parseOffset(in, pos, hi);
+                    l = Dates.parseOffset(in, pos, hi);
                     if (l == Long.MIN_VALUE) {
                         l = locale.matchZone(in, pos, hi);
                         timezone = Numbers.decodeLowInt(l);

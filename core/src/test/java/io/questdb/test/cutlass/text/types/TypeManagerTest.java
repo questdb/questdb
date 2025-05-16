@@ -36,15 +36,20 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.TimestampFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+
+import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
 
 public class TypeManagerTest extends AbstractTest {
     private static JsonLexer jsonLexer;
@@ -238,7 +243,7 @@ public class TypeManagerTest extends AbstractTest {
                 new DateFormatFactory(),
                 DateLocaleFactory.INSTANCE,
                 new TimestampFormatFactory(),
-                DateFormatUtils.EN_LOCALE
+                EN_LOCALE
         );
 
         inputFormatConfiguration.parseConfiguration(getClass(), jsonLexer, root, fileResource);

@@ -52,11 +52,12 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.function.LongSupplier;
+
+import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
     private final BuildInformation buildInformation = new BuildInformationHolder();
@@ -287,7 +288,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public @NotNull DateLocale getDefaultDateLocale() {
-        return DateFormatUtils.EN_LOCALE;
+        return EN_LOCALE;
     }
 
     @Override

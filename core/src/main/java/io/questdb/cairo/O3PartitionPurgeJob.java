@@ -38,7 +38,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -48,6 +47,7 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
 
 public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPurgeTask> implements Closeable {
 
@@ -116,7 +116,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             }
 
             try {
-                long partitionTs = partitionByFormat.parse(fileNameSink.asAsciiCharSequence(), 0, index, DateFormatUtils.EN_LOCALE);
+                long partitionTs = partitionByFormat.parse(fileNameSink.asAsciiCharSequence(), 0, index, EN_LOCALE);
                 partitionList.add(partitionTs);
             } catch (NumericException e) {
                 if (!Utf8s.startsWithAscii(fileNameSink, WalUtils.WAL_NAME_BASE) && !Utf8s.equalsAscii(WalUtils.SEQ_DIR, fileNameSink)

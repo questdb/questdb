@@ -30,8 +30,18 @@ import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FindVisitor;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Os;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
@@ -42,6 +52,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.PartitionBy.getPartitionDirFormatMethod;
 import static io.questdb.std.Files.DT_DIR;
+import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
 
 public class VacuumColumnVersions implements Closeable {
     private static final int COLUMN_VERSION_LIST_CAPACITY = 8;
@@ -274,7 +285,7 @@ public class VacuumColumnVersions implements Closeable {
             }
 
             try {
-                partitionTimestamp = getPartitionDirFormatMethod(partitionBy).parse(fileNameSink.asAsciiCharSequence(), 0, dotIndex, DateFormatUtils.EN_LOCALE);
+                partitionTimestamp = getPartitionDirFormatMethod(partitionBy).parse(fileNameSink.asAsciiCharSequence(), 0, dotIndex, EN_LOCALE);
             } catch (NumericException ex) {
                 // Directory is an invalid partition name, continue
                 LOG.error().$("skipping column version purge VACUUM, invalid partition directory name [name=").$(fileNameSink)

@@ -32,7 +32,8 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.TimestampFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
+
+import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
 
 public class DefaultTextConfiguration implements TextConfiguration {
     private final InputFormatConfiguration inputFormatConfiguration;
@@ -50,7 +51,7 @@ public class DefaultTextConfiguration implements TextConfiguration {
                 new DateFormatFactory(),
                 DateLocaleFactory.INSTANCE,
                 new TimestampFormatFactory(),
-                DateFormatUtils.EN_LOCALE
+                EN_LOCALE
         );
 
         try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
@@ -67,7 +68,7 @@ public class DefaultTextConfiguration implements TextConfiguration {
 
     @Override
     public DateLocale getDefaultDateLocale() {
-        return DateFormatUtils.EN_LOCALE;
+        return EN_LOCALE;
     }
 
     @Override

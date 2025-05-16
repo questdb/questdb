@@ -26,7 +26,6 @@ package io.questdb.std.datetime.microtime;
 
 import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -34,6 +33,7 @@ import io.questdb.std.Os;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.FixedTimeZoneRule;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 
@@ -44,11 +44,8 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public final class Timestamps {
 
-    public static final long DAY_MICROS = 86400000000L; // 24 * 60 * 60 * 1000 * 1000L
+    public static final long DAY_MICROS = 86_400_000_000L; // 24 * 60 * 60 * 1000 * 1000L
     public static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
-    private static final long HALF_YEAR_MICROS = AVG_YEAR_MICROS / 2;
-    private static final long EPOCH_MICROS = 1970L * AVG_YEAR_MICROS;
-    private static final long HALF_EPOCH_MICROS = EPOCH_MICROS / 2;
     public static final long DAY_SECONDS = 86400;
     public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
     public static final long HOUR_MICROS = 3600000000L;
@@ -63,26 +60,16 @@ public final class Timestamps {
     public static final int SECOND_MILLIS = 1000;
     public static final long SECOND_NANOS = 1000000000;
     public static final long STARTUP_TIMESTAMP;
-    public static final int STATE_DELIM = 4;
-    public static final int STATE_END = 6;
-    public static final int STATE_GMT = 2;
-    public static final int STATE_HOUR = 3;
-    public static final int STATE_INIT = 0;
-    public static final int STATE_MINUTE = 5;
-    public static final int STATE_SIGN = 7;
-    public static final int STATE_UTC = 1;
     public static final int WEEK_DAYS = 7;
     public static final long WEEK_MICROS = 604800000000L; // DAY_MICROS * 7
     public static final long YEAR_10000 = 253_402_300_800_000_000L;
     public static final long YEAR_MICROS_NONLEAP = 365 * DAY_MICROS;
-    private static final char AFTER_NINE = '9' + 1;
-    private static final char BEFORE_ZERO = '0' - 1;
     private static final int DAYS_0000_TO_1970 = 719527;
     private static final int[] DAYS_PER_MONTH = {
             31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
     };
-    private static final int DAY_HOURS = 24;
-    private static final int HOUR_MINUTES = 60;
+    public static final int DAY_HOURS = 24;
+    public static final int HOUR_MINUTES = 60;
     private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long YEAR_MICROS_LEAP = 366 * DAY_MICROS;
@@ -819,7 +806,7 @@ public final class Timestamps {
             int lo,
             int hi
     ) throws NumericException {
-        long l = parseOffset(timezone, lo, hi);
+        long l = Dates.parseOffset(timezone, lo, hi);
         if (l == Long.MIN_VALUE) {
             return locale.getZoneRules(
                     Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
@@ -871,27 +858,60 @@ public final class Timestamps {
      * @param micros time micros.
      * @return year
      */
-    public static int getYear(long micros) {
-        long mid = (micros >> 1) + HALF_EPOCH_MICROS;
-        if (mid < 0) {
-            mid = mid - HALF_YEAR_MICROS + 1;
-        }
-        int year = (int) (mid / HALF_YEAR_MICROS);
+//    public static int getYear(long micros) {
+//        long mid = (micros >> 1) + HALF_EPOCH_MICROS;
+//        if (mid < 0) {
+//            mid = mid - HALF_YEAR_MICROS + 1;
+//        }
+//        int year = (int) (mid / HALF_YEAR_MICROS);
+//
+//        boolean leap = isLeapYear(year);
+//        long yearStart = yearMicros(year, leap);
+//        long diff = micros - yearStart;
+//
+//        if (diff < 0) {
+//            year--;
+//        } else if (diff >= YEAR_MICROS_NONLEAP) {
+//            yearStart += leap ? YEAR_MICROS_LEAP : YEAR_MICROS_NONLEAP;
+//            if (yearStart <= micros) {
+//                year++;
+//            }
+//        }
+//
+//        return year;
+//    }
 
-        boolean leap = isLeapYear(year);
-        long yearStart = yearMicros(year, leap);
+    public static int getYear(long micros) {
+        // Initial year estimate relative to 1970
+        // Use a reasonable approximation of days per year to avoid overflow
+        // 365.25 days per year approximation
+        int yearsSinceEpoch = (int)(micros / AVG_YEAR_MICROS);
+        int yearEstimate = 1970 + yearsSinceEpoch;
+
+        // Handle negative years appropriately
+        if (micros < 0 && yearEstimate >= 1970) {
+            yearEstimate = 1969;
+        }
+
+        // Calculate year start
+        boolean leap = isLeapYear(yearEstimate);
+        long yearStart = yearMicros(yearEstimate, leap);
+
+        // Check if we need to adjust
         long diff = micros - yearStart;
 
         if (diff < 0) {
-            year--;
-        } else if (diff >= YEAR_MICROS_NONLEAP) {
-            yearStart += leap ? YEAR_MICROS_LEAP : YEAR_MICROS_NONLEAP;
-            if (yearStart <= micros) {
-                year++;
+            // We're in the previous year
+            yearEstimate--;
+        } else {
+            // Check if we're in the next year
+            long yearLength = leap ? YEAR_MICROS_LEAP : YEAR_MICROS_NONLEAP;
+            if (diff >= yearLength) {
+                yearEstimate++;
             }
         }
 
-        return year;
+        return yearEstimate;
     }
 
     public static long getYearsBetween(long a, long b) {
@@ -972,131 +992,6 @@ public final class Timestamps {
         val /= 1000;
 
         return Numbers.encodeLowHighInts(negative ? val : -val, len);
-    }
-
-    public static long parseOffset(CharSequence in) {
-        return parseOffset(in, 0, in.length());
-    }
-
-    public static long parseOffset(CharSequence in, int lo, int hi) {
-        int p = lo;
-        int state = STATE_INIT;
-        boolean negative = false;
-        int hour = 0;
-        int minute = 0;
-
-        try {
-            OUT:
-            while (p < hi) {
-                char c = in.charAt(p);
-
-                switch (state) {
-                    case STATE_INIT:
-                        switch (c) {
-                            case 'U':
-                            case 'u':
-                                state = STATE_UTC;
-                                break;
-                            case 'G':
-                            case 'g':
-                                state = STATE_GMT;
-                                break;
-                            case 'Z':
-                            case 'z':
-                                state = STATE_END;
-                                break;
-                            case '+':
-                                state = STATE_HOUR;
-                                break;
-                            case '-':
-                                negative = true;
-                                state = STATE_HOUR;
-                                break;
-                            default:
-                                if (isDigit(c)) {
-                                    state = STATE_HOUR;
-                                    p--;
-                                } else {
-                                    return Long.MIN_VALUE;
-                                }
-                                break;
-                        }
-                        p++;
-                        break;
-                    case STATE_UTC:
-                        if (p > hi - 2 || Chars.noMatch(in, p, p + 2, "tc", 0, 2)) {
-                            return Long.MIN_VALUE;
-                        }
-                        state = STATE_SIGN;
-                        p += 2;
-                        break;
-                    case STATE_GMT:
-                        if (p > hi - 2 || Chars.noMatch(in, p, p + 2, "mt", 0, 2)) {
-                            return Long.MIN_VALUE;
-                        }
-                        state = STATE_SIGN;
-                        p += 2;
-                        break;
-                    case STATE_SIGN:
-                        switch (c) {
-                            case '+':
-                                break;
-                            case '-':
-                                negative = true;
-                                break;
-                            default:
-                                return Long.MIN_VALUE;
-                        }
-                        p++;
-                        state = STATE_HOUR;
-                        break;
-                    case STATE_HOUR:
-                        if (isDigit(c) && p < hi - 1) {
-                            hour = Numbers.parseInt(in, p, p + 2);
-                        } else {
-                            return Long.MIN_VALUE;
-                        }
-                        state = STATE_DELIM;
-                        p += 2;
-                        break;
-                    case STATE_DELIM:
-                        if (c == ':') {
-                            state = STATE_MINUTE;
-                            p++;
-                        } else if (isDigit(c)) {
-                            state = STATE_MINUTE;
-                        } else {
-                            return Long.MIN_VALUE;
-                        }
-                        break;
-                    case STATE_MINUTE:
-                        if (isDigit(c) && p < hi - 1) {
-                            minute = Numbers.parseInt(in, p, p + 2);
-                        } else {
-                            return Long.MIN_VALUE;
-                        }
-                        p += 2;
-                        state = STATE_END;
-                        break OUT;
-                    default:
-                        return Long.MIN_VALUE;
-                }
-            }
-        } catch (NumericException e) {
-            return Long.MIN_VALUE;
-        }
-
-        switch (state) {
-            case STATE_DELIM:
-            case STATE_END:
-                if (hour > 23 || minute > 59) {
-                    return Long.MIN_VALUE;
-                }
-                final int min = hour * 60 + minute;
-                return Numbers.encodeLowHighInts(negative ? -min : min, p - lo);
-            default:
-                return Long.MIN_VALUE;
-        }
     }
 
     public static long previousOrSameDayOfWeek(long micros, int dow) {
@@ -1238,7 +1133,7 @@ public final class Timestamps {
             int hi
     ) throws NumericException {
         final long offset;
-        long l = parseOffset(timezone, lo, hi);
+        long l = Dates.parseOffset(timezone, lo, hi);
         if (l == Long.MIN_VALUE) {
             return utc + locale.getZoneRules(
                     Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
@@ -1267,7 +1162,7 @@ public final class Timestamps {
             int hi
     ) throws NumericException {
         long offset;
-        long l = parseOffset(timezone, lo, hi);
+        long l = Dates.parseOffset(timezone, lo, hi);
         if (l == Long.MIN_VALUE) {
             TimeZoneRules zoneRules = locale.getZoneRules(
                     Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
@@ -1285,12 +1180,12 @@ public final class Timestamps {
     }
 
     /**
-     * Calculated start of year in millis. For example of year 2008 this is
+     * Calculated epoch offset in microseconds of the beginning of the year. For example of year 2008 this is
      * equivalent to parsing "2008-01-01T00:00:00.000Z", except this method is faster.
      *
      * @param year the year
      * @param leap true if give year is leap year
-     * @return millis for start of year.
+     * @return epoch offset in micros.
      */
     public static long yearMicros(int year, boolean leap) {
         int leapYears = year / 100;
@@ -1323,10 +1218,6 @@ public final class Timestamps {
     private static long getTimeMicros(long micros, int stride, long offset) {
         final long us = stride * DAY_MICROS;
         return micros < 0 ? us - 1 + ((micros - offset) % us) : (micros - offset) % us;
-    }
-
-    private static boolean isDigit(char c) {
-        return c > BEFORE_ZERO && c < AFTER_NINE;
     }
 
     static {

@@ -30,10 +30,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseUtf8SequenceIntHashMap;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.CommonFormatUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -41,6 +41,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
+import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
 import static io.questdb.std.datetime.microtime.TimestampFormatUtils.*;
 
 /**
@@ -195,23 +196,23 @@ public final class PartitionBy {
             switch (partitionBy) {
                 case DAY:
                     fmtMethod = PARTITION_DAY_FORMAT;
-                    fmtStr = DAY_PATTERN;
+                    fmtStr = CommonFormatUtils.DAY_PATTERN;
                     break;
                 case MONTH:
                     fmtMethod = PARTITION_MONTH_FORMAT;
-                    fmtStr = MONTH_PATTERN;
+                    fmtStr = CommonFormatUtils.MONTH_PATTERN;
                     break;
                 case YEAR:
                     fmtMethod = PARTITION_YEAR_FORMAT;
-                    fmtStr = YEAR_PATTERN;
+                    fmtStr = CommonFormatUtils.YEAR_PATTERN;
                     break;
                 case HOUR:
                     fmtMethod = PARTITION_HOUR_FORMAT;
-                    fmtStr = HOUR_PATTERN;
+                    fmtStr = CommonFormatUtils.HOUR_PATTERN;
                     break;
                 case WEEK:
                     fmtMethod = PARTITION_WEEK_FORMAT;
-                    fmtStr = WEEK_PATTERN;
+                    fmtStr = CommonFormatUtils.WEEK_PATTERN;
                     break;
                 case NONE:
                     fmtMethod = DEFAULT_FORMAT;
@@ -228,15 +229,15 @@ public final class PartitionBy {
             if (hi - lo < limit) {
                 throw expectedPartitionDirNameFormatCairoException(partitionName, lo, hi, partitionBy);
             }
-            return fmtMethod.parse(partitionName, lo, hi, DateFormatUtils.EN_LOCALE);
+            return fmtMethod.parse(partitionName, lo, hi, EN_LOCALE);
         } catch (NumericException e) {
             if (partitionBy == PartitionBy.WEEK) {
                 // maybe the user used a timestamp, or a date, string.
-                int localLimit = DAY_PATTERN.length();
+                int localLimit = CommonFormatUtils.DAY_PATTERN.length();
                 try {
                     // trim to the lowest precision needed and get the timestamp
                     // convert timestamp to first day of the week
-                    return Timestamps.floorDOW(DAY_FORMAT.parse(partitionName, 0, localLimit, DateFormatUtils.EN_LOCALE));
+                    return Timestamps.floorDOW(DAY_FORMAT.parse(partitionName, 0, localLimit, EN_LOCALE));
                 } catch (NumericException ignore) {
                     throw expectedPartitionDirNameFormatCairoException(partitionName, 0, Math.min(partitionName.length(), localLimit), partitionBy);
                 }
@@ -247,7 +248,7 @@ public final class PartitionBy {
 
     public static void setSinkForPartition(CharSink<?> path, int partitionBy, long timestamp) {
         if (partitionBy != PartitionBy.NONE) {
-            getPartitionDirFormatMethod(partitionBy).format(timestamp, DateFormatUtils.EN_LOCALE, null, path);
+            getPartitionDirFormatMethod(partitionBy).format(timestamp, EN_LOCALE, null, path);
             return;
         }
         path.putAscii(DEFAULT_PARTITION_NAME);
@@ -311,19 +312,19 @@ public final class PartitionBy {
         final CairoException ee = CairoException.critical(0).put('\'');
         switch (partitionBy) {
             case DAY:
-                ee.put(DAY_PATTERN);
+                ee.put(CommonFormatUtils.DAY_PATTERN);
                 break;
             case WEEK:
-                ee.put(WEEK_PATTERN).put("' or '").put(DAY_PATTERN);
+                ee.put(CommonFormatUtils.WEEK_PATTERN).put("' or '").put(CommonFormatUtils.DAY_PATTERN);
                 break;
             case MONTH:
-                ee.put(MONTH_PATTERN);
+                ee.put(CommonFormatUtils.MONTH_PATTERN);
                 break;
             case YEAR:
-                ee.put(YEAR_PATTERN);
+                ee.put(CommonFormatUtils.YEAR_PATTERN);
                 break;
             case HOUR:
-                ee.put(HOUR_PATTERN);
+                ee.put(CommonFormatUtils.HOUR_PATTERN);
                 break;
         }
         ee.put("' expected, found [ts=").put(partitionName.subSequence(lo, hi)).put(']');

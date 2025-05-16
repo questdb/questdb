@@ -38,9 +38,10 @@ import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.CommonFormatUtils;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -197,7 +198,7 @@ public class MatViewDefinition implements Mutable {
 
         if (timeZone != null) {
             try {
-                this.rules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timeZone);
+                this.rules = Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, timeZone);
             } catch (NumericException e) {
                 throw CairoException.critical(0).put("invalid timezone: ").put(timeZone);
             }
@@ -206,7 +207,7 @@ public class MatViewDefinition implements Mutable {
         }
 
         if (timeZoneOffset != null) {
-            final long val = Timestamps.parseOffset(timeZoneOffset);
+            final long val = Dates.parseOffset(timeZoneOffset);
             if (val == Numbers.LONG_NULL) {
                 throw CairoException.critical(0).put("invalid offset: ").put(timeZoneOffset);
             }

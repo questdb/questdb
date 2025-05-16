@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.std.datetime.microtime;
+package io.questdb.test.std.datetime.nanotime;
 
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.IntHashSet;
@@ -51,8 +51,7 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 public class TimestampFormatCompilerTest {
 
     private static final TimestampFormatCompiler compiler = new TimestampFormatCompiler();
-    private final static DateFormat REFERENCE = compiler.compile(CommonFormatUtils.USEC_UTC_PATTERN);
-    private static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getLocale("en-GB");
+    private final static DateFormat REFERENCE = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUz");
     private final static StringSink sink = new StringSink();
 
     @BeforeClass
@@ -105,9 +104,9 @@ public class TimestampFormatCompilerTest {
         DateFormat fmt = compiler.compile("E, dd MMM yyyy a KK:m:s.S Z");
         String utcPattern = "yyyy-MM-ddTHH:mm:ss.SSSz";
         DateFormat utc = compiler.compile(utcPattern);
-        long millis = fmt.parse("Mon, 08 Apr 2017 PM 11:11:10.123 UTC", defaultLocale);
+        long millis = fmt.parse("Mon, 08 Apr 2017 PM 11:11:10.123 UTC", CommonFormatUtils.EN_LOCALE);
         sink.clear();
-        utc.format(millis, defaultLocale, "Z", sink);
+        utc.format(millis, CommonFormatUtils.EN_LOCALE, "Z", sink);
         TestUtils.assertEquals("2017-04-08T23:11:10.123Z", sink);
     }
 
@@ -162,10 +161,10 @@ public class TimestampFormatCompilerTest {
         DateFormat fmt = get("dd-MM-yyyy HH:mm:ss Z");
         String targetTimezoneName = "MSK";
 
-        long millis = fmt.parse("06-04-2017 01:09:30 BST", defaultLocale);
-        millis += defaultLocale.getRules(targetTimezoneName, RESOLUTION_MICROS).getOffset(millis);
+        long millis = fmt.parse("06-04-2017 01:09:30 BST", CommonFormatUtils.EN_LOCALE);
+        millis += CommonFormatUtils.EN_LOCALE.getRules(targetTimezoneName, RESOLUTION_MICROS).getOffset(millis);
         sink.clear();
-        fmt.format(millis, defaultLocale, targetTimezoneName, sink);
+        fmt.format(millis, CommonFormatUtils.EN_LOCALE, targetTimezoneName, sink);
         TestUtils.assertEquals("06-04-2017 03:09:30 MSK", sink);
     }
 
@@ -825,9 +824,9 @@ public class TimestampFormatCompilerTest {
         DateFormat fmt1 = compiler.compile("G yyyy MMM", true);
         DateFormat fmt2 = compiler.compile("yyyy MMM dd", true);
 
-        long millis = fmt2.parse("-2010 Aug 01", defaultLocale);
+        long millis = fmt2.parse("-2010 Aug 01", CommonFormatUtils.EN_LOCALE);
         sink.clear();
-        fmt1.format(millis, defaultLocale, "Z", sink);
+        fmt1.format(millis, CommonFormatUtils.EN_LOCALE, "Z", sink);
         TestUtils.assertEquals("BC -2010 Aug", sink);
     }
 
@@ -1045,20 +1044,20 @@ public class TimestampFormatCompilerTest {
     private void assertFormat(String expected, String pattern, String date, int mic) throws NumericException {
         sink.clear();
         long micros = TimestampFormatUtils.parseTimestamp(date) + mic;
-        get(pattern).format(micros, defaultLocale, "GMT", sink);
+        get(pattern).format(micros, CommonFormatUtils.EN_LOCALE, "GMT", sink);
         TestUtils.assertEqualsIgnoreCase(expected, sink);
         sink.clear();
-        compiler.compile(pattern, false).format(micros, defaultLocale, "GMT", sink);
+        compiler.compile(pattern, false).format(micros, CommonFormatUtils.EN_LOCALE, "GMT", sink);
         TestUtils.assertEqualsIgnoreCase(expected, sink);
     }
 
     private void assertMicros(String pattern, String expected, String input) throws NumericException {
         sink.clear();
-        REFERENCE.format(get(pattern).parse(input, defaultLocale), defaultLocale, "Z", sink);
+        REFERENCE.format(get(pattern).parse(input, CommonFormatUtils.EN_LOCALE), CommonFormatUtils.EN_LOCALE, "Z", sink);
         TestUtils.assertEquals(expected, sink);
 
         sink.clear();
-        REFERENCE.format(compiler.compile(pattern).parse(input, defaultLocale), defaultLocale, "Z", sink);
+        REFERENCE.format(compiler.compile(pattern).parse(input, CommonFormatUtils.EN_LOCALE), CommonFormatUtils.EN_LOCALE, "Z", sink);
     }
 
     private void assertThat(String pattern, String expected, String input, CharSequence localeId) throws NumericException {
@@ -1066,7 +1065,7 @@ public class TimestampFormatCompilerTest {
     }
 
     private void assertThat(String pattern, String expected, String input) throws NumericException {
-        assertThat(pattern, expected, input, defaultLocale);
+        assertThat(pattern, expected, input, CommonFormatUtils.EN_LOCALE);
     }
 
     private void assertThat(String pattern, String expected, String input, DateLocale locale) throws NumericException {
@@ -1089,17 +1088,17 @@ public class TimestampFormatCompilerTest {
             long tsMillis = tsMicros / 1000;
             String javaFormatted = javaFmt.format(new Date(tsMillis));
 
-            genericQuestFmt.format(tsMicros, defaultLocale, "UTC", sink);
+            genericQuestFmt.format(tsMicros, CommonFormatUtils.EN_LOCALE, "UTC", sink);
             Assert.assertEquals(javaFormatted, sink.toString());
 
             sink.clear();
-            compiledQuestFmt.format(tsMicros, defaultLocale, "UTC", sink);
+            compiledQuestFmt.format(tsMicros, CommonFormatUtils.EN_LOCALE, "UTC", sink);
             Assert.assertEquals(javaFormatted, sink.toString());
 
             // now we know both Java and QuestDB format the same way.
             // let's try to parse it back.
-            Assert.assertEquals(tsMicros, genericQuestFmt.parse(sink, defaultLocale));
-            Assert.assertEquals(tsMicros, compiledQuestFmt.parse(sink, defaultLocale));
+            Assert.assertEquals(tsMicros, genericQuestFmt.parse(sink, CommonFormatUtils.EN_LOCALE));
+            Assert.assertEquals(tsMicros, compiledQuestFmt.parse(sink, CommonFormatUtils.EN_LOCALE));
 
             // sanity check
             Assert.assertEquals(tsMillis, javaFmt.parse(sink.toString()).getTime());

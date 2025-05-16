@@ -45,6 +45,7 @@ import java.util.Date;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
+import static io.questdb.std.datetime.CommonFormatUtils.UTC_PATTERN;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MILLIS;
 
 public class DateFormatCompilerTest {
@@ -683,7 +684,7 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testParseUtc() throws Exception {
-        assertThat(DateFormatUtils.UTC_PATTERN, "2011-10-03T00:00:00.000Z", "2011-10-03T00:00:00.000Z");
+        assertThat(UTC_PATTERN, "2011-10-03T00:00:00.000Z", "2011-10-03T00:00:00.000Z");
     }
 
     @Test

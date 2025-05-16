@@ -22,38 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.datetime.microtime;
+package io.questdb.std.datetime.nanotime;
 
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.CommonFormatUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
-import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
+import static io.questdb.std.datetime.CommonFormatUtils.*;
+import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_NANOS;
 
-public class TimestampFormatUtils {
-    public static final DateFormat DAY_FORMAT;
-    public static final DateFormat GREEDY_MILLIS1_UTC_FORMAT;
-    public static final DateFormat GREEDY_MILLIS2_UTC_FORMAT;
-    public static final DateFormat HOUR_FORMAT;
-    public static final DateFormat MONTH_FORMAT;
-    public static final DateFormat NANOS_UTC_FORMAT;
-    public static final DateFormat PG_TIMESTAMP_FORMAT;
-    public static final DateFormat PG_TIMESTAMP_MILLI_TIME_Z_FORMAT;
-    public static final DateFormat PG_TIMESTAMP_TIME_Z_FORMAT;
-    public static final DateFormat SEC_UTC_FORMAT;
-    public static final DateFormat USEC_UTC_FORMAT;
+public class NanosFormatUtils {
+    public static final DateFormat NSEC_UTC_FORMAT;
     public static final DateFormat UTC_FORMAT;
-    public static final DateFormat WEEK_FORMAT;
-    public static final DateFormat YEAR_FORMAT;
+    public static final DateFormat USEC_UTC_FORMAT;
     private static final DateFormat[] FORMATS;
     private static final DateFormat[] HTTP_FORMATS;
     static int prevCenturyLow;
@@ -100,19 +89,25 @@ public class TimestampFormatUtils {
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmZ
-    public static void appendDateTime(@NotNull CharSink<?> sink, long micros) {
-        if (micros == Long.MIN_VALUE) {
+    public static void appendDateTime(@NotNull CharSink<?> sink, long nanos) {
+        if (nanos == Long.MIN_VALUE) {
             return;
         }
-        UTC_FORMAT.format(micros, EN_LOCALE, "Z", sink);
+        UTC_FORMAT.format(nanos, EN_LOCALE, "Z", sink);
     }
 
-    // YYYY-MM-DDThh:mm:ss.mmmuuuZ
-    public static void appendDateTimeUSec(@NotNull CharSink<?> sink, long micros) {
-        if (micros == Long.MIN_VALUE) {
+    public static void appendDateTimeUSec(@NotNull CharSink<?> sink, long nanos) {
+        if (nanos == Long.MIN_VALUE) {
             return;
         }
-        USEC_UTC_FORMAT.format(micros, EN_LOCALE, "Z", sink);
+        USEC_UTC_FORMAT.format(nanos, EN_LOCALE, "Z", sink);
+    }
+
+    public static void appendDateTimeNSec(@NotNull CharSink<?> sink, long nanos) {
+        if (nanos == Long.MIN_VALUE) {
+            return;
+        }
+        NSEC_UTC_FORMAT.format(nanos, EN_LOCALE, "Z", sink);
     }
 
     public static void appendEra(@NotNull CharSink<?> sink, int year, @NotNull DateLocale locale) {
@@ -215,6 +210,7 @@ public class TimestampFormatUtils {
             int second,
             int millis,
             int micros,
+            int nanos,
             int timezone,
             long offset,
             int hourType
@@ -223,14 +219,14 @@ public class TimestampFormatUtils {
             year = -(year - 1);
         }
 
-        boolean leap = Timestamps.isLeapYear(year);
+        boolean leap = Nanos.isLeapYear(year);
 
         // wrong month
         if (month < 1 || month > 12) {
             throw NumericException.INSTANCE;
         }
 
-        if (hourType == CommonFormatUtils.HOUR_24) {
+        if (hourType == HOUR_24) {
             // wrong 24-hour clock hour
             if (hour < 0 || hour > 24) {
                 throw NumericException.INSTANCE;
@@ -242,7 +238,7 @@ public class TimestampFormatUtils {
                 throw NumericException.INSTANCE;
             }
             hour %= 12;
-            if (hourType == CommonFormatUtils.HOUR_PM) {
+            if (hourType == HOUR_PM) {
                 hour += 12;
             }
         }
@@ -260,31 +256,32 @@ public class TimestampFormatUtils {
             throw NumericException.INSTANCE;
         }
 
-        if ((week <= 0 && week != -1) || week > Timestamps.getWeeks(year)) {
+        if ((week <= 0 && week != -1) || week > io.questdb.std.datetime.microtime.Timestamps.getWeeks(year)) {
             throw NumericException.INSTANCE;
         }
 
         // calculate year, month, and day of ISO week
         if (week != -1) {
-            long firstDayOfIsoWeekMicros = Timestamps.yearMicros(year, Timestamps.isLeapYear(year)) +
-                    (week - 1) * Timestamps.WEEK_MICROS +
-                    Timestamps.getIsoYearDayOffset(year) * Timestamps.DAY_MICROS;
-            month = Timestamps.getMonthOfYear(firstDayOfIsoWeekMicros);
+            long firstDayOfIsoWeekNanos = Nanos.yearNanos(year, Nanos.isLeapYear(year)) +
+                    (week - 1) * Nanos.WEEK_NANOS +
+                    Timestamps.getIsoYearDayOffset(year) * Nanos.DAY_NANOS;
+            month = Nanos.getMonthOfYear(firstDayOfIsoWeekNanos);
             year += (week == 1 && Timestamps.getIsoYearDayOffset(year) < 0) ? -1 : 0;
-            day = Timestamps.getDayOfMonth(firstDayOfIsoWeekMicros, year, month, Timestamps.isLeapYear(year));
+            day = Nanos.getDayOfMonth(firstDayOfIsoWeekNanos, year, month, Nanos.isLeapYear(year));
         }
 
-        long datetime = Timestamps.yearMicros(year, leap)
-                + Timestamps.monthOfYearMicros(month, leap)
-                + (long) (day - 1) * Timestamps.DAY_MICROS
-                + (long) hour * Timestamps.HOUR_MICROS
-                + (long) minute * Timestamps.MINUTE_MICROS
-                + (long) second * Timestamps.SECOND_MICROS
-                + (long) millis * Timestamps.MILLI_MICROS
-                + micros;
+        long datetime = Nanos.yearNanos(year, leap)
+                + Nanos.monthOfYearNanos(month, leap)
+                + (long) (day - 1) * Nanos.DAY_NANOS
+                + (long) hour * Nanos.HOUR_NANOS
+                + (long) minute * Nanos.MINUTE_NANOS
+                + (long) second * Nanos.SECOND_NANOS
+                + (long) millis * Nanos.MILLI_NANOS
+                + (long) micros * Nanos.MICRO_NANOS
+                + nanos;
 
         if (timezone > -1) {
-            datetime -= locale.getZoneRules(timezone, RESOLUTION_MICROS).getOffset(datetime, year);
+            datetime -= locale.getZoneRules(timezone, RESOLUTION_NANOS).getOffset(datetime, year);
         } else if (offset > Long.MIN_VALUE) {
             datetime -= offset;
         }
@@ -293,31 +290,31 @@ public class TimestampFormatUtils {
     }
 
     // YYYY-MM-DD
-    public static void formatDashYYYYMMDD(@NotNull CharSink<?> sink, long micros) {
-        int y = Timestamps.getYear(micros);
-        boolean l = Timestamps.isLeapYear(y);
-        int m = Timestamps.getMonthOfYear(micros, y, l);
+    public static void formatDashYYYYMMDD(@NotNull CharSink<?> sink, long nanos) {
+        int y = Nanos.getYear(nanos);
+        boolean l = Nanos.isLeapYear(y);
+        int m = Nanos.getMonthOfYear(nanos, y, l);
         Numbers.append(sink, y);
         append0(sink.putAscii('-'), m);
-        append0(sink.putAscii('-'), Timestamps.getDayOfMonth(micros, y, m, l));
+        append0(sink.putAscii('-'), Nanos.getDayOfMonth(nanos, y, m, l));
     }
 
     // YYYY-MM
-    public static void formatYYYYMM(@NotNull CharSink<?> sink, long micros) {
-        int y = Timestamps.getYear(micros);
-        int m = Timestamps.getMonthOfYear(micros, y, Timestamps.isLeapYear(y));
+    public static void formatYYYYMM(@NotNull CharSink<?> sink, long millis) {
+        int y = Nanos.getYear(millis);
+        int m = Nanos.getMonthOfYear(millis, y, Nanos.isLeapYear(y));
         Numbers.append(sink, y);
         append0(sink.putAscii('-'), m);
     }
 
     // YYYYMMDD
     public static void formatYYYYMMDD(@NotNull CharSink<?> sink, long micros) {
-        int y = Timestamps.getYear(micros);
-        boolean l = Timestamps.isLeapYear(y);
-        int m = Timestamps.getMonthOfYear(micros, y, l);
+        int y = Nanos.getYear(micros);
+        boolean l = Nanos.isLeapYear(y);
+        int m = Nanos.getMonthOfYear(micros, y, l);
         Numbers.append(sink, y);
         append0(sink, m);
-        append0(sink, Timestamps.getDayOfMonth(micros, y, m, l));
+        append0(sink, Nanos.getDayOfMonth(micros, y, m, l));
     }
 
     public static long getReferenceYear() {
@@ -330,19 +327,8 @@ public class TimestampFormatUtils {
     }
 
     @TestOnly
-    public static long parseDateTime(@NotNull CharSequence seq) throws NumericException {
-        return NANOS_UTC_FORMAT.parse(seq, 0, seq.length(), EN_LOCALE);
-    }
-
-    public static long parseHTTP(@NotNull CharSequence in) throws NumericException {
-        for (int i = 0, n = HTTP_FORMATS.length; i < n; i++) {
-            try {
-                return HTTP_FORMATS[i].parse(in, EN_LOCALE);
-            } catch (NumericException ignore) {
-                // try next
-            }
-        }
-        throw NumericException.INSTANCE;
+    public static long parseNSecUTC(@NotNull CharSequence seq) throws NumericException {
+        return NSEC_UTC_FORMAT.parse(seq, 0, seq.length(), EN_LOCALE);
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmZ
@@ -359,11 +345,6 @@ public class TimestampFormatUtils {
             }
         }
         throw NumericException.INSTANCE;
-    }
-
-    // YYYY-MM-DDThh:mm:ss.mmmnnn
-    public static long parseUTCTimestamp(@NotNull CharSequence seq) throws NumericException {
-        return USEC_UTC_FORMAT.parse(seq, 0, seq.length(), EN_LOCALE);
     }
 
     public static long parseYearGreedy(@NotNull CharSequence in, int pos, int hi) throws NumericException {
@@ -385,7 +366,7 @@ public class TimestampFormatUtils {
     public static void updateReferenceYear(long micros) {
         referenceYear = micros;
 
-        int referenceYear = Timestamps.getYear(micros);
+        int referenceYear = Nanos.getYear(micros);
         int centuryOffset = referenceYear % 100;
         thisCenturyLimit = centuryOffset + 20;
         if (thisCenturyLimit > 100) {
@@ -395,17 +376,13 @@ public class TimestampFormatUtils {
             thisCenturyLow = referenceYear - centuryOffset;
         }
         prevCenturyLow = thisCenturyLow - 100;
-        newYear = Timestamps.endOfYear(referenceYear);
+        newYear = Nanos.endOfYear(referenceYear);
     }
 
     static {
         updateReferenceYear(Os.currentTimeMicros());
 
-        final TimestampFormatCompiler compiler = new TimestampFormatCompiler();
-        PG_TIMESTAMP_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.SSSUUU");
-        PG_TIMESTAMP_TIME_Z_FORMAT = compiler.compile("y-MM-dd HH:mm:ssz");
-        NANOS_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz");
-
+        final NanosFormatCompiler compiler = new NanosFormatCompiler();
         final String[] httpPatterns = new String[]{ // priority sorted
                 "E, d MMM yyyy HH:mm:ss Z",     // HTTP standard
                 "E, d-MMM-yyyy HH:mm:ss Z"      // Microsoft EntraID
@@ -416,17 +393,18 @@ public class TimestampFormatUtils {
         }
 
         final String[] patterns = new String[]{ // priority sorted
-                CommonFormatUtils.PG_TIMESTAMP_MILLI_TIME_Z_PATTERN, // y-MM-dd HH:mm:ss.SSSz
-                CommonFormatUtils.GREEDY_MILLIS1_UTC_PATTERN,        // yyyy-MM-ddTHH:mm:ss.Sz
-                CommonFormatUtils.USEC_UTC_PATTERN,                  // yyyy-MM-ddTHH:mm:ss.SSSUUUz
-                CommonFormatUtils.SEC_UTC_PATTERN,                   // yyyy-MM-ddTHH:mm:ssz
-                CommonFormatUtils.GREEDY_MILLIS2_UTC_PATTERN,        // yyyy-MM-ddTHH:mm:ss.SSz
-                CommonFormatUtils.UTC_PATTERN,                       // yyyy-MM-ddTHH:mm:ss.SSSz
-                CommonFormatUtils.HOUR_PATTERN,                      // yyyy-MM-ddTHH
-                CommonFormatUtils.DAY_PATTERN,                       // yyyy-MM-dd
-                CommonFormatUtils.WEEK_PATTERN,                      // YYYY-Www
-                CommonFormatUtils.MONTH_PATTERN,                     // yyyy-MM
-                CommonFormatUtils.YEAR_PATTERN                       // yyyy
+                NSEC_UTC_PATTERN,
+                PG_TIMESTAMP_MILLI_TIME_Z_PATTERN, // y-MM-dd HH:mm:ss.SSSz
+                GREEDY_MILLIS1_UTC_PATTERN,        // yyyy-MM-ddTHH:mm:ss.Sz
+                USEC_UTC_PATTERN,                  // yyyy-MM-ddTHH:mm:ss.SSSUUUz
+                SEC_UTC_PATTERN,                   // yyyy-MM-ddTHH:mm:ssz
+                GREEDY_MILLIS2_UTC_PATTERN,        // yyyy-MM-ddTHH:mm:ss.SSz
+                UTC_PATTERN,                       // yyyy-MM-ddTHH:mm:ss.SSSz
+                HOUR_PATTERN,                      // yyyy-MM-ddTHH
+                DAY_PATTERN,                       // yyyy-MM-dd
+                WEEK_PATTERN,                      // YYYY-Www
+                MONTH_PATTERN,                     // yyyy-MM
+                YEAR_PATTERN,                      // yyyy
         };
         FORMATS = new DateFormat[patterns.length];
         CharSequenceObjHashMap<DateFormat> dateFormats = new CharSequenceObjHashMap<>();
@@ -436,16 +414,9 @@ public class TimestampFormatUtils {
             dateFormats.put(pattern, format);
             FORMATS[i] = format;
         }
-        PG_TIMESTAMP_MILLI_TIME_Z_FORMAT = dateFormats.get(CommonFormatUtils.PG_TIMESTAMP_MILLI_TIME_Z_PATTERN);
-        GREEDY_MILLIS1_UTC_FORMAT = dateFormats.get(CommonFormatUtils.GREEDY_MILLIS1_UTC_PATTERN);
-        USEC_UTC_FORMAT = dateFormats.get(CommonFormatUtils.USEC_UTC_PATTERN);
-        SEC_UTC_FORMAT = dateFormats.get(CommonFormatUtils.SEC_UTC_PATTERN);
-        GREEDY_MILLIS2_UTC_FORMAT = dateFormats.get(CommonFormatUtils.GREEDY_MILLIS2_UTC_PATTERN);
-        UTC_FORMAT = dateFormats.get(CommonFormatUtils.UTC_PATTERN);
-        HOUR_FORMAT = dateFormats.get(CommonFormatUtils.HOUR_PATTERN);
-        DAY_FORMAT = dateFormats.get(CommonFormatUtils.DAY_PATTERN);
-        WEEK_FORMAT = dateFormats.get(CommonFormatUtils.WEEK_PATTERN);
-        MONTH_FORMAT = dateFormats.get(CommonFormatUtils.MONTH_PATTERN);
-        YEAR_FORMAT = dateFormats.get(CommonFormatUtils.YEAR_PATTERN);
+
+        UTC_FORMAT = dateFormats.get(UTC_PATTERN);
+        USEC_UTC_FORMAT = dateFormats.get(USEC_UTC_PATTERN);
+        NSEC_UTC_FORMAT = dateFormats.get(NSEC_UTC_PATTERN);
     }
 }

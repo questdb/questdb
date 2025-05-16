@@ -88,7 +88,6 @@ import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
 import io.questdb.std.WeakSelfReturningObjectPool;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
@@ -105,6 +104,7 @@ import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.cutlass.pgwire.modern.PGConnectionContextModern.*;
 import static io.questdb.cutlass.pgwire.modern.PGUtils.calculateColumnBinSize;
 import static io.questdb.cutlass.pgwire.modern.PGUtils.estimateColumnTxtSize;
+import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 public class PGPipelineEntry implements QuietCloseable, Mutable {
@@ -1790,7 +1790,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         final long longValue = record.getDate(columnIndex);
         if (longValue != Numbers.LONG_NULL) {
             final long a = utf8Sink.skipInt();
-            PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, utf8Sink);
+            PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, EN_LOCALE, null, utf8Sink);
             utf8Sink.putLenEx(a);
         } else {
             utf8Sink.setNullValue();
@@ -1909,7 +1909,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.setNullValue();
         } else {
             a = utf8Sink.skipInt();
-            TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, utf8Sink);
+            TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, EN_LOCALE, null, utf8Sink);
             utf8Sink.putLenEx(a);
         }
     }
