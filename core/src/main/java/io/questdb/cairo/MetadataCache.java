@@ -197,7 +197,8 @@ public class MetadataCache implements QuietCloseable {
             table.setPartitionBy(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
             table.setMaxUncommittedRows(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
             table.setO3MaxLag(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
-            table.setTimestampIndex(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
+            int timestampWriterIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+            table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
             table.setMatViewRefreshLimitHoursOrMonths(TableUtils.getMatViewRefreshLimitHoursOrMonths(metaMem));
             table.setIsSoftLink(isSoftLink);
@@ -216,43 +217,47 @@ public class MetadataCache implements QuietCloseable {
                 assert name != null;
                 int columnType = TableUtils.getColumnType(metaMem, writerIndex);
 
-                if (columnType > -1) {
-                    String columnName = Chars.toString(name);
-                    CairoColumn column = new CairoColumn();
+                if (columnType < 0) {
+                    continue;
+                }
+                String columnName = Chars.toString(name);
+                CairoColumn column = new CairoColumn();
 
-                    LOG.debug().$("hydrating column [table=").$(token).$(", column=").utf8(columnName).I$();
+                LOG.debug().$("hydrating column [table=").$(token).$(", column=").utf8(columnName).I$();
 
-                    column.setName(columnName);
-                    table.upsertColumn(column);
+                column.setName(columnName);
 
-                    // Column positions already determined
-                    column.setPosition(table.getColumnCount() - 1);
-                    column.setType(columnType);
+                // Column positions already determined
+                column.setPosition(table.getColumnCount());
+                column.setType(columnType);
 
-                    if (column.getType() < 0) {
-                        // deleted
-                        continue;
-                    }
+                column.setIsIndexed(TableUtils.isColumnIndexed(metaMem, writerIndex));
+                column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
+                column.setIsSymbolTableStatic(true);
+                column.setIsDedupKey(TableUtils.isColumnDedupKey(metaMem, writerIndex));
+                column.setWriterIndex(writerIndex);
 
-                    column.setIsIndexed(TableUtils.isColumnIndexed(metaMem, writerIndex));
-                    column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
-                    column.setIsSymbolTableStatic(true);
-                    column.setIsDedupKey(TableUtils.isColumnDedupKey(metaMem, writerIndex));
-                    column.setWriterIndex(writerIndex);
-                    column.setIsDesignated(writerIndex == table.getTimestampIndex());
-                    if (columnType == ColumnType.SYMBOL) {
-                        if (isMetaFormatUpToDate) {
-                            column.setSymbolCapacity(TableUtils.getSymbolCapacity(metaMem, writerIndex));
-                            column.setSymbolCached(TableUtils.isSymbolCached(metaMem, writerIndex));
-                        } else {
-                            LOG.debug().$("updating symbol capacity [table=").$(token).$(", column=").utf8(columnName).I$();
-                            loadCapacities(column, token, path, engine.getConfiguration(), getColumnVersionReader());
-                        }
-                    }
-                    if (column.getIsDedupKey()) {
-                        table.setIsDedup(true);
+                boolean isDesignated = writerIndex == timestampWriterIndex;
+                column.setIsDesignated(isDesignated);
+                if (isDesignated) {
+                    table.setTimestampIndex(table.getColumnCount());
+                }
+
+                if (column.getIsDedupKey()) {
+                    table.setIsDedup(true);
+                }
+
+                if (columnType == ColumnType.SYMBOL) {
+                    if (isMetaFormatUpToDate) {
+                        column.setSymbolCapacity(TableUtils.getSymbolCapacity(metaMem, writerIndex));
+                        column.setSymbolCached(TableUtils.isSymbolCached(metaMem, writerIndex));
+                    } else {
+                        LOG.debug().$("updating symbol capacity [table=").$(token).$(", column=").utf8(columnName).I$();
+                        loadCapacities(column, token, path, engine.getConfiguration(), getColumnVersionReader());
                     }
                 }
+
+                table.upsertColumn(column);
             }
 
             tableMap.put(table.getTableName(), table);
@@ -529,9 +534,8 @@ public class MetadataCache implements QuietCloseable {
             table.setPartitionBy(tableMetadata.getPartitionBy());
             table.setMaxUncommittedRows(tableMetadata.getMaxUncommittedRows());
             table.setO3MaxLag(tableMetadata.getO3MaxLag());
-
-            int timestampIndex = tableMetadata.getTimestampIndex();
-            table.setTimestampIndex(timestampIndex);
+            int timestampWriterIndex = tableMetadata.getTimestampIndex();
+            table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(tableMetadata.getTtlHoursOrMonths());
             table.setMatViewRefreshLimitHoursOrMonths(tableMetadata.getMatViewRefreshLimitHoursOrMonths());
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
@@ -539,19 +543,18 @@ public class MetadataCache implements QuietCloseable {
 
             for (int i = 0; i < columnCount; i++) {
                 final TableColumnMetadata columnMetadata = tableMetadata.getColumnMetadata(i);
-                CharSequence columnName = columnMetadata.getColumnName();
 
                 int columnType = columnMetadata.getColumnType();
-
                 if (columnType < 0) {
                     continue; // marked for deletion
                 }
 
+                String columnName = columnMetadata.getColumnName();
                 LOG.debug().$("hydrating column [table=").$(tableToken).$(", column=").utf8(columnName).I$();
 
                 CairoColumn column = new CairoColumn();
 
-                column.setName(columnName); // check this, not sure the char sequence is preserved
+                column.setName(columnName);
                 column.setType(columnType);
                 int replacingIndex = columnMetadata.getReplacingIndex();
                 column.setPosition(replacingIndex > -1 ? replacingIndex : i);
@@ -559,8 +562,15 @@ public class MetadataCache implements QuietCloseable {
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
                 column.setIsSymbolTableStatic(columnMetadata.isSymbolTableStatic());
                 column.setIsDedupKey(columnMetadata.isDedupKeyFlag());
-                column.setWriterIndex(columnMetadata.getWriterIndex());
-                column.setIsDesignated(column.getWriterIndex() == timestampIndex);
+
+                int writerIndex = columnMetadata.getWriterIndex();
+                column.setWriterIndex(writerIndex);
+
+                boolean isDesignated = writerIndex == timestampWriterIndex;
+                column.setIsDesignated(isDesignated);
+                if (isDesignated) {
+                    table.setTimestampIndex(table.getColumnCount());
+                }
 
                 if (column.getIsDedupKey()) {
                     table.setIsDedup(true);
