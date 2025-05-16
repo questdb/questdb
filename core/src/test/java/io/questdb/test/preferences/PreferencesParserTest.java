@@ -34,6 +34,7 @@ import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
 public class PreferencesParserTest extends AbstractCairoTest {
 
@@ -107,6 +108,7 @@ public class PreferencesParserTest extends AbstractCairoTest {
         sink.put(preferences);
         try {
             parser.parse(sink);
+            fail("Exception expected");
         } catch (CairoException | JsonException e) {
             assertContains(e.getFlyweightMessage(), errorMessage);
         }
