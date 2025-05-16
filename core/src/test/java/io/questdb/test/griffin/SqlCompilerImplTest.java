@@ -5472,6 +5472,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testListEmptyArgs() throws Exception {
+        assertException(
+                "select list() from long_sequence(1)",
+                7,
+                "no arguments provided"
+        );
+    }
+
+    @Test
     public void testNonEqualityJoinCondition() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab ( created timestamp, value long ) timestamp(created) ");
@@ -5887,7 +5896,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testRndSymbolEmptyArgs() throws Exception {
-        assertMemoryLeak(() -> assertExceptionNoLeakCheck("select rnd_symbol() from long_sequence(1)", 7, "function rnd_symbol expects arguments but has none"));
+        assertException(
+                "select rnd_symbol() from long_sequence(1)",
+                7,
+                "no arguments provided"
+        );
     }
 
     @Test
