@@ -32,16 +32,16 @@ import org.jetbrains.annotations.NotNull;
 
 public class CairoColumn implements Sinkable {
     public static final Log LOG = LogFactory.getLog(CairoEngine.class);
+    private boolean dedupKey;
+    private boolean designated;
     private int indexBlockCapacity;
-    private boolean isDedupKey;
-    private boolean isDesignated;
-    private boolean isIndexed;
-    private boolean isSymbolTableStatic;
+    private boolean indexed;
     private long metadataVersion;
     private CharSequence name;
     private int position;
     private boolean symbolCached;
     private int symbolCapacity;
+    private boolean symbolTableStatic;
     private int type;
     private int writerIndex;
 
@@ -49,11 +49,11 @@ public class CairoColumn implements Sinkable {
     }
 
     public void copyTo(@NotNull CairoColumn target) {
-        target.isDesignated = this.isDesignated;
+        target.designated = this.designated;
         target.indexBlockCapacity = this.indexBlockCapacity;
-        target.isDedupKey = this.isDedupKey;
-        target.isIndexed = this.isIndexed;
-        target.isSymbolTableStatic = this.isSymbolTableStatic;
+        target.dedupKey = this.dedupKey;
+        target.indexed = this.indexed;
+        target.symbolTableStatic = this.symbolTableStatic;
         target.name = this.name;
         target.position = this.position;
         target.symbolCached = this.symbolCached;
@@ -67,32 +67,12 @@ public class CairoColumn implements Sinkable {
         return indexBlockCapacity;
     }
 
-    public boolean getIsDedupKey() {
-        return isDedupKey;
-    }
-
-    public boolean getIsDesignated() {
-        return isDesignated;
-    }
-
-    public boolean getIsIndexed() {
-        return isIndexed;
-    }
-
-    public boolean getIsSymbolTableStatic() {
-        return isSymbolTableStatic;
-    }
-
     public CharSequence getName() {
         return name;
     }
 
     public int getPosition() {
         return position;
-    }
-
-    public boolean getSymbolCached() {
-        return symbolCached;
     }
 
     public int getSymbolCapacity() {
@@ -107,24 +87,40 @@ public class CairoColumn implements Sinkable {
         return writerIndex;
     }
 
+    public boolean isDedupKey() {
+        return dedupKey;
+    }
+
+    public boolean isDesignated() {
+        return designated;
+    }
+
+    public boolean isIndexed() {
+        return indexed;
+    }
+
+    public boolean isSymbolCached() {
+        return symbolCached;
+    }
+
+    public boolean isSymbolTableStatic() {
+        return symbolTableStatic;
+    }
+
+    public void setDedupKeyFlag(boolean dedupKey) {
+        this.dedupKey = dedupKey;
+    }
+
+    public void setDesignatedFlag(boolean designated) {
+        this.designated = designated;
+    }
+
     public void setIndexBlockCapacity(int indexBlockCapacity) {
         this.indexBlockCapacity = indexBlockCapacity;
     }
 
-    public void setIsDedupKey(boolean isDedupKey) {
-        this.isDedupKey = isDedupKey;
-    }
-
-    public void setIsDesignated(boolean isDesignated) {
-        this.isDesignated = isDesignated;
-    }
-
-    public void setIsIndexed(boolean isIndexed) {
-        this.isIndexed = isIndexed;
-    }
-
-    public void setIsSymbolTableStatic(boolean symbolTableStatic) {
-        isSymbolTableStatic = symbolTableStatic;
+    public void setIndexedFlag(boolean indexed) {
+        this.indexed = indexed;
     }
 
     public void setName(CharSequence name) {
@@ -143,6 +139,10 @@ public class CairoColumn implements Sinkable {
         this.symbolCapacity = symbolCapacity;
     }
 
+    public void setSymbolTableStaticFlag(boolean symbolTableStatic) {
+        this.symbolTableStatic = symbolTableStatic;
+    }
+
     public void setType(int type) {
         this.type = type;
     }
@@ -157,14 +157,13 @@ public class CairoColumn implements Sinkable {
         sink.put("name=").put(getName()).put(", ");
         sink.put("position=").put(getPosition()).put(", ");
         sink.put("type=").put(ColumnType.nameOf(getType())).put(", ");
-        sink.put("isDedupKey=").put(getIsDedupKey()).put(", ");
-        sink.put("isDesignated=").put(getIsDesignated()).put(", ");
-        sink.put("isSymbolTableStatic=").put(getIsSymbolTableStatic()).put(", ");
-        sink.put("symbolCached=").put(getSymbolCached()).put(", ");
+        sink.put("isDedupKey=").put(isDedupKey()).put(", ");
+        sink.put("isDesignated=").put(isDesignated()).put(", ");
+        sink.put("isSymbolTableStatic=").put(isSymbolTableStatic()).put(", ");
+        sink.put("symbolCached=").put(isSymbolCached()).put(", ");
         sink.put("symbolCapacity=").put(getSymbolCapacity()).put(", ");
-        sink.put("isIndexed=").put(getIsIndexed()).put(", ");
+        sink.put("isIndexed=").put(isIndexed()).put(", ");
         sink.put("indexBlockCapacity=").put(getIndexBlockCapacity()).put(", ");
         sink.put("writerIndex=").put(getWriterIndex()).put("]");
     }
-
 }

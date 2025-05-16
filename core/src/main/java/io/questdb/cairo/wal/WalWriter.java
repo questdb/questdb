@@ -831,8 +831,9 @@ public class WalWriter implements TableWriterAPI {
                 if (metaValidatorSvc.structureVersion != getColumnStructureVersion() + 1) {
                     retry = false;
                     throw CairoException.nonCritical()
-                            .put("statements containing multiple transactions, such as 'alter table add column col1, col2'" +
-                                    " are currently not supported for WAL tables [table=").put(tableToken.getTableName())
+                            .put("statement is either no-op,")
+                            .put(" or contains multiple transactions, such as 'alter table add column col1, col2',")
+                            .put(" and currently not supported for WAL tables [table=").put(tableToken.getTableName())
                             .put(", oldStructureVersion=").put(getColumnStructureVersion())
                             .put(", newStructureVersion=").put(metaValidatorSvc.structureVersion).put(']');
                 }
