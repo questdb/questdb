@@ -49,6 +49,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
     private long affectedRowsCount;
     private AlterOperation alterOp;
+    private boolean done;
     private InsertOperation insertOp;
     private boolean isExecutedAtParseTime;
     private Operation operation;
@@ -90,6 +91,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.statementName = null;
         this.operation = null;
         this.isExecutedAtParseTime = false;
+        this.done = false;
+    }
+
+    public void done() {
+        this.done = true;
     }
 
     @Override
@@ -103,6 +109,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
             SCSequence eventSubSeq,
             boolean closeOnDone
     ) throws SqlException {
+        if (done) {
+            return doneFuture.of(0);
+        }
+
         switch (type) {
             case INSERT:
                 return insertOp.execute(sqlExecutionContext);

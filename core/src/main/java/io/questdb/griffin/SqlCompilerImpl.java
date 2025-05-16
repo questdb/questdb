@@ -733,10 +733,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } while (true);
 
         addColumnSuffix(securityContext, null, tableToken, alterOperationBuilder);
-        if (alterOperationBuilder.getExtraStrInfo().size() > 0) {
-            compiledQuery.ofAlter(alterOperationBuilder.build());
-        } else {
-            compiledQuery.ofEmpty();
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+        if (alterOperationBuilder.getExtraStrInfo().size() == 0) {
+            // there is no column to add, set the done flag to avoid execution of the query
+            compiledQuery.done();
         }
     }
 
