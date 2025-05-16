@@ -33,7 +33,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class CairoTable implements Sinkable {
     public final LowerCaseCharSequenceIntHashMap columnNameIndexMap;
-    public final IntList columnOrderMap;
+    public final IntList columnOrderList;
     public final ObjList<CairoColumn> columns;
     private boolean dedup;
     private int matViewRefreshLimitHoursOrMonths;
@@ -50,14 +50,14 @@ public class CairoTable implements Sinkable {
         this.token = token;
 
         columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
-        columnOrderMap = new IntList();
+        columnOrderList = new IntList();
         columns = new ObjList<>();
     }
 
     public CairoTable(@NotNull TableToken token, CairoTable fromTab) {
         this.token = token;
 
-        columnOrderMap = fromTab.columnOrderMap;
+        columnOrderList = fromTab.columnOrderList;
         columns = fromTab.columns;
         columnNameIndexMap = fromTab.columnNameIndexMap;
 

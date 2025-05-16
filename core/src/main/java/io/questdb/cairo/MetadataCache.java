@@ -79,7 +79,7 @@ public class MetadataCache implements QuietCloseable {
     /**
      * Used on a background thread at startup to populate the cache.
      * Cache is also populated on-demand by SQL metadata functions.
-     * Takes a lock per table to not prevent ongoing probress of the database.
+     * Takes a lock per table to not prevent the ongoing progress of the database.
      * Generally completes quickly.
      */
     public void onStartupAsyncHydrator() {
@@ -151,12 +151,12 @@ public class MetadataCache implements QuietCloseable {
 
         Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
 
-        // set up dir path
+        // set up the dir path
         path.concat(token.getDirName());
 
         boolean isSoftLink = Files.isSoftLink(path.$());
 
-        // set up table path
+        // set up the table path
         path.concat(TableUtils.META_FILE_NAME).trimTo(path.size());
 
         // create table to work with
@@ -202,20 +202,22 @@ public class MetadataCache implements QuietCloseable {
             table.setMatViewRefreshLimitHoursOrMonths(TableUtils.getMatViewRefreshLimitHoursOrMonths(metaMem));
             table.setSoftLinkFlag(isSoftLink);
 
-            TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, columnCount);
+            TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
             boolean isMetaFormatUpToDate = TableUtils.isMetaFormatUpToDate(metaMem);
             // populate columns
-            for (int i = 0, n = table.columnOrderMap.size(); i < n; i += 3) {
-                int writerIndex = table.columnOrderMap.get(i);
+            for (int i = 0, n = table.columnOrderList.size(); i < n; i += 3) {
+                int writerIndex = table.columnOrderList.get(i);
+                // negative writer index columns were "replaced", as in renamed, or had their type changed
                 if (writerIndex < 0) {
                     continue;
                 }
 
-                CharSequence name = metaMem.getStrA(table.columnOrderMap.get(i + 1));
+                CharSequence name = metaMem.getStrA(table.columnOrderList.get(i + 1));
 
                 assert name != null;
                 int columnType = TableUtils.getColumnType(metaMem, writerIndex);
 
+                // negative type means column was deleted
                 if (columnType < 0) {
                     continue;
                 }
@@ -229,7 +231,6 @@ public class MetadataCache implements QuietCloseable {
                 // Column positions already determined
                 column.setPosition(table.getColumnCount());
                 column.setType(columnType);
-
                 column.setIndexedFlag(TableUtils.isColumnIndexed(metaMem, writerIndex));
                 column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
                 column.setSymbolTableStaticFlag(true);
@@ -239,6 +240,8 @@ public class MetadataCache implements QuietCloseable {
                 boolean isDesignated = writerIndex == timestampWriterIndex;
                 column.setDesignatedFlag(isDesignated);
                 if (isDesignated) {
+                    // Timestamp index is the logical index of the column in the column list. Rather than
+                    // physical index of the column in the metadata file (writer index).
                     table.setTimestampIndex(table.getColumnCount());
                 }
 
@@ -264,7 +267,7 @@ public class MetadataCache implements QuietCloseable {
         } catch (Throwable e) {
             // get rid of stale metadata
             tableMap.remove(token.getTableName());
-            // if we can't hydrate and table is not dropped, it's a critical error
+            // if we can't hydrate and the table is not dropped, it's a critical error
             LogRecord log = engine.isTableDropped(token) ? LOG.info() : LOG.critical();
             try {
                 log
@@ -308,14 +311,14 @@ public class MetadataCache implements QuietCloseable {
                 columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
             }
 
-            // initialise symbol map memory
+            // initialize symbol map memory
             final long capacityOffset = SymbolMapWriter.HEADER_CAPACITY;
             final int capacity;
             final byte isCached;
             final LPSZ offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
             long fd = TableUtils.openRO(ff, offsetFileName, LOG);
             try {
-                // use txn to find correct symbol entry
+                // use txn to find the correct symbol entry
                 capacity = ff.readNonNegativeInt(fd, capacityOffset);
                 isCached = ff.readNonNegativeByte(fd, SymbolMapWriter.HEADER_CACHE_ENABLED);
             } finally {
