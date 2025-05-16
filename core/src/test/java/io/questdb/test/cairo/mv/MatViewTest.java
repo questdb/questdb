@@ -94,6 +94,7 @@ public class MatViewTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_INTERVAL_JOB_WHEEL_SIZE, "4");
         if (rowsPerQuery > 0) {
             setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         }
@@ -2051,6 +2052,72 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testManyIntervalRefreshMatViews() throws Exception {
+        assertMemoryLeak(() -> {
+            final int views = 32;
+            final long start = parseFloorPartialTimestamp("2024-12-12T00:00:00.000000Z");
+
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            // Create first and last mat view before all others to verify timer list sort logic.
+            createNthIntervalRefreshMatView(start, 0);
+            createNthIntervalRefreshMatView(start, (views - 1));
+            for (int i = 1; i < views - 1; i++) {
+                createNthIntervalRefreshMatView(start, i);
+            }
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = start;
+            final MatViewRefreshIntervalJob refreshIntervalJob = new MatViewRefreshIntervalJob(engine);
+
+            for (int i = 0; i < views; i++) {
+                drainMatViewIntervalQueue(refreshIntervalJob);
+                drainQueues();
+
+                assertQueryNoLeakCheck(
+                        "sym\tprice\tts\n" +
+                                "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                        "price_1h_" + i + " order by sym"
+                );
+
+                currentMicros += Timestamps.SECOND_MICROS;
+            }
+
+            // Drop all mat views. All timers should be removed as well.
+            dropNthIntervalRefreshMatView(views - 1);
+            dropNthIntervalRefreshMatView(0);
+            for (int i = 1; i < views - 1; i++) {
+                dropNthIntervalRefreshMatView(i);
+            }
+
+            currentMicros += Timestamps.DAY_MICROS;
+            drainMatViewIntervalQueue(refreshIntervalJob);
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "count\n" +
+                            "0\n",
+                    "select count() from materialized_views",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testQueryError() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -3094,6 +3161,20 @@ public class MatViewTest extends AbstractCairoTest {
 
     private static void createMatView(String viewName, String viewSql) throws SqlException {
         execute("create materialized view " + viewName + " as (" + viewSql + ") partition by DAY");
+    }
+
+    private static void createNthIntervalRefreshMatView(long start, int n) throws SqlException {
+        sink.clear();
+        TimestampFormatUtils.appendDateTimeUSec(sink, start + n * Timestamps.SECOND_MICROS);
+        execute(
+                "create materialized view price_1h_" + n + " refresh interval start '" + sink + "' every 1m as (" +
+                        "select sym, last(price) as price, ts from base_price sample by 1h" +
+                        ") partition by day;"
+        );
+    }
+
+    private static void dropNthIntervalRefreshMatView(int n) throws SqlException {
+        execute("drop materialized view if exists price_1h_" + n + ";");
     }
 
     private String copySql(int from, int count) {

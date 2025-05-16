@@ -150,7 +150,7 @@ public class MatViewGraph implements Mutable {
                         final TableToken matView = matViews.get(i);
                         if (matView.equals(matViewToken)) {
                             matViews.remove(i);
-                            return;
+                            break;
                         }
                     }
                 } finally {
