@@ -474,12 +474,22 @@ public class FuzzTransactionGenerator {
         transaction.waitBarrierVersion = waitBarrierVersion;
         transactionList.add(transaction);
 
-        if (replaceInsert && !transaction.rollback) {
-            // Add up to 2 partition to the range from each side to make things more interesting
-            minTs = minTs - rnd.nextLong(2 * DAY_MICROS);
-            maxTs = maxTs + rnd.nextLong(2 * DAY_MICROS);
-            transaction.setReplaceRange(minTs, maxTs);
-            return waitBarrierVersion + 1;
+        if (replaceInsert) {
+            minTs = minTs - (long) Math.exp(24);
+            maxTs = maxTs + (long) Math.exp(24);
+            if (!transaction.rollback) {
+                // Add up to 2 partition to the range from each side to make things more interesting
+                transaction.setReplaceRange(minTs, maxTs);
+
+                return waitBarrierVersion + 1;
+            } else if (rnd.nextBoolean()) {
+                // Instead of rollback, insert empty replace range
+                transaction.operationList.clear();
+                transaction.rollback = false;
+                transaction.setReplaceRange(minTs, maxTs);
+
+                return waitBarrierVersion + 1;
+            }
         }
 
         return waitBarrierVersion;
