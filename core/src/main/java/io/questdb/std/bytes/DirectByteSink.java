@@ -25,7 +25,12 @@
 package io.questdb.std.bytes;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
+import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByteSink, QuietCloseable, Mutable {
