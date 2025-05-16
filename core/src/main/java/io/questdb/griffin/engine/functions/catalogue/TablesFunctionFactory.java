@@ -200,9 +200,9 @@ public class TablesFunctionFactory implements FunctionFactory {
                 public boolean getBool(int col) {
                     switch (col) {
                         case WAL_ENABLED_COLUMN:
-                            return table.getWalEnabled();
+                            return table.isWalEnabled();
                         case DEDUP_NAME_COLUMN:
-                            return table.getIsDedup();
+                            return table.hasDedup();
                         case IS_MAT_VIEW_COLUMN:
                             return table.getTableToken().isMatView();
                         default:
@@ -240,7 +240,7 @@ public class TablesFunctionFactory implements FunctionFactory {
                         case DESIGNATED_TIMESTAMP_COLUMN:
                             return table.getTimestampName();
                         case DIRECTORY_NAME_COLUMN:
-                            if (table.getIsSoftLink()) {
+                            if (table.isSoftLink()) {
                                 if (lazyStringSink == null) {
                                     lazyStringSink = new StringSink();
                                 }
