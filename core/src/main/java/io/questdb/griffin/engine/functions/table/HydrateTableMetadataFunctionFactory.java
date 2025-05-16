@@ -68,13 +68,13 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final CairoEngine engine = sqlExecutionContext.getCairoEngine();
-        ObjList<TableToken> tableTokens = new ObjList<>();
-
         // check if there are no args
         if (args == null || args.size() == 0) {
             throw SqlException.$(position, "no arguments provided");
         }
+
+        final CairoEngine engine = sqlExecutionContext.getCairoEngine();
+        ObjList<TableToken> tableTokens = new ObjList<>();
 
         // check for hydrate_table_metadata('*') case
         if (args.size() == 1) {

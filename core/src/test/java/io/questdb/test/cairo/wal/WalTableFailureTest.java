@@ -1483,9 +1483,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(
-                        ex.getFlyweightMessage(),
-                        "statements containing multiple transactions, such as 'alter table add column col1, col2'" +
-                                " are currently not supported for WAL tables"
+                        ex.getFlyweightMessage(), "statement is either no-op," +
+                                " or contains multiple transactions, such as 'alter table add column col1, col2'," +
+                                " and currently not supported for WAL tables" +
+                                " [table=testWalTableMultiColumnAddNotSupported, oldStructureVersion=0, newStructureVersion=2]"
                 );
             }
 

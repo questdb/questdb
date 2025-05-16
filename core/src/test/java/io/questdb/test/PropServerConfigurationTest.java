@@ -133,8 +133,8 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getDumpNetworkTraffic());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().allowDeflateBeforeSend());
         Assert.assertTrue(configuration.getHttpServerConfiguration().isQueryCacheEnabled());
-        Assert.assertEquals(8 * configuration.getWorkerPoolConfiguration().getWorkerCount(), configuration.getHttpServerConfiguration().getConcurrentCacheConfiguration().getBlocks());
-        Assert.assertEquals(2 * configuration.getWorkerPoolConfiguration().getWorkerCount(), configuration.getHttpServerConfiguration().getConcurrentCacheConfiguration().getRows());
+        Assert.assertEquals(32, configuration.getHttpServerConfiguration().getConcurrentCacheConfiguration().getBlocks());
+        Assert.assertEquals(Math.max(configuration.getWorkerPoolConfiguration().getWorkerCount(), 4), configuration.getHttpServerConfiguration().getConcurrentCacheConfiguration().getRows());
 
         Assert.assertEquals(10, configuration.getWorkerPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(10000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
@@ -435,8 +435,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getPGWireConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
         Assert.assertTrue(configuration.getPGWireConfiguration().isSelectCacheEnabled());
-        Assert.assertEquals(8 * configuration.getWorkerPoolConfiguration().getWorkerCount(), configuration.getPGWireConfiguration().getConcurrentCacheConfiguration().getBlocks());
-        Assert.assertEquals(2 * configuration.getWorkerPoolConfiguration().getWorkerCount(), configuration.getPGWireConfiguration().getConcurrentCacheConfiguration().getRows());
+        Assert.assertEquals(32, configuration.getPGWireConfiguration().getConcurrentCacheConfiguration().getBlocks());
+        Assert.assertEquals(Math.max(configuration.getWorkerPoolConfiguration().getWorkerCount(), 4), configuration.getPGWireConfiguration().getConcurrentCacheConfiguration().getRows());
         Assert.assertTrue(configuration.getPGWireConfiguration().isInsertCacheEnabled());
         Assert.assertEquals(4, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
         Assert.assertEquals(4, configuration.getPGWireConfiguration().getInsertCacheRowCount());
