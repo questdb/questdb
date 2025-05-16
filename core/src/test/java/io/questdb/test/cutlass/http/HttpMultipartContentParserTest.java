@@ -24,7 +24,11 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpHeaderParser;
+import io.questdb.cutlass.http.HttpMultipartContentParser;
+import io.questdb.cutlass.http.HttpMultipartContentProcessor;
+import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -46,7 +50,7 @@ import java.util.concurrent.TimeUnit;
 
 public class HttpMultipartContentParserTest {
 
-    private static final TestHttpMultipartContentListener LISTENER = new TestHttpMultipartContentListener();
+    private static final TestHttpMultipartContentProcessor LISTENER = new TestHttpMultipartContentProcessor();
     private static final ObjectPool<DirectUtf8String> pool = new ObjectPool<>(DirectUtf8String::new, 32);
     private static final StringSink sink = new StringSink();
     @Rule
@@ -241,7 +245,7 @@ public class HttpMultipartContentParserTest {
         });
     }
 
-    private boolean parseWithRetry(TestHttpMultipartContentListener listener, HttpMultipartContentParser multipartContentParser, long breakPoint, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    private boolean parseWithRetry(TestHttpMultipartContentProcessor listener, HttpMultipartContentParser multipartContentParser, long breakPoint, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         boolean result;
         try {
             result = multipartContentParser.parse(breakPoint, hi, listener);
@@ -252,7 +256,7 @@ public class HttpMultipartContentParserTest {
     }
 
     private void testBreaksCsvImportAt(int breakAt, RuntimeException onChunkException) throws Exception {
-        TestHttpMultipartContentListener listener = new TestHttpMultipartContentListener(onChunkException);
+        TestHttpMultipartContentProcessor listener = new TestHttpMultipartContentProcessor(onChunkException);
         TestUtils.assertMemoryLeak(() -> {
             try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
                 String boundaryToken = "------------------------27d997ca93d2689d";
@@ -296,15 +300,15 @@ public class HttpMultipartContentParserTest {
         });
     }
 
-    private static class TestHttpMultipartContentListener implements HttpMultipartContentListener {
+    private static class TestHttpMultipartContentProcessor implements HttpMultipartContentProcessor {
         private final RuntimeException firstChunkException;
         private int onChunkCount;
 
-        public TestHttpMultipartContentListener() {
+        public TestHttpMultipartContentProcessor() {
             this(null);
         }
 
-        public TestHttpMultipartContentListener(RuntimeException firstChunkException) {
+        public TestHttpMultipartContentProcessor(RuntimeException firstChunkException) {
             this.firstChunkException = firstChunkException;
         }
 

@@ -42,6 +42,7 @@ import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpConstants;
 import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
@@ -77,7 +78,7 @@ import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_LIMIT;
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_QUERY;
 import static java.net.HttpURLConnection.*;
 
-public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
+public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
 
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessor.class);
     private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
@@ -269,6 +270,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         logInternalError(e, state, metrics);
         sendException(response, context, 0, e.getFlyweightMessage(), state.getQuery(), configuration.getKeepAliveHeader(), HTTP_BAD_REQUEST);
         response.shutdownWrite();
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
     }
 
     @Override

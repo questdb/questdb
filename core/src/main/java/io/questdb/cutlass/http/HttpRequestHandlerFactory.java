@@ -22,11 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.cutlass.http;
 
-public class DefaultTextImportProcessorConfiguration implements TextImportProcessorConfiguration {
-    @Override
-    public boolean abortBrokenUploads() {
-        return true;
-    }
+import io.questdb.std.ObjList;
+
+public interface HttpRequestHandlerFactory {
+    ObjList<String> getUrls();
+
+    HttpRequestHandler newInstance();
 }

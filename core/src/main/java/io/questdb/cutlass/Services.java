@@ -32,8 +32,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpCookieHandler;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParserFactory;
-import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.http.HttpRequestProcessorFactory;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
@@ -106,14 +106,14 @@ public class Services {
                 cookieHandler,
                 headerParserFactory
         );
-        HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
+        HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
                 workerPool.getWorkerCount(),
                 sharedWorkerCount
         );
 
-        HttpServer.HttpRequestProcessorBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
+        HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
                 cairoEngine,
                 httpServerConfiguration.getRecvBufferSize(),
                 httpServerConfiguration.getSendBufferSize(),
@@ -209,14 +209,14 @@ public class Services {
         final HttpServer server = new HttpServer(configuration, workerPool, configuration.getFactoryProvider().getHttpMinSocketFactory());
         Metrics metrics = configuration.getHttpContextConfiguration().getMetrics();
         server.bind(
-                new HttpRequestProcessorFactory() {
+                new HttpRequestHandlerFactory() {
                     @Override
                     public ObjList<String> getUrls() {
                         return configuration.getContextPathStatus();
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return new HealthCheckProcessor(configuration);
                     }
                 },
@@ -229,14 +229,14 @@ public class Services {
             );
             server.registerClosable(pool);
             server.bind(
-                    new HttpRequestProcessorFactory() {
+                    new HttpRequestHandlerFactory() {
                         @Override
                         public ObjList<String> getUrls() {
                             return configuration.getContextPathMetrics();
                         }
 
                         @Override
-                        public HttpRequestProcessor newInstance() {
+                        public HttpRequestHandler newInstance() {
                             return new PrometheusMetricsProcessor(metrics, configuration, pool);
                         }
                     }

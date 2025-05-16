@@ -24,15 +24,20 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpException;
-import io.questdb.cutlass.http.HttpMultipartContentListener;
+import io.questdb.cutlass.http.HttpMultipartContentProcessor;
+import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.AtomicLongGauge;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -41,10 +46,12 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
-import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.*;
+import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.ENCODING_NOT_SUPPORTED;
+import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.PRECISION_NOT_SUPPORTED;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.*;
+import static io.questdb.cutlass.http.HttpRequestValidator.*;
 
-public class LineHttpProcessorImpl implements LineHttpProcessor, HttpMultipartContentListener {
+public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, HttpRequestHandler {
     private static final Utf8String CONTENT_ENCODING = new Utf8String("Content-Encoding");
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
     private static final LocalValue<LineHttpProcessorState> LV = new LocalValue<>();
@@ -63,6 +70,34 @@ public class LineHttpProcessorImpl implements LineHttpProcessor, HttpMultipartCo
     }
 
     @Override
+    public AtomicLongGauge connectionCountGauge(Metrics metrics) {
+        return metrics.lineMetrics().httpConnectionCountGauge();
+    }
+
+    @Override
+    public int getConnectionLimit(HttpContextConfiguration configuration) {
+        return configuration.getIlpConnectionLimit();
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
+    }
+
+    @Override
+    public byte getSupportedRequestTypes() {
+        return METHOD_POST + METHOD_MULTIPART_POST;
+    }
+
+    @Override
+    public void onPartBegin(HttpRequestHeader partHeader) {
+    }
+
+    @Override
+    public void onPartEnd() {
+    }
+
+    @Override
     public void onChunk(long lo, long hi) {
         this.state.parse(lo, hi);
     }
@@ -75,6 +110,7 @@ public class LineHttpProcessorImpl implements LineHttpProcessor, HttpMultipartCo
         }
     }
 
+    @Override
     public void onHeadersReady(HttpConnectionContext context) {
         state = LV.get(context);
         if (state == null) {
@@ -84,12 +120,7 @@ public class LineHttpProcessorImpl implements LineHttpProcessor, HttpMultipartCo
             state.clear();
         }
 
-        // Method
         HttpRequestHeader requestHeader = context.getRequestHeader();
-        if (!Utf8s.equalsNcAscii("POST", requestHeader.getMethod())) {
-            state.reject(METHOD_NOT_SUPPORTED, "Not Found", context.getFd());
-            return;
-        }
 
         // Encoding
         Utf8Sequence encoding = requestHeader.getHeader(CONTENT_ENCODING);
@@ -129,14 +160,6 @@ public class LineHttpProcessorImpl implements LineHttpProcessor, HttpMultipartCo
         }
 
         state.of(context.getFd(), timestampPrecision, context.getSecurityContext());
-    }
-
-    @Override
-    public void onPartBegin(HttpRequestHeader partHeader) {
-    }
-
-    @Override
-    public void onPartEnd() {
     }
 
     @Override

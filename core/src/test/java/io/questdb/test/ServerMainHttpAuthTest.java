@@ -24,6 +24,7 @@
 
 package io.questdb.test;
 
+import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.client.Sender;
@@ -35,6 +36,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import static io.questdb.test.cutlass.http.SettingsEndpointTest.*;
 
 public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
     private static final String PASSWORD = "quest";
@@ -171,6 +174,30 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                     sender.flush();
                 } catch (LineSenderException e) {
                     TestUtils.assertContains(e.getMessage(), "Unauthorized");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSettingsEndpointShowsAclEnabled() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"acl.enabled\":true," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null" +
+                            "}," +
+                            "\"preferences.version\":0," +
+                            "\"preferences\":{" +
+                            "}" +
+                            "}");
                 }
             }
         });

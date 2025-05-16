@@ -29,6 +29,7 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRangeParser;
 import io.questdb.cutlass.http.HttpRawSocket;
+import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpResponseHeader;
@@ -59,10 +60,10 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 import static java.net.HttpURLConnection.HTTP_MOVED_PERM;
 import static java.net.HttpURLConnection.HTTP_NOT_FOUND;
 
-public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
+public class StaticContentProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
     private static final LocalValue<StaticContentProcessorState> LV = new LocalValue<>();
-    private final Utf8Sequence webConsoleContextPath;
+    private final StaticContentProcessorConfiguration configuration;
     private final FilesFacade ff;
     private final String httpProtocolVersion;
     private final String keepAliveHeader;
@@ -71,7 +72,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     private final HttpRangeParser rangeParser = new HttpRangeParser();
     private final byte requiredAuthType;
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
-    private final StaticContentProcessorConfiguration configuration;
+    private final Utf8Sequence webConsoleContextPath;
 
     public StaticContentProcessor(HttpFullFatServerConfiguration configuration) {
         this.configuration = configuration.getStaticContentProcessorConfiguration();
@@ -87,6 +88,16 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void close() {
         Misc.free(prefixedPath);
+    }
+
+    @Override
+    public HttpRequestProcessor getDefaultProcessor() {
+        return this;
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
     }
 
     @Override

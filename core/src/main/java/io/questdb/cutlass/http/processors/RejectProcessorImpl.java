@@ -66,11 +66,6 @@ public class RejectProcessorImpl implements RejectProcessor {
     }
 
     @Override
-    public boolean isErrorProcessor() {
-        return true;
-    }
-
-    @Override
     public boolean isRequestBeingRejected() {
         return rejectCode != 0;
     }

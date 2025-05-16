@@ -22,8 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.cutlass.http;
 
-public interface TextImportProcessorConfiguration {
-    boolean abortBrokenUploads();
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.ServerDisconnectException;
+
+import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_MULTIPART_POST;
+import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_MULTIPART_PUT;
+
+public interface HttpMultipartContentProcessor extends HttpPostPutProcessor {
+    @Override
+    default byte getSupportedRequestTypes() {
+        return METHOD_MULTIPART_POST + METHOD_MULTIPART_PUT;
+    }
+
+    void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
+
+    void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
 }

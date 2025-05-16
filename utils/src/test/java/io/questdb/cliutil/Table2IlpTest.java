@@ -504,14 +504,14 @@ public class Table2IlpTest {
                 cookieHandler,
                 headerParserFactory
         );
-        HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
+        HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
                 workerPool.getWorkerCount(),
                 sharedWorkerCount
         );
 
-        HttpServer.HttpRequestProcessorBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
+        HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
                 cairoEngine,
                 httpServerConfiguration.getRecvBufferSize(),
                 httpServerConfiguration.getSendBufferSize(),

@@ -103,7 +103,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
     public boolean parse(
             long lo,
             long hi,
-            HttpMultipartContentListener listener
+            HttpMultipartContentProcessor processor
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         long _lo = lo;
         long ptr = lo;
@@ -148,11 +148,11 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                                 ptr++;
                                 break;
                             }
-                            listener.onPartEnd();
+                            processor.onPartEnd();
                             state = DONE;
                             return true;
                         default:
-                            listener.onChunk(boundary.lo(), boundary.hi());
+                            processor.onChunk(boundary.lo(), boundary.hi());
                             _lo = ptr;
                             state = BODY;
                             break;
@@ -173,7 +173,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                     }
                     break;
                 case HEADERS:
-                    listener.onPartEnd();
+                    processor.onPartEnd();
                     state = HEADERS;
                     // fall through
                 case START_HEADERS:
@@ -187,7 +187,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                         return false;
                     }
                     _lo = ptr;
-                    listener.onPartBegin(headerParser);
+                    processor.onPartBegin(headerParser);
                     state = BODY;
                     break;
                 case BODY:
@@ -196,10 +196,10 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                         boundaryPtr = 1;
                         switch (matchBoundary(ptr, hi)) {
                             case BOUNDARY_INCOMPLETE:
-                                onChunkWithRetryHandle(listener, _lo, ptr - 1, POTENTIAL_BOUNDARY, hi, true);
+                                onChunkWithRetryHandle(processor, _lo, ptr - 1, POTENTIAL_BOUNDARY, hi, true);
                                 return false;
                             case BOUNDARY_MATCH:
-                                ptr = onChunkWithRetryHandle(listener, _lo, ptr - 1, PRE_HEADERS, ptr + consumedBoundaryLen, false);
+                                ptr = onChunkWithRetryHandle(processor, _lo, ptr - 1, PRE_HEADERS, ptr + consumedBoundaryLen, false);
                                 break;
                             default:
                                 break;
@@ -217,7 +217,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                             break;
                         default:
                             // can only be BOUNDARY_NO_MATCH:
-                            onChunkWithRetryHandle(listener, boundary.lo(), boundary.lo() + p, BODY_BROKEN, ptr, true);
+                            onChunkWithRetryHandle(processor, boundary.lo(), boundary.lo() + p, BODY_BROKEN, ptr, true);
                             break;
                     }
                     break;
@@ -228,7 +228,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         }
 
         if (state == BODY) {
-            onChunkWithRetryHandle(listener, _lo, ptr, BODY_BROKEN, ptr, true);
+            onChunkWithRetryHandle(processor, _lo, ptr, BODY_BROKEN, ptr, true);
         }
 
         return false;
@@ -255,7 +255,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
     }
 
     private long onChunkWithRetryHandle(
-            HttpMultipartContentListener listener,
+            HttpMultipartContentProcessor processor,
             long lo,
             long hi,
             int state,
@@ -264,7 +264,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
         RetryOperationException needsRetry = null;
         try {
-            listener.onChunk(lo, hi);
+            processor.onChunk(lo, hi);
         } catch (RetryOperationException e) {
             // Request re-try.
             needsRetry = e;

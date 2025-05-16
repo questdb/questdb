@@ -26,6 +26,8 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.LocalValue;
@@ -40,7 +42,7 @@ import io.questdb.std.str.DirectUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-public class PrometheusMetricsProcessor implements HttpRequestProcessor {
+public class PrometheusMetricsProcessor implements HttpRequestProcessor, HttpRequestHandler {
     private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; version=0.0.4; charset=utf-8";
     private static final LocalValue<RequestState> LV = new LocalValue<>();
     private final Target metrics;
@@ -51,6 +53,11 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         this.metrics = metrics;
         this.requiredAuthType = configuration.getRequiredAuthType();
         this.pool = pool;
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
     }
 
     @Override

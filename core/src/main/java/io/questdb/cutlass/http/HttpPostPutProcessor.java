@@ -24,10 +24,18 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.std.ObjList;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.ServerDisconnectException;
 
-public interface HttpRequestProcessorFactory {
-    ObjList<String> getUrls();
+import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_POST;
+import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_PUT;
 
-    HttpRequestProcessor newInstance();
+public interface HttpPostPutProcessor extends HttpRequestProcessor {
+    @Override
+    default byte getSupportedRequestTypes() {
+        return METHOD_POST + METHOD_PUT;
+    }
+
+    void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
 }

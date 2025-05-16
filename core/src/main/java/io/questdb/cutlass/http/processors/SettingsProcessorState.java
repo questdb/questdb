@@ -24,20 +24,32 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.Metrics;
-import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.metrics.AtomicLongGauge;
+import io.questdb.preferences.SettingsStore;
+import io.questdb.std.Mutable;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.StringSink;
 
-public interface LineHttpProcessor extends HttpRequestProcessor {
+import java.io.Closeable;
 
-    @Override
-    default AtomicLongGauge connectionCountGauge(Metrics metrics) {
-        return metrics.lineMetrics().httpConnectionCountGauge();
+class SettingsProcessorState implements Mutable, Closeable {
+    final DirectUtf8Sink sink;
+    final StringSink version;
+    SettingsStore.Mode mode;
+
+    SettingsProcessorState(int size) {
+        sink = new DirectUtf8Sink(size);
+        version = new StringSink();
     }
 
     @Override
-    default int getConnectionLimit(HttpContextConfiguration configuration) {
-        return configuration.getIlpConnectionLimit();
+    public void clear() {
+        sink.clear();
+        version.clear();
+        mode = null;
+    }
+
+    @Override
+    public void close() {
+        sink.close();
     }
 }

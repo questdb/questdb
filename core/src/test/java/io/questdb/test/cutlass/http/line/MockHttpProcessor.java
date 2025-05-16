@@ -24,7 +24,12 @@
 
 package io.questdb.test.cutlass.http.line;
 
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpChunkedResponse;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpPostPutProcessor;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Chars;
@@ -41,7 +46,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartContentListener {
+final class MockHttpProcessor implements HttpPostPutProcessor, HttpRequestHandler {
     private static final long MAX_DELIVERY_DELAY_NANOS = TimeUnit.SECONDS.toNanos(10);
     private final Queue<ExpectedRequest> expectedRequests = new ConcurrentLinkedQueue<>();
     private final Queue<ActualRequest> recordedRequests = new ConcurrentLinkedQueue<>();
@@ -62,7 +67,6 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
         return this;
     }
 
-
     public MockHttpProcessor delayedReplyWithStatus(int statusCode, CountDownLatch delayLatch) {
         Response response = new Response();
         response.responseStatusCode = statusCode;
@@ -72,6 +76,11 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
         expectedRequests.add(expectedRequest);
         expectedRequest = new ExpectedRequest();
 
+        return this;
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
         return this;
     }
 
@@ -113,16 +122,6 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
             String headerValue = context.getRequestHeader().getHeader(headerNameUtf8).toString();
             actualRequest.headers.put(headerName, headerValue);
         }
-    }
-
-    @Override
-    public void onPartBegin(HttpRequestHeader partHeader) {
-
-    }
-
-    @Override
-    public void onPartEnd() {
-
     }
 
     @Override

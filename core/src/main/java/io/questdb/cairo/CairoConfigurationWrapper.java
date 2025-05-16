@@ -33,7 +33,6 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.datetime.DateFormat;
@@ -41,6 +40,7 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -59,6 +59,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     public CairoConfigurationWrapper(@NotNull CairoConfiguration delegate) {
         this.delegate.set(delegate);
         this.metrics = delegate.getMetrics();
+    }
+
+    @Override
+    public boolean exportConfiguration(Utf8StringSink sink) {
+        return getDelegate().exportConfiguration(sink);
     }
 
     @Override
@@ -624,6 +629,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getPartitionPurgeListCapacity() {
         return getDelegate().getPartitionPurgeListCapacity();
+    }
+
+    @Override
+    public int getPreferencesParserCacheSizeLimit() {
+        return getDelegate().getPreferencesParserCacheSizeLimit();
+    }
+
+    @Override
+    public int getPreferencesStringPoolCapacity() {
+        return getDelegate().getPreferencesStringPoolCapacity();
     }
 
     @Override
@@ -1303,11 +1318,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean mangleTableDirNames() {
         return getDelegate().mangleTableDirNames();
-    }
-
-    @Override
-    public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-        getDelegate().populateSettings(settings);
     }
 
     public void setDelegate(CairoConfiguration delegate) {
