@@ -39,8 +39,6 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
  * Based on George Varghese and Tony Lauck's paper, "Hashed and Hierarchical
  * Timing Wheels: data structures to efficiently implement a timer facility".
  */
-// TODOs:
-// - sort timers within bucket
 public class RefreshIntervalTimingWheel {
     private final MicrosecondClock clock;
     private final int mask;
@@ -110,27 +108,42 @@ public class RefreshIntervalTimingWheel {
         private Timer head;
         private Timer tail;
 
+        // the list is kept sorted to speed up expiration checks
         public void addTimer(Timer timer) {
             assert timer.bucket == null;
 
             timer.bucket = this;
             if (head == null) {
                 this.head = this.tail = timer;
-            } else {
+            } else if (head.deadline >= timer.deadline) {
+                head.prev = timer;
+                timer.next = head;
+                this.head = timer;
+            } else if (tail.deadline <= timer.deadline) {
                 tail.next = timer;
                 timer.prev = tail;
                 this.tail = timer;
+            } else {
+                for (Timer t = head.next; t != null; t = t.next) {
+                    if (t.deadline >= timer.deadline) {
+                        timer.next = t;
+                        timer.prev = t.prev;
+                        t.prev.next = timer;
+                        t.prev = timer;
+                        break;
+                    }
+                }
             }
         }
 
         public void expireTimers(ObjList<Timer> expired, long now) {
             Timer next;
             for (Timer timer = head; timer != null; timer = next) {
-                next = timer.next;
-                // TODO(puzpuzpuz): keep the list sorted
                 if (timer.deadline <= now) {
                     next = removeTimer(timer);
                     expired.add(timer);
+                } else {
+                    break;
                 }
             }
         }
