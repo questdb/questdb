@@ -64,15 +64,6 @@ public interface CairoConfiguration {
     long O_SYNC = 0x80;
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
-    /**
-     * Appends to the settings sink from cairo configuration in JSON format.
-     *
-     * @return true if added anything to settings
-     */
-    default boolean appendToSettingsSink(Utf8StringSink settings) {
-        return false;
-    }
-
     boolean attachPartitionCopy();
 
     default boolean disableColumnPurgeJob() {
@@ -80,6 +71,16 @@ public interface CairoConfiguration {
     }
 
     boolean enableTestFactories();
+
+    /**
+     * Exports subset of configuration parameters into a sink. Configuration
+     * parameters are exported in JSON format.
+     *
+     * @return true if anything was exported
+     */
+    default boolean exportConfiguration(Utf8StringSink sink) {
+        return false;
+    }
 
     default boolean freeLeakedReaders() {
         return true;

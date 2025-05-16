@@ -26,7 +26,7 @@ package io.questdb.test.preferences;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.preferences.PreferencesStore;
+import io.questdb.preferences.SettingsStore;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -40,7 +40,7 @@ import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.await;
 import static org.junit.Assert.fail;
 
-public class PreferencesStoreConcurrentTest extends AbstractCairoTest {
+public class SettingsStoreConcurrentTest extends AbstractCairoTest {
 
     @Test
     public void testConcurrentWriteRead() throws Exception {
@@ -50,13 +50,13 @@ public class PreferencesStoreConcurrentTest extends AbstractCairoTest {
         final int numOfReads = 500;
         assertMemoryLeak(() -> {
             final String preferences = "{\"key1\":\"value1\",\"key2\":\"value2\",\"key3\":\"value3\"}";
-            try (PreferencesStore preferencesStore = new PreferencesStore(engine.getConfiguration())) {
-                preferencesStore.init();
+            try (SettingsStore settingsStore = new SettingsStore(engine.getConfiguration())) {
+                settingsStore.init();
                 try (DirectUtf8Sink directUtf8Sink = new DirectUtf8Sink(256)) {
                     for (int j = 0; j < numOfWrites; j++) {
                         directUtf8Sink.clear();
                         directUtf8Sink.put(preferences);
-                        preferencesStore.save(directUtf8Sink, PreferencesStore.Mode.OVERWRITE, j);
+                        settingsStore.save(directUtf8Sink, SettingsStore.Mode.OVERWRITE, j);
                     }
                 }
 
@@ -73,7 +73,7 @@ public class PreferencesStoreConcurrentTest extends AbstractCairoTest {
                                 directUtf8Sink.clear();
                                 directUtf8Sink.put(preferences);
                                 try {
-                                    preferencesStore.save(directUtf8Sink, PreferencesStore.Mode.OVERWRITE, preferencesStore.getVersion());
+                                    settingsStore.save(directUtf8Sink, SettingsStore.Mode.OVERWRITE, settingsStore.getVersion());
                                 } catch (CairoException e) {
                                     if (!e.isPreferencesOutOfDateError()) {
                                         throw e;
@@ -95,7 +95,7 @@ public class PreferencesStoreConcurrentTest extends AbstractCairoTest {
                             final Utf8StringSink sink = new Utf8StringSink();
                             for (int j = 0; j < numOfReads; j++) {
                                 sink.clear();
-                                preferencesStore.appendToSettingsSink(sink);
+                                settingsStore.appendToSettingsSink(sink);
                                 assertEquals("\"preferences\":{\"key1\":\"value1\",\"key2\":\"value2\",\"key3\":\"value3\"}", sink);
                             }
                         } catch (Throwable th) {

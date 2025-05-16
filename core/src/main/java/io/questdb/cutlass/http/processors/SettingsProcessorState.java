@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.preferences.PreferencesStore;
+import io.questdb.preferences.SettingsStore;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
@@ -34,7 +34,7 @@ import java.io.Closeable;
 class SettingsProcessorState implements Mutable, Closeable {
     final DirectUtf8Sink sink;
     final StringSink version;
-    PreferencesStore.Mode mode;
+    SettingsStore.Mode mode;
 
     SettingsProcessorState(int size) {
         sink = new DirectUtf8Sink(size);

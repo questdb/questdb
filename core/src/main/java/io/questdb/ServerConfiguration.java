@@ -39,17 +39,21 @@ public interface ServerConfiguration {
     String OSS = "OSS";
 
     /**
-     * Constructs the config part of settings.
-     * Appends to the settings sink from server configuration in JSON format.
+     * Exports subset of configuration options into the provided sink. The config is exported
+     * int JSON format.
+     *
+     * @param sink the target sink
      */
-    default void appendToSettingsSink(Utf8StringSink settings) {
-        settings.putAscii("\"config\":{");
+    default void exportConfiguration(Utf8StringSink sink) {
+        sink.putAscii("\"config\":{");
         // bitwise OR below is intentional, always want to append passthrough config
-        if (getCairoConfiguration().appendToSettingsSink(settings)
-                | getPublicPassthroughConfiguration().appendToSettingsSink(settings)) {
-            settings.clear(settings.size() - 1);
+        if (
+                getCairoConfiguration().exportConfiguration(sink)
+                | getPublicPassthroughConfiguration().exportConfiguration(sink)
+        ) {
+            sink.clear(sink.size() - 1);
         }
-        settings.putAscii("},");
+        sink.putAscii("},");
     }
 
     CairoConfiguration getCairoConfiguration();

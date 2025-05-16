@@ -23,7 +23,7 @@ import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
 import static io.questdb.cutlass.http.HttpConstants.METHOD_POST;
 import static io.questdb.cutlass.http.HttpConstants.METHOD_PUT;
 
-public class PreferencesStore implements Closeable {
+public class SettingsStore implements Closeable {
     private static final String PREFERENCES_FILE_NAME = "_preferences~store";
     private final BlockFileReader blockFileReader;
     private final BlockFileWriter blockFileWriter;
@@ -35,7 +35,7 @@ public class PreferencesStore implements Closeable {
     private final int rootLen;
     private long version = 0L;
 
-    public PreferencesStore(CairoConfiguration configuration) {
+    public SettingsStore(CairoConfiguration configuration) {
         this.configuration = configuration;
 
         preferencesMap = new PreferencesMap(configuration);

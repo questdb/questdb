@@ -40,7 +40,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
-import io.questdb.preferences.PreferencesStore;
+import io.questdb.preferences.SettingsStore;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ThreadLocal;
@@ -62,13 +62,13 @@ public class SettingsProcessor implements HttpRequestHandler {
     private static final ThreadLocal<Utf8StringSink> tlSink = new ThreadLocal<>(Utf8StringSink::new);
     private final GetProcessor getProcessor = new GetProcessor();
     private final PostPutProcessor postPutProcessor = new PostPutProcessor();
-    private final PreferencesStore preferencesStore;
+    private final SettingsStore settingsStore;
     private final byte requiredAuthTypeForUpdate;
     private final ServerConfiguration serverConfiguration;
 
     public SettingsProcessor(CairoEngine engine, ServerConfiguration serverConfiguration) {
         this.serverConfiguration = serverConfiguration;
-        this.preferencesStore = engine.getPreferencesStore();
+        this.settingsStore = engine.getSettingsStore();
 
         requiredAuthTypeForUpdate = serverConfiguration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getRequiredAuthType();
     }
@@ -89,9 +89,9 @@ public class SettingsProcessor implements HttpRequestHandler {
             final Utf8StringSink settings = tlSink.get();
             settings.clear();
             settings.putAscii('{');
-            serverConfiguration.appendToSettingsSink(settings);
-            integer(PREFERENCES_VERSION, preferencesStore.getVersion(), settings);
-            preferencesStore.appendToSettingsSink(settings);
+            serverConfiguration.exportConfiguration(settings);
+            integer(PREFERENCES_VERSION, settingsStore.getVersion(), settings);
+            settingsStore.appendToSettingsSink(settings);
             settings.putAscii('}');
 
             final HttpChunkedResponse r = context.getChunkedResponse();
@@ -127,7 +127,7 @@ public class SettingsProcessor implements HttpRequestHandler {
                 LV.set(context, transientState = new SettingsProcessorState(serverConfiguration.getHttpServerConfiguration().getRecvBufferSize()));
             }
 
-            transientState.mode = PreferencesStore.Mode.of(context.getRequestHeader().getMethod());
+            transientState.mode = SettingsStore.Mode.of(context.getRequestHeader().getMethod());
 
             transientState.version.clear();
             transientState.version.put(context.getRequestHeader().getUrlParam(URL_PARAM_VERSION));
@@ -137,8 +137,7 @@ public class SettingsProcessor implements HttpRequestHandler {
         public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
             try {
                 context.getSecurityContext().authorizeSystemAdmin();
-
-                preferencesStore.save(transientState.sink, transientState.mode, parseVersion(transientState.version));
+                settingsStore.save(transientState.sink, transientState.mode, parseVersion(transientState.version));
                 sendOk();
             } catch (CairoException e) {
                 LOG.error().$("could not save preferences").$((Throwable) e).$();

@@ -29,11 +29,12 @@ import io.questdb.std.str.Utf8StringSink;
 public interface PublicPassthroughConfiguration {
 
     /**
-     * Appends to the settings sink from passthrough configuration in JSON format.
+     * Exports subset of configuration parameters into a sink. Configuration
+     * parameters are exported in JSON format
      *
-     * @return true if added anything to settings
+     * @return true if anything was exported
      */
-    default boolean appendToSettingsSink(Utf8StringSink settings) {
+    default boolean exportConfiguration(Utf8StringSink sink) {
         return false;
     }
 

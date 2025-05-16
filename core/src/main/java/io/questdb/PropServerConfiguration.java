@@ -2539,11 +2539,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         };
 
         @Override
-        public boolean appendToSettingsSink(Utf8StringSink settings) {
-            str(RELEASE_TYPE, getReleaseType(), settings);
-            str(RELEASE_VERSION, getBuildInformation().getSwVersion(), settings);
+        public boolean exportConfiguration(Utf8StringSink sink) {
+            str(RELEASE_TYPE, getReleaseType(), sink);
+            str(RELEASE_VERSION, getBuildInformation().getSwVersion(), sink);
             if (!Chars.empty(httpUsername)) {
-                bool(ACL_ENABLED, true, settings);
+                bool(ACL_ENABLED, true, sink);
             }
             return true;
         }
@@ -3118,7 +3118,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getPreferencesParserCacheSizeLimit() {
-            // the json to be parsed comes from the http receive buffer
+            // the JSON to be parsed comes from the http receive buffer
             // so setting the max size to the same
             return httpRecvBufferSize;
         }
@@ -5234,9 +5234,9 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     class PropPublicPassthroughConfiguration implements PublicPassthroughConfiguration {
         @Override
-        public boolean appendToSettingsSink(Utf8StringSink settings) {
-            bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), isPosthogEnabled(), settings);
-            str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), getPosthogApiKey(), settings);
+        public boolean exportConfiguration(Utf8StringSink sink) {
+            bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), isPosthogEnabled(), sink);
+            str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), getPosthogApiKey(), sink);
             return true;
         }
 

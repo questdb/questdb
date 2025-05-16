@@ -30,7 +30,7 @@ public final class PreferencesParser extends AbstractJsonParser {
     public void onEvent(int code, CharSequence tag, int position) {
         switch (code) {
             case JsonLexer.EVT_OBJ_START:
-                if (state == STATE_START) { // expecting root object
+                if (state == STATE_START) { // expecting the root object
                     state = STATE_ROOT;
                 } else {
                     throw CairoException.critical(0).put("unexpected input format [code=").put(code).put(", state=").put(state).put(']');
