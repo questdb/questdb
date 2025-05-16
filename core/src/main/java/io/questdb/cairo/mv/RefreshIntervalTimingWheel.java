@@ -39,6 +39,11 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
  * Based on George Varghese and Tony Lauck's paper, "Hashed and Hierarchical
  * Timing Wheels: data structures to efficiently implement a timer facility".
  */
+// TODOs:
+// - 1 sec interval
+// - deadlines should expire within the bucket
+// - sort timers within bucket
+// - is tail needed?
 public class RefreshIntervalTimingWheel {
     private final MicrosecondClock clock;
     private final int mask;

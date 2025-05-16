@@ -212,8 +212,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(200, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
-        Assert.assertEquals(512, configuration.getCairoConfiguration().getMatViewIntervalJobWheelSize());
-        Assert.assertEquals(10 * Timestamps.SECOND_MICROS, configuration.getCairoConfiguration().getMatViewIntervalJobTick());
+        Assert.assertEquals(256, configuration.getCairoConfiguration().getMatViewIntervalJobWheelSize());
+        Assert.assertEquals(Timestamps.SECOND_MICROS, configuration.getCairoConfiguration().getMatViewIntervalJobTick());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getDefaultSymbolCapacity());
