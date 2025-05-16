@@ -3,3 +3,4 @@ psycopg2-binary==2.9.10
 pytz==2024.2
 PyYAML==6.0.2
 zope.interface==7.0.3
+python-dateutil==2.9.0.post0
