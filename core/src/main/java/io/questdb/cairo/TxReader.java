@@ -238,6 +238,10 @@ public class TxReader implements Closeable, Mutable {
         return minTimestamp;
     }
 
+    public long getNextLogicalPartitionTimestamp(long timestamp) {
+        return partitionCeilMethod.ceil(timestamp);
+    }
+
     public long getNextPartitionTimestamp(long timestamp) {
         if (partitionBy == PartitionBy.NONE) {
             return Long.MAX_VALUE;
@@ -257,6 +261,24 @@ public class TxReader implements Closeable, Mutable {
             }
         }
         return partitionCeilMethod.ceil(timestamp);
+    }
+
+    public long getNextExistingPartitionTimestamp(long timestamp) {
+        if (partitionBy == PartitionBy.NONE) {
+            return Long.MAX_VALUE;
+        }
+
+        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
+        if (index < 0) {
+            index = -index - 1;
+        } else {
+            index += LONGS_PER_TX_ATTACHED_PARTITION;
+        }
+        int nextIndex = index + PARTITION_TS_OFFSET;
+        if (nextIndex < attachedPartitions.size()) {
+            return attachedPartitions.get(nextIndex);
+        }
+        return Long.MAX_VALUE;
     }
 
     public int getPartitionCount() {
@@ -473,7 +495,7 @@ public class TxReader implements Closeable, Mutable {
             long timestamp = getPartitionTimestampByIndex(i / LONGS_PER_TX_ATTACHED_PARTITION);
             long rowCount = attachedPartitions.getQuick(i + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
 
-            if (i / LONGS_PER_TX_ATTACHED_PARTITION == getPartitionIndex(maxTimestamp)) {
+            if (i / LONGS_PER_TX_ATTACHED_PARTITION == getPartitionCount()) {
                 rowCount = transientRowCount;
             }
 

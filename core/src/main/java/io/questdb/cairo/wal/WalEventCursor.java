@@ -309,11 +309,18 @@ public class WalEventCursor {
 
     public class DataInfo implements SymbolMapDiffCursor {
         private final SymbolMapDiffImpl symbolMapDiff = new SymbolMapDiffImpl(WalEventCursor.this);
+        private byte dedupMode;
         private long endRowID;
         private long maxTimestamp;
         private long minTimestamp;
         private boolean outOfOrder;
+        private long replaceRangeTsHi;
+        private long replaceRangeTsLow;
         private long startRowID;
+
+        public byte getDedupMode() {
+            return dedupMode;
+        }
 
         public long getEndRowID() {
             return endRowID;
@@ -325,6 +332,14 @@ public class WalEventCursor {
 
         public long getMinTimestamp() {
             return minTimestamp;
+        }
+
+        public long getReplaceRangeTsHi() {
+            return replaceRangeTsHi;
+        }
+
+        public long getReplaceRangeTsLow() {
+            return replaceRangeTsLow;
         }
 
         public long getStartRowID() {
@@ -345,6 +360,10 @@ public class WalEventCursor {
             minTimestamp = readLong();
             maxTimestamp = readLong();
             outOfOrder = readBool();
+
+            replaceRangeTsLow = eventMem.getLong(nextOffset - Long.BYTES - Long.BYTES - Byte.BYTES);
+            replaceRangeTsHi = eventMem.getLong(nextOffset - Long.BYTES - Byte.BYTES);
+            dedupMode = eventMem.getByte(nextOffset - Byte.BYTES);
         }
     }
 

@@ -1805,7 +1805,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 if (rnd.nextBoolean()) {
                     walWriter.commit();
                 } else {
-                    walWriter.commitMatView(0, 0);
+                    walWriter.commitMatView(0, 0, 0, 0);
                 }
 
                 drainWalQueue();
@@ -4116,7 +4116,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     row.putSym(1, "sym" + i);
                     row.append();
                     if (i == 1) {
-                        walWriter.commitMatView(42, 42);
+                        walWriter.commitMatView(42, 42, 0, 0);
                     } else {
                         walWriter.commit();
                     }
@@ -4213,7 +4213,7 @@ public class WalWriterTest extends AbstractCairoTest {
         TableToken tableToken = createTable(model);
         try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
             for (int i = 0; i < 10; i++) {
-                TableWriter.Row row = walWriter.newRow(0);
+                TableWriter.Row row = walWriter.newRow(i);
                 row.putByte(0, (byte) i);
                 row.putSym(1, "sym" + i);
                 row.append();
@@ -4222,7 +4222,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     walWriter.commit();
                 } else {
                     if (newFormat) {
-                        walWriter.commitMatView(refreshTxn + i, i);
+                        walWriter.commitMatView(refreshTxn + i, i, i, i + 1);
                     } else {
                         walWriter.commit();
                     }

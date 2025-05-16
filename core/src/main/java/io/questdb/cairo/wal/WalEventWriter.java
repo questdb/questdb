@@ -108,7 +108,19 @@ class WalEventWriter implements Closeable {
         }
     }
 
-    private int appendData(byte txnType, long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder, long lastRefreshBaseTxn, long lastRefreshTimestamp) {
+    private int appendData(
+            byte txnType,
+            long startRowID,
+            long endRowID,
+            long minTimestamp,
+            long maxTimestamp,
+            boolean outOfOrder,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode
+    ) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(txnType);
@@ -123,6 +135,10 @@ class WalEventWriter implements Closeable {
             eventMem.putLong(lastRefreshTimestamp);
         }
         writeSymbolMapDiffs();
+
+        eventMem.putLong(replaceRangeLowTs);
+        eventMem.putLong(replaceRangeHiTs);
+        eventMem.putByte(dedupMode);
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
 
@@ -253,21 +269,46 @@ class WalEventWriter implements Closeable {
         eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
     }
 
-    int appendData(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+    /**
+     * Append data to the WAL. This method is used for both regular and materialized view data.
+     * The method takes various parameters to specify the data range, timestamps, and other options.
+     *
+     * @param startRowID           the starting row ID of the data in the segment.
+     * @param endRowID             the ending row ID of the data  in the segment.
+     * @param minTimestamp         the minimum timestamp of the data, inclusive
+     * @param maxTimestamp         the maximum timestamp of the data, inclusive
+     * @param outOfOrder           indicates if the data is out of order
+     * @param lastRefreshBaseTxn   seqTxn of base transaction ID when refresh is performed
+     * @param lastRefreshTimestamp wall clock mat view refresh timestamp
+     * @param replaceRangeLowTs    the low timestamp for the range to be replaced, inclusive
+     * @param replaceRangeHiTs     the high timestamp for the range to be replaced, exclusive
+     */
+    int appendData(
+            long startRowID,
+            long endRowID,
+            long minTimestamp,
+            long maxTimestamp,
+            boolean outOfOrder,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode
+    ) {
+        byte msgType = lastRefreshBaseTxn != Numbers.LONG_NULL ? WalTxnType.MAT_VIEW_DATA : WalTxnType.DATA;
         return appendData(
+                msgType,
                 startRowID,
                 endRowID,
                 minTimestamp,
                 maxTimestamp,
                 outOfOrder,
-                Numbers.LONG_NULL,
-                Numbers.LONG_NULL
+                lastRefreshBaseTxn,
+                lastRefreshTimestamp,
+                replaceRangeLowTs,
+                replaceRangeHiTs,
+                dedupMode
         );
-    }
-
-    int appendData(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder, long lastRefreshBaseTxn, long lastRefreshTimestamp) {
-        byte msgType = lastRefreshBaseTxn != Numbers.LONG_NULL ? WalTxnType.MAT_VIEW_DATA : WalTxnType.DATA;
-        return appendData(msgType, startRowID, endRowID, minTimestamp, maxTimestamp, outOfOrder, lastRefreshBaseTxn, lastRefreshTimestamp);
     }
 
     int appendMatViewInvalidate(long lastRefreshBaseTxn, long lastRefreshTimestamp, boolean invalid, @Nullable CharSequence invalidationReason) {

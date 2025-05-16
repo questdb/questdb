@@ -77,13 +77,9 @@ public class WalTxnRangeLoader implements QuietCloseable {
             long txnHi
     ) {
         try (TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, txnLo)) {
-            if (transactionLogCursor.getVersion() == WAL_SEQUENCER_FORMAT_VERSION_V1) {
-                tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken);
-                int rootLen = tempPath.size();
-                loadTransactionDetailsV1(tempPath, rootLen, transactionLogCursor, intervals, txnLo, txnHi);
-            } else {
-                loadTransactionDetailsV2(transactionLogCursor, intervals, txnLo, txnHi);
-            }
+            tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken);
+            int rootLen = tempPath.size();
+            loadTransactionDetailsV1(tempPath, rootLen, transactionLogCursor, intervals, txnLo, txnHi);
         }
     }
 
@@ -159,7 +155,13 @@ public class WalTxnRangeLoader implements QuietCloseable {
                         }
 
                         final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
-                        intervals.add(dataInfo.getMinTimestamp(), dataInfo.getMaxTimestamp());
+                        long minTimestamp1 = dataInfo.getMinTimestamp();
+                        long maxTimestamp1 = dataInfo.getMaxTimestamp();
+                        if (dataInfo.getDedupMode() == WAL_DEDUP_MODE_REPLACE_RANGE) {
+                            minTimestamp1 = dataInfo.getReplaceRangeTsLow();
+                            maxTimestamp1 = dataInfo.getReplaceRangeTsHi();
+                        }
+                        intervals.add(minTimestamp1, maxTimestamp1);
                         IntervalUtils.unionInPlace(intervals, intervals.size() - 2);
                     }
                 }

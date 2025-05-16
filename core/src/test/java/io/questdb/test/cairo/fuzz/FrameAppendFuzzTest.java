@@ -61,7 +61,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0.1 * rnd.nextDouble(),
                 0.0,
-                0.4
+                0.4,
+                0.0
         );
 
         partitionCount = 5 + rnd.nextInt(10);
@@ -98,7 +99,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0.1 * rnd.nextDouble(),
                 0.0,
-                0.4
+                0.4,
+                0.0
         );
 
         partitionCount = 5 + rnd.nextInt(10);
@@ -128,10 +130,6 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
     private void mergeAllPartitions(TableToken merged) {
         FilesFacade ff = configuration.getFilesFacade();
-        try (TableWriter writer = getWriter(merged)) {
-            writer.squashAllPartitionsIntoOne();
-        }
-
         engine.releaseInactive();
 
         // Force overwrite partitioning to by YEAR
@@ -147,6 +145,10 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
         Unsafe.free(addr, 4, MemoryTag.NATIVE_DEFAULT);
         ff.close(metaFd);
+
+        try (TableWriter writer = getWriter(merged)) {
+            writer.squashAllPartitionsIntoOne();
+        }
     }
 
     @Override
@@ -156,10 +158,10 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
         String tableName = testName.getMethodName();
         String tableNameMerged = testName.getMethodName() + "_merged";
-        TableToken merged = fuzzer.createInitialTable(tableNameMerged, false, 0);
+        TableToken merged = fuzzer.createInitialTableEmptyNonWal(tableNameMerged);
 
         assertMemoryLeak(() -> {
-            TableToken src = fuzzer.createInitialTable(tableName, false);
+            TableToken src = fuzzer.createInitialTableNonWal(tableName, null);
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd);
 
             fuzzer.applyNonWal(transactions, tableName, rnd);

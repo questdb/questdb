@@ -944,51 +944,53 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testBatchInsert() throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, "10");
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 2);
+
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
                             "sym varchar, price double, ts timestamp" +
-                            ") timestamp(ts) partition by DAY WAL"
+                            ") timestamp(ts) partition by MONTH WAL"
             );
 
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
 
-            execute("insert into base_price select concat('sym', x), x, x::timestamp from long_sequence(30);");
+            execute("insert into base_price select concat('sym', x), x, timestamp_sequence('2022-02-24', 1000000*60*60*2) from long_sequence(30);");
 
             drainQueues();
 
             assertQueryNoLeakCheck(
                     "sym\tprice\tts\n" +
-                            "sym1\t1.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym10\t10.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym11\t11.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym12\t12.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym13\t13.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym14\t14.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym15\t15.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym16\t16.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym17\t17.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym18\t18.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym19\t19.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym2\t2.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym20\t20.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym21\t21.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym22\t22.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym23\t23.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym24\t24.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym25\t25.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym26\t26.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym27\t27.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym28\t28.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym29\t29.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym3\t3.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym30\t30.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym4\t4.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym5\t5.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym6\t6.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym7\t7.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym8\t8.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "sym9\t9.0\t1970-01-01T00:00:00.000000Z\n",
+                            "sym30\t30.0\t2022-02-23T12:00:00.000000Z\n" +
+                            "sym27\t27.0\t2022-02-23T13:00:00.000000Z\n" +
+                            "sym28\t28.0\t2022-02-23T13:00:00.000000Z\n" +
+                            "sym29\t29.0\t2022-02-23T13:00:00.000000Z\n" +
+                            "sym25\t25.0\t2022-02-23T14:00:00.000000Z\n" +
+                            "sym26\t26.0\t2022-02-23T14:00:00.000000Z\n" +
+                            "sym22\t22.0\t2022-02-23T15:00:00.000000Z\n" +
+                            "sym23\t23.0\t2022-02-23T15:00:00.000000Z\n" +
+                            "sym24\t24.0\t2022-02-23T15:00:00.000000Z\n" +
+                            "sym20\t20.0\t2022-02-23T16:00:00.000000Z\n" +
+                            "sym21\t21.0\t2022-02-23T16:00:00.000000Z\n" +
+                            "sym17\t17.0\t2022-02-23T17:00:00.000000Z\n" +
+                            "sym18\t18.0\t2022-02-23T17:00:00.000000Z\n" +
+                            "sym19\t19.0\t2022-02-23T17:00:00.000000Z\n" +
+                            "sym14\t14.0\t2022-02-23T18:00:00.000000Z\n" +
+                            "sym15\t15.0\t2022-02-23T18:00:00.000000Z\n" +
+                            "sym16\t16.0\t2022-02-23T18:00:00.000000Z\n" +
+                            "sym12\t12.0\t2022-02-23T19:00:00.000000Z\n" +
+                            "sym13\t13.0\t2022-02-23T19:00:00.000000Z\n" +
+                            "sym10\t10.0\t2022-02-23T20:00:00.000000Z\n" +
+                            "sym11\t11.0\t2022-02-23T20:00:00.000000Z\n" +
+                            "sym9\t9.0\t2022-02-23T20:00:00.000000Z\n" +
+                            "sym7\t7.0\t2022-02-23T21:00:00.000000Z\n" +
+                            "sym8\t8.0\t2022-02-23T21:00:00.000000Z\n" +
+                            "sym4\t4.0\t2022-02-23T22:00:00.000000Z\n" +
+                            "sym5\t5.0\t2022-02-23T22:00:00.000000Z\n" +
+                            "sym6\t6.0\t2022-02-23T22:00:00.000000Z\n" +
+                            "sym2\t2.0\t2022-02-23T23:00:00.000000Z\n" +
+                            "sym3\t3.0\t2022-02-23T23:00:00.000000Z\n" +
+                            "sym1\t1.0\t2022-02-24T00:00:00.000000Z\n",
                     "price_1h order by ts, sym",
                     "ts",
                     true,
