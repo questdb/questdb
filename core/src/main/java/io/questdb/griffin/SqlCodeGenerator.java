@@ -5416,22 +5416,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             model.setWhereClause(withinExtracted);
 
             if (prefixes.size() > 0) {
-                if (latestByColumnCount < 1) {
-                    throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause requires LATEST BY clause");
-                } else {
-                    for (int i = 0; i < latestByColumnCount; i++) {
-                        int idx = listColumnFilterA.getColumnIndexFactored(i);
-                        if (!ColumnType.isSymbol(myMeta.getColumnType(idx)) || !myMeta.isColumnIndexed(idx)) {
-                            throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause requires LATEST BY using only indexed symbol columns");
-                        }
+                for (int i = 0; i < latestByColumnCount; i++) {
+                    int idx = listColumnFilterA.getColumnIndexFactored(i);
+                    if (!ColumnType.isSymbol(myMeta.getColumnType(idx)) || !myMeta.isColumnIndexed(idx)) {
+                        throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause requires LATEST BY using only indexed symbol columns");
                     }
                 }
             }
         }
-        
-        if (withinExtracted != null || executionContext.isOverriddenIntrinsics(reader.getTableToken())) {
+
+        ExpressionNode whereClause = model.getWhereClause();
+
+        if (whereClause != null || executionContext.isOverriddenIntrinsics(reader.getTableToken())) {
             final IntrinsicModel intrinsicModel;
-            if (withinExtracted != null) {
+            if (whereClause != null) {
                 CharSequence preferredKeyColumn = null;
                 if (latestByColumnCount == 1) {
                     final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
@@ -5442,7 +5440,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 intrinsicModel = whereClauseParser.extract(
                         model,
-                        withinExtracted,
+                        whereClause,
                         metadata,
                         preferredKeyColumn,
                         readerTimestampIndex,
