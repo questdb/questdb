@@ -32,10 +32,13 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.Constants;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.LongObjHashMap;
+import io.questdb.std.ObjList;
 
 public class SwitchFunctionFactory implements FunctionFactory {
-
     private static final IntMethod GET_BYTE = SwitchFunctionFactory::getByte;
     private static final IntMethod GET_CHAR = SwitchFunctionFactory::getChar;
     private static final LongMethod GET_DATE = SwitchFunctionFactory::getDate;
@@ -167,7 +170,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
         } else {
             throw SqlException.$(sqlPos, "CASE values cannot be bind variables");
         }
-
     }
 
     private static byte getByte(Function function, Record record) {
