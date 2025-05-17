@@ -589,7 +589,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         }
         TestServerMain serverMain = new TestServerMain(newBootstrapWithEnvVariables(envMap)) {
             @Override
-            protected void setupMatViewRefreshJob(
+            protected void setupMatViewJobs(
                     WorkerPool workerPool,
                     CairoEngine engine,
                     int sharedWorkerCount

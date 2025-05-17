@@ -34,6 +34,7 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
+import io.questdb.cairo.mv.MatViewRefreshIntervalTask;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
@@ -92,7 +93,9 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Job;
+import io.questdb.mp.Queue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SimpleWaitingLock;
@@ -142,7 +145,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
-    private final MatViewGraph matViewGraph = new MatViewGraph();
+    private final MatViewGraph matViewGraph;
+    private final Queue<MatViewRefreshIntervalTask> matViewRefreshIntervalQueue;
     private final MessageBusImpl messageBus;
     private final MetadataCache metadataCache;
     private final Metrics metrics;
@@ -200,6 +204,9 @@ public class CairoEngine implements Closeable, WriterSource {
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = createRootExecutionContext();
+            // TODO(puzpuzpuz): use no-op queue on read-only replicas
+            this.matViewRefreshIntervalQueue = new ConcurrentQueue<>(MatViewRefreshIntervalTask.ITEM_FACTORY);
+            this.matViewGraph = new MatViewGraph(matViewRefreshIntervalQueue);
 
             tableIdGenerator.open();
             checkpointRecover();
@@ -360,31 +367,31 @@ public class CairoEngine implements Closeable, WriterSource {
                 final TableToken tableToken = tableTokenBucket.get(i);
                 if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
                     try {
-                        MatViewDefinition matViewDefinition = matViewGraph.getViewDefinition(tableToken);
-                        if (matViewDefinition == null) {
-                            matViewDefinition = new MatViewDefinition();
+                        MatViewDefinition viewDefinition = matViewGraph.getViewDefinition(tableToken);
+                        if (viewDefinition == null) {
+                            viewDefinition = new MatViewDefinition();
                             MatViewDefinition.readFrom(
-                                    matViewDefinition,
+                                    viewDefinition,
                                     reader,
                                     path,
                                     pathLen,
                                     tableToken
                             );
-                            if (matViewGraph.addView(matViewDefinition)) {
-                                matViewStateStore.createViewState(matViewDefinition);
+                            if (matViewGraph.addView(viewDefinition)) {
+                                matViewStateStore.createViewState(viewDefinition);
                             }
                         }
 
-                        MatViewState state = matViewStateStore.getViewState(tableToken);
+                        final MatViewState state = matViewStateStore.getViewState(tableToken);
                         // Can be null if the graph implementation is no-op.
                         // The no-op graph does nothing on view creation and other operations
                         // and is used when mat views are disabled.
                         if (state != null) {
-                            final TableToken baseTableToken = tableNameRegistry.getTableToken(matViewDefinition.getBaseTableName());
+                            final TableToken baseTableToken = tableNameRegistry.getTableToken(viewDefinition.getBaseTableName());
                             final boolean baseTableExists = baseTableToken != null && !tableNameRegistry.isTableDropped(baseTableToken);
                             if (!baseTableExists) {
                                 // Print a warning, but let the mat view load in invalid state.
-                                LOG.info().$("base table for materialized view does not exist [table=").utf8(matViewDefinition.getBaseTableName())
+                                LOG.info().$("base table for materialized view does not exist [table=").utf8(viewDefinition.getBaseTableName())
                                         .$(", view=").utf8(tableToken.getTableName())
                                         .I$();
                                 matViewStateStore.enqueueInvalidate(tableToken, "base table does not exist");
@@ -393,7 +400,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
                             if (!baseTableToken.isWal()) {
                                 // Print a warning, but let the mat view load in invalid state.
-                                LOG.info().$("base table for materialized view is not WAL table [table=").utf8(matViewDefinition.getBaseTableName())
+                                LOG.info().$("base table for materialized view is not WAL table [table=").utf8(viewDefinition.getBaseTableName())
                                         .$(", view=").utf8(tableToken.getTableName())
                                         .I$();
                                 matViewStateStore.enqueueInvalidate(tableToken, "base table is not WAL table");
@@ -402,7 +409,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
                             path.trimTo(pathLen).concat(tableToken);
                             if (!WalUtils.readMatViewState(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader)) {
-                                LOG.info().$("could not find materialized view state, view will be fully refreshed on next base table insert [table=").utf8(matViewDefinition.getBaseTableName())
+                                LOG.info().$("could not find materialized view state, view will be fully refreshed on next base table insert [table=").utf8(viewDefinition.getBaseTableName())
                                         .$(", view=").utf8(tableToken.getTableName())
                                         .I$();
                                 continue;
@@ -415,13 +422,14 @@ public class CairoEngine implements Closeable, WriterSource {
                             long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
                             if (state.getLastRefreshBaseTxn() > baseTableLastTxn) {
                                 LOG.info().$("materialized view is ahead of base table and cannot be synchronized [table=")
-                                        .utf8(matViewDefinition.getBaseTableName())
+                                        .utf8(viewDefinition.getBaseTableName())
                                         .$(", view=").utf8(tableToken.getTableName())
                                         .$(", matViewBaseTxn=").$(state.getLastRefreshBaseTxn())
                                         .$(", baseTableTxn=").$(baseTableLastTxn)
                                         .I$();
                                 matViewStateStore.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
-                            } else {
+                            } else if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
+                                // Kickstart incremental refresh.
                                 matViewStateStore.enqueueIncrementalRefresh(tableToken);
                             }
                         }
@@ -696,6 +704,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public @NotNull MatViewGraph getMatViewGraph() {
         return matViewGraph;
+    }
+
+    public Queue<MatViewRefreshIntervalTask> getMatViewRefreshIntervalQueue() {
+        return matViewRefreshIntervalQueue;
     }
 
     public @NotNull MatViewStateStore getMatViewStateStore() {

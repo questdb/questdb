@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -44,7 +45,10 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     public static final ObjectFactory<CreateMatViewOperationBuilderImpl> FACTORY = CreateMatViewOperationBuilderImpl::new;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private String baseTableName;
-    private int baseTableNamePosition = 0;
+    private int baseTableNamePosition;
+    private long intervalStart;
+    private int intervalStride;
+    private char intervalUnit;
     private int refreshType = -1;
     private String timeZone;
     private String timeZoneOffset;
@@ -59,7 +63,10 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
                 baseTableName,
                 baseTableNamePosition,
                 timeZone,
-                timeZoneOffset
+                timeZoneOffset,
+                intervalStart,
+                intervalStride,
+                intervalUnit
         );
     }
 
@@ -68,8 +75,12 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         createTableOperationBuilder.clear();
         refreshType = -1;
         baseTableName = null;
+        baseTableNamePosition = 0;
         timeZone = null;
         timeZoneOffset = null;
+        intervalStart = 0;
+        intervalStride = 0;
+        intervalUnit = 0;
     }
 
     public CreateTableOperationBuilderImpl getCreateTableOperationBuilder() {
@@ -99,6 +110,18 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         this.baseTableNamePosition = baseTableNamePosition;
     }
 
+    public void setIntervalStart(long intervalStart) {
+        this.intervalStart = intervalStart;
+    }
+
+    public void setIntervalStride(int intervalStride) {
+        this.intervalStride = intervalStride;
+    }
+
+    public void setIntervalUnit(char intervalUnit) {
+        this.intervalUnit = intervalUnit;
+    }
+
     public void setRefreshType(int refreshType) {
         this.refreshType = refreshType;
     }
@@ -123,6 +146,13 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         if (baseTableName != null) {
             sink.putAscii(" with base ");
             sink.put(baseTableName);
+        }
+        if (refreshType == MatViewDefinition.INTERVAL_REFRESH_TYPE) {
+            sink.putAscii(" refresh incremental start '");
+            sink.putISODate(intervalStart);
+            sink.putAscii("' every ");
+            sink.put(intervalStride);
+            sink.putAscii(intervalUnit);
         }
         sink.putAscii(" as (");
         if (createTableOperationBuilder.getQueryModel() != null) {

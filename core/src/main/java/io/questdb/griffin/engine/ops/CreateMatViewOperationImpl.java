@@ -88,6 +88,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String baseTableName;
     private final int baseTableNamePosition;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final long intervalStart;
+    private final int intervalStride;
+    private final char intervalUnit;
     private final MatViewDefinition matViewDefinition = new MatViewDefinition();
     private final int refreshType;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
@@ -107,7 +110,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             @NotNull String baseTableName,
             int baseTableNamePosition,
             @Nullable String timeZone,
-            @Nullable String timeZoneOffset
+            @Nullable String timeZoneOffset,
+            long intervalStart,
+            int intervalStride,
+            char intervalUnit
     ) {
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
@@ -116,6 +122,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         this.baseTableNamePosition = baseTableNamePosition;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
+        this.intervalStart = intervalStart;
+        this.intervalStride = intervalStride;
+        this.intervalUnit = intervalUnit;
     }
 
     @Override
@@ -159,6 +168,21 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return createTableOperation.getIndexBlockCapacity(columnIndex);
+    }
+
+    @Override
+    public long getIntervalStart() {
+        return intervalStart;
+    }
+
+    @Override
+    public int getIntervalStride() {
+        return intervalStride;
+    }
+
+    @Override
+    public char getIntervalUnit() {
+        return intervalUnit;
     }
 
     @Override
@@ -256,7 +280,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 samplingInterval,
                 samplingIntervalUnit,
                 timeZone,
-                timeZoneOffset
+                timeZoneOffset,
+                intervalStart,
+                intervalStride,
+                intervalUnit
         );
     }
 
@@ -456,7 +483,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public void validateAndUpdateMetadataFromSelect(
-            RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata
+            RecordMetadata selectMetadata,
+            TableReaderMetadata baseTableMetadata
     ) throws SqlException {
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
         // SELECT validation

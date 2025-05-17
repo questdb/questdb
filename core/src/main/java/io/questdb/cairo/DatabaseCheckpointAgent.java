@@ -252,8 +252,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                 // This way, the state copy will never hold a txn number that is newer than what's
                                 // in the table copy (otherwise, such a situation may lead to lost view refresh data).
                                 if (tableToken.isMatView()) {
-                                    final MatViewGraph graph = engine.getMatViewGraph();
-                                    final MatViewDefinition matViewDefinition = graph.getViewDefinition(tableToken);
+                                    final MatViewGraph matViewGraph = engine.getMatViewGraph();
+                                    final MatViewDefinition matViewDefinition = matViewGraph.getViewDefinition(tableToken);
                                     if (matViewDefinition != null) {
                                         matViewFileWriter.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                                         MatViewDefinition.append(matViewDefinition, matViewFileWriter);

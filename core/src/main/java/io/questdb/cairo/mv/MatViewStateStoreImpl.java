@@ -120,7 +120,9 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     @Override
     public void createViewState(MatViewDefinition viewDefinition) {
         addViewState(viewDefinition).init();
-        enqueueMatViewTask(viewDefinition.getMatViewToken(), MatViewRefreshTask.INCREMENTAL_REFRESH, null);
+        if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
+            enqueueMatViewTask(viewDefinition.getMatViewToken(), MatViewRefreshTask.INCREMENTAL_REFRESH, null);
+        }
     }
 
     @Override

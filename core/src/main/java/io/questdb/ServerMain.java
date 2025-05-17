@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.FlushQueryCacheJob;
+import io.questdb.cairo.mv.MatViewRefreshIntervalJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
@@ -366,7 +367,7 @@ public class ServerMain implements Closeable {
                         }
 
                         if (matViewEnabled && !config.getMatViewRefreshPoolConfiguration().isEnabled()) {
-                            setupMatViewRefreshJob(sharedPool, engine, sharedPool.getWorkerCount());
+                            setupMatViewJobs(sharedPool, engine, sharedPool.getWorkerCount());
                         }
                     }
 
@@ -393,7 +394,7 @@ public class ServerMain implements Closeable {
                     config.getMatViewRefreshPoolConfiguration(),
                     WorkerPoolManager.Requester.MAT_VIEW_REFRESH
             );
-            setupMatViewRefreshJob(matViewRefreshWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
+            setupMatViewJobs(matViewRefreshWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
         }
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
@@ -458,7 +459,7 @@ public class ServerMain implements Closeable {
         return Services.INSTANCE;
     }
 
-    protected void setupMatViewRefreshJob(
+    protected void setupMatViewJobs(
             WorkerPool workerPool,
             CairoEngine engine,
             int sharedWorkerCount
@@ -469,6 +470,8 @@ public class ServerMain implements Closeable {
             workerPool.assign(i, matViewRefreshJob);
             workerPool.freeOnExit(matViewRefreshJob);
         }
+        final MatViewRefreshIntervalJob matViewRefreshIntervalJob = new MatViewRefreshIntervalJob(engine);
+        workerPool.assign(matViewRefreshIntervalJob);
     }
 
     protected void setupWalApplyJob(

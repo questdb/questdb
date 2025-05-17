@@ -157,7 +157,6 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
 
     @SuppressWarnings({"unchecked"})
     private void rehash() {
-
         free = capacity = this.capacity * 2;
         V[] oldValues = values;
         K[] oldKeys = keys;

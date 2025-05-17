@@ -113,10 +113,6 @@ public class ConcurrentQueue<T extends ValueHolder<T>> implements Queue<T> {
         }
     }
 
-    public ObjectFactory<T> itemFactory() {
-        return factory;
-    }
-
     /**
      * Attempts to remove and return the object at the beginning of the ConcurrentQueue.
      *
