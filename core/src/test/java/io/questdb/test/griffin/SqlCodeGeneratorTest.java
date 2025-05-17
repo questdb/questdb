@@ -8285,21 +8285,26 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testWithinClauseWithFilterFails() throws Exception {
-        assertException(
+        assertQuery(
+                "x\tsym\tgeo\tts\n" +
+                        "19\tb\tz2\t1970-01-01T00:00:00.000019Z\n" +
+                        "20\ta\trk\t1970-01-01T00:00:00.000020Z\n",
                 "select * from tab where geo within(#zz) and x > 0 latest on ts partition by sym",
                 "create table tab as " +
                         "(" +
                         " select  x, rnd_symbol('a', 'b') sym, rnd_geohash(10) geo, x::timestamp ts " +
                         " from long_sequence(20) " +
                         "), index(sym) timestamp(ts)",
-                28,
-                "WITHIN clause doesn't work with filters"
+                "ts",
+                true,
+                true
         );
     }
 
     @Test
     public void testWithinClauseWithLatestByNonSymbolOrNonIndexedSymbolColumnFails() throws Exception {
-        assertException(
+        assertQuery(
+                "x\tsym_idx\tsym_noidx\tgeo\tts\n",
                 "select * from tab where geo within(#zz) latest on ts partition by x",
                 "create table tab as " +
                         "(" +
@@ -8310,26 +8315,36 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "         x::timestamp ts " +
                         " from long_sequence(20) " +
                         "), index(sym_idx) timestamp(ts)",
-                28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+                "ts",
+                true,
+                true
         );
 
-        assertException(
+        assertQuery(
+                "x\tsym_idx\tsym_noidx\tgeo\tts\n",
                 "select * from tab where geo within(#zz) latest on ts partition by sym_idx, x",
-                28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+                null,
+                "ts",
+                true,
+                true
         );
 
-        assertException(
+        assertQuery(
+                "x\tsym_idx\tsym_noidx\tgeo\tts\n",
                 "select * from tab where geo within(#zz) latest on ts partition by sym_noidx",
-                28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+                null,
+                "ts",
+                true,
+                true
         );
 
-        assertException(
+        assertQuery(
+                "x\tsym_idx\tsym_noidx\tgeo\tts\n",
                 "select * from tab where geo within(#zz) latest on ts partition by sym_idx, sym_noidx",
-                28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+                null,
+                "ts",
+                true,
+                true
         );
     }
 

@@ -104,7 +104,7 @@ public class WithinGeohashFunctionFactory implements FunctionFactory {
 
         // don't have to copy, references are not kept to args
         if (firstArg.isConstant() && constCount == argCount && runtimeConstCount == 0) {
-            return new WithinGeohashConstConstFunction(args);
+            return new WithinGeohashConstConstFunction(new ObjList<>(args));
         }
 
         if (constCount == argCount && runtimeConstCount == 0) {
@@ -143,7 +143,7 @@ public class WithinGeohashFunctionFactory implements FunctionFactory {
 
         @Override
         public ObjList<Function> getArgs() {
-            return args;
+            return new ObjList<>(args);
         }
 
         @Override
