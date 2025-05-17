@@ -5401,7 +5401,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.deepCopyOf(metadata);
         final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, myMeta);
         final TableToken tableToken = metadata.getTableToken();
-        ExpressionNode withinExtracted = null;
+        ExpressionNode withinExtracted;
 
         if (latestByColumnCount > 0) {
             withinExtracted = whereClauseParser.extractWithin(
@@ -5413,15 +5413,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     prefixes
             );
 
-            model.setWhereClause(withinExtracted);
-
+            boolean allSymbolsAreIndexed = true;
             if (prefixes.size() > 0) {
                 for (int i = 0; i < latestByColumnCount; i++) {
                     int idx = listColumnFilterA.getColumnIndexFactored(i);
                     if (!ColumnType.isSymbol(myMeta.getColumnType(idx)) || !myMeta.isColumnIndexed(idx)) {
-                        throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause requires LATEST BY using only indexed symbol columns");
+                        allSymbolsAreIndexed = false;
                     }
                 }
+            }
+
+            if (allSymbolsAreIndexed) {
+                model.setWhereClause(withinExtracted);
             }
         }
 
@@ -5479,10 +5482,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     model.getLatestBy().clear();
                     Misc.free(filter);
                     return new EmptyTableRecordCursorFactory(myMeta);
-                }
-
-                if (prefixes.size() > 0 && filter != null) {
-                    throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause doesn't work with filters");
                 }
 
                 // a sub-query present in the filter may have used the latest by
