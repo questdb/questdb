@@ -48,6 +48,7 @@ import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampIntervalFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.WithinGeohashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
@@ -2451,6 +2452,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     } else if (factory instanceof LagDoubleFunctionFactory || factory instanceof LeadDoubleFunctionFactory) {
                                         sigArgType = ColumnType.INT;
                                         useConst = true;
+                                    } else if (factory instanceof WithinGeohashFunctionFactory) {
+                                        sigArgType = ColumnType.GEOBYTE;
                                     } else {
                                         sigArgType = ColumnType.STRING;
                                     }
