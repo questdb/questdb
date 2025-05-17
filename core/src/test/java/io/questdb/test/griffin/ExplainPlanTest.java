@@ -3314,7 +3314,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select max(i) from (select * from a order by d limit 10)",
                 "GroupBy vectorized: false\n" +
                         "  values: [max(i)]\n" +
-                        "    Sort light lo: 10\n" +
+                        "    Async Top K lo: 10 workers: 1\n" +
+                        "      filter: null\n" +
                         "      keys: [d]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
@@ -3454,7 +3455,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select y, count(*) from di order by y desc limit 1",
-                "Long top K lo: 1\n" +
+                "Long Top K lo: 1\n" +
                         "  keys: [y desc]\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [y]\n" +
@@ -3471,7 +3472,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select y, count(*) c from di order by c limit 42",
-                "Long top K lo: 42\n" +
+                "Long Top K lo: 42\n" +
                         "  keys: [c asc]\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [y]\n" +
@@ -3490,7 +3491,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "create table di (x int, y long)",
                     "select y, count(*) c from di order by c limit 42",
-                    "Long top K lo: 42\n" +
+                    "Long Top K lo: 42\n" +
                             "  keys: [c asc]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [y]\n" +
@@ -9533,17 +9534,44 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSelectWhereOrderByLimit() throws Exception {
+    public void testSelectWhereOrderByLimit1() throws Exception {
         assertPlan(
                 "create table xx ( x long, str string) ",
                 "select * from xx where str = 'A' order by str,x limit 10",
-                "Sort light lo: 10\n" +
+                "Async Top K lo: 10 workers: 1\n" +
+                        "  filter: str='A'\n" +
                         "  keys: [str, x]\n" +
-                        "    Async Filter workers: 1\n" +
-                        "      filter: str='A'\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: xx\n"
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: xx\n"
+        );
+    }
+
+    @Test
+    public void testSelectWhereOrderByLimit2() throws Exception {
+        assertPlan(
+                "create table xx ( x long, str varchar ) ",
+                "select * from xx where str is not null order by str,x limit 10",
+                "Async JIT Top K lo: 10 workers: 1\n" +
+                        "  filter: str is not null\n" +
+                        "  keys: [str, x]\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: xx\n"
+        );
+    }
+
+    @Test
+    public void testSelectWhereOrderByLimit3() throws Exception {
+        assertPlan(
+                "create table xx ( x long, id uuid ) ",
+                "select * from xx order by id desc, x limit 10",
+                "Async Top K lo: 10 workers: 1\n" +
+                        "  filter: null\n" +
+                        "  keys: [id desc, x]\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: xx\n"
         );
     }
 
@@ -10674,7 +10702,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from (select * from a order by ts, l limit 10) order by ts, l",
                     "Sort light\n" +
                             "  keys: [ts, l]\n" +
-                            "    Sort light lo: 10\n" +
+                            "    Async Top K lo: 10 workers: 1\n" +
+                            "      filter: null\n" +
                             "      keys: [ts, l]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +

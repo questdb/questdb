@@ -1322,6 +1322,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelTopKEnabled() {
+        return getDelegate().isSqlParallelTopKEnabled();
+    }
+
+    @Override
     public boolean isTableTypeConversionEnabled() {
         return getDelegate().isTableTypeConversionEnabled();
     }

@@ -37,6 +37,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -50,7 +51,7 @@ import org.jetbrains.annotations.NotNull;
  * This pool is thread-unsafe as it may hold navigated Parquet partition data,
  * so it shouldn't be shared between multiple threads.
  */
-public class PageFrameMemoryPool implements QuietCloseable, Mutable {
+public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, Mutable {
     private static final byte FRAME_MEMORY_MASK = 1 << 2;
     private static final byte RECORD_A_MASK = 1;
     private static final byte RECORD_B_MASK = 1 << 1;
@@ -199,6 +200,13 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
         }
         frameMemory.clear();
         Misc.free(parquetDecoder);
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
+        navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
+        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
     }
 
     // We don't use additional data structures to speed up the lookups
