@@ -51,16 +51,16 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     protected final int capacity;
     private final long bufA;
     private final long bufB;
+    protected long hi;
     protected LineChannel lineChannel;
+    protected long ptr;
     private boolean closed;
     private boolean enableValidation;
     private boolean hasColumns;
     private boolean hasSymbols;
     private boolean hasTable;
-    private long hi;
     private long lineStart;
     private long lo;
-    private long ptr;
     private boolean quoted = false;
 
     public AbstractLineSender(LineChannel lineChannel, int capacity) {
@@ -139,11 +139,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
      */
     public void disableValidation() {
         enableValidation = false;
-    }
-
-    @Override
-    public final AbstractLineSender doubleColumn(CharSequence name, double value) {
-        return field(name, value);
     }
 
     public AbstractLineSender field(CharSequence name, long value) {
@@ -358,6 +353,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         return -1;
     }
 
+
     private byte[] receiveChallengeBytes() {
         int n = 0;
         for (; ; ) {
@@ -492,8 +488,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
             } else {
                 putAsciiInternal(',');
             }
-            put(name);
-            return putAsciiInternal('=');
+            return put(name).putAsciiInternal('=');
         }
         throw new LineSenderException("table expected");
     }

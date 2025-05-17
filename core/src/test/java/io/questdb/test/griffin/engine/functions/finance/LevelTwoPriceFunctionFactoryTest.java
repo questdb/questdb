@@ -181,12 +181,12 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                 "9.825714285714286\n", "select l2price(35, 8, 5.2, 23, 9.3, 42, 22.1)");
         assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)"); // fail
         assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertFailure("[15] not enough arguments for l2price", "select l2price(100)");
+        assertFailure("[7] there is no matching function `l2price` with the argument types: (INT)", "select l2price(100)");
     }
 
     @Test
     public void testLevelTwoPriceFailsWithEvenArgs() throws Exception {
-        assertException("select l2price(35, 8);", 19, "l2price requires an odd number of arguments.");
+        assertException("select l2price(35, 8, 7, 6);", 25, "l2price requires an odd number of arguments.");
     }
 
     /**

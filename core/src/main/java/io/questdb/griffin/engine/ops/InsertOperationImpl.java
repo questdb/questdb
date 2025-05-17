@@ -62,6 +62,12 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     @Override
+    public void close() {
+        Misc.free(insertMethod);
+        Misc.freeObjList(insertRows);
+    }
+
+    @Override
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         SecurityContext securityContext = executionContext.getSecurityContext();
         securityContext.authorizeInsert(tableToken);

@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -398,6 +399,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             // It is essential to init the atom after we prepared sequence for dispatch.
             // If atom is to fail, we will be releasing whatever we prepared.
             atom.init(frameCursor, executionContext);
+        } catch (TableReferenceOutOfDateException e) {
+            frameCursor = Misc.freeIfCloseable(frameCursor);
+            throw e;
         } catch (Throwable th) {
             // Log the OG exception as the below frame cursor close call may throw.
             LOG.error().$("could not initialize page frame sequence [error=").$(th).I$();
