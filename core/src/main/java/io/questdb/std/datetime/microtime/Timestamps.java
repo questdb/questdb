@@ -850,40 +850,11 @@ public final class Timestamps {
         return Math.abs(a - b) / WEEK_MICROS;
     }
 
-    /**
-     * Calculates year number from micros.
-     *
-     * @param micros time micros.
-     * @return year
-     */
-//    public static int getYear(long micros) {
-//        long mid = (micros >> 1) + HALF_EPOCH_MICROS;
-//        if (mid < 0) {
-//            mid = mid - HALF_YEAR_MICROS + 1;
-//        }
-//        int year = (int) (mid / HALF_YEAR_MICROS);
-//
-//        boolean leap = isLeapYear(year);
-//        long yearStart = yearMicros(year, leap);
-//        long diff = micros - yearStart;
-//
-//        if (diff < 0) {
-//            year--;
-//        } else if (diff >= YEAR_MICROS_NONLEAP) {
-//            yearStart += leap ? YEAR_MICROS_LEAP : YEAR_MICROS_NONLEAP;
-//            if (yearStart <= micros) {
-//                year++;
-//            }
-//        }
-//
-//        return year;
-//    }
-
     public static int getYear(long micros) {
         // Initial year estimate relative to 1970
         // Use a reasonable approximation of days per year to avoid overflow
         // 365.25 days per year approximation
-        int yearsSinceEpoch = (int)(micros / AVG_YEAR_MICROS);
+        int yearsSinceEpoch = (int) (micros / AVG_YEAR_MICROS);
         int yearEstimate = 1970 + yearsSinceEpoch;
 
         // Handle negative years appropriately
