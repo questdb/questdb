@@ -24,7 +24,7 @@
 
 package io.questdb.test.std.datetime.nanotime;
 
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.nanotime.Nanos;
 import org.junit.Test;
 
 import java.time.Instant;
@@ -47,7 +47,7 @@ import static java.time.temporal.TemporalAdjusters.firstDayOfYear;
 import static java.util.concurrent.TimeUnit.HOURS;
 import static org.junit.Assert.fail;
 
-public class TimestampsBruteForceTest {
+public class NanosBruteForceTest {
 
     private static final Function<ZonedDateTime, ZonedDateTime> HOURS_STEP = current -> current.plus(ThreadLocalRandom.current().nextInt((int) HOURS.toMillis(1), (int) HOURS.toMillis(12)), MILLIS);
     private static final Function<ZonedDateTime, ZonedDateTime> SECONDS_STEP = current -> current.plus(ThreadLocalRandom.current().nextInt(1, 20_000), ChronoUnit.MILLIS);
@@ -109,67 +109,67 @@ public class TimestampsBruteForceTest {
     @Test
     public void testFlooring_CENTURY() {
         testFlooring(40, HOURS_STEP,
-                (expected, tested) -> assertEpochMicrosEquals(expected.with(TRUNCATE_TO_CENTURY), Timestamps.floorCentury(tested)));
+                (expected, tested) -> assertEpochNanosEquals(expected.with(TRUNCATE_TO_CENTURY), Nanos.floorCentury(tested)));
     }
 
     @Test
     public void testFlooring_DD() {
         testFlooring(40, HOURS_STEP,
-                (expected, tested) -> assertEpochMicrosEquals(expected.truncatedTo(DAYS), Timestamps.floorDD(tested)));
+                (expected, tested) -> assertEpochNanosEquals(expected.truncatedTo(DAYS), Nanos.floorDD(tested)));
     }
 
     @Test
     public void testFlooring_DECADE() {
         testFlooring(40, HOURS_STEP,
-                (expected, tested) -> assertEpochMicrosEquals(expected.with(TRUNCATE_TO_DECADE), Timestamps.floorDecade(tested)));
+                (expected, tested) -> assertEpochNanosEquals(expected.with(TRUNCATE_TO_DECADE), Nanos.floorDecade(tested)));
     }
 
     @Test
     public void testFlooring_DOW() {
         testFlooring(40, HOURS_STEP,
-                (expected, tested) -> assertEpochMicrosEquals(expected.with(MONDAY).truncatedTo(DAYS), Timestamps.floorDOW(tested)));
+                (expected, tested) -> assertEpochNanosEquals(expected.with(MONDAY).truncatedTo(DAYS), Nanos.floorDOW(tested)));
     }
 
     @Test
     public void testFlooring_MM() {
         testFlooring(40, HOURS_STEP,
-                (expected, tested) -> assertEpochMicrosEquals(expected.with(firstDayOfMonth()).truncatedTo(DAYS), Timestamps.floorMM(tested)));
+                (expected, tested) -> assertEpochNanosEquals(expected.with(firstDayOfMonth()).truncatedTo(DAYS), Nanos.floorMM(tested)));
     }
 
     @Test
     public void testFlooring_MS_SS_MI_HH() {
-        // testing 4 cases at once because it allows us to amortize cost of toEpochMicros()
+        // testing 4 cases at once because it allows us to amortize cost of toEpochNanos()
         // separating this would make the test(s) run longer by a few 100s of ms.
         testFlooring(2, SECONDS_STEP,
                 (expected, tested) -> {
-                    assertEpochMicrosEquals(expected.truncatedTo(MILLIS), Timestamps.floorMS(tested));
-                    assertEpochMicrosEquals(expected.truncatedTo(SECONDS), Timestamps.floorSS(tested));
-                    assertEpochMicrosEquals(expected.truncatedTo(MINUTES), Timestamps.floorMI(tested));
-                    assertEpochMicrosEquals(expected.truncatedTo(ChronoUnit.HOURS), Timestamps.floorHH(tested));
+                    assertEpochNanosEquals(expected.truncatedTo(MILLIS), Nanos.floorMS(tested));
+                    assertEpochNanosEquals(expected.truncatedTo(SECONDS), Nanos.floorSS(tested));
+                    assertEpochNanosEquals(expected.truncatedTo(MINUTES), Nanos.floorMI(tested));
+                    assertEpochNanosEquals(expected.truncatedTo(ChronoUnit.HOURS), Nanos.floorHH(tested));
                 });
     }
 
     @Test
     public void testFlooring_Quarter() {
         testFlooring(40, HOURS_STEP,
-                (expected, tested) -> assertEpochMicrosEquals(expected.with(TRUNCATE_TO_QUARTER), Timestamps.floorQuarter(tested)));
+                (expected, tested) -> assertEpochNanosEquals(expected.with(TRUNCATE_TO_QUARTER), Nanos.floorQuarter(tested)));
     }
 
     @Test
     public void testFlooring_YYYY() {
         testFlooring(40, HOURS_STEP,
-                (expected, tested) -> assertEpochMicrosEquals(expected.with(firstDayOfYear()).truncatedTo(DAYS), Timestamps.floorYYYY(tested)));
+                (expected, tested) -> assertEpochNanosEquals(expected.with(firstDayOfYear()).truncatedTo(DAYS), Nanos.floorYYYY(tested)));
     }
 
-    private static void assertEpochMicrosEquals(ZonedDateTime expected, long epochMicros) {
-        long expectedMicros = toEpochMicros(expected);
-        if (expectedMicros != epochMicros) {
+    private static void assertEpochNanosEquals(ZonedDateTime expected, long epochNanos) {
+        long expectedNanos = toEpochNanos(expected);
+        if (expectedNanos != epochNanos) {
             DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss.SSS")
                     .withLocale(Locale.US)
                     .withZone(ZoneId.of("UTC"));
-            fail("Epoch micros " + epochMicros + " (="
-                    + dateTimeFormatter.format(Instant.ofEpochMilli(epochMicros / 1000))
-                    + ") is not the same instant as the expected " + expectedMicros + " (="
+            fail("Epoch nanos " + epochNanos + " (="
+                    + dateTimeFormatter.format(Instant.ofEpochMilli(epochNanos / Nanos.MILLI_NANOS))
+                    + ") is not the same instant as the expected " + expectedNanos + " (="
                     + dateTimeFormatter.format(expected.toInstant()) + ")");
         }
     }
@@ -184,14 +184,14 @@ public class TimestampsBruteForceTest {
         ZonedDateTime deadline = current.plusYears(yearsToTest);
 
         while (current.isBefore(deadline)) {
-            long epochMicros = toEpochMicros(current);
-            assertFunction.accept(current, epochMicros);
+            long epochNanos = toEpochNanos(current);
+            assertFunction.accept(current, epochNanos);
             current = stepFunction.apply(current);
         }
     }
 
-    private static long toEpochMicros(ZonedDateTime zonedDateTime) {
-        return TimeUnit.SECONDS.toMicros(zonedDateTime.toEpochSecond())
-                + TimeUnit.NANOSECONDS.toMicros(zonedDateTime.getNano());
+    private static long toEpochNanos(ZonedDateTime zonedDateTime) {
+        return TimeUnit.SECONDS.toNanos(zonedDateTime.toEpochSecond())
+                + TimeUnit.NANOSECONDS.toNanos(zonedDateTime.getNano());
     }
 }

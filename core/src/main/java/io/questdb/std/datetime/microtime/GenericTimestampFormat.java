@@ -405,7 +405,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
         int week = -1;
         int era = 1;
         int timezone = -1;
-        long offset = Long.MIN_VALUE;
+        long offsetMinutes = Long.MIN_VALUE;
         int hourType = CommonFormatUtils.HOUR_24;
         int pos = lo;
         long l;
@@ -686,7 +686,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                         l = locale.matchZone(in, pos, hi);
                         timezone = Numbers.decodeLowInt(l);
                     } else {
-                        offset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;
+                        offsetMinutes = Numbers.decodeLowInt(l);
                     }
                     pos += Numbers.decodeHighInt(l);
                     break;
@@ -706,6 +706,21 @@ public class GenericTimestampFormat extends AbstractDateFormat {
 
         TimestampFormatUtils.assertNoTail(pos, hi);
 
-        return TimestampFormatUtils.compute(locale, era, year, month, week, day, hour, minute, second, millis, micros, timezone, offset, hourType);
+        return TimestampFormatUtils.compute(
+                locale,
+                era,
+                year,
+                month,
+                week,
+                day,
+                hour,
+                minute,
+                second,
+                millis,
+                micros,
+                timezone,
+                offsetMinutes,
+                hourType
+        );
     }
 }

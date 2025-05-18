@@ -30,6 +30,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.CommonFormatUtils;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.FixedTimeZoneRule;
 import io.questdb.std.datetime.TimeZoneRules;
@@ -68,12 +69,9 @@ public final class Timestamps {
     private static final int[] DAYS_PER_MONTH = {
             31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
     };
-    public static final int DAY_HOURS = 24;
-    public static final int HOUR_MINUTES = 60;
     private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long YEAR_MICROS_LEAP = 366 * DAY_MICROS;
-    private static final int YEAR_MONTHS = 12;
 
     private Timestamps() {
     }
@@ -566,9 +564,9 @@ public final class Timestamps {
 
     public static int getHourOfDay(long micros) {
         if (micros > -1) {
-            return (int) ((micros / HOUR_MICROS) % DAY_HOURS);
+            return (int) ((micros / HOUR_MICROS) % CommonFormatUtils.DAY_HOURS);
         } else {
-            return DAY_HOURS - 1 + (int) (((micros + 1) / HOUR_MICROS) % DAY_HOURS);
+            return CommonFormatUtils.DAY_HOURS - 1 + (int) (((micros + 1) / HOUR_MICROS) % CommonFormatUtils.DAY_HOURS);
         }
     }
 
@@ -657,9 +655,9 @@ public final class Timestamps {
 
     public static int getMinuteOfHour(long micros) {
         if (micros > -1) {
-            return (int) ((micros / MINUTE_MICROS) % HOUR_MINUTES);
+            return (int) ((micros / MINUTE_MICROS) % CommonFormatUtils.HOUR_MINUTES);
         } else {
-            return HOUR_MINUTES - 1 + (int) (((micros + 1) / MINUTE_MICROS) % HOUR_MINUTES);
+            return CommonFormatUtils.HOUR_MINUTES - 1 + (int) (((micros + 1) / MINUTE_MICROS) % CommonFormatUtils.HOUR_MINUTES);
         }
     }
 
@@ -1028,28 +1026,28 @@ public final class Timestamps {
             case PartitionBy.HOUR:
                 return value;
             case PartitionBy.DAY:
-                int maxDays = Integer.MAX_VALUE / DAY_HOURS;
+                int maxDays = Integer.MAX_VALUE / CommonFormatUtils.DAY_HOURS;
                 if (value > maxDays) {
                     throw SqlException.$(tokenPos, "value out of range: ")
                             .put(value).put(" days. Max value: ").put(maxDays).put(" days");
                 }
-                return DAY_HOURS * value;
+                return CommonFormatUtils.DAY_HOURS * value;
             case PartitionBy.WEEK:
-                int maxWeeks = Integer.MAX_VALUE / WEEK_DAYS / DAY_HOURS;
+                int maxWeeks = Integer.MAX_VALUE / WEEK_DAYS / CommonFormatUtils.DAY_HOURS;
                 if (value > maxWeeks) {
                     throw SqlException.$(tokenPos, "value out of range: ")
                             .put(value).put(" weeks. Max value: ").put(maxWeeks).put(" weeks");
                 }
-                return WEEK_DAYS * DAY_HOURS * value;
+                return WEEK_DAYS * CommonFormatUtils.DAY_HOURS * value;
             case PartitionBy.MONTH:
                 return -value;
             case PartitionBy.YEAR:
-                int maxYears = Integer.MAX_VALUE / YEAR_MONTHS;
+                int maxYears = Integer.MAX_VALUE / CommonFormatUtils.YEAR_MONTHS;
                 if (value > maxYears) {
                     throw SqlException.$(tokenPos, "value out of range: ")
                             .put(value).put(" years. Max value: ").put(maxYears).put(" years");
                 }
-                return -(YEAR_MONTHS * value);
+                return -(CommonFormatUtils.YEAR_MONTHS * value);
             default:
                 throw new AssertionError("invalid value for partitionByUnit: " + partitionByUnit);
         }

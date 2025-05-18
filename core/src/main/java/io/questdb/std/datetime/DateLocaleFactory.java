@@ -70,7 +70,8 @@ public class DateLocaleFactory {
             // Someone was faster than us.
             return val;
         }
-        Locale locale = Locale.forLanguageTag(key.toString());
-        return new DateLocale(key.toString(), new DateFormatSymbols(locale), timeZoneRuleFactory);
+        String keyStr = key.toString();
+        Locale locale = Locale.forLanguageTag(keyStr);
+        return new DateLocale(keyStr, new DateFormatSymbols(locale), timeZoneRuleFactory);
     }
 }

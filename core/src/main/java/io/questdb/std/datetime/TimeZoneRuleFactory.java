@@ -31,6 +31,7 @@ import io.questdb.std.datetime.microtime.TimeZoneRulesMicros;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.datetime.millitime.TimeZoneRulesMillis;
+import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.datetime.nanotime.TimeZoneRulesNanos;
 
 import java.time.ZoneId;
@@ -71,6 +72,7 @@ public class TimeZoneRuleFactory {
                     if (offset != Long.MIN_VALUE) {
                         ruleList.add(new FixedTimeZoneRule(Numbers.decodeLowInt(offset) * Dates.MINUTE_MILLIS));
                         ruleList.add(new FixedTimeZoneRule(Numbers.decodeLowInt(offset) * Timestamps.MINUTE_MICROS));
+                        ruleList.add(new FixedTimeZoneRule(Numbers.decodeLowInt(offset) * Nanos.MINUTE_NANOS));
                         ruleMap.put(key, index++);
                     }
                 } else {

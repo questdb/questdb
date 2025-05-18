@@ -41,8 +41,6 @@ import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
-import static io.questdb.std.datetime.nanotime.Nanos.MINUTE_NANOS;
-
 public class NanosFormatCompiler {
     static final int OP_AM_PM = 14;
     static final int OP_DAY_GREEDY = 139;
@@ -114,11 +112,12 @@ public class NanosFormatCompiler {
     private static final int FA_LOCAL_LOCALE = 3;
     private static final int FA_LOCAL_SINK = 5;
     private static final int FA_LOCAL_TIMEZONE = 4;
-    private static final int FA_WALL_MICROS = 11;
     private static final int FA_MINUTE = 3;
     private static final int FA_MONTH = 6;
+    private static final int FA_NANOS9 = 15;
     private static final int FA_SECOND = 2;
     private static final int FA_SECOND_MILLIS = 1;
+    private static final int FA_WALL_MICROS = 11;
     private static final int FA_WALL_NANOS = 16;
     private static final int FA_WEEK_OF_YEAR = 12;
     private static final int FA_YEAR = 7;
@@ -159,16 +158,8 @@ public class NanosFormatCompiler {
         }
     }
 
-    public static int getOpCode(String opName) {
-        return opMap.get(opName);
-    }
-
     public static int getOpCount() {
         return opList.size();
-    }
-
-    public static String getOpName(int index) {
-        return opList.getQuick(index);
     }
 
     public DateFormat compile(CharSequence pattern) {
@@ -259,14 +250,14 @@ public class NanosFormatCompiler {
             int isLeapYearIndex,
             int getMonthOfYearIndex,
             int getDayOfMonthIndex,
-            int getHourOfDayIndex,
-            int getMinuteOfHourIndex,
-            int getSecondOfMinuteIndex,
-            int getMillisOfSecondIndex,
-            int getMicrosOfMilliIndex,
-            int walNanosIndex,
+            int wallHoursIndex,
+            int wallMinutesIndex,
+            int wallSecondsIndex,
+            int wallMillisIndex,
+            int wallMicrosIndex,
+            int wallNanosIndex,
             int getDayOfWeekIndex,
-            int append00000Index,
+            int append00000000Index,
             int append00Index,
             int append0Index,
             int appendYear000Index,
@@ -280,7 +271,8 @@ public class NanosFormatCompiler {
             int formatSigIndex,
             int getDayOfYearIndex,
             int getWeekOfYearIndex,
-            int getWeekIndex
+            int getWeekIndex,
+            int nanosOfSecondIndex
     ) {
         int formatAttributes = computeFormatAttributes(ops);
         asm.startMethod(formatNameIndex, formatSigIndex, 6, FORMAT_METHOD_STACK_START + Integer.bitCount(formatAttributes));
@@ -292,16 +284,17 @@ public class NanosFormatCompiler {
                 isLeapYearIndex,
                 getMonthOfYearIndex,
                 getDayOfMonthIndex,
-                getHourOfDayIndex,
-                getMinuteOfHourIndex,
-                getSecondOfMinuteIndex,
-                getMillisOfSecondIndex,
-                getMicrosOfMilliIndex,
-                walNanosIndex,
+                wallHoursIndex,
+                wallMinutesIndex,
+                wallSecondsIndex,
+                wallMillisIndex,
+                wallMicrosIndex,
+                wallNanosIndex,
                 getDayOfWeekIndex,
                 getDayOfYearIndex,
                 getWeekOfYearIndex,
-                getWeekIndex
+                getWeekIndex,
+                nanosOfSecondIndex
         );
 
         for (int i = 0, n = ops.size(); i < n; i++) {
@@ -322,11 +315,11 @@ public class NanosFormatCompiler {
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-//                case OP_NANOS_GREEDY9:
-//                    asm.aload(FA_LOCAL_SINK);
-//                    asm.iload(fmtAttributeIndex[FA_SECOND_MICROS]);
-//                    asm.invokeStatic(append00000Index);
-//                    break;
+                case OP_NANOS_GREEDY9:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_NANOS9]);
+                    asm.invokeStatic(append00000000Index);
+                    break;
                 case OP_MICROS_THREE_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_WALL_MICROS]);
@@ -616,7 +609,9 @@ public class NanosFormatCompiler {
             int getDayOfWeekIndex,
             int getDayOfYearIndex,
             int getWeekOfYearIndex,
-            int getWeekIndex) {
+            int getWeekIndex,
+            int nanosOfSecondIndex
+    ) {
         int index = FORMAT_METHOD_STACK_START;
         if (invokeConvertMillis(formatAttributes, FA_YEAR, getYearIndex, index)) {
             fmtAttributeIndex[FA_YEAR] = index++;
@@ -677,21 +672,24 @@ public class NanosFormatCompiler {
         }
 
         if (invokeConvertMillis(formatAttributes, FA_DAY_OF_WEEK, getDayOfWeekIndex, index)) {
-            fmtAttributeIndex[FA_DAY_OF_WEEK] = index;
+            fmtAttributeIndex[FA_DAY_OF_WEEK] = index++;
         }
 
         if (invokeConvertMillis(formatAttributes, FA_DAY_OF_YEAR, getDayOfYearIndex, index)) {
-            fmtAttributeIndex[FA_DAY_OF_YEAR] = index;
+            fmtAttributeIndex[FA_DAY_OF_YEAR] = index++;
         }
 
         if (invokeConvertMillis(formatAttributes, FA_ISO_WEEK_OF_YEAR, getWeekIndex, index)) {
-            fmtAttributeIndex[FA_ISO_WEEK_OF_YEAR] = index;
+            fmtAttributeIndex[FA_ISO_WEEK_OF_YEAR] = index++;
         }
 
         if (invokeConvertMillis(formatAttributes, FA_WEEK_OF_YEAR, getWeekOfYearIndex, index)) {
-            fmtAttributeIndex[FA_WEEK_OF_YEAR] = index;
+            fmtAttributeIndex[FA_WEEK_OF_YEAR] = index++;
         }
 
+        if (invokeConvertMillis(formatAttributes, FA_NANOS9, nanosOfSecondIndex, index)) {
+            fmtAttributeIndex[FA_NANOS9] = index;
+        }
     }
 
     private void assembleParseMethod(
@@ -702,7 +700,6 @@ public class NanosFormatCompiler {
             int dateLocaleClassIndex,
             int charSequenceClassIndex,
             int minLongIndex,
-            int minuteMicrosIndex,
             int matchWeekdayIndex,
             int matchMonthIndex,
             int matchZoneIndex,
@@ -710,7 +707,6 @@ public class NanosFormatCompiler {
             int matchEraIndex,
             int parseIntSafelyIndex,
             int parseInt000GreedyIndex,
-            int parseLong000000GreedyIndex,
             int parseNanosAsMicrosGreedyIndex,
             int decodeLenIndex,
             int decodeIntIndex,
@@ -847,11 +843,6 @@ public class NanosFormatCompiler {
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseInt000GreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);
                     break;
-//                case OP_MICROS_GREEDY6:
-//                    stackState &= ~(1 << LOCAL_MICROS);
-//                    stackState &= ~(1 << LOCAL_TEMP_LONG);
-//                    invokeParseIntSafelyAndStore(parseLong000000GreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);
-//                    break;
                 case OP_NANOS_GREEDY9:
                     stackState &= ~(1 << LOCAL_MICROS);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
@@ -1178,8 +1169,6 @@ public class NanosFormatCompiler {
 
                     decodeInt(decodeIntIndex);
                     asm.i2l();
-                    asm.ldc2_w(minuteMicrosIndex);
-                    asm.lmul();
                     asm.lstore(LOCAL_OFFSET);
                     p = asm.position();
                     frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));
@@ -1210,8 +1199,6 @@ public class NanosFormatCompiler {
                     break;
             }
         }
-//        asm.iconst(0);
-//        asm.istore(LOCAL_NANOS);
 
         // check that there is no tail
         asm.iload(LOCAL_POS);
@@ -1384,7 +1371,6 @@ public class NanosFormatCompiler {
         int dateLocaleClassIndex = asm.poolClass(DateLocale.class);
         int charSequenceClassIndex = asm.poolClass(CharSequence.class);
         int minLongIndex = asm.poolLongConst(Long.MIN_VALUE);
-        int minMinuteMicrosIndex = asm.poolLongConst(MINUTE_NANOS);
 
         int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
         int matchWeekdayIndex = asm.poolMethod(DateLocale.class, "matchWeekday", "(Ljava/lang/CharSequence;II)J");
@@ -1399,7 +1385,6 @@ public class NanosFormatCompiler {
 
         int parseIntSafelyIndex = asm.poolMethod(Numbers.class, "parseIntSafely", "(Ljava/lang/CharSequence;II)J");
         int parseInt000GreedyIndex = asm.poolMethod(Numbers.class, "parseInt000Greedy", "(Ljava/lang/CharSequence;II)J");
-        int parseLong000000GreedyIndex = asm.poolMethod(Numbers.class, "parseLong000000Greedy", "(Ljava/lang/CharSequence;II)J");
         int parseNanosAsMicrosGreedyIndex = asm.poolMethod(Nanos.class, "parseNanosAsMicrosGreedy", "(Ljava/lang/CharSequence;II)J");
         int decodeLenIndex = asm.poolMethod(Numbers.class, "decodeHighInt", "(J)I");
         int decodeIntIndex = asm.poolMethod(Numbers.class, "decodeLowInt", "(J)I");
@@ -1420,7 +1405,7 @@ public class NanosFormatCompiler {
         int appendHour121PaddedIndex = asm.poolMethod(NanosFormatUtils.class, "appendHour121Padded", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour241Index = asm.poolMethod(NanosFormatUtils.class, "appendHour241", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour241PaddedIndex = asm.poolMethod(NanosFormatUtils.class, "appendHour241Padded", "(Lio/questdb/std/str/CharSink;I)V");
-        int append00000Index = asm.poolMethod(NanosFormatUtils.class, "append00000", "(Lio/questdb/std/str/CharSink;I)V");
+        int append00000000Index = asm.poolMethod(NanosFormatUtils.class, "append00000000", "(Lio/questdb/std/str/CharSink;I)V");
         int append00Index = asm.poolMethod(NanosFormatUtils.class, "append00", "(Lio/questdb/std/str/CharSink;I)V");
         int append0Index = asm.poolMethod(NanosFormatUtils.class, "append0", "(Lio/questdb/std/str/CharSink;I)V");
         int appendYear000Index = asm.poolMethod(NanosFormatUtils.class, "appendYear000", "(Lio/questdb/std/str/CharSink;I)V");
@@ -1444,6 +1429,7 @@ public class NanosFormatCompiler {
         int getDayOfYearIndex = asm.poolMethod(Nanos.class, "getDayOfYear", "(J)I");
         int getWeekIndex = asm.poolMethod(Nanos.class, "getWeek", "(J)I");
         int getWeekOfYearIndex = asm.poolMethod(Nanos.class, "getWeekOfYear", "(J)I");
+        int nanosOfSecondIndex = asm.poolMethod(Nanos.class, "getNanosOfSecond", "(J)I");
 
         int sinkPutIntIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(I)Lio/questdb/std/str/CharSink;");
         int sinkPutStrIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(Ljava/lang/CharSequence;)Lio/questdb/std/str/CharSink;");
@@ -1486,7 +1472,6 @@ public class NanosFormatCompiler {
                 dateLocaleClassIndex,
                 charSequenceClassIndex,
                 minLongIndex,
-                minMinuteMicrosIndex,
                 matchWeekdayIndex,
                 matchMonthIndex,
                 matchZoneIndex,
@@ -1494,7 +1479,6 @@ public class NanosFormatCompiler {
                 matchEraIndex,
                 parseIntSafelyIndex,
                 parseInt000GreedyIndex,
-                parseLong000000GreedyIndex,
                 parseNanosAsMicrosGreedyIndex,
                 decodeLenIndex,
                 decodeIntIndex,
@@ -1540,7 +1524,7 @@ public class NanosFormatCompiler {
                 wallMicrosIndex,
                 wallNanosIndex,
                 getDayOfWeekIndex,
-                append00000Index,
+                append00000000Index,
                 append00Index,
                 append0Index,
                 appendYear000Index,
@@ -1554,7 +1538,8 @@ public class NanosFormatCompiler {
                 formatSigIndex,
                 getDayOfYearIndex,
                 getWeekOfYearIndex,
-                getWeekIndex
+                getWeekIndex,
+                nanosOfSecondIndex
         );
 
         // class attribute count
@@ -1582,14 +1567,10 @@ public class NanosFormatCompiler {
                 case OP_MICROS_THREE_DIGITS:
                     attributes |= (1 << FA_WALL_MICROS);
                     break;
-                // formatting method for MICROS6 and NANOS9 is the same
-//                case OP_NANOS_GREEDY9:
-//                    attributes |= (1 << FA_SECOND_MICROS);
-//                    break;
-
-                // NANOS we are parsing microsecond resolution time, it does not
-                // have nanos, therefore we do not need to store value on stack, it is constant 0
-
+                // NANOS9
+                case OP_NANOS_GREEDY9:
+                    attributes |= (1 << FA_NANOS9);
+                    break;
                 // MILLIS
                 case OP_MILLIS_ONE_DIGIT:
                 case OP_MILLIS_GREEDY:

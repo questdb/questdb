@@ -216,7 +216,7 @@ public class TimestampFormatUtils {
             int millis,
             int micros,
             int timezone,
-            long offset,
+            long offsetMinutes,
             int hourType
     ) throws NumericException {
         if (era == 0) {
@@ -274,7 +274,7 @@ public class TimestampFormatUtils {
             day = Timestamps.getDayOfMonth(firstDayOfIsoWeekMicros, year, month, Timestamps.isLeapYear(year));
         }
 
-        long datetime = Timestamps.yearMicros(year, leap)
+        long outMicros = Timestamps.yearMicros(year, leap)
                 + Timestamps.monthOfYearMicros(month, leap)
                 + (long) (day - 1) * Timestamps.DAY_MICROS
                 + (long) hour * Timestamps.HOUR_MICROS
@@ -284,12 +284,12 @@ public class TimestampFormatUtils {
                 + micros;
 
         if (timezone > -1) {
-            datetime -= locale.getZoneRules(timezone, RESOLUTION_MICROS).getOffset(datetime, year);
-        } else if (offset > Long.MIN_VALUE) {
-            datetime -= offset;
+            outMicros -= locale.getZoneRules(timezone, RESOLUTION_MICROS).getOffset(outMicros, year);
+        } else if (offsetMinutes > Long.MIN_VALUE) {
+            outMicros -= offsetMinutes * Timestamps.MINUTE_MICROS;
         }
 
-        return datetime;
+        return outMicros;
     }
 
     // YYYY-MM-DD

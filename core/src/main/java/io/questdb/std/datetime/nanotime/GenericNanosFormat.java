@@ -59,6 +59,7 @@ public class GenericNanosFormat extends AbstractDateFormat {
         boolean leap = false;
         int millis = -1;
         int micros = -1;
+        int nanosOfSecond = -1;
 
         for (int i = 0, n = compiledOps.size(); i < n; i++) {
             int op = compiledOps.getQuick(i);
@@ -81,10 +82,10 @@ public class GenericNanosFormat extends AbstractDateFormat {
                     break;
 
                 case NanosFormatCompiler.OP_NANOS_GREEDY9:
-                    if (micros == -1) {
-                        micros = Nanos.getNanosOfSecond(nanos);
+                    if (nanosOfSecond == -1) {
+                        nanosOfSecond = Nanos.getNanosOfSecond(nanos);
                     }
-                    NanosFormatUtils.append00000(sink, micros);
+                    NanosFormatUtils.append00000000(sink, nanosOfSecond);
                     break;
 
                 case NanosFormatCompiler.OP_MICROS_THREE_DIGITS:
@@ -407,7 +408,7 @@ public class GenericNanosFormat extends AbstractDateFormat {
         int week = -1;
         int era = 1;
         int timezone = -1;
-        long offset = Long.MIN_VALUE;
+        long offsetMinutes = Long.MIN_VALUE;
         int hourType = HOUR_24;
         int pos = lo;
         long l;
@@ -685,7 +686,7 @@ public class GenericNanosFormat extends AbstractDateFormat {
                         l = locale.matchZone(in, pos, hi);
                         timezone = Numbers.decodeLowInt(l);
                     } else {
-                        offset = Numbers.decodeLowInt(l) * Nanos.MINUTE_NANOS;
+                        offsetMinutes = Numbers.decodeLowInt(l);
                     }
                     pos += Numbers.decodeHighInt(l);
                     break;
@@ -719,7 +720,7 @@ public class GenericNanosFormat extends AbstractDateFormat {
                 micros,
                 nanos,
                 timezone,
-                offset,
+                offsetMinutes,
                 hourType
         );
     }

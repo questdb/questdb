@@ -695,7 +695,6 @@ public class TimestampFormatCompiler {
             int dateLocaleClassIndex,
             int charSequenceClassIndex,
             int minLongIndex,
-            int minuteMicrosIndex,
             int matchWeekdayIndex,
             int matchMonthIndex,
             int matchZoneIndex,
@@ -1161,8 +1160,6 @@ public class TimestampFormatCompiler {
 
                     decodeInt(decodeIntIndex);
                     asm.i2l();
-                    asm.ldc2_w(minuteMicrosIndex);
-                    asm.lmul();
                     asm.lstore(LOCAL_OFFSET);
                     p = asm.position();
                     frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));
@@ -1357,7 +1354,6 @@ public class TimestampFormatCompiler {
         int dateLocaleClassIndex = asm.poolClass(DateLocale.class);
         int charSequenceClassIndex = asm.poolClass(CharSequence.class);
         int minLongIndex = asm.poolLongConst(Long.MIN_VALUE);
-        int minMinuteMicrosIndex = asm.poolLongConst(Timestamps.MINUTE_MICROS);
 
         int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
         int matchWeekdayIndex = asm.poolMethod(DateLocale.class, "matchWeekday", "(Ljava/lang/CharSequence;II)J");
@@ -1459,7 +1455,6 @@ public class TimestampFormatCompiler {
                 dateLocaleClassIndex,
                 charSequenceClassIndex,
                 minLongIndex,
-                minMinuteMicrosIndex,
                 matchWeekdayIndex,
                 matchMonthIndex,
                 matchZoneIndex,

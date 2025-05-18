@@ -30,14 +30,13 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.std.datetime.CommonFormatUtils.*;
-import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_NANOS;
 
 public class NanosFormatUtils {
     public static final DateFormat NSEC_UTC_FORMAT;
@@ -64,18 +63,24 @@ public class NanosFormatUtils {
         DateFormatUtils.append00(sink, val);
     }
 
-    public static void append00000(@NotNull CharSink<?> sink, int val) {
+    public static void append00000000(@NotNull CharSink<?> sink, int val) {
         int v = Math.abs(val);
         if (v < 10) {
-            sink.putAscii('0').putAscii('0').putAscii('0').putAscii('0').putAscii('0');
+            sink.putAscii("00000000");
         } else if (v < 100) {
-            sink.putAscii('0').putAscii('0').putAscii('0').putAscii('0');
+            sink.putAscii("0000000");
         } else if (v < 1000) {
-            sink.putAscii('0').putAscii('0').putAscii('0');
+            sink.putAscii("000000");
         } else if (v < 10000) {
-            sink.putAscii('0').putAscii('0');
+            sink.putAscii("00000");
         } else if (v < 100000) {
-            sink.putAscii('0');
+            sink.putAscii("0000");
+        } else if (v < 1000000) {
+            sink.putAscii("000");
+        } else if (v < 10000000) {
+            sink.putAscii("00");
+        } else if (v < 100000000) {
+            sink.putAscii("0");
         }
         sink.put(val);
     }
@@ -212,81 +217,36 @@ public class NanosFormatUtils {
             int micros,
             int nanos,
             int timezone,
-            long offset,
+            long offsetMinutes,
             int hourType
     ) throws NumericException {
         if (era == 0) {
-            year = -(year - 1);
-        }
-
-        boolean leap = Nanos.isLeapYear(year);
-
-        // wrong month
-        if (month < 1 || month > 12) {
+            // era out of range
             throw NumericException.INSTANCE;
         }
 
-        if (hourType == HOUR_24) {
-            // wrong 24-hour clock hour
-            if (hour < 0 || hour > 24) {
-                throw NumericException.INSTANCE;
-            }
-            hour %= 24;
-        } else {
-            // wrong 12-hour clock hour
-            if (hour < 0 || hour > 12) {
-                throw NumericException.INSTANCE;
-            }
-            hour %= 12;
-            if (hourType == HOUR_PM) {
-                hour += 12;
-            }
+        if (year > 1677 && year < 2262) {
+            long m = TimestampFormatUtils.compute(
+                    locale,
+                    era,
+                    year,
+                    month,
+                    week,
+                    day,
+                    hour,
+                    minute,
+                    second,
+                    millis,
+                    micros,
+                    timezone,
+                    offsetMinutes,
+                    hourType
+            );
+            return m * Nanos.MICRO_NANOS + nanos;
         }
 
-        // wrong day of month
-        if (day < 1 || day > Timestamps.getDaysPerMonth(month, leap)) {
-            throw NumericException.INSTANCE;
-        }
-
-        if (minute < 0 || minute > 59) {
-            throw NumericException.INSTANCE;
-        }
-
-        if (second < 0 || second > 59) {
-            throw NumericException.INSTANCE;
-        }
-
-        if ((week <= 0 && week != -1) || week > io.questdb.std.datetime.microtime.Timestamps.getWeeks(year)) {
-            throw NumericException.INSTANCE;
-        }
-
-        // calculate year, month, and day of ISO week
-        if (week != -1) {
-            long firstDayOfIsoWeekNanos = Nanos.yearNanos(year, Nanos.isLeapYear(year)) +
-                    (week - 1) * Nanos.WEEK_NANOS +
-                    Timestamps.getIsoYearDayOffset(year) * Nanos.DAY_NANOS;
-            month = Nanos.getMonthOfYear(firstDayOfIsoWeekNanos);
-            year += (week == 1 && Timestamps.getIsoYearDayOffset(year) < 0) ? -1 : 0;
-            day = Nanos.getDayOfMonth(firstDayOfIsoWeekNanos, year, month, Nanos.isLeapYear(year));
-        }
-
-        long datetime = Nanos.yearNanos(year, leap)
-                + Nanos.monthOfYearNanos(month, leap)
-                + (long) (day - 1) * Nanos.DAY_NANOS
-                + (long) hour * Nanos.HOUR_NANOS
-                + (long) minute * Nanos.MINUTE_NANOS
-                + (long) second * Nanos.SECOND_NANOS
-                + (long) millis * Nanos.MILLI_NANOS
-                + (long) micros * Nanos.MICRO_NANOS
-                + nanos;
-
-        if (timezone > -1) {
-            datetime -= locale.getZoneRules(timezone, RESOLUTION_NANOS).getOffset(datetime, year);
-        } else if (offset > Long.MIN_VALUE) {
-            datetime -= offset;
-        }
-
-        return datetime;
+        // yeah overflow
+        throw NumericException.INSTANCE;
     }
 
     // YYYY-MM-DD
@@ -332,11 +292,11 @@ public class NanosFormatUtils {
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmZ
-    public static long parseTimestamp(@NotNull CharSequence seq) throws NumericException {
-        return parseTimestamp(seq, 0, seq.length());
+    public static long parseNanos(@NotNull CharSequence seq) throws NumericException {
+        return parseNanos(seq, 0, seq.length());
     }
 
-    public static long parseTimestamp(@NotNull CharSequence value, int lo, int hi) throws NumericException {
+    public static long parseNanos(@NotNull CharSequence value, int lo, int hi) throws NumericException {
         for (int i = 0, n = FORMATS.length; i < n; i++) {
             try {
                 return FORMATS[i].parse(value, lo, hi, EN_LOCALE);
@@ -360,7 +320,7 @@ public class NanosFormatUtils {
     }
 
     public static long tryParse(@NotNull CharSequence s, int lo, int lim) throws NumericException {
-        return parseTimestamp(s, lo, lim);
+        return parseNanos(s, lo, lim);
     }
 
     public static void updateReferenceYear(long micros) {

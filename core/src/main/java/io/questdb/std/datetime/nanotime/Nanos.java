@@ -24,11 +24,11 @@
 
 package io.questdb.std.datetime.nanotime;
 
-import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.CommonFormatUtils;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.FixedTimeZoneRule;
 import io.questdb.std.datetime.TimeZoneRules;
@@ -50,13 +50,9 @@ public final class Nanos {
     public static final long MICRO_NANOS = 1000;
     public static final long MILLI_NANOS = 1_000_000;
     public static final long MINUTE_NANOS = 60_000_000_000L;
-    public static final long MINUTE_SECONDS = 60;
     public static final long SECOND_NANOS = 1_000_000_000;
-    public static final int WEEK_DAYS = 7;
     public static final long WEEK_NANOS = DAY_NANOS * 7L; // DAY_NANOS * 7
-    public static final long YEAR_10000 = 253_402_300_800_000_000L;
     public static final long YEAR_NANOS_NONLEAP = 365 * DAY_NANOS;
-    private static final int YEAR_MONTHS = 12;
     private static final long YEAR_NANOS_LEAP = 366 * DAY_NANOS;
 
     private Nanos() {
@@ -732,9 +728,9 @@ public final class Nanos {
 
     public static int getWallHours(long nanos) {
         if (nanos > -1) {
-            return (int) ((nanos / HOUR_NANOS) % DAY_HOURS);
+            return (int) ((nanos / HOUR_NANOS) % CommonFormatUtils.DAY_HOURS);
         } else {
-            return DAY_HOURS - 1 + (int) (((nanos + 1) / HOUR_NANOS) % DAY_HOURS);
+            return CommonFormatUtils.DAY_HOURS - 1 + (int) (((nanos + 1) / HOUR_NANOS) % CommonFormatUtils.DAY_HOURS);
         }
     }
 
@@ -756,9 +752,9 @@ public final class Nanos {
 
     public static int getWallMinutes(long nanos) {
         if (nanos > -1) {
-            return (int) ((nanos / MINUTE_NANOS) % HOUR_MINUTES);
+            return (int) ((nanos / MINUTE_NANOS) % CommonFormatUtils.HOUR_MINUTES);
         } else {
-            return HOUR_MINUTES - 1 + (int) (((nanos + 1) / MINUTE_NANOS) % HOUR_MINUTES);
+            return CommonFormatUtils.HOUR_MINUTES - 1 + (int) (((nanos + 1) / MINUTE_NANOS) % CommonFormatUtils.HOUR_MINUTES);
         }
     }
 
@@ -772,9 +768,9 @@ public final class Nanos {
 
     public static int getWallSeconds(long nanos) {
         if (nanos > -1) {
-            return (int) ((nanos / SECOND_NANOS) % MINUTE_SECONDS);
+            return (int) ((nanos / SECOND_NANOS) % CommonFormatUtils.MINUTE_SECONDS);
         } else {
-            return (int) (MINUTE_SECONDS - 1 + (int) (((nanos + 1) / SECOND_NANOS) % MINUTE_SECONDS));
+            return (int) (CommonFormatUtils.MINUTE_SECONDS - 1 + (int) (((nanos + 1) / SECOND_NANOS) % CommonFormatUtils.MINUTE_SECONDS));
         }
     }
 
@@ -938,54 +934,6 @@ public final class Nanos {
     }
 
     /**
-     * Returns a duration value in TTL format: if positive, it's in hours; if negative, it's in months (and
-     * the actual value is positive)
-     *
-     * @param value           the number of units, must be a non-negative number
-     * @param partitionByUnit the time unit, one of `PartitionBy` constants
-     * @param tokenPos        the position of the number token in the SQL string
-     * @return the TTL value as described
-     * @throws SqlException if the passed value is out of range
-     */
-    public static int toHoursOrMonths(int value, int partitionByUnit, int tokenPos) throws SqlException {
-        if (value < 0) {
-            throw new AssertionError("The value must be non-negative");
-        }
-        if (value == 0) {
-            return 0;
-        }
-        switch (partitionByUnit) {
-            case PartitionBy.HOUR:
-                return value;
-            case PartitionBy.DAY:
-                int maxDays = Integer.MAX_VALUE / DAY_HOURS;
-                if (value > maxDays) {
-                    throw SqlException.$(tokenPos, "value out of range: ")
-                            .put(value).put(" days. Max value: ").put(maxDays).put(" days");
-                }
-                return DAY_HOURS * value;
-            case PartitionBy.WEEK:
-                int maxWeeks = Integer.MAX_VALUE / WEEK_DAYS / DAY_HOURS;
-                if (value > maxWeeks) {
-                    throw SqlException.$(tokenPos, "value out of range: ")
-                            .put(value).put(" weeks. Max value: ").put(maxWeeks).put(" weeks");
-                }
-                return WEEK_DAYS * DAY_HOURS * value;
-            case PartitionBy.MONTH:
-                return -value;
-            case PartitionBy.YEAR:
-                int maxYears = Integer.MAX_VALUE / YEAR_MONTHS;
-                if (value > maxYears) {
-                    throw SqlException.$(tokenPos, "value out of range: ")
-                            .put(value).put(" years. Max value: ").put(maxYears).put(" years");
-                }
-                return -(YEAR_MONTHS * value);
-            default:
-                throw new AssertionError("invalid value for partitionByUnit: " + partitionByUnit);
-        }
-    }
-
-    /**
      * Convert a timestamp in arbitrary units to nanoseconds.
      *
      * @param value timestamp value
@@ -1085,7 +1033,7 @@ public final class Nanos {
     }
 
     public static long toUTC(
-            long localTimestamp,
+            long tzNanos,
             DateLocale locale,
             CharSequence timezone,
             int lo,
@@ -1098,11 +1046,11 @@ public final class Nanos {
                     Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
                     RESOLUTION_NANOS
             );
-            offset = zoneRules.getLocalOffset(localTimestamp);
-            return localTimestamp - offset;
+            offset = zoneRules.getLocalOffset(tzNanos);
+            return tzNanos - offset;
         }
         offset = Numbers.decodeLowInt(l) * MINUTE_NANOS;
-        return localTimestamp - offset;
+        return tzNanos - offset;
     }
 
     public static long yearNanos(int year, boolean leap) {

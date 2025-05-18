@@ -223,15 +223,15 @@ public class NanosTest {
         Assert.assertEquals(
                 41168,
                 Nanos.getDaysBetween(
-                        NanosFormatUtils.parseTimestamp("1904-11-05T23:45:41.045Z"),
-                        NanosFormatUtils.parseTimestamp("2017-07-24T23:45:31.045Z")
+                        NanosFormatUtils.parseNanos("1904-11-05T23:45:41.045Z"),
+                        NanosFormatUtils.parseNanos("2017-07-24T23:45:31.045Z")
                 )
         );
         Assert.assertEquals(
                 41169,
                 Nanos.getDaysBetween(
-                        NanosFormatUtils.parseTimestamp("1904-11-05T23:45:41.045Z"),
-                        NanosFormatUtils.parseTimestamp("2017-07-24T23:45:51.045Z")
+                        NanosFormatUtils.parseNanos("1904-11-05T23:45:41.045Z"),
+                        NanosFormatUtils.parseNanos("2017-07-24T23:45:51.045Z")
                 )
         );
     }
@@ -403,19 +403,19 @@ public class NanosTest {
 
     @Test
     public void testFormatCalDate1() throws Exception {
-        NanosFormatUtils.formatDashYYYYMMDD(sink, NanosFormatUtils.parseTimestamp("2008-05-10T12:31:02.008Z"));
+        NanosFormatUtils.formatDashYYYYMMDD(sink, NanosFormatUtils.parseNanos("2008-05-10T12:31:02.008Z"));
         TestUtils.assertEquals("2008-05-10", sink);
     }
 
     @Test
     public void testFormatCalDate2() throws Exception {
-        NanosFormatUtils.formatYYYYMM(sink, NanosFormatUtils.parseTimestamp("2008-05-10T12:31:02.008Z"));
+        NanosFormatUtils.formatYYYYMM(sink, NanosFormatUtils.parseNanos("2008-05-10T12:31:02.008Z"));
         TestUtils.assertEquals("2008-05", sink);
     }
 
     @Test
     public void testFormatCalDate3() throws Exception {
-        NanosFormatUtils.formatYYYYMMDD(sink, NanosFormatUtils.parseTimestamp("2008-05-10T12:31:02.008Z"));
+        NanosFormatUtils.formatYYYYMMDD(sink, NanosFormatUtils.parseNanos("2008-05-10T12:31:02.008Z"));
         TestUtils.assertEquals("20080510", sink);
     }
 
@@ -598,7 +598,7 @@ public class NanosTest {
     public void testParseTimestampNotNullLocale() {
         try {
             // we deliberately mangle timezone so that function begins to rely on locale to resolve text
-            NanosFormatUtils.parseTimestamp("2020-01-10T15:00:01.000143Zz");
+            NanosFormatUtils.parseNanos("2020-01-10T15:00:01.000143Zz");
             Assert.fail();
         } catch (NumericException ignored) {
         }
@@ -856,7 +856,7 @@ public class NanosTest {
 
     private void expectExceptionDateTime(String s) {
         try {
-            NanosFormatUtils.parseTimestamp(s);
+            NanosFormatUtils.parseNanos(s);
             Assert.fail("Expected exception");
         } catch (NumericException ignore) {
         }
