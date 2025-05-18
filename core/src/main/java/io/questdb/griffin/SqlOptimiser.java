@@ -126,6 +126,7 @@ public class SqlOptimiser implements Mutable {
     private final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
     private final ObjectPool<JoinContext> contextPool;
     private final ObjectPool<CharSequenceHashSet> csHashSetPool = new ObjectPool<>(CharSequenceHashSet::new, 16);
+    private final ObjectPool<CharSequenceIntHashMap> csIntHashMapPool = new ObjectPool<>(CharSequenceIntHashMap::new, 16);
     private final IntHashSet deletedContexts = new IntHashSet();
     private final CharSequenceHashSet existsDependedTokens = new CharSequenceHashSet();
     private final ObjectPool<ExpressionNode> expressionNodePool;
@@ -155,6 +156,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
+    private final ObjectPool<StringSink> stringSinkPool = new ObjectPool<>(StringSink::new, 16);
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
@@ -290,48 +292,6 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
-    }
-
-    public void rewritePivotGenerateAliases(QueryModel model, ObjList<CharSequence> aliasList) throws SqlException {
-        QueryModel nested = model.getNestedModel();
-        assert nested.getPivotColumns() != null;
-
-        boolean alreadyAliased = false;
-
-        // 0. - check for aliases
-        for (int i = 0, n = nested.getPivotColumns().size(); i < n; i++) {
-            alreadyAliased |= nested.getPivotColumns().getQuick(i).getAlias() != null;
-        }
-
-        if (alreadyAliased) {
-            // rule out any accidental dupes
-            CharSequenceHashSet aliasDedupe = csHashSetPool.next();
-            for (int i = 0, n = nested.getPivotColumns().size(); i < n; i++) {
-                final QueryColumn pc = nested.getPivotColumns().getQuick(i);
-                if (!aliasDedupe.add(pc.getAlias())) {
-                    throw SqlException.$(pc.getAst().position, "duplicate alias in pivot definition [alias=").put(pc.getAlias());
-                }
-                aliasList.add(pc.getAlias());
-            }
-            // do nothing and break
-            // todo:
-            return;
-        }
-
-        // 1.
-        for (int i = 0)
-
-
-        // naming rules
-        // 0. the alias provided by the user
-        // 1. Named after the column values
-        // i.e. 2000, 2010, 2020
-        // 2. Suffixed with aggregate columns, if multiple
-        // i.e 2000_sum, 2000_first
-        // 3. Suffixed with the parameter inside if multiple
-        // i.e. 2000_price, 2000_amount
-        // 4. suffixed with both if multiple
-        // i.e. 2000_sum_price, 2000_first_amount
     }
 
     public @Nullable ExpressionNode rewritePivotGetAppropriateNameFromInExpr(ExpressionNode forInExpr) {
@@ -4968,6 +4928,71 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void rewritePivotGenerateAliases(QueryModel model) throws SqlException {
+        QueryModel nested = model.getNestedModel();
+        assert nested.getPivotColumns() != null;
+        ObjList<QueryColumn> pivotColumns = nested.getPivotColumns();
+        int pivotColumnSize = nested.getPivotColumns().size();
+
+        boolean allAlreadyAliased = true;
+        boolean duplicateAggregates = false;
+
+        CharSequenceIntHashMap aggregateDedupe = csIntHashMapPool.next();
+        CharSequenceHashSet aliasDedupe = csHashSetPool.next();
+        StringSink sink = stringSinkPool.next();
+
+        try {
+            for (int i = 0; i < pivotColumnSize; i++) {
+                final QueryColumn pc = pivotColumns.getQuick(i);
+                if (aggregateDedupe.incrementAndReturnValue(pc.getAst().token) > 0) {
+                    duplicateAggregates = true;
+                }
+                if (pc.getAlias() == null) {
+                    allAlreadyAliased = false;
+                }
+            }
+
+            if (!allAlreadyAliased && duplicateAggregates) {
+                CharSequence tok;
+                for (int i = 0; i < pivotColumnSize; i++) {
+                    final QueryColumn pc = pivotColumns.getQuick(i);
+                    tok = pc.getAst().token;
+                    sink.clear();
+
+                    if (pc.getAlias() != null) {
+                        aliasDedupe.add(pc.getAlias());
+                        continue;
+                    }
+
+                    if (aggregateDedupe.get(tok) > 0 && pc.getAlias() == null) {
+                        // need to alias it
+                        sink.put(tok).put('_').put(pc.getAst().rhs);
+                        if (aliasDedupe.contains(sink)) {
+                            // already duplicate
+                            int aliasLength = sink.length();
+                            int suffix = 1;
+                            do {
+                                sink.trimTo(aliasLength);
+                                sink.put(suffix++);
+                            } while (aliasDedupe.contains(sink) && suffix < 500);
+                        }
+                        CharacterStoreEntry cse = characterStore.newEntry();
+                        cse.put(sink);
+                        CharSequence cs = cse.toImmutable();
+                        if (!aliasDedupe.add(cs)) {
+                            throw new UnsupportedOperationException();
+                        }
+                        pc.setAlias(cs);
+                    }
+                }
+            }
+        } finally {
+            csIntHashMapPool.release(aggregateDedupe);
+            csHashSetPool.release(aliasDedupe);
+            stringSinkPool.release(sink);
+        }
+    }
+
     private @Nullable ExpressionNode rewritePivotGetAppropriateArgFromInExpr(ExpressionNode forInExpr, int slot) {
         if (forInExpr.paramCount == 2) {
             assert slot == 0;
@@ -6928,6 +6953,8 @@ public class SqlOptimiser implements Mutable {
             // 4. suffixed with both if multiple
             // i.e. 2000_sum_price, 2000_first_amount
 
+
+            rewritePivotGenerateAliases(model);
             // add group by columns
             for (int i = 0, n = nested.getPivotColumns().size(); i < n; i++) {
                 QueryColumn pivotColumn = nested.getPivotColumns().getQuick(i);
@@ -6955,6 +6982,7 @@ public class SqlOptimiser implements Mutable {
                     pivotColumn.setAlias(cse.toImmutable());
                 }
             }
+
 
             // need to permute all of the FOR exprs
             // FOR year in (2000, 2010, 2020)

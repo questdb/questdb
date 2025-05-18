@@ -180,7 +180,7 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotDefaultNamingRules() throws Exception {
         assertQueryAndPlan(
-                "side\tBTC-USD_price_first\tBTC-USD_price_first0\n",
+                "side\tBTC-USD_first_price\tBTC-USD_first_price1\n",
                 "trades PIVOT (\n" +
                         "first(price),\n" +
                         "first(price)\n" +
@@ -190,19 +190,18 @@ public class PivotTest extends AbstractSqlParserTest {
                 ddlTrades,
                 null,
                 dmlTrades,
-                "side\tBTC-USD_price_first\tBTC-USD_price_first0\n" +
-                        "buy\t101502.2\t101502.2\n" +
-                        "sell\t101502.1\t101502.1\n",
+                "side\tBTC-USD_first_price\tBTC-USD_first_price1\n" +
+                        "sell\t101502.1\t101502.1\n" +
+                        "buy\t101502.2\t101502.2\n",
                 true,
                 true,
                 false,
-                "VirtualRecord\n" +
-                        "  functions: [side,BTC-USD_price_first,BTC-USD_price_first]\n" +
-                        "    GroupBy vectorized: false\n" +
-                        "      keys: [side]\n" +
-                        "      values: [first_not_null(case([first,NaN,symbol]))]\n" +
+                "GroupBy vectorized: false\n" +
+                        "  keys: [side]\n" +
+                        "  values: [first_not_null(case([first_price,NaN,symbol])),first_not_null(case([first_price1,NaN,symbol]))]\n" +
+                        "    SelectedRecord\n" +
                         "        VirtualRecord\n" +
-                        "          functions: [side,first,symbol]\n" +
+                        "          functions: [side,first_price,symbol]\n" +
                         "            Async JIT Group By workers: 1\n" +
                         "              keys: [side,symbol]\n" +
                         "              values: [first(price)]\n" +
@@ -216,7 +215,7 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotDefaultNamingRules2() throws Exception {
         assertQueryAndPlan(
-                "side\tBTC-USD_price_first\tBTC-USD_amount_first\n",
+                "side\tBTC-USD_first_price\tBTC-USD_first_amount\n",
                 "trades PIVOT (\n" +
                         "first(price),\n" +
                         "first(amount)\n" +
@@ -226,24 +225,22 @@ public class PivotTest extends AbstractSqlParserTest {
                 ddlTrades,
                 null,
                 dmlTrades,
-                "side\tBTC-USD_price_first\tBTC-USD_amount_first\n" +
-                        "buy\t101502.2\t101502.2\n" +
-                        "sell\t101502.1\t101502.1\n",
+                "side\tBTC-USD_first_price\tBTC-USD_first_amount\n" +
+                        "buy\t101502.2\t5.775E-5\n" +
+                        "sell\t101502.1\t1.4443E-4\n",
                 true,
                 true,
                 false,
-                "VirtualRecord\n" +
-                        "  functions: [side,BTC-USD_price_first,BTC-USD_price_first]\n" +
-                        "    GroupBy vectorized: false\n" +
-                        "      keys: [side]\n" +
-                        "      values: [first_not_null(case([first,NaN,symbol]))]\n" +
-                        "        Async JIT Group By workers: 1\n" +
-                        "          keys: [side,symbol]\n" +
-                        "          values: [first(price)]\n" +
-                        "          filter: symbol in [BTC-USD]\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: trades\n");
+                "GroupBy vectorized: false\n" +
+                        "  keys: [side]\n" +
+                        "  values: [first_not_null(case([first_price,NaN,symbol])),first_not_null(case([first_amount,NaN,symbol]))]\n" +
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [side,symbol]\n" +
+                        "      values: [first(price),first(amount)]\n" +
+                        "      filter: symbol in [BTC-USD]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: trades\n");
     }
 
     @Test
