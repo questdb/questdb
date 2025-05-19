@@ -122,8 +122,8 @@ open module io.questdb {
     exports io.questdb.griffin.engine.table.parquet;
     exports io.questdb.cairo.mv;
     exports io.questdb.cutlass.pgwire.modern;
+    exports io.questdb.cairo.file;
     exports io.questdb.cairo.arr;
     exports io.questdb.griffin.engine.functions.array;
-    exports io.questdb.cairo.file;
     exports io.questdb.cutlass.line.array;
 }
