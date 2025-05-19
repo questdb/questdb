@@ -71,6 +71,8 @@ def convert_and_append_parameters(value, type, resolved_parameters):
         parsed_value = parser.isoparse(value)
         resolved_parameters.append(parsed_value)
     elif type == 'date':
+        # parsed_value = parser.isoparse(value)
+        # parsed_value = datetime.datetime.combine(parsed_value, datetime.time.min, tzinfo=datetime.timezone.utc)
         parsed_value = datetime.date.fromisoformat(value)
         resolved_parameters.append(parsed_value)
     elif type == 'char':
