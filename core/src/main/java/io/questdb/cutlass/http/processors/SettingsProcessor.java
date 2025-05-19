@@ -136,7 +136,7 @@ public class SettingsProcessor implements HttpRequestHandler {
         @Override
         public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
             try {
-                context.getSecurityContext().authorizeSystemAdmin();
+                context.getSecurityContext().authorizeSettings();
                 settingsStore.save(transientState.sink, transientState.mode, parseVersion(transientState.version));
                 sendOk();
             } catch (CairoException e) {
