@@ -303,9 +303,9 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testOldServerWithoutIlpHttpSupport() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
-                .replyWithContent(404, "Not Found", "test/plain");
+                .replyWithContent(405, "Method not allowed", "test/plain");
 
-        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint does not support ILP. [http-status=404]"));
+        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint does not support ILP. [http-status=405]"));
     }
 
     @Test

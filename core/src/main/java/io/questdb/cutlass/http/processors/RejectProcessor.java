@@ -34,6 +34,7 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.str.Utf16Sink;
 
 import static io.questdb.cutlass.http.HttpRequestValidator.ALL;
+import static io.questdb.cutlass.http.HttpRequestValidator.INVALID;
 
 public interface RejectProcessor extends HttpMultipartContentProcessor {
 
@@ -42,8 +43,8 @@ public interface RejectProcessor extends HttpMultipartContentProcessor {
     Utf16Sink getMessageSink();
 
     @Override
-    default byte getSupportedRequestTypes() {
-        return ALL;
+    default short getSupportedRequestTypes() {
+        return ALL | INVALID;
     }
 
     boolean isRequestBeingRejected();

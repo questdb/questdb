@@ -5,22 +5,32 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
+import static java.net.HttpURLConnection.HTTP_BAD_METHOD;
 import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
-import static java.net.HttpURLConnection.HTTP_NOT_FOUND;
 
+// request type is encoded in a short
+// bits of the lower byte correspond to HTTP methods:
+// 0 bit: GET (1), 1 bit: POST (2), 2 bit: PUT (4)
+// we can assign more method types in the future, if necessary
+// bits of the higher byte correspond to multipart/non-multipart content types:
+// 0 bit: non-multipart (256), 1 bit: multipart (512)
+// in the future these groups could be broken up into multiple, more specific content types
 public class HttpRequestValidator {
-    public static final byte INVALID = 1;
-    public static final byte METHOD_GET = 2;
-    public static final byte METHOD_MULTIPART_POST = 4;
-    public static final byte METHOD_MULTIPART_PUT = 8;
-    public static final byte METHOD_POST = 16;
-    public static final byte METHOD_PUT = 32;
-    public static final byte ALL = METHOD_GET | METHOD_MULTIPART_POST | METHOD_MULTIPART_PUT | METHOD_POST | METHOD_PUT;
+    public static final short ALL_CONTENT_TYPES = 0x7F00;
+    public static final short ALL_METHODS = 0x00FF;
+    public static final short ALL = ALL_METHODS | ALL_CONTENT_TYPES;
+    public static final short INVALID = Short.MIN_VALUE;
+    public static final short METHOD_GET = 0x0001;
+    public static final short METHOD_POST = METHOD_GET << 1;
+    public static final short METHOD_PUT = METHOD_POST << 1;
+    public static final short NON_MULTIPART_REQUEST = 0x0100;
+    public static final short MULTIPART_REQUEST = NON_MULTIPART_REQUEST << 1;
+
     private boolean chunked;
     private long contentLength;
     private boolean multipart;
     private HttpRequestHeader requestHeader;
-    private byte requestType = INVALID;
+    private short requestType = INVALID;
 
     HttpRequestValidator() {
     }
@@ -59,30 +69,29 @@ public class HttpRequestValidator {
                 rejectProcessor.reject(HTTP_BAD_REQUEST, "Content-length not specified for POST/PUT request");
                 return;
             }
-            if (!multipart) {
-                requestType = requestHeader.isPostRequest() ? METHOD_POST : METHOD_PUT;
-            } else {
-                requestType = requestHeader.isPostRequest() ? METHOD_MULTIPART_POST : METHOD_MULTIPART_PUT;
-            }
+            requestType = multipart ? MULTIPART_REQUEST : NON_MULTIPART_REQUEST;
+            requestType |= requestHeader.isPostRequest() ? METHOD_POST : METHOD_PUT;
         }
     }
 
     HttpRequestProcessor validateRequestType(HttpRequestProcessor processor, RejectProcessor rejectProcessor) {
-        if (processor.getSupportedRequestTypes() == ALL) {
-            // ALL request types are supported, these are usually error/reject processors
-            // validation can pass without checking actual request type
+        if ((processor.getSupportedRequestTypes() & requestType) == requestType) {
+            // request type is supported, check passed
             return processor;
         }
-        if ((processor.getSupportedRequestTypes() & requestType) == 0) {
-            final Utf8Sequence method = requestHeader.getMethod();
-            rejectProcessor.getMessageSink()
-                    .put(requestHeader.isPostRequest() || requestHeader.isPutRequest()
-                            ? (multipart ? "Multipart " : "Non-multipart ")
-                            : "Method ")
-                    .put(method)
-                    .put(!Utf8s.equalsAscii("", method) ? " not supported" : "not supported");
-            return rejectProcessor.reject(HTTP_NOT_FOUND);
+
+        // request type is not supported
+        // we need to work out the right error code and message
+        final Utf8Sequence method = requestHeader.getMethod();
+        if (method == null || Utf8s.equalsAscii("", method)) {
+            rejectProcessor.getMessageSink().put("Method is not set in HTTP request");
+            return rejectProcessor.reject(HTTP_BAD_REQUEST);
         }
-        return processor;
+        if ((processor.getSupportedRequestTypes() & ALL_METHODS & requestType) == 0) {
+            rejectProcessor.getMessageSink().put("Method ").put(method).put(" not supported");
+            return rejectProcessor.reject(HTTP_BAD_METHOD);
+        }
+        rejectProcessor.getMessageSink().put(multipart ? "Multipart " : "Non-multipart ").put(method).put(" not supported");
+        return rejectProcessor.reject(HTTP_BAD_REQUEST);
     }
 }

@@ -36,15 +36,12 @@ import io.questdb.ServerConfiguration;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.client.Response;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -57,8 +54,7 @@ import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.preferences.SettingsStore.Mode.MERGE;
 import static io.questdb.preferences.SettingsStore.Mode.OVERWRITE;
 import static io.questdb.test.tools.TestUtils.*;
-import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
-import static java.net.HttpURLConnection.HTTP_OK;
+import static java.net.HttpURLConnection.*;
 
 public class SettingsEndpointTest extends AbstractBootstrapTest {
     private static final String DEFAULT_PAYLOAD = "{" +
@@ -280,6 +276,35 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testPreferencesBadMethod() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT).DELETE()
+                            .url("/settings?version=" + 0L).withContent().put("{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}");
+                    assertResponse(request, HTTP_BAD_METHOD, "Method DELETE not supported\r\n");
+                    assertPreferencesStore(settingsStore, 0, "\"preferences\":{}");
+
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null" +
+                            "}," +
+                            "\"preferences.version\":0," +
+                            "\"preferences\":{" +
+                            "}" +
+                            "}");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPreferencesMalformedJson() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root)) {
@@ -491,25 +516,6 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
 
         request.url("/settings?version=" + version).withContent().put(preferences);
         assertResponse(request, expectedStatusCode, expectedHttpResponse);
-    }
-
-    private static void assertResponse(HttpClient.Request request, int expectedStatusCode, String expectedHttpResponse) {
-        try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
-            responseHeaders.await();
-
-            assertEquals(String.valueOf(expectedStatusCode), responseHeaders.getStatusCode());
-
-            final Utf8StringSink sink = new Utf8StringSink();
-
-            Fragment fragment;
-            final Response response = responseHeaders.getResponse();
-            while ((fragment = response.recv()) != null) {
-                Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
-            }
-
-            assertEquals(expectedHttpResponse, sink);
-            sink.clear();
-        }
     }
 
     private static void savePreferences(HttpClient httpClient, String preferences, SettingsStore.Mode mode, long version) {

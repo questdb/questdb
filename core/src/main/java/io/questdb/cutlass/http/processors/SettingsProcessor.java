@@ -62,9 +62,9 @@ public class SettingsProcessor implements HttpRequestHandler {
     private static final ThreadLocal<Utf8StringSink> tlSink = new ThreadLocal<>(Utf8StringSink::new);
     private final GetProcessor getProcessor = new GetProcessor();
     private final PostPutProcessor postPutProcessor = new PostPutProcessor();
-    private final SettingsStore settingsStore;
     private final byte requiredAuthTypeForUpdate;
     private final ServerConfiguration serverConfiguration;
+    private final SettingsStore settingsStore;
 
     public SettingsProcessor(CairoEngine engine, ServerConfiguration serverConfiguration) {
         this.serverConfiguration = serverConfiguration;

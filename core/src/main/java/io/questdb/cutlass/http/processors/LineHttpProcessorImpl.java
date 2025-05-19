@@ -46,10 +46,10 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
+import static io.questdb.cutlass.http.HttpRequestValidator.*;
 import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.ENCODING_NOT_SUPPORTED;
 import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.PRECISION_NOT_SUPPORTED;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.*;
-import static io.questdb.cutlass.http.HttpRequestValidator.*;
 
 public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, HttpRequestHandler {
     private static final Utf8String CONTENT_ENCODING = new Utf8String("Content-Encoding");
@@ -85,16 +85,8 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
     }
 
     @Override
-    public byte getSupportedRequestTypes() {
-        return METHOD_POST + METHOD_MULTIPART_POST;
-    }
-
-    @Override
-    public void onPartBegin(HttpRequestHeader partHeader) {
-    }
-
-    @Override
-    public void onPartEnd() {
+    public short getSupportedRequestTypes() {
+        return METHOD_POST | NON_MULTIPART_REQUEST | MULTIPART_REQUEST;
     }
 
     @Override
@@ -160,6 +152,14 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
         }
 
         state.of(context.getFd(), timestampPrecision, context.getSecurityContext());
+    }
+
+    @Override
+    public void onPartBegin(HttpRequestHeader partHeader) {
+    }
+
+    @Override
+    public void onPartEnd() {
     }
 
     @Override

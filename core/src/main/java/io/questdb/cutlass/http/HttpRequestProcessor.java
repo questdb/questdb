@@ -56,8 +56,7 @@ public interface HttpRequestProcessor {
         return SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
-    // error/reject processors should support ALL request types
-    default byte getSupportedRequestTypes() {
+    default short getSupportedRequestTypes() {
         return METHOD_GET;
     }
 

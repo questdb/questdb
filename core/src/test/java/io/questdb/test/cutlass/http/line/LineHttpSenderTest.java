@@ -466,7 +466,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         sender.flush();
                         Assert.fail("Expected exception");
                     } catch (LineSenderException e) {
-                        TestUtils.assertContains(e.getMessage(), "http-status=404");
+                        TestUtils.assertContains(e.getMessage(), "http-status=405");
                         TestUtils.assertContains(e.getMessage(), "Could not flush buffer: HTTP endpoint does not support ILP.");
                     }
                 }

@@ -1657,7 +1657,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportBadRequestGet() throws Exception {
         testImport(
-                "HTTP/1.1 404 Not Found\r\n" +
+                "HTTP/1.1 405 Method Not Allowed\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -3051,14 +3051,14 @@ public class IODispatcherTest extends AbstractTest {
                             "\r\n";
                     new SendAndReceiveRequestBuilder().execute(
                             request,
-                            "HTTP/1.1 404 Not Found\r\n" +
+                            "HTTP/1.1 400 Bad request\r\n" +
                                     "Server: questDB/1.0\r\n" +
                                     "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                     "Transfer-Encoding: chunked\r\n" +
                                     "Content-Type: text/plain; charset=utf-8\r\n" +
                                     "\r\n" +
-                                    "16\r\n" +
-                                    "Method not supported\r\n" +
+                                    "23\r\n" +
+                                    "Method is not set in HTTP request\r\n" +
                                     "\r\n" +
                                     "00\r\n"
                     );
@@ -6059,14 +6059,14 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testPostRequestToGetProcessor() throws Exception {
         testImport(
-                "HTTP/1.1 404 Not Found\r\n" +
+                "HTTP/1.1 405 Method Not Allowed\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "1e\r\n" +
-                        "Multipart POST not supported\r\n" +
+                        "1b\r\n" +
+                        "Method POST not supported\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",
