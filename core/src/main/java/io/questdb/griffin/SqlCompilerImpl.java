@@ -693,7 +693,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok != null && isExistsKeyword(tok)) {
                         tok = SqlUtil.fetchNext(lexer); // captured column name
-                        if (tableMetadata.getColumnIndexQuiet(tok) != -1) {
+                        final int columnIndex = tableMetadata.getColumnIndexQuiet(tok);
+                        if (columnIndex != -1) {
+                            tok = expectToken(lexer, "column type");
+                            final int columnType = ColumnType.typeOf(tok);
+                            if (columnType == -1) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "unrecognized column type: ").put(tok);
+                            }
+                            final int existingType = tableMetadata.getColumnType(columnIndex);
+                            if (existingType != columnType) {
+                                throw SqlException
+                                        .$(lexer.lastTokenPosition(), "column already exists with a different column type [current type=")
+                                        .put(ColumnType.nameOf(existingType))
+                                        .put(", requested type=")
+                                        .put(ColumnType.nameOf(columnType))
+                                        .put(']');
+                            }
                             break;
                         }
                     } else {
@@ -734,6 +749,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         addColumnSuffix(securityContext, null, tableToken, alterOperationBuilder);
         compiledQuery.ofAlter(alterOperationBuilder.build());
+        if (alterOperationBuilder.getExtraStrInfo().size() == 0) {
+            // there is no column to add, set the done flag to avoid execution of the query
+            compiledQuery.done();
+        }
     }
 
     private void alterTableChangeColumnType(

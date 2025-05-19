@@ -449,9 +449,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.net.idle.connection.timeout\tQDB_HTTP_NET_IDLE_CONNECTION_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                                     "http.net.queued.connection.timeout\tQDB_HTTP_NET_QUEUED_CONNECTION_TIMEOUT\t5000\tdefault\tfalse\tfalse\n" +
                                     "http.pessimistic.health.check.enabled\tQDB_HTTP_PESSIMISTIC_HEALTH_CHECK_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "http.query.cache.block.count\tQDB_HTTP_QUERY_CACHE_BLOCK_COUNT\t8\tdefault\tfalse\tfalse\n" +
+                                    "http.query.cache.block.count\tQDB_HTTP_QUERY_CACHE_BLOCK_COUNT\t32\tdefault\tfalse\tfalse\n" +
                                     "http.query.cache.enabled\tQDB_HTTP_QUERY_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
-                                    "http.query.cache.row.count\tQDB_HTTP_QUERY_CACHE_ROW_COUNT\t2\tdefault\tfalse\tfalse\n" +
+                                    "http.query.cache.row.count\tQDB_HTTP_QUERY_CACHE_ROW_COUNT\t4\tdefault\tfalse\tfalse\n" +
                                     "http.request.header.buffer.size\tQDB_HTTP_REQUEST_HEADER_BUFFER_SIZE\t64448\tdefault\tfalse\ttrue\n" +
                                     "http.security.interrupt.on.closed.connection\tQDB_HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION\ttrue\tdefault\tfalse\tfalse\n" +
                                     "http.security.max.response.rows\tQDB_HTTP_SECURITY_MAX_RESPONSE_ROWS\t9223372036854775807\tdefault\tfalse\tfalse\n" +
@@ -586,9 +586,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.readonly.user.enabled\tQDB_PG_READONLY_USER_ENABLED\tfalse\tdefault\tfalse\ttrue\n" +
                                     "pg.recv.buffer.size\tQDB_PG_RECV_BUFFER_SIZE\t1048576\tdefault\tfalse\ttrue\n" +
                                     "pg.security.readonly\tQDB_PG_SECURITY_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "pg.select.cache.block.count\tQDB_PG_SELECT_CACHE_BLOCK_COUNT\t8\tdefault\tfalse\tfalse\n" +
+                                    "pg.select.cache.block.count\tQDB_PG_SELECT_CACHE_BLOCK_COUNT\t32\tdefault\tfalse\tfalse\n" +
                                     "pg.select.cache.enabled\tQDB_PG_SELECT_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
-                                    "pg.select.cache.row.count\tQDB_PG_SELECT_CACHE_ROW_COUNT\t2\tdefault\tfalse\tfalse\n" +
+                                    "pg.select.cache.row.count\tQDB_PG_SELECT_CACHE_ROW_COUNT\t4\tdefault\tfalse\tfalse\n" +
                                     "pg.send.buffer.size\tQDB_PG_SEND_BUFFER_SIZE\t1048576\tdefault\tfalse\ttrue\n" +
                                     "pg.update.cache.block.count\tQDB_PG_UPDATE_CACHE_BLOCK_COUNT\t4\tdefault\tfalse\tfalse\n" +
                                     "pg.update.cache.enabled\tQDB_PG_UPDATE_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
