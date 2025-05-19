@@ -36,6 +36,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class CaseFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "case(V)";
