@@ -786,6 +786,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
             execute("alter table x add column arr double[]");
 
+            drainWalQueue();
+
             assertSql("ddl\n" +
                             "CREATE TABLE 'x' ( \n" +
                             "\ti INT,\n" +
@@ -805,7 +807,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             "\tm BINARY,\n" +
                             "\tn STRING,\n" +
                             "\tarr DOUBLE[]\n" + // <-- array should be present
-                            ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                            ") timestamp(timestamp) PARTITION BY DAY " + (isWal ? "" : "BYPASS ") + "WAL\n" +
                             "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
                     "show create table x;");
         });
