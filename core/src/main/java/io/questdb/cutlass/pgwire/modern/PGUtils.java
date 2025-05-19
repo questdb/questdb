@@ -59,6 +59,16 @@ class PGUtils {
     private PGUtils() {
     }
 
+    public static int calculateArrayColBinSize(ArrayView array) {
+        return Integer.BYTES // dimension count
+                + Integer.BYTES // "has nulls" flag
+                + Integer.BYTES // component type
+                + array.getDimCount() * (2 * Integer.BYTES) // dimension lengths
+                + array.getCardinality() * (
+                Integer.BYTES // element size
+                        + Long.BYTES); // element value
+    }
+
     /**
      * Returns the size of the serialized value in bytes, or -1 if the type is not supported.
      *
@@ -148,29 +158,13 @@ class PGUtils {
             case ColumnType.ARRAY:
                 ArrayView array = record.getArray(columnIndex, columnType);
                 if (array.isNull()) {
-                    return Integer.BYTES;
+                    return Integer.BYTES; // size field (will be -1 for NULL)
                 }
-                assert ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE || ColumnType.decodeArrayElementType(columnType) == ColumnType.LONG : "implemented only for double and long";
-                // todo: check if this is the only way to get the total size of the array
-                int encodedSize =
-                        Integer.BYTES // size
-                                + Integer.BYTES // dimension count
-                                + Integer.BYTES // has nulls flag
-                                + Integer.BYTES; // component type
-                encodedSize += array.getDimCount() * (2 * Integer.BYTES); // dimension lengths
-
-                int nDims = array.getDimCount();
-                int totalElements = 1;
-                for (int i = 0; i < nDims; i++) {
-                    totalElements *= array.getDimLen(i);
-                }
-
-                // assume non-null array, otherwise we would have to iterate over all elements
-                encodedSize += totalElements * (
-                        Integer.BYTES // element size
-                                + Long.BYTES // element value
-                );
-                return encodedSize;
+                assert ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE ||
+                        ColumnType.decodeArrayElementType(columnType) == ColumnType.LONG
+                        : "implemented only for double and long";
+                return Integer.BYTES // size
+                        + calculateArrayColBinSize(array); // encoded array size
             default:
                 assert false : "unsupported type: " + typeTag;
                 return -1;

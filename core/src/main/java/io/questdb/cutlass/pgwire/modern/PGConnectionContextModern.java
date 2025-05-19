@@ -1413,7 +1413,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             boolean isError = pipelineCurrentEntry.isError();
             boolean isClosed = pipelineCurrentEntry.isStateClosed();
             // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
-            do {
+            while (true) {
                 try {
                     pipelineCurrentEntry.msgSync(
                             sqlExecutionContext,
@@ -1438,7 +1438,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                         break;
                     }
                 }
-            } while (true);
+            }
 
             // we want the pipelineCurrentEntry to retain the last entry of the pipeline
             // unless this entry was already executed, closed and is an error

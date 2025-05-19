@@ -55,6 +55,7 @@ import io.questdb.std.str.StringSink;
  */
 public final class ColumnType {
     public static final int ARRAY_NDIMS_LIMIT = 32; // inclusive
+    public static final String[] ARRAY_DIM_SUFFIX = new String[ARRAY_NDIMS_LIMIT + 1];
     public static final int GEOBYTE_MAX_BITS = 7;
     // geohash bits <-> backing primitive types bit boundaries
     public static final int GEOBYTE_MIN_BITS = 1;
@@ -849,6 +850,12 @@ public final class ColumnType {
                 typeNameMap.put(arrayType, name);
                 nameTypeMap.put(name, arrayType);
             }
+        }
+
+        sink.clear();
+        for (int i = 0, n = ARRAY_NDIMS_LIMIT + 1; i < n; i++) {
+            ARRAY_DIM_SUFFIX[i] = sink.toString();
+            sink.put("[]");
         }
     }
 }

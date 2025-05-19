@@ -171,6 +171,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private Utf8String namedPortal;
     private Utf8String namedStatement;
     private Operation operation = null;
+    private int outResendArrayFlatIndex = 0;
     private int outResendColumnIndex = 0;
     private boolean outResendCursorRecord = false;
     private boolean outResendRecordHeader = true;
@@ -1070,7 +1071,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 return -1; // unsupported type
             }
 
-            if (columnValueSize >= sendBufferSize) {
+            if (columnValueSize >= sendBufferSize && !ColumnType.isArray(columnType)) {
                 // doesn't fit into send buffer
                 return -1;
             }
@@ -1643,45 +1644,52 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.setNullValue();
             return;
         }
-
-        int nDims = array.getDimCount();
         short elemType = array.getElemType();
-        int componentTypeOid = getTypeOid(elemType);
+        if (outResendArrayFlatIndex == 0) {
+            int nDims = array.getDimCount();
+            int componentTypeOid = getTypeOid(elemType);
 
-        // array header
-        long sizePtr = utf8Sink.skipInt();
-        utf8Sink.putNetworkInt(nDims);
+            // array header
+            utf8Sink.putNetworkInt(PGUtils.calculateArrayColBinSize(array));
+            utf8Sink.putNetworkInt(nDims);
 
-        utf8Sink.putIntDirect(0); // null flag: questdb does not support null elements in arrays so we always set this to 0
-        utf8Sink.putNetworkInt(componentTypeOid);
+            utf8Sink.putIntDirect(0); // "has nulls" flag: always 0 because QuestDB doesn't support NULL as array element
+            utf8Sink.putNetworkInt(componentTypeOid);
 
-        // Write dimension information
-        for (int i = 0; i < nDims; i++) {
-            utf8Sink.putNetworkInt(array.getDimLen(i)); // length of each dimension
-            utf8Sink.putNetworkInt(1); // lower bound, always 1 in PostgreSQL
-        }
-
-        if (array.isVanilla()) {
-            FlatArrayView flatView = array.flatView();
-            int len = flatView.length();
-            // Note that we rely on a HotSpot optimization: Loop-invariant code motion
-            // it moves the switch outside the loop.
-            for (int i = 0; i < len; i++) {
-                switch (elemType) {
-                    case ColumnType.LONG:
-                        utf8Sink.putNetworkInt(Long.BYTES);
-                        utf8Sink.putNetworkLong(flatView.getLongAtAbsIndex(i));
-                        break;
-                    case ColumnType.DOUBLE:
-                        utf8Sink.putNetworkInt(Double.BYTES);
-                        utf8Sink.putNetworkDouble(flatView.getDoubleAtAbsIndex(i));
-                        break;
-                }
+            // Write dimension information
+            for (int i = 0; i < nDims; i++) {
+                utf8Sink.putNetworkInt(array.getDimLen(i)); // length of each dimension
+                utf8Sink.putNetworkInt(1); // lower bound, always 1 in Postgres
             }
-        } else {
-            outColBinArrRecursive(utf8Sink, array, elemType, 0, 0);
         }
-        utf8Sink.putLenEx(sizePtr);
+        try {
+            if (array.isVanilla()) {
+                FlatArrayView flatView = array.flatView();
+                int len = flatView.length();
+                // Note that we rely on a HotSpot optimization: Loop-invariant code motion.
+                // It moves the switch outside the loop.
+                for (int i = outResendArrayFlatIndex; i < len; i++) {
+                    utf8Sink.bookmark();
+                    outResendArrayFlatIndex = i;
+                    switch (elemType) {
+                        case ColumnType.LONG:
+                            utf8Sink.putNetworkInt(Long.BYTES);
+                            utf8Sink.putNetworkLong(flatView.getLongAtAbsIndex(i));
+                            break;
+                        case ColumnType.DOUBLE:
+                            utf8Sink.putNetworkInt(Double.BYTES);
+                            utf8Sink.putNetworkDouble(flatView.getDoubleAtAbsIndex(i));
+                            break;
+                    }
+                }
+            } else {
+                outColBinArrRecursive(utf8Sink, array, elemType, 0, 0);
+            }
+            outResendArrayFlatIndex = 0;
+        } catch (NoSpaceLeftInResponseBufferException e) {
+            utf8Sink.resetToBookmark();
+            throw e;
+        }
     }
 
     private void outColBinArrRecursive(
@@ -1691,28 +1699,34 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         final int stride = array.getStride(dim);
         final boolean atDeepestDim = dim == array.getDimCount() - 1;
         if (atDeepestDim) {
-            switch (elemType) {
-                case ColumnType.LONG:
-                    for (int i = 0; i < count; i++) {
-                        long val = array.getLong(flatIndex);
-                        utf8Sink.putNetworkInt(Long.BYTES);
-                        utf8Sink.putNetworkLong(val);
-                        flatIndex += stride;
+            for (int i = 0; i < count; i++) {
+                if (flatIndex == outResendArrayFlatIndex) {
+                    utf8Sink.bookmark();
+                    switch (elemType) {
+                        case ColumnType.LONG: {
+                            long val = array.getLong(flatIndex);
+                            utf8Sink.putNetworkInt(Long.BYTES);
+                            utf8Sink.putNetworkLong(val);
+                            break;
+                        }
+                        case ColumnType.DOUBLE: {
+                            double val = array.getDouble(flatIndex);
+                            utf8Sink.putNetworkInt(Double.BYTES);
+                            utf8Sink.putNetworkDouble(val);
+                            break;
+                        }
                     }
-                    break;
-                case ColumnType.DOUBLE:
-                    for (int i = 0; i < count; i++) {
-                        double val = array.getDouble(flatIndex);
-                        utf8Sink.putNetworkInt(Double.BYTES);
-                        utf8Sink.putNetworkDouble(val);
-                        flatIndex += stride;
-                    }
-                    break;
+                    outResendArrayFlatIndex += stride;
+                }
+                flatIndex += stride;
             }
         } else {
             for (int i = 0; i < count; i++) {
                 outColBinArrRecursive(utf8Sink, array, elemType, dim + 1, flatIndex);
                 flatIndex += stride;
+                if (flatIndex > outResendArrayFlatIndex) {
+                    outResendArrayFlatIndex = flatIndex;
+                }
             }
         }
     }
@@ -2217,29 +2231,29 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         final boolean isMsgLengthRequired = messageLengthAddress > 0;
         try {
             while (outResendColumnIndex < columnCount) {
-                final int i = outResendColumnIndex;
-                final int type = pgResultSetColumnTypes.getQuick(2 * i);
+                final int colIndex = outResendColumnIndex;
+                final int type = pgResultSetColumnTypes.getQuick(2 * colIndex);
                 final int typeTag = ColumnType.tagOf(type);
-                final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, type);
+                final short columnBinaryFlag = getPgResultSetColumnFormatCode(colIndex, type);
 
                 final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, typeTag);
                 switch (tagWithFlag) {
                     case BINARY_TYPE_INT:
-                        outColBinInt(utf8Sink, record, i);
+                        outColBinInt(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.INT:
-                        outColTxtInt(utf8Sink, record, i);
+                        outColTxtInt(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.IPv4:
-                        outColTxtIPv4(utf8Sink, record, i);
+                        outColTxtIPv4(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.INTERVAL:
                     case BINARY_TYPE_INTERVAL:
-                        outColInterval(utf8Sink, record, i);
+                        outColInterval(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.VARCHAR:
                     case BINARY_TYPE_VARCHAR:
-                        outColVarchar(utf8Sink, record, i);
+                        outColVarchar(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.ARRAY_STRING:
                     case BINARY_TYPE_ARRAY_STRING:
@@ -2248,98 +2262,98 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         // metadata functions, we send it as if it was a STRING
                     case ColumnType.STRING:
                     case BINARY_TYPE_STRING:
-                        outColString(utf8Sink, record, i);
+                        outColString(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.SYMBOL:
                     case BINARY_TYPE_SYMBOL:
-                        outColSymbol(utf8Sink, record, i);
+                        outColSymbol(utf8Sink, record, colIndex);
                         break;
                     case BINARY_TYPE_LONG:
-                        outColBinLong(utf8Sink, record, i);
+                        outColBinLong(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.LONG:
-                        outColTxtLong(utf8Sink, record, i);
+                        outColTxtLong(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.SHORT:
-                        outColTxtShort(utf8Sink, record, i);
+                        outColTxtShort(utf8Sink, record, colIndex);
                         break;
                     case BINARY_TYPE_DOUBLE:
-                        outColBinDouble(utf8Sink, record, i);
+                        outColBinDouble(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.DOUBLE:
-                        outColTxtDouble(utf8Sink, record, i);
+                        outColTxtDouble(utf8Sink, record, colIndex);
                         break;
                     case BINARY_TYPE_FLOAT:
-                        outColBinFloat(utf8Sink, record, i);
+                        outColBinFloat(utf8Sink, record, colIndex);
                         break;
                     case BINARY_TYPE_SHORT:
-                        outColBinShort(utf8Sink, record, i);
+                        outColBinShort(utf8Sink, record, colIndex);
                         break;
                     case BINARY_TYPE_DATE:
-                        outColBinDate(utf8Sink, record, i);
+                        outColBinDate(utf8Sink, record, colIndex);
                         break;
                     case BINARY_TYPE_TIMESTAMP:
-                        outColBinTimestamp(utf8Sink, record, i);
+                        outColBinTimestamp(utf8Sink, record, colIndex);
                         break;
                     case BINARY_TYPE_BYTE:
-                        outColBinByte(utf8Sink, record, i);
+                        outColBinByte(utf8Sink, record, colIndex);
                         break;
                     case BINARY_TYPE_UUID:
-                        outColBinUuid(utf8Sink, record, i);
+                        outColBinUuid(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.FLOAT:
-                        outColTxtFloat(utf8Sink, record, i);
+                        outColTxtFloat(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.TIMESTAMP:
-                        outColTxtTimestamp(utf8Sink, record, i);
+                        outColTxtTimestamp(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.DATE:
-                        outColTxtDate(utf8Sink, record, i);
+                        outColTxtDate(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.BOOLEAN:
-                        outColTxtBool(utf8Sink, record, i);
+                        outColTxtBool(utf8Sink, record, colIndex);
                         break;
                     case BINARY_TYPE_BOOLEAN:
-                        outColBinBool(utf8Sink, record, i);
+                        outColBinBool(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.BYTE:
-                        outColTxtByte(utf8Sink, record, i);
+                        outColTxtByte(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.BINARY:
                     case BINARY_TYPE_BINARY:
-                        outColBinary(utf8Sink, record, i);
+                        outColBinary(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.CHAR:
                     case BINARY_TYPE_CHAR:
-                        outColChar(utf8Sink, record, i);
+                        outColChar(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.LONG256:
                     case BINARY_TYPE_LONG256:
-                        outColTxtLong256(utf8Sink, record, i);
+                        outColTxtLong256(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.GEOBYTE:
-                        outColTxtGeoByte(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
+                        outColTxtGeoByte(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
                         break;
                     case ColumnType.GEOSHORT:
-                        outColTxtGeoShort(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
+                        outColTxtGeoShort(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
                         break;
                     case ColumnType.GEOINT:
-                        outColTxtGeoInt(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
+                        outColTxtGeoInt(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
                         break;
                     case ColumnType.GEOLONG:
-                        outColTxtGeoLong(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
+                        outColTxtGeoLong(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
                         break;
                     case ColumnType.NULL:
                         utf8Sink.setNullValue();
                         break;
                     case ColumnType.UUID:
-                        outColTxtUuid(utf8Sink, record, i);
+                        outColTxtUuid(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.ARRAY:
-                        outColTxtArr(utf8Sink, record, i, type);
+                        outColTxtArr(utf8Sink, record, colIndex, type);
                         break;
                     case BINARY_TYPE_ARRAY:
-                        outColBinArr(utf8Sink, record, i, type);
+                        outColBinArr(utf8Sink, record, colIndex, type);
                         break;
                     default:
                         assert false;
