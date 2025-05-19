@@ -57,11 +57,11 @@ public class NoOpMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
-    public void enqueueIntervalRefresh(TableToken matViewToken, long intervalFrom, long intervalTo) {
+    public void enqueueInvalidate(TableToken matViewToken, String invalidationReason) {
     }
 
     @Override
-    public void enqueueInvalidate(TableToken matViewToken, String invalidationReason) {
+    public void enqueueRangeRefresh(TableToken matViewToken, long rangeFrom, long rangeTo) {
     }
 
     @Override

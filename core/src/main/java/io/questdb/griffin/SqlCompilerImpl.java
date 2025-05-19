@@ -2294,11 +2294,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table name");
         }
 
-        tok = expectToken(lexer, "'full' or 'incremental' or 'interval'");
+        tok = expectToken(lexer, "'full' or 'incremental' or 'range'");
         final boolean full = isFullKeyword(tok);
         long from = Numbers.LONG_NULL;
         long to = Numbers.LONG_NULL;
-        if (isIntervalKeyword(tok)) {
+        if (isRangeKeyword(tok)) {
             expectKeyword(lexer, "from");
             tok = expectToken(lexer, "FROM timestamp");
             try {
@@ -2317,7 +2317,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), "TO timestamp must not be earlier than FROM timestamp");
             }
         } else if (!full && !isIncrementalKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'full' or 'incremental' or 'interval' expected");
+            throw SqlException.$(lexer.lastTokenPosition(), "'full' or 'incremental' or 'range' expected");
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -2330,7 +2330,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (full) {
             matViewStateStore.enqueueFullRefresh(matViewToken);
         } else if (from != Numbers.LONG_NULL) {
-            matViewStateStore.enqueueIntervalRefresh(matViewToken, from, to);
+            matViewStateStore.enqueueRangeRefresh(matViewToken, from, to);
         } else {
             matViewStateStore.enqueueIncrementalRefresh(matViewToken);
         }

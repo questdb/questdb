@@ -141,25 +141,25 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     }
 
     @Override
-    public void enqueueIntervalRefresh(TableToken matViewToken, long intervalFrom, long intervalTo) {
-        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.INTERVAL_REFRESH, null, intervalFrom, intervalTo);
+    public void enqueueInvalidate(TableToken matViewToken, String invalidationReason) {
+        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.INVALIDATE, invalidationReason);
     }
 
     @Override
-    public void enqueueInvalidate(TableToken matViewToken, String invalidationReason) {
-        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.INVALIDATE, invalidationReason);
+    public void enqueueRangeRefresh(TableToken matViewToken, long rangeFrom, long rangeTo) {
+        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.RANGE_REFRESH, null, rangeFrom, rangeTo);
     }
 
     public void enqueueRefreshTaskIfStateExists(
             TableToken matViewToken,
             int operation,
             String invalidationReason,
-            long intervalFrom,
-            long intervalTo
+            long rangeFrom,
+            long rangeTo
     ) {
         final MatViewState state = stateByTableDirName.get(matViewToken.getDirName());
         if (state != null && !state.isDropped()) {
-            enqueueMatViewTask(matViewToken, operation, invalidationReason, intervalFrom, intervalTo);
+            enqueueMatViewTask(matViewToken, operation, invalidationReason, rangeFrom, rangeTo);
         }
     }
 
@@ -242,16 +242,16 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
             TableToken matViewToken,
             int operation,
             String invalidationReason,
-            long intervalFrom,
-            long intervalTo
+            long rangeFrom,
+            long rangeTo
     ) {
         final MatViewRefreshTask task = taskHolder.get();
         task.clear();
         task.matViewToken = matViewToken;
         task.operation = operation;
         task.invalidationReason = invalidationReason;
-        task.intervalFrom = intervalFrom;
-        task.intervalTo = intervalTo;
+        task.rangeFrom = rangeFrom;
+        task.rangeTo = rangeTo;
         if (MatViewRefreshTask.isRefreshOperation(operation)) {
             task.refreshTriggerTimestamp = microsecondClock.getTicks();
         }
