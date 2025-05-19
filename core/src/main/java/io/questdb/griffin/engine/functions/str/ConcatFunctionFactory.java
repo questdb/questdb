@@ -29,7 +29,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.*;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
@@ -54,10 +58,14 @@ public class ConcatFunctionFactory implements FunctionFactory {
     public Function newInstance(
             int position,
             @Transient ObjList<Function> args,
-            IntList argPositions,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        if (args == null || args.size() == 0) {
+            throw SqlException.$(position, "no arguments provided");
+        }
+
         final int n = args.size();
 
         boolean allConst = true;

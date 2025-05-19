@@ -47,3 +47,4 @@ compat/src/test/nodejs-pg/node_modules
 compat/src/test/nodejs-postgres/node_modules
 compat/src/test/php/vendor/
 compat/src/test/php/composer.lock
+compat/src/test/golang/gorunner
