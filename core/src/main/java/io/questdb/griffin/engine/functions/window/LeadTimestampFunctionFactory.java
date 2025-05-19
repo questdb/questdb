@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
@@ -35,11 +36,6 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.DateFunction;
-import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -69,9 +65,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                 configuration,
                 sqlExecutionContext,
                 (defaultValue) -> {
-                    if (!(defaultValue instanceof TimestampFunction
-                            || defaultValue instanceof IntFunction || defaultValue instanceof StrFunction
-                            || defaultValue instanceof LongFunction || defaultValue instanceof DateFunction)) {
+                    if (!ColumnType.isAssignableFrom(defaultValue.getType(), ColumnType.TIMESTAMP)) {
                         throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to timestamp");
                     }
                 },

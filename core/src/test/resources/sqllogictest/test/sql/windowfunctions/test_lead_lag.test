@@ -1,0 +1,75 @@
+statement ok
+create table basic(c0 int, c1 int);
+
+statement ok
+insert into basic values
+                  	(1, 2),
+                  	(2, 3),
+                  	(3, 4),
+                  	(4, 5)
+
+query II
+select c1, lead(c1, 2) over (order by c0 rows between 4 preceding and  2 preceding) as b
+from basic;
+----
+2	4
+3	5
+4	NULL
+5	NULL
+
+# Lag > 2 with explicit constant default
+statement ok
+create table win(id int, v int, t int, f float, s varchar);
+
+statement ok
+insert into win values
+	(1, 1, 2, 0.54, 'h'),
+	(1, 1, 1, 0.21, 'e'),
+	(1, 2, 3, 0.001, 'l'),
+	(2, 10, 4, 0.04, 'l'),
+	(2, 11, -1, 10.45, 'o'),
+	(3, -1, 0, 13.32, ','),
+	(3, 5, -2, 9.87, 'wor'),
+	(3, null, 10, 6.56, 'ld');
+
+query IIII
+select id, v, t, lag(v, 2, NULL) over (partition by id order by t asc)
+from win
+order by id, t
+----
+1	1	1	NULL
+1	1	2	NULL
+1	2	3	1
+2	11	-1	NULL
+2	10	4	NULL
+3	5	-2	NULL
+3	-1	0	NULL
+3	NULL	10	5
+
+# Shifted lead optimisation with hash collisions
+statement ok
+CREATE TABLE issue14398 (date DATE, "group" INT, count INT, status STRING);
+
+statement ok
+INSERT INTO issue14398 VALUES
+('2024-01-01', 1, 1000, 'ordered'),
+('2024-02-01', 1, 1000, 'dispatched'),
+('2024-03-01', 1, 1000, 'dispatched'),
+('2024-01-01', 2, 2000, 'ordered'),
+('2024-02-01', 2, 2000, 'ordered'),
+('2024-03-01', 2, 2000, 'ordered'),
+('2024-01-01', 3, 3000, 'ordered'),
+('2024-02-01', 3, 3000, 'ordered'),
+('2024-03-01', 3, 3000, 'late'),
+('2024-01-01', 4, 4000, 'ordered'),
+('2024-02-01', 4, 4000, 'ordered'),
+('2024-03-01', 4, 4000, 'ordered'),
+('2024-01-01', 5, 5000, 'ordered'),
+('2024-02-01', 5, 5000, 'late'),
+('2024-03-01', 5, 5000, 'ordered'),
+('2024-01-01', 6, 1000, 'dispatched'),
+('2024-02-01', 6, 1000, 'dispatched'),
+('2024-03-01', 6, 1000, 'dispatched'),
+('2024-01-01', 7, 1000, 'late'),
+('2024-02-01', 7, 1000, 'dispatched'),
+('2024-03-01', 7, 1000, 'dispatched');
