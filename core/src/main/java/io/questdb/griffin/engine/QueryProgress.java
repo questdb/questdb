@@ -177,6 +177,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         LogRecord log = null;
         CharSequence message = null;
 
+        CharSequence principal = executionContext.getSecurityContext().getPrincipal();
         try {
             executionContext.getCairoEngine().getMetrics().healthMetrics().incrementQueryErrorCounter();
             // Extract all the variables before the call to call LOG.errorW() to avoid exception
