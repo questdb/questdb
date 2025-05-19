@@ -34,10 +34,12 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class ArrayDimLengthFunctionFactory implements FunctionFactory {
     public static final String FUNCTION_NAME = "dim_length";
@@ -50,8 +52,8 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
@@ -75,9 +77,9 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         return new ArrayDimLengthFunction(arrayArg, dimArg, dimArgPos);
     }
 
-    static class ArrayDimLengthConstFunction extends IntFunction {
+    static class ArrayDimLengthConstFunction extends IntFunction implements UnaryFunction {
+        private final Function arrayArg;
         private final int dimConstArg;
-        private Function arrayArg;
 
         ArrayDimLengthConstFunction(Function arrayArg, int dimConstArg) {
             this.arrayArg = arrayArg;
@@ -85,8 +87,8 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void close() {
-            arrayArg = Misc.free(arrayArg);
+        public Function getArg() {
+            return arrayArg;
         }
 
         @Override
@@ -101,23 +103,17 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class ArrayDimLengthFunction extends IntFunction {
+    static class ArrayDimLengthFunction extends IntFunction implements BinaryFunction {
+        private final Function arrayArg;
+        private final Function dimArg;
         private final int dimArgPos;
         private final int nDims;
-        private Function arrayArg;
-        private Function dimArg;
 
         ArrayDimLengthFunction(Function arrayArg, Function dimArg, int dimArgPos) {
             this.arrayArg = arrayArg;
             this.dimArg = dimArg;
             this.nDims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
             this.dimArgPos = dimArgPos;
-        }
-
-        @Override
-        public void close() {
-            arrayArg = Misc.free(arrayArg);
-            dimArg = Misc.free(dimArg);
         }
 
         @Override
@@ -134,6 +130,16 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
                         .put(']');
             }
             return array.getDimLen(dim - 1);
+        }
+
+        @Override
+        public Function getLeft() {
+            return arrayArg;
+        }
+
+        @Override
+        public Function getRight() {
+            return dimArg;
         }
 
         @Override

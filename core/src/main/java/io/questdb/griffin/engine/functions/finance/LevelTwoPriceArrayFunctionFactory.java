@@ -35,9 +35,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
 
@@ -49,8 +51,8 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
@@ -73,12 +75,11 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class LevelTwoPriceArrayFunction extends DoubleFunction {
-
+    private static class LevelTwoPriceArrayFunction extends DoubleFunction implements TernaryFunction {
+        private final Function pricesArg;
+        private final Function sizesArg;
         private final int sizesArgPos;
-        private Function pricesArg;
-        private Function sizesArg;
-        private Function targetArg;
+        private final Function targetArg;
 
         public LevelTwoPriceArrayFunction(Function targetArg, Function sizesArg, int sizesArgPos, Function pricesArg) {
             this.targetArg = targetArg;
@@ -88,10 +89,8 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void close() {
-            pricesArg = Misc.free(pricesArg);
-            sizesArg = Misc.free(sizesArg);
-            targetArg = Misc.free(targetArg);
+        public Function getCenter() {
+            return sizesArg;
         }
 
         @Override
@@ -136,6 +135,16 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
 
             // if never exceeded the target, then no price, since it can't be fulfilled
             return Double.NaN;
+        }
+
+        @Override
+        public Function getLeft() {
+            return targetArg;
+        }
+
+        @Override
+        public Function getRight() {
+            return pricesArg;
         }
 
         @Override
