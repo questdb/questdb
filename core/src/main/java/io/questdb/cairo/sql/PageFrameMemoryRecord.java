@@ -121,7 +121,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     public ArrayView getArray(int columnIndex, int columnType) {
-        final BorrowedArray array = ensureBorrowedArray(arrayBuffers, columnIndex);
+        final BorrowedArray array = borrowedArray(columnIndex);
         final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
         if (auxPageAddress != 0) {
             final long auxPageLim = auxPageAddress + auxPageSizes.getQuick(columnIndex);
@@ -484,30 +484,28 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.rowIndex = rowIndex;
     }
 
-    private static @NotNull BorrowedArray ensureBorrowedArray(ObjList<BorrowedArray> arrays, int columnIndex) {
-        BorrowedArray array = arrays.getQuiet(columnIndex);
-        if (array == null) {
-            array = new BorrowedArray();
-            arrays.extendAndSet(columnIndex, array);
+    private @NotNull BorrowedArray borrowedArray(int columnIndex) {
+        if (arrayBuffers.getQuiet(columnIndex) == null) {
+            arrayBuffers.extendAndSet(columnIndex, new BorrowedArray());
         }
-        return array;
+        return arrayBuffers.getQuick(columnIndex);
     }
 
-    private MemoryCR.ByteSequenceView bsView(int columnIndex) {
+    private @NotNull MemoryCR.ByteSequenceView bsView(int columnIndex) {
         if (bsViews.getQuiet(columnIndex) == null) {
             bsViews.extendAndSet(columnIndex, new MemoryCR.ByteSequenceView());
         }
         return bsViews.getQuick(columnIndex);
     }
 
-    private DirectString csViewA(int columnIndex) {
+    private @NotNull DirectString csViewA(int columnIndex) {
         if (csViewsA.getQuiet(columnIndex) == null) {
             csViewsA.extendAndSet(columnIndex, new DirectString(this));
         }
         return csViewsA.getQuick(columnIndex);
     }
 
-    private DirectString csViewB(int columnIndex) {
+    private @NotNull DirectString csViewB(int columnIndex) {
         if (csViewsB.getQuiet(columnIndex) == null) {
             csViewsB.extendAndSet(columnIndex, new DirectString(this));
         }

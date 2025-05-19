@@ -69,5 +69,4 @@ public class BinColumn extends BinFunction implements Function {
             COLUMNS.setQuick(i, new BinColumn(i));
         }
     }
-
 }

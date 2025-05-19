@@ -47,6 +47,12 @@ public class ArrayColumn extends ArrayFunction {
     }
 
     @Override
+    public boolean isThreadSafe() {
+        // This function is thread-safe since
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.putColumnName(columnIndex);
     }
