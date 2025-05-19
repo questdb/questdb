@@ -3339,7 +3339,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [s]\n" +
                         "  values: [avg(l)]\n" +
                         "  filter: s in cursor \n" +
-                        "    Filter filter: s='key'\n" +
+                        "    Async JIT Filter workers: 1\n" +
+                        "      filter: s='key' [pre-touch]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a [state-shared]\n" +

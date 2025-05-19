@@ -53,17 +53,20 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
             setParallelGroupByEnabled(false);
             setParallelReadParquetEnabled(false);
         }
-        with(
-                new ReadOnlySecurityContext() {
-                    @Override
-                    public void authorizeInsert(TableToken tableToken) {
-                        if (!tableToken.equals(viewTableToken)) {
-                            throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-                        }
-                    }
-                },
-                new BindVariableServiceImpl(engine.getConfiguration())
-        );
+        this.securityContext = new ReadOnlySecurityContext() {
+            @Override
+            public void authorizeInsert(TableToken tableToken) {
+                if (!tableToken.equals(viewTableToken)) {
+                    throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+                }
+            }
+        };
+        this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
+    }
+
+    @Override
+    public boolean allowNonDeterministicFunctions() {
+        return false;
     }
 
     public void clearReader() {
@@ -123,6 +126,11 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
         // and then can be re-used in another execution context.
         intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, ColumnType.TIMESTAMP, 0));
         intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, ColumnType.TIMESTAMP, 0));
+    }
+
+    @Override
+    public void setAllowNonDeterministicFunction(boolean value) {
+        // no-op
     }
 
     // tsLo is inclusive, tsHi is exclusive
