@@ -104,10 +104,6 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.forceSendFragmentationChunkSize = contextConfiguration.getForceSendFragmentationChunkSize();
     }
 
-    public static String getStatusMessage(int code) {
-        return httpStatusMap.get(code);
-    }
-
     @Override
     public void clear() {
         headerImpl.clear();
