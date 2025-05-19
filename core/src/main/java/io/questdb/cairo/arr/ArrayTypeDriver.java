@@ -166,17 +166,19 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             appendAddress += Integer.BYTES;
         }
 
-        // todo: we only support vanilla arrays for now
-        assert value.isVanilla();
-        for (int i = 0, n = value.getFlatViewLength(); i < n; i++) {
-            switch (elemType) {
-                case ColumnType.DOUBLE:
-                    Unsafe.getUnsafe().putDouble(appendAddress, value.getDouble(i));
-                    appendAddress += Double.BYTES;
-                    break;
-                default:
-                    throw new UnsupportedOperationException("Unsupported array element type: " + elemType);
+        if (value.isVanilla()) {
+            for (int i = 0, n = value.getFlatViewLength(); i < n; i++) {
+                switch (elemType) {
+                    case ColumnType.DOUBLE:
+                        Unsafe.getUnsafe().putDouble(appendAddress, value.getDouble(i));
+                        appendAddress += Double.BYTES;
+                        break;
+                    default:
+                        throw new UnsupportedOperationException("Unsupported array element type: " + elemType);
+                }
             }
+        } else {
+            appendAddress = appendToMemRecursive(value, 0, 0, appendAddress);
         }
         long bytesWritten = appendAddress - origAddress;
         assert bytesWritten > 0 && bytesWritten <= Integer.MAX_VALUE;
@@ -666,6 +668,34 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     private static void appendNullImpl(MemoryA auxMem, MemoryA dataMem) {
         final long offset = dataMem.getAppendOffset();
         appendNullImpl(auxMem, offset);
+    }
+
+    private static long appendToMemRecursive(@NotNull ArrayView value, int dim, int flatIndex, long appendAddress) {
+        short elemType = value.getElemType();
+        assert elemType == ColumnType.DOUBLE || elemType == ColumnType.LONG : "implemented only for long and double";
+
+        final int count = value.getDimLen(dim);
+        final int stride = value.getStride(dim);
+        final boolean atDeepestDim = dim == value.getDimCount() - 1;
+        if (atDeepestDim) {
+            switch (elemType) {
+                case ColumnType.DOUBLE:
+                    for (int i = 0; i < count; i++) {
+                        Unsafe.getUnsafe().putDouble(appendAddress, value.getDouble(flatIndex));
+                        appendAddress += Double.BYTES;
+                        flatIndex += stride;
+                    }
+                    break;
+                default:
+                    throw new UnsupportedOperationException("Unsupported array element type: " + elemType);
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                appendAddress = appendToMemRecursive(value, dim + 1, flatIndex, appendAddress);
+                flatIndex += stride;
+            }
+        }
+        return appendAddress;
     }
 
     private static void arrayToText(
