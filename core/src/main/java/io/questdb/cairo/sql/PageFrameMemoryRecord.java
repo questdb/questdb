@@ -485,31 +485,39 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private @NotNull BorrowedArray borrowedArray(int columnIndex) {
-        if (arrayBuffers.getQuiet(columnIndex) == null) {
-            arrayBuffers.extendAndSet(columnIndex, new BorrowedArray());
+        BorrowedArray array = arrayBuffers.getQuiet(columnIndex);
+        if (array != null) {
+            return array;
         }
-        return arrayBuffers.getQuick(columnIndex);
+        arrayBuffers.extendAndSet(columnIndex, array = new BorrowedArray());
+        return array;
     }
 
     private @NotNull MemoryCR.ByteSequenceView bsView(int columnIndex) {
-        if (bsViews.getQuiet(columnIndex) == null) {
-            bsViews.extendAndSet(columnIndex, new MemoryCR.ByteSequenceView());
+        MemoryCR.ByteSequenceView view = bsViews.getQuiet(columnIndex);
+        if (view != null) {
+            return view;
         }
-        return bsViews.getQuick(columnIndex);
+        bsViews.extendAndSet(columnIndex, view = new MemoryCR.ByteSequenceView());
+        return view;
     }
 
     private @NotNull DirectString csViewA(int columnIndex) {
-        if (csViewsA.getQuiet(columnIndex) == null) {
-            csViewsA.extendAndSet(columnIndex, new DirectString(this));
+        DirectString view = csViewsA.getQuiet(columnIndex);
+        if (view != null) {
+            return view;
         }
-        return csViewsA.getQuick(columnIndex);
+        csViewsA.extendAndSet(columnIndex, view = new DirectString(this));
+        return view;
     }
 
     private @NotNull DirectString csViewB(int columnIndex) {
-        if (csViewsB.getQuiet(columnIndex) == null) {
-            csViewsB.extendAndSet(columnIndex, new DirectString(this));
+        DirectString view = csViewsB.getQuiet(columnIndex);
+        if (view != null) {
+            return view;
         }
-        return csViewsB.getQuick(columnIndex);
+        csViewsB.extendAndSet(columnIndex, view = new DirectString(this));
+        return view;
     }
 
     private BinarySequence getBin(long base, long offset, long dataLim, MemoryCR.ByteSequenceView view) {
@@ -612,32 +620,40 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return null; // Column top.
     }
 
-    private Long256Impl long256A(int columnIndex) {
-        if (longs256A.getQuiet(columnIndex) == null) {
-            longs256A.extendAndSet(columnIndex, new Long256Impl());
+    private @NotNull Long256Impl long256A(int columnIndex) {
+        Long256Impl long256 = longs256A.getQuiet(columnIndex);
+        if (long256 != null) {
+            return long256;
         }
-        return longs256A.getQuick(columnIndex);
+        longs256A.extendAndSet(columnIndex, long256 = new Long256Impl());
+        return long256;
     }
 
-    private Long256Impl long256B(int columnIndex) {
-        if (longs256B.getQuiet(columnIndex) == null) {
-            longs256B.extendAndSet(columnIndex, new Long256Impl());
+    private @NotNull Long256Impl long256B(int columnIndex) {
+        Long256Impl long256 = longs256B.getQuiet(columnIndex);
+        if (long256 != null) {
+            return long256;
         }
-        return longs256B.getQuick(columnIndex);
+        longs256B.extendAndSet(columnIndex, long256 = new Long256Impl());
+        return long256;
     }
 
-    private Utf8SplitString utf8ViewA(int columnIndex) {
-        if (utf8ViewsA.getQuiet(columnIndex) == null) {
-            utf8ViewsA.extendAndSet(columnIndex, new Utf8SplitString(this));
+    private @NotNull Utf8SplitString utf8ViewA(int columnIndex) {
+        Utf8SplitString view = utf8ViewsA.getQuiet(columnIndex);
+        if (view != null) {
+            return view;
         }
-        return utf8ViewsA.getQuick(columnIndex);
+        utf8ViewsA.extendAndSet(columnIndex, view = new Utf8SplitString(this));
+        return view;
     }
 
-    private Utf8SplitString utf8ViewB(int columnIndex) {
-        if (utf8ViewsB.getQuiet(columnIndex) == null) {
-            utf8ViewsB.extendAndSet(columnIndex, new Utf8SplitString(this));
+    private @NotNull Utf8SplitString utf8ViewB(int columnIndex) {
+        Utf8SplitString view = utf8ViewsB.getQuiet(columnIndex);
+        if (view != null) {
+            return view;
         }
-        return utf8ViewsB.getQuick(columnIndex);
+        utf8ViewsB.extendAndSet(columnIndex, view = new Utf8SplitString(this));
+        return view;
     }
 
     void init(
