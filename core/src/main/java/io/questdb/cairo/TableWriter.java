@@ -1315,9 +1315,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
 
             assert txWriter.getPartitionCount() == 0 || txWriter.getMinTimestamp() >= txWriter.getPartitionTimestampByIndex(0);
-            LOG.info().$("============== table=").$(tableToken)
+            LOG.debug().$("table ranges after the commit [table=").$(tableToken)
                     .$(", minTs=").$ts(txWriter.getMinTimestamp())
-                    .$(", maxTs=").$ts(txWriter.getMaxTimestamp()).$();
+                    .$(", maxTs=").$ts(txWriter.getMaxTimestamp()).I$();
         }
 
         // Nothing was committed to the table, only copied to LAG.
@@ -6062,14 +6062,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
                         partitionsRemoved = true;
                         firstPartitionRemoved |= removedIndex == 0;
-                        lastPartitionRemoved |= removedIndex == txWriter.getPartitionCount();
+                        boolean removedIsLast = removedIndex == txWriter.getPartitionCount();
+                        lastPartitionRemoved |= removedIsLast;
 
-                        if (lastPartitionRemoved) {
+                        if (removedIsLast) {
                             if (removedIndex > 0) {
                                 int newLastPartitionIndex = removedIndex - 1;
                                 long newLastPartitionTimestamp = txWriter.getPartitionTimestampByIndex(newLastPartitionIndex);
-                                long newLastPartitionSize = txWriter.getPartitionRowCountByTimestamp(newLastPartitionTimestamp);
+                                long newLastPartitionSize = txWriter.getPartitionSize(newLastPartitionIndex);
                                 columnVersionWriter.replaceInitialPartitionRecords(newLastPartitionTimestamp, newLastPartitionSize);
+
+                                // If a split partition is removed, it may leave the previous partition
+                                // with column top stiking out of the partition size.
+                                // This "sticking out" is not handled if it is the last partition.
+                                o3ConsumePartitionUpdateSink_trimPartitionColumnTops(newLastPartitionTimestamp, newLastPartitionSize);
                             } else {
                                 // All partitions are removed
                                 columnVersionWriter.truncate();
@@ -6853,6 +6859,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final MemoryR oooMem2 = o3Columns.getQuick(colOffset + 1);
                             final MemoryMA mem1 = columns.getQuick(colOffset);
                             final MemoryMA mem2 = columns.getQuick(colOffset + 1);
+//                            final long srcDataTop = Math.min(getColumnTop(i), srcDataMax);
                             final long srcDataTop = getColumnTop(i);
                             final long srcOooFixAddr;
                             final long srcOooVarAddr;
@@ -7351,8 +7358,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     replaceRangeTsHi
             );
 
+            // Min timestamp is either outside of replace range or equals to the min timestamp of the transaction
             assert txWriter.getMinTimestamp() < replaceRangeTsLo || txWriter.getMinTimestamp() > replaceRangeTsHi || txWriter.getMinTimestamp() == txnMinTs;
-            assert txWriter.getMaxTimestamp() < replaceRangeTsLo || txWriter.getMaxTimestamp() > replaceRangeTsHi || txWriter.getMaxTimestamp() == txnMaxTs;
+            // Max timestamp is either outside of replace range or equals to the max timestamp of the transaction
+            assert txWriter.getMaxTimestamp() < replaceRangeTsLo || txWriter.getMaxTimestamp() >= replaceRangeTsHi || txWriter.getMaxTimestamp() == txnMaxTs;
 
             return true;
         } else {
@@ -9176,6 +9185,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryMA auxMem = getSecondaryColumn(columnIndex);
             int columnType = metadata.getColumnType(columnIndex);
             if (columnType > 0) { // Not deleted
+                // Sometimes column tops can be greater than the rows in the partition
+                // this can happen when the partition is split and then the split part is dropped
+//                final long pos = Math.max(0, size - getColumnTop(columnIndex));
                 final long pos = size - getColumnTop(columnIndex);
                 if (ColumnType.isVarSize(columnType)) {
                     ColumnTypeDriver driver = ColumnType.getDriver(columnType);

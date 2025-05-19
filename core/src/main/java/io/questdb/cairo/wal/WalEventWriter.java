@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.VarcharTypeDriver;
@@ -134,6 +135,19 @@ class WalEventWriter implements Closeable {
             eventMem.putLong(lastRefreshBaseTxn);
             eventMem.putLong(lastRefreshTimestamp);
         }
+
+        if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            if (replaceRangeLowTs >= replaceRangeHiTs) {
+                throw CairoException.nonCritical().put("replaceRangeLowTs must be less than replaceRangeHiTs");
+            }
+            if (replaceRangeLowTs > minTimestamp) {
+                throw CairoException.nonCritical().put("replace range low must before or equal to min timestamp");
+            }
+            if (replaceRangeHiTs <= maxTimestamp) {
+                throw CairoException.nonCritical().put("replace range must greater than max timestamp");
+            }
+        }
+
         writeSymbolMapDiffs();
 
         eventMem.putLong(replaceRangeLowTs);
