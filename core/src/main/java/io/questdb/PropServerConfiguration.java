@@ -172,6 +172,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean cairoSqlLegacyOperatorPrecedence;
     private final long cairoTableRegistryAutoReloadFrequency;
     private final int cairoTableRegistryCompactionThreshold;
+    private final int cairoTxnScoreboardFormat;
     private final long cairoWriteBackOffTimeoutOnMemPressureMs;
     private final boolean checkpointRecoveryEnabled;
     private final String checkpointRoot;
@@ -286,8 +287,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final TimeZoneRules logTimestampTimezoneRules;
     private final boolean matViewEnabled;
     private final long matViewInsertAsSelectBatchSize;
-    private final int matViewMaxRecompileAttempts;
+    private final int matViewMaxRefreshRetries;
+    private final long matViewMinRefreshInterval;
     private final boolean matViewParallelExecutionEnabled;
+    private final long matViewRefreshOomRetryTimeout;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewRefreshPoolConfiguration();
     private final long matViewRefreshSleepTimeout;
     private final int[] matViewRefreshWorkerAffinity;
@@ -296,6 +299,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewRefreshWorkerNapThreshold;
     private final long matViewRefreshWorkerSleepThreshold;
     private final long matViewRefreshWorkerYieldThreshold;
+    private final int matViewRowsPerQueryEstimate;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -376,11 +380,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlCreateTableModelBatchSize;
     private final int sqlDistinctTimestampKeyCapacity;
     private final double sqlDistinctTimestampLoadFactor;
-    private final int sqlDoubleToStrCastScale;
     private final int sqlExplainModelPoolCapacity;
     private final int sqlExpressionPoolCapacity;
     private final double sqlFastMapLoadFactor;
-    private final int sqlFloatToStrCastScale;
     private final long sqlGroupByAllocatorChunkSize;
     private final long sqlGroupByAllocatorMaxChunkSize;
     private final int sqlGroupByMapCapacity;
@@ -542,8 +544,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpRecvBufferSize;
     private short integerDefaultColumnType;
     private int jsonQueryConnectionCheckFrequency;
-    private int jsonQueryDoubleScale;
-    private int jsonQueryFloatScale;
     private boolean lineLogMessageOnError;
     private long lineTcpCommitIntervalDefault;
     private double lineTcpCommitIntervalFraction;
@@ -608,6 +608,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgNetIdleConnectionTimeout;
     private String pgPassword;
     private int pgPendingWritersCacheCapacity;
+    private int pgPipelineCapacity;
     private String pgReadOnlyPassword;
     private boolean pgReadOnlySecurityContext;
     private boolean pgReadOnlyUserEnabled;
@@ -749,6 +750,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.isQueryTracingBindVariableSubstitutionEnabled = getBoolean(properties, env, PropertyKey.QUERY_TRACING_BIND_VARIABLE_SUBSTITUTION_ENABLED, false);
         this.cairoTableRegistryAutoReloadFrequency = getMillis(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
+        this.cairoTxnScoreboardFormat = getInt(properties, env, PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, 2);
         this.cairoWriteBackOffTimeoutOnMemPressureMs = getMillis(properties, env, PropertyKey.CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE, 4000);
         this.repeatMigrationFromVersion = getInt(properties, env, PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
         this.mkdirMode = getInt(properties, env, PropertyKey.CAIRO_MKDIR_MODE, 509);
@@ -970,17 +972,18 @@ public class PropServerConfiguration implements ServerConfiguration {
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathExec, httpContextWebConsole + "/exec");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_WARNINGS, this.httpContextPathWarnings, httpContextWebConsole + "/warnings");
 
-            // If any of the REST services the Web Console depends on are overridden, we need to make sure
-            // the context paths the Web Console requires are also present, so customization does not break the Web Console.
+            // If any REST services that the Web Console depends on are overridden,
+            // ensure the required context paths remain available,
+            // so that customization does not break the Web Console.
 
             // The following paths need to be added for the Web Console to work properly. This
-            // deals with the cases where context path was overridden by the user. Adding duplicate
-            // paths is ok, because duplicates are squashed by the HTTP server.
+            // deals with the cases where the context path was overridden by the user. Adding duplicate
+            // paths is ok because duplicates are squashed by the HTTP server.
             // 1. import, to support CSV import UI
             // 2. export, to support CSV export UI
             // 3. settings, that is what the Web Console loads on startup
-            // 4. table status, to support CSV import UI
-            // 5. JSON query execution, e.g. exec
+            // 4. table status to support CSV import UI
+            // 5. JSON query execution, e.g., exec
             // 6. warnings, that displays warnings in the table view
 
             // we use defaults, because this is what the Web Console expects
@@ -1104,7 +1107,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             final String publicDirectory = getString(properties, env, PropertyKey.HTTP_STATIC_PUBLIC_DIRECTORY, "public");
-            // translate public directory into absolute path
+            // translate public directory into an absolute path
             // this will generate some garbage, but this is ok - we're just doing this once on startup
             if (new File(publicDirectory).isAbsolute()) {
                 this.publicDirectory = publicDirectory;
@@ -1164,14 +1167,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             if (loadAdditionalConfigurations && httpServerEnabled) {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
-                this.jsonQueryFloatScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE, 4);
-                if (jsonQueryFloatScale > Numbers.MAX_FLOAT_SCALE) {
-                    throw new ServerConfigurationException(PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_FLOAT_SCALE);
-                }
-                this.jsonQueryDoubleScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE, 12);
-                if (jsonQueryDoubleScale > Numbers.MAX_DOUBLE_SCALE) {
-                    throw new ServerConfigurationException(PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_DOUBLE_SCALE);
-                }
                 String httpBindTo = getString(properties, env, PropertyKey.HTTP_BIND_TO, "0.0.0.0:9000");
                 parseBindTo(properties, env, PropertyKey.HTTP_NET_BIND_TO, httpBindTo, (a, p) -> {
                     httpNetBindIPv4Address = a;
@@ -1260,6 +1255,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgNamesStatementPoolCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_POOL_CAPACITY, 32);
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, PropertyKey.PG_PENDING_WRITERS_CACHE_CAPACITY, 16);
                 this.pgNamedStatementLimit = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_LIMIT, 10_000);
+                this.pgPipelineCapacity = getInt(properties, env, PropertyKey.PG_PIPELINE_CAPACITY, 64);
             }
 
             this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, cpuWalApplyWorkers);
@@ -1270,9 +1266,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplySleepTimeout = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
 
-            // reuse wal apply defaults for mat view workers
-            this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, false);
-            this.matViewMaxRecompileAttempts = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_SQL_MAX_RECOMPILE_ATTEMPTS, 10);
+            // reuse wal-apply defaults for mat view workers
+            this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
+            this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
+            this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
+            this.matViewMinRefreshInterval = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL, Timestamps.MINUTE_MICROS);
             this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
             this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
@@ -1339,6 +1337,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlInsertModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY, 64);
             this.sqlInsertModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_BATCH_SIZE, 1_000_000);
             this.matViewInsertAsSelectBatchSize = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, sqlInsertModelBatchSize);
+            this.matViewRowsPerQueryEstimate = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 10_000_000);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
             this.columnPurgeTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 256);
@@ -1355,16 +1354,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.sqlSampleByIndexSearchPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 0);
             this.sqlSampleByDefaultAlignment = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR, true);
-
-            this.sqlDoubleToStrCastScale = getInt(properties, env, PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE, 12);
-            if (sqlDoubleToStrCastScale > Numbers.MAX_DOUBLE_SCALE) {
-                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_DOUBLE_SCALE);
-            }
-            this.sqlFloatToStrCastScale = getInt(properties, env, PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE, 4);
-            if (sqlFloatToStrCastScale > Numbers.MAX_FLOAT_SCALE) {
-                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_FLOAT_SCALE);
-            }
-
             this.sqlGroupByMapCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_MAP_CAPACITY, 1024);
             this.sqlGroupByAllocatorChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE, 128 * 1024);
             this.sqlGroupByAllocatorMaxChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE, 4 * Numbers.SIZE_1GB);
@@ -1623,13 +1612,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (pgEnabled) {
                 this.pgSelectCacheEnabled = getBoolean(properties, env, PropertyKey.PG_SELECT_CACHE_ENABLED, true);
                 final int effectivePGWorkerCount = pgWorkerCount > 0 ? pgWorkerCount : sharedWorkerCount;
-                this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 8 * effectivePGWorkerCount);
-                this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, 2 * effectivePGWorkerCount);
+                this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 32);
+                this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, Math.max(effectivePGWorkerCount, 4));
             }
             final int effectiveHttpWorkerCount = httpWorkerCount > 0 ? httpWorkerCount : sharedWorkerCount;
             this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
-            this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 8 * effectiveHttpWorkerCount);
-            this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, 2 * effectiveHttpWorkerCount);
+            this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 32);
+            this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, Math.max(effectiveHttpWorkerCount, 4));
             this.queryCacheEventQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY, 4));
 
             this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + sharedWorkerCount + walApplyWorkerCount);
@@ -1798,7 +1787,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         return configReloadEnabled;
     }
 
-    // Used by dynamic configuration to reuse already created factory provider.
+    // Used by dynamic configuration to reuse the already created factory provider.
     public void reinit(FactoryProvider factoryProvider) {
         this.factoryProvider = factoryProvider;
     }
@@ -1966,13 +1955,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             throw new ServerConfigurationException("Cannot calculate canonical path for configuration property [key=" + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + ",value=" + path + "]");
         }
     }
-
-/*
-    protected String getContextPath(Properties properties, @Nullable Map<String, String> env) {
-        final String contextPath = getString(properties, env, PropertyKey.HTTP_CONTEXT_PATH, "");
-        return !contextPath.isEmpty() && !contextPath.startsWith("/") ? "/" + contextPath : contextPath;
-    }
-*/
 
     protected double getDouble(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultValue) throws ServerConfigurationException {
         final String value = getString(properties, env, key, defaultValue);
@@ -2378,6 +2360,18 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY,
                     PropertyKey.CAIRO_SQL_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY
             );
+            registerDeprecated(
+                    PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE
+            );
+            registerDeprecated(
+                    PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE
+            );
+            registerDeprecated(
+                    PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE
+            );
+            registerDeprecated(
+                    PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE
+            );
         }
 
         public ValidationResult validate(Properties properties) {
@@ -2761,11 +2755,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getDoubleToStrCastScale() {
-            return sqlDoubleToStrCastScale;
-        }
-
-        @Override
         public int getExplainPoolCapacity() {
             return sqlExplainModelPoolCapacity;
         }
@@ -2783,11 +2772,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull FilesFacade getFilesFacade() {
             return filesFacade;
-        }
-
-        @Override
-        public int getFloatToStrCastScale() {
-            return sqlFloatToStrCastScale;
         }
 
         @Override
@@ -2926,8 +2910,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getMatViewMaxRecompileAttempts() {
-            return matViewMaxRecompileAttempts;
+        public int getMatViewMaxRefreshRetries() {
+            return matViewMaxRefreshRetries;
+        }
+
+        @Override
+        public long getMatViewMinRefreshInterval() {
+            return matViewMinRefreshInterval;
+        }
+
+        @Override
+        public long getMatViewRefreshOomRetryTimeout() {
+            return matViewRefreshOomRetryTimeout;
+        }
+
+        @Override
+        public int getMatViewRowsPerQueryEstimate() {
+            return matViewRowsPerQueryEstimate;
         }
 
         @Override
@@ -3143,6 +3142,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSampleByIndexSearchPageSize() {
             return sqlSampleByIndexSearchPageSize;
+        }
+
+        @Override
+        public int getScoreboardFormat() {
+            return cairoTxnScoreboardFormat;
         }
 
         @Override
@@ -4276,11 +4280,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getDoubleScale() {
-            return jsonQueryDoubleScale;
-        }
-
-        @Override
         public FactoryProvider getFactoryProvider() {
             return factoryProvider;
         }
@@ -4288,11 +4287,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public FilesFacade getFilesFacade() {
             return FilesFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public int getFloatScale() {
-            return jsonQueryFloatScale;
         }
 
         @Override
@@ -5083,6 +5077,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPendingWritersCacheSize() {
             return pgPendingWritersCacheCapacity;
+        }
+
+        @Override
+        public int getPipelineCapacity() {
+            return pgPipelineCapacity;
         }
 
         @Override

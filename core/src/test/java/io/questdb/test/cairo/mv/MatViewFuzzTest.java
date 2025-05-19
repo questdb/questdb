@@ -29,33 +29,26 @@ import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MatViewFuzzTest extends AbstractFuzzTest {
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
-        AbstractCairoTest.setUpStatic();
-    }
-
     @Before
     public void setUp() {
         super.setUp();
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
     }
 
@@ -143,7 +136,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             drainWalQueue();
             fuzzer.checkNoSuspendedTables();
 
-            runRefreshJobAndDrainWalQueue();
+            drainWalAndMatViewQueues();
             fuzzer.checkNoSuspendedTables();
 
             for (int i = 0; i < tableCount; i++) {
@@ -151,7 +144,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 final String mvName = testTableName + "_" + i + "_mv";
 
                 execute("refresh materialized view '" + mvName + "' full;");
-                runRefreshJobAndDrainWalQueue();
+                drainWalAndMatViewQueues();
 
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
                 assertSql(
@@ -205,6 +198,72 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testMultipleQueryExecutionsPerRefresh() throws Exception {
+        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
+        final String tableName = testName.getMethodName();
+        final String mvName = testName.getMethodName() + "_mv";
+        final int mins = 1 + rnd.nextInt(300);
+        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m";
+        testMvFuzz(tableName, mvName, viewSql);
+    }
+
+    @Test
+    public void testMultipleQueryExecutionsPerRefreshDSTShiftBack() throws Exception {
+        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
+        final String tableName = testName.getMethodName();
+        final String mvName = testName.getMethodName() + "_mv";
+        final int mins = 1 + rnd.nextInt(300);
+        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m " +
+                "align to calendar time zone 'Europe/Berlin'";
+        long start = TimestampFormatUtils.parseUTCTimestamp("2020-10-23T20:30:00.000000Z");
+        testMvFuzz(tableName, start, mvName, viewSql);
+    }
+
+    @Test
+    public void testMultipleQueryExecutionsPerRefreshDSTShiftForward() throws Exception {
+        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
+        final String tableName = testName.getMethodName();
+        final String mvName = testName.getMethodName() + "_mv";
+        final int mins = 1 + rnd.nextInt(300);
+        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m " +
+                "align to calendar time zone 'Europe/Berlin'";
+        long start = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T00:59:00.000000Z");
+        testMvFuzz(tableName, start, mvName, viewSql);
+    }
+
+    @Test
+    public void testMultipleQueryExecutionsPerRefreshDSTWithOffset() throws Exception {
+        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
+        final String tableName = testName.getMethodName();
+        final String mvName = testName.getMethodName() + "_mv";
+        final int mins = 1 + rnd.nextInt(300);
+        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m " +
+                "align to calendar time zone 'Europe/Berlin' with offset '00:15'";
+        long start = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T00:59:00.000000Z");
+        testMvFuzz(tableName, start, mvName, viewSql);
+    }
+
+    @Test
+    public void testMultipleQueryExecutionsPerRefreshSmallSamplingInterval() throws Exception {
+        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
+        final String tableName = testName.getMethodName();
+        final String mvName = testName.getMethodName() + "_mv";
+        final int secs = 1 + rnd.nextInt(30);
+        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + secs + "s";
+        testMvFuzz(tableName, mvName, viewSql);
+    }
+
+    @Test
     public void testOneView() throws Exception {
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
@@ -226,7 +285,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testStressSqlRecompilation() throws Exception {
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_SQL_MAX_RECOMPILE_ATTEMPTS, 1);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 1);
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0);
@@ -251,13 +310,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     private static void createMatView(String viewSql, String mvName) throws SqlException {
         execute("create materialized view " + mvName + " as (" + viewSql + ") partition by DAY");
-    }
-
-    private static void runRefreshJobAndDrainWalQueue() {
-        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-            refreshJob.run(0);
-            drainWalQueue();
-        }
     }
 
     private ObjList<FuzzTransaction> createTransactionsAndMv(Rnd rnd, String tableNameBase, String matViewName, String viewSql) throws SqlException, NumericException {
@@ -308,9 +360,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         drainWalQueue();
         fuzzer.checkNoSuspendedTables();
 
-        runRefreshJobAndDrainWalQueue();
+        drainWalAndMatViewQueues();
         fuzzer.checkNoSuspendedTables();
-
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             for (int i = 0; i < tableCount; i++) {
@@ -386,20 +437,20 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private Thread startRefreshJob(int workerId, AtomicBoolean stop, Rnd outsideRnd) {
-        Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
-        Thread th = new Thread(
+        final Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
+        final Thread th = new Thread(
                 () -> {
                     try {
                         try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine)) {
                             while (!stop.get()) {
                                 refreshJob.run(workerId);
-                                Os.sleep(rnd.nextInt(1000));
+                                Os.sleep(rnd.nextInt(100));
                             }
 
                             // Run one final time before stopping
                             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                                 do {
-                                    drainWalQueue(walApplyJob);
+                                    drainWalQueue(walApplyJob, engine);
                                 } while (refreshJob.run(workerId));
                             }
                         }
@@ -416,6 +467,11 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private void testMvFuzz(String baseTableName, String... mvNamesAndSqls) throws Exception {
+        long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
+        testMvFuzz(baseTableName, start, mvNamesAndSqls);
+    }
+
+    private void testMvFuzz(String baseTableName, long start, String... mvNamesAndSqls) throws Exception {
         assertMemoryLeak(() -> {
             fuzzer.createInitialTable(baseTableName, true);
             Rnd rnd = fuzzer.generateRandom(LOG);
@@ -431,7 +487,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
             setFuzzParams(rnd, 0);
 
-            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(baseTableName, rnd);
+            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(baseTableName, rnd, start);
             ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
             fuzzTransactions.add(transactions);
             fuzzer.applyManyWalParallel(

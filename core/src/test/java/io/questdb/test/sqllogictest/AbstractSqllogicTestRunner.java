@@ -27,11 +27,11 @@ package io.questdb.test.sqllogictest;
 import io.questdb.network.NetworkError;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.Sqllogictest;
@@ -53,7 +53,6 @@ import java.util.Collection;
 import java.util.List;
 
 import static io.questdb.PropertyKey.*;
-import static io.questdb.std.Files.notDots;
 import static org.junit.Assert.assertNotNull;
 
 @RunWith(Parameterized.class)
@@ -133,7 +132,6 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
             String testResourcePath = getTestResourcePath();
             path.of(testResourcePath).concat("test").concat(testFile);
             Assert.assertTrue(Misc.getThreadLocalUtf8Sink().put(path).toString(), FilesFacadeImpl.INSTANCE.exists(path.$()));
-
             Sqllogictest.run(pgPort, path.$().ptr());
         }
     }
@@ -148,53 +146,24 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
         }
     }
 
-    private static int runRecursive(FilesFacade ff, String dirName, Path src, List<Object[]> paths) {
-        int srcLen = src.size();
-        int len = src.size();
-        long p = ff.findFirst(src.$());
-        String root = src.toString();
-
-        if (p > 0) {
-            try {
-                int res;
-                do {
-                    long name = ff.findName(p);
-                    if (notDots(name)) {
-                        int type = ff.findType(p);
-                        src.trimTo(len);
-                        src.concat(name);
-                        if (type == Files.DT_FILE) {
-                            if (Utf8s.endsWithAscii(src, ".test") && !Utf8s.containsAscii(src, ".ignore.")) {
-                                String path = src.toString();
-                                paths.add(
-                                        new Object[]{
-                                                path.substring(root.length() - dirName.length())
-                                        }
-                                );
-                            }
-                        } else {
-                            if ((res = runRecursive(ff, dirName, src, paths)) < 0) {
-                                return res;
-                            }
-                        }
-                        src.trimTo(srcLen);
-                    }
-                } while (ff.findNext(p) > 0);
-            } finally {
-                ff.findClose(p);
-                src.trimTo(srcLen);
-            }
-        }
-
-        return 0;
-    }
-
     protected static Collection<Object[]> files(String dirName) {
         String testResourcePath = getTestResourcePath();
         try (Path path = new Path()) {
-            path.concat(testResourcePath).concat("test").concat(dirName);
+            path.concat(testResourcePath).concat("test");
+            int basePathLen = path.size();
+            path.concat(dirName);
             List<Object[]> paths = new ArrayList<>();
-            runRecursive(FilesFacadeImpl.INSTANCE, dirName, path, paths);
+            final StringSink sink = new StringSink();
+            Files.walk(path, (pUtf8NameZ, type) -> {
+                if (Files.notDots(pUtf8NameZ)) {
+                    path.concat(pUtf8NameZ).$();
+                    if (Utf8s.endsWithAscii(path, ".test") && !Utf8s.containsAscii(path, ".ignore.")) {
+                        sink.clear();
+                        sink.put(path, basePathLen, path.size());
+                        paths.add(new Object[]{sink.toString()});
+                    }
+                }
+            });
             return paths;
         }
     }

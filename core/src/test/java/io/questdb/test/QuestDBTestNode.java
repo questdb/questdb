@@ -191,6 +191,7 @@ public class QuestDBTestNode {
             engine.getTableIdGenerator().close();
             engine.clear();
             engine.closeNameRegistry();
+            engine.getMetrics().clear();
             if (removeDir && ownRoot) {
                 TestUtils.removeTestPath(root);
             }

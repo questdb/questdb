@@ -30,7 +30,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -79,6 +79,7 @@ import io.questdb.tasks.O3PartitionPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 
@@ -117,6 +118,7 @@ public final class TableUtils {
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
+    public static final long META_OFFSET_MAT_VIEW_REFRESH_LIMIT_HOURS_OR_MONTHS = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     /**
      * TXN file structure
@@ -243,9 +245,14 @@ public final class TableUtils {
     }
 
     public static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
-        return TX_RECORD_HEADER_SIZE + Integer.BYTES + bytesSymbols + Integer.BYTES + bytesPartitions;
+        // Note that 32 bit symbol length is included in TX_RECORD_HEADER_SIZE,
+        // hence the record size is head + symbol sizes + 32bit partition count + bytes to store partitions
+        return TX_RECORD_HEADER_SIZE + bytesSymbols + Integer.BYTES + bytesPartitions;
     }
 
+    @SuppressWarnings("JavaExistingMethodCanBeUsed")
+    // the mig methods are deliberately standalone so that between old versions
+    // does not regress if the main code changes
     public static int calculateTxnLagChecksum(long txn, long seqTxn, int lagRowCount, long lagMinTimestamp, long lagMaxTimestamp, int lagTxnCount) {
         long checkSum = lagMinTimestamp;
         checkSum = checkSum * 31 + lagMaxTimestamp;
@@ -547,8 +554,6 @@ public final class TableUtils {
                 try (BlockFileWriter writer = blockFileWriter) {
                     writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                     MatViewDefinition.append(structure.getMatViewDefinition(), writer);
-                    writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                    MatViewRefreshState.append(null, writer);
                 }
             }
 
@@ -913,7 +918,7 @@ public final class TableUtils {
 
     public static boolean isMatViewStateFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
         FilesFacade ff = configuration.getFilesFacade();
-        path.of(configuration.getDbRoot()).concat(dirName).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+        path.of(configuration.getDbRoot()).concat(dirName).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
         return ff.exists(path.$());
     }
 
@@ -1100,7 +1105,7 @@ public final class TableUtils {
     }
 
     public static long mapAppendColumnBuffer(FilesFacade ff, long fd, long offset, long size, boolean rw, int memoryTag) {
-        assert !Vm.PARANOIA_MODE || ff.length(fd) >= offset + size : "mmap ro buffer is beyond EOF";
+        assert !VM_PARANOIA_MODE || ff.length(fd) >= offset + size : "mmap ro buffer is beyond EOF";
 
         // Linux requires the mmap offset to be page aligned
         long alignedOffset = Files.floorPageSize(offset);
@@ -1851,8 +1856,9 @@ public final class TableUtils {
         mem.putBool(tableStruct.isWalEnabled());
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
-        mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
+        mem.putInt(tableStruct.getMatViewRefreshLimitHoursOrMonths());
 
+        mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
 
         for (int i = 0; i < count; i++) {
@@ -1920,38 +1926,60 @@ public final class TableUtils {
         return true;
     }
 
-    static void buildWriterOrderMap(MemoryR newMetaMem, IntList columnOrderMap, int newColumnCount) {
-        int nameOffset = (int) TableUtils.getColumnNameOffset(newColumnCount);
-        columnOrderMap.clear();
+    /**
+     * Creates a column list from the metadata file. Each entry of the list is a struct, but
+     * Java doesn't support structs you may say! Yes, this is open-array struct, 3 elements per entry.
+     * - writer index (will explain what this is later)
+     * - column name offset - pointer at the beginning of the string list
+     * - symbol map index
+     * <p>
+     * This list will be dense, e.g., it will not have deleted columns, not will it have extra columns that
+     * have changed types. The type change is what makes this loading tricky. When a column type is changed, a new
+     * entry is added to the metadata file on the disk. This new entry will reference the old column (type change) via
+     * replace index, which is also written to the file.
+     * <p>
+     * When we read the file from disk, we don't need the "old" columns in the output. For this reason, as we read
+     * new columns from the file, we might go back to the columns we already read, and replace them.
+     * <p>
+     * Writer index is the index of the column in the metadata file. The metadata file has "sparse" column list,
+     * writer index refers to this sparse list.
+     *
+     * @param metaMem     the memory mapped metadata file
+     * @param columnCount the column count in the file
+     * @param targetList  the destination list (out parameter)
+     */
+    static void buildColumnListFromMetadataFile(MemoryR metaMem, int columnCount, IntList targetList) {
+        int nameOffset = (int) TableUtils.getColumnNameOffset(columnCount);
+        targetList.clear();
 
         int denseSymbolIndex = 0;
-        for (int i = 0; i < newColumnCount; i++) {
-            int strLen = TableUtils.getInt(newMetaMem, newMetaMem.size(), nameOffset);
+        for (int i = 0; i < columnCount; i++) {
+            int strLen = TableUtils.getInt(metaMem, metaMem.size(), nameOffset);
             if (strLen == TableUtils.NULL_LEN) {
-                throw validationException(newMetaMem).put("NULL column name at [").put(i).put(']');
+                throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
             }
             if (strLen < 1 || strLen > 255) {
                 // EXT4 and many others do not allow file name length > 255 bytes
-                throw validationException(newMetaMem).put("String length of ").put(strLen).put(" is invalid at offset ").put(nameOffset);
+                throw validationException(metaMem).put("String length of ").put(strLen).put(" is invalid at offset ").put(nameOffset);
             }
             int nameLen = (int) Vm.getStorageLength(strLen);
-            int newOrderIndex = TableUtils.getReplacingColumnIndex(newMetaMem, i);
-            boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(newMetaMem, i));
+            int replacingColumnIndex = TableUtils.getReplacingColumnIndex(metaMem, i);
+            boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(metaMem, i));
 
-            if (newOrderIndex > -1 && newOrderIndex < newColumnCount - 1) {
+            if (replacingColumnIndex > -1 && replacingColumnIndex < columnCount - 1) {
                 // Replace the column index
-                columnOrderMap.set(3 * newOrderIndex, i);
-                columnOrderMap.set(3 * newOrderIndex + 1, nameOffset);
-                columnOrderMap.set(3 * newOrderIndex + 2, isSymbol ? denseSymbolIndex : -1);
+                targetList.set(3 * replacingColumnIndex, i);
+                targetList.set(3 * replacingColumnIndex + 1, nameOffset);
+                targetList.set(3 * replacingColumnIndex + 2, isSymbol ? denseSymbolIndex : -1);
 
-                columnOrderMap.add(-newOrderIndex - 1);
-                columnOrderMap.add(0);
-                columnOrderMap.add(0);
+                targetList.add(-replacingColumnIndex - 1);
+                targetList.add(0);
+                targetList.add(0);
 
             } else {
-                columnOrderMap.add(i);
-                columnOrderMap.add(nameOffset);
-                columnOrderMap.add(isSymbol ? denseSymbolIndex : -1);
+                targetList.add(i);
+                targetList.add(nameOffset);
+                targetList.add(isSymbol ? denseSymbolIndex : -1);
             }
             nameOffset += nameLen;
             if (isSymbol) {
@@ -1972,6 +2000,10 @@ public final class TableUtils {
 
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
+    }
+
+    static int getMatViewRefreshLimitHoursOrMonths(MemoryR metaMem) {
+        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_MAT_VIEW_REFRESH_LIMIT_HOURS_OR_MONTHS) : 0;
     }
 
     static int getTtlHoursOrMonths(MemoryR metaMem) {
@@ -2006,6 +2038,7 @@ public final class TableUtils {
                         // right, cannot open file for some reason?
                         LOG.error()
                                 .$("could not open swap [file=").$(path)
+                                .$(", msg=").$(e.getFlyweightMessage())
                                 .$(", errno=").$(e.getErrno())
                                 .I$();
                     }
@@ -2027,6 +2060,7 @@ public final class TableUtils {
     }
 
     static {
+        //noinspection ConstantValue
         assert TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8 <= TX_OFFSET_MAP_WRITER_COUNT_32;
     }
 }

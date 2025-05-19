@@ -59,13 +59,13 @@ public class TtlTest extends AbstractCairoTest {
             execute("ALTER TABLE tango SET TTL");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[25] missing argument, should be TTL <number> <unit> or <number_with_unit>", e.getMessage());
+            assertEquals("[25] missing argument, should be <number> <unit> or <number_with_unit>", e.getMessage());
         }
         try {
             execute("ALTER TABLE tango SET TTL X");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[26] invalid syntax, should be TTL <number> <unit> but was TTL X", e.getMessage());
+            assertEquals("[26] invalid syntax, should be <number> <unit> but was X", e.getMessage());
         }
         try {
             execute("ALTER TABLE tango SET TTL 12");
@@ -84,14 +84,14 @@ public class TtlTest extends AbstractCairoTest {
             execute("ALTER TABLE tango SET TTL HOURS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[26] invalid argument, should be TTL <number> <unit> or <number_with_unit>",
+            assertEquals("[26] invalid argument, should be <number> <unit> or <number_with_unit>",
                     e.getMessage());
         }
         try {
             execute("ALTER TABLE tango SET TTL H");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[26] invalid syntax, should be TTL <number> <unit> but was TTL H",
+            assertEquals("[26] invalid syntax, should be <number> <unit> but was H",
                     e.getMessage());
         }
         try {
@@ -302,12 +302,11 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testGranularityInvalidCreate() throws Exception {
-        try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 1 HOUR");
-            fail("Accepted a TTL that's too fine-grained for partition size");
-        } catch (SqlException e) {
-            assertEquals("[69] TTL value must be an integer multiple of partition size", e.getMessage());
-        }
+        assertException(
+                "CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 1 HOUR",
+                69,
+                "TTL value must be an integer multiple of partition size"
+        );
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 25 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");

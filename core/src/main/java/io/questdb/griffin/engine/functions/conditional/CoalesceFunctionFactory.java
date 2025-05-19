@@ -48,12 +48,14 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
 import static io.questdb.cairo.ColumnType.*;
 
 public class CoalesceFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "coalesce(V)";
@@ -62,12 +64,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        if (args.size() < 2) {
+        if (args == null || args.size() < 2) {
             throw SqlException.$(position, "coalesce can be used with 2 or more arguments");
         }
         if (args.size() > 2) {

@@ -33,6 +33,7 @@ import io.questdb.std.Chars;
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
 public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata, TableStructure {
+    private int matViewRefreshLimitHoursOrMonths;
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;
@@ -57,6 +58,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
     }
 
+    public int getMatViewRefreshLimitHoursOrMonths() {
+        return matViewRefreshLimitHoursOrMonths;
+    }
+
     @Override
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
@@ -78,8 +83,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     public int getReplacingColumnIndex(int columnIndex) {
-        WriterTableColumnMetadata columnMeta = (WriterTableColumnMetadata) columnMetadata.get(columnIndex);
-        return columnMeta.getReplacingIndex();
+        return columnMetadata.get(columnIndex).getReplacingIndex();
     }
 
     @Override
@@ -139,6 +143,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
+        this.matViewRefreshLimitHoursOrMonths = TableUtils.getMatViewRefreshLimitHoursOrMonths(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -172,6 +177,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             }
             offset += Vm.getStorageLength(name);
         }
+    }
+
+    public void setMatViewRefreshLimitHoursOrMonths(int matViewRefreshLimitHoursOrMonths) {
+        this.matViewRefreshLimitHoursOrMonths = matViewRefreshLimitHoursOrMonths;
     }
 
     public void setMaxUncommittedRows(int rows) {

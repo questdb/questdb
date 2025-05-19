@@ -36,7 +36,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -70,23 +70,38 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static io.questdb.PropertyKey.CAIRO_CHECKPOINT_RECOVERY_ENABLED;
 import static io.questdb.PropertyKey.CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED;
 
+@RunWith(Parameterized.class)
 public class CheckpointTest extends AbstractCairoTest {
     private static final TestFilesFacade testFilesFacade = new TestFilesFacade();
+    static int SCOREBOARD_FORMAT = 1;
     private static Path path;
     private static Rnd rnd;
     private static Path triggerFilePath;
     private int rootLen;
 
+    public CheckpointTest(int scoreboardFormat) throws Exception {
+        if (scoreboardFormat != SCOREBOARD_FORMAT) {
+            SCOREBOARD_FORMAT = scoreboardFormat;
+            tearDownStatic();
+            setUpStatic();
+        }
+    }
+
     @BeforeClass
     public static void setUpStatic() throws Exception {
+        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, SCOREBOARD_FORMAT);
         path = new Path();
         triggerFilePath = new Path();
         ff = testFilesFacade;
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
     }
 
@@ -97,13 +112,20 @@ public class CheckpointTest extends AbstractCairoTest {
         AbstractCairoTest.tearDownStatic();
     }
 
+    @Parameterized.Parameters(name = "V{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {1},
+                {2},
+        });
+    }
+
     @Before
     public void setUp() {
         // sync() system call is not available on Windows, so we skip the whole test suite there.
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         super.setUp();
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         ff = testFilesFacade;
         path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).slash();
         triggerFilePath.of(configuration.getDbRoot()).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME).$();
@@ -350,7 +372,7 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("create table test (ts timestamp, name symbol, val int)");
             execute("checkpoint create", sqlExecutionContext);
 
-            // The test file should be deleted by checkpoint create.
+            // The test file should be deleted by checkpoint-create.
             Assert.assertFalse(ff.exists(path.$()));
 
             execute("checkpoint release");
@@ -515,6 +537,7 @@ public class CheckpointTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not lock 'test' [reason='checkpointInProgress']");
             }
+            engine.checkpointRelease();
         });
     }
 
@@ -531,6 +554,7 @@ public class CheckpointTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=checkpointInProgress]");
             }
+            engine.checkpointRelease();
         });
     }
 
@@ -547,6 +571,7 @@ public class CheckpointTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "there is an active query against 'test'");
             }
+            engine.checkpointRelease();
         });
     }
 
@@ -585,6 +610,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             "2023-09-20T12:39:01.933062Z\tfoobar\t42\n",
                     "test;"
             );
+            engine.checkpointRelease();
         });
     }
 
@@ -621,6 +647,8 @@ public class CheckpointTest extends AbstractCairoTest {
             // Renamed table should be there under the original name.
             assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
             assertSql("count\n0\n", "select count() from tables() where table_name = 'test2';");
+
+            engine.checkpointRelease();
         });
     }
 
@@ -651,6 +679,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             // Dropped rows should be there.
             assertSql("count\n1\n", "select count() from test;");
+            engine.checkpointRelease();
         });
     }
 
@@ -716,6 +745,7 @@ public class CheckpointTest extends AbstractCairoTest {
             } finally {
                 testFilesFacade.errorOnRegistryFileCopy = false;
             }
+            engine.checkpointRelease();
         });
     }
 
@@ -741,6 +771,7 @@ public class CheckpointTest extends AbstractCairoTest {
             } finally {
                 testFilesFacade.errorOnRegistryFileRemoval = false;
             }
+            engine.checkpointRelease();
         });
     }
 
@@ -765,6 +796,7 @@ public class CheckpointTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "could not remove restore trigger file");
             }
+            engine.checkpointRelease();
         });
     }
 
@@ -811,6 +843,7 @@ public class CheckpointTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "checkpoint metadata file does not exist");
             }
+            engine.checkpointRelease();
         });
     }
 
@@ -919,6 +952,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             partitionCount + "\n",
                     "select count() from " + tableName
             );
+            engine.checkpointRelease();
         });
     }
 
@@ -959,6 +993,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             // Dropped column should be there.
             assertSql(expectedAllColumns, "select * from " + tableName);
+            engine.checkpointRelease();
         });
     }
 
@@ -1011,6 +1046,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             partitionCount + "\n",
                     "select count() from " + tableName
             );
+            engine.checkpointRelease();
         });
     }
 
@@ -1104,7 +1140,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(
                         path.of(configuration.getLegacyCheckpointRoot()).concat(configuration.getDbDirectory()).slash$()
                 ));
-                // Assert .checkpint folder DOES NOT exists
+                // Assert .checkpoint folder DOES NOT exist
                 Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(
                         path.of(configuration.getCheckpointRoot()).slash$()
                 ));
@@ -1127,7 +1163,7 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testSuspendResumeWalPurgeJob() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
-            String tableName = testName.getMethodName();
+            String tableName = getTestTableName();
             execute(
                     "create table " + tableName + " as (" +
                             "select x, " +
@@ -1196,7 +1232,7 @@ public class CheckpointTest extends AbstractCairoTest {
         final String restartedId = "id2";
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
-            String tableName = testName.getMethodName() + "_abc";
+            String tableName = getTestTableName() + "_abc";
             execute(
                     "create table " + tableName + " as (" +
                             "select x, " +
@@ -1233,7 +1269,7 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("alter table " + tableName + " add column kkk int");
             execute("insert into " + tableName + " values (103, 'dfd', '2022-02-24T03', 'xyz', 41, 42, 43)");
 
-            // updates above should apply to WAL, not table
+            // the updates above should apply to WAL, not table
             execute("checkpoint create");
 
             // these updates are lost during the snapshotting
@@ -1333,6 +1369,9 @@ public class CheckpointTest extends AbstractCairoTest {
                             "999\tAAA\t2022-02-24T06:01:00.000000Z\tBBB\t10\t11\t12\t13\tnull\n",
                     tableName
             );
+
+
+            engine.checkpointRelease();
         });
     }
 
@@ -1348,6 +1387,10 @@ public class CheckpointTest extends AbstractCairoTest {
 
     private static void createTriggerFile() {
         Files.touch(triggerFilePath.$());
+    }
+
+    private String getTestTableName() {
+        return testName.getMethodName().replace('[', '_').replace(']', '_');
     }
 
     private void testCheckpointCreateCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
@@ -1385,10 +1428,11 @@ public class CheckpointTest extends AbstractCairoTest {
                 path.trimTo(tableNameLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$();
                 copyPath.trimTo(copyTableNameLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$();
                 TestUtils.assertFileContentsEquals(path, copyPath);
-
-                path.trimTo(tableNameLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$();
-                copyPath.trimTo(copyTableNameLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$();
-                TestUtils.assertFileContentsEquals(path, copyPath);
+                path.trimTo(tableNameLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+                if (configuration.getFilesFacade().exists(path.$())) {
+                    copyPath.trimTo(copyTableNameLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+                    TestUtils.assertFileContentsEquals(path, copyPath);
+                }
             }
             execute("checkpoint release");
         }
@@ -1604,6 +1648,8 @@ public class CheckpointTest extends AbstractCairoTest {
                     Assert.fail("Recovery shouldn't happen but the snapshot path does not exist:" + Utf8s.toString(path));
                 }
             }
+
+            engine.checkpointRelease();
         });
     }
 

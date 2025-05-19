@@ -5554,8 +5554,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertException(
                 "SELECT pickup_datetime, row_number() OVER (PARTITION BY row_number())\n" +
                         "FROM trips\n" +
-                        "WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'\n" +
-                        "SAMPLE BY 1d",
+                        "WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'",
                 "create table trips as " +
                         "(" +
                         "select" +
@@ -5699,7 +5698,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "4\tSPY\t2021-01-04T09:30:00.000000Z\t370.75\t371.25\t370.25\t371.0\t1.0\n" +
                             "3\tSPY\t2021-01-03T09:30:00.000000Z\t370.5\t371.0\t370.0\t370.75\t1.0\n" +
                             "2\tSPY\t2021-01-02T09:30:00.000000Z\t370.25\t370.75\t369.75\t370.5\t1.0\n" +
-                            "1\tSPY\t2021-01-01T09:30:00.000000Z\t370.0\t370.5\t369.5\t370.25\tnull\n",
+                            "1\tSPY\t2021-01-01T09:30:00.000000Z\t370.0\t370.5\t369.5\t370.25\t1.0\n",
                     "WITH true_ranges AS " +
                             "( SELECT rn, ticker, timestamp, open, high, low, close, high-low AS day_range, avg_14_bar_range, " +
                             "greatest(high-low, abs(high-prev_close), abs(low-prev_close)) as true_range FROM " +

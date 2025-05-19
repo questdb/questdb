@@ -301,7 +301,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         if (dynamicRangeList.size() == 0) {
             staticIntervals.add(lo, hi);
             if (intervalApplied) {
-                IntervalUtils.unionInplace(staticIntervals, staticIntervals.size() - 2);
+                IntervalUtils.unionInPlace(staticIntervals, staticIntervals.size() - 2);
             }
         } else {
             throw new UnsupportedOperationException();

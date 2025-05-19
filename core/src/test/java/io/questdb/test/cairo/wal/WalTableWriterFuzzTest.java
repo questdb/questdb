@@ -31,7 +31,6 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
@@ -1147,7 +1146,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             }
         }
 
-        final AbstractQueueConsumerJob<?> job = cleanup ? new QueueCleanerJob(engine) : new ApplyWal2TableJob(engine, 1, 1);
+        final AbstractQueueConsumerJob<?> job = cleanup ? new QueueCleanerJob(engine) : createWalApplyJob(engine);
         try {
             job.drain(0);
         } finally {

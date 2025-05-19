@@ -38,6 +38,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Sinkable;
 
 public class RndStringListFunctionFactory implements FunctionFactory {
@@ -47,7 +48,13 @@ public class RndStringListFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         if (args == null) {
             return new RndStrFunction(3, 10, 1);
         }

@@ -88,18 +88,29 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
     @Test
     public void testCheckMaxBuffer() throws Exception {
         final int maxLength = configuration.getStrFunctionMaxBufferLength();
-        assertException("select rpad('w3r'::varchar, " + (maxLength + 1) + ")",
-                -1,
-                "breached memory limit set for rpad(ØI) [maxLength=1048576, requiredLength=1048577]");
-        assertException("select lpad('w3r'::varchar, " + (maxLength + 1) + ")",
-                -1,
-                "breached memory limit set for lpad(ØI) [maxLength=1048576, requiredLength=1048577]");
-        assertException("select rpad('w3r'::varchar, " + (maxLength + 1) + ", 'esource'::varchar)",
-                -1,
-                "breached memory limit set for rpad(ØIØ) [maxLength=1048576, requiredLength=1048577]");
-        assertException("select lpad('w3r'::varchar, " + (maxLength + 1) + ", 'esource'::varchar)",
-                -1,
-                "breached memory limit set for lpad(ØIØ) [maxLength=1048576, requiredLength=1048577]");
+        assertException(
+                "select rpad('w3r'::varchar, " + (maxLength + 1) + ")",
+                0,
+                "breached memory limit set for rpad(ØI) [maxLength=1048576, requiredLength=1048577]"
+        );
+
+        assertException(
+                "select lpad('w3r'::varchar, " + (maxLength + 1) + ")",
+                0,
+                "breached memory limit set for lpad(ØI) [maxLength=1048576, requiredLength=1048577]"
+        );
+
+        assertException(
+                "select rpad('w3r'::varchar, " + (maxLength + 1) + ", 'esource'::varchar)",
+                0,
+                "breached memory limit set for rpad(ØIØ) [maxLength=1048576, requiredLength=1048577]"
+        );
+
+        assertException(
+                "select lpad('w3r'::varchar, " + (maxLength + 1) + ", 'esource'::varchar)",
+                0,
+                "breached memory limit set for lpad(ØIØ) [maxLength=1048576, requiredLength=1048577]"
+        );
     }
 
     @Test

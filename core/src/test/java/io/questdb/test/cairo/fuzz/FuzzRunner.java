@@ -277,7 +277,7 @@ public class FuzzRunner {
                     int failures = ff.failureGenerated();
                     if (failures > failuresObserved) {
                         failuresObserved = failures;
-                        LOG.info().$("expected IO failure observed: ").$(e).$();
+                        LOG.info().$("expected IO failure observed: ").$((Throwable) e).$();
                         writer = Misc.free(writer);
 
                         transaction = transactions.getQuick(i);
@@ -313,7 +313,7 @@ public class FuzzRunner {
                     int failures = ff.failureGenerated();
                     if (failures > failuresObserved) {
                         failuresObserved = failures;
-                        LOG.info().$("expected IO failure observed: ").$(e).$();
+                        LOG.info().$("expected IO failure observed: ").$((Throwable) e).$();
                         rdr1 = Misc.free(rdr1);
                         rdr2 = Misc.free(rdr2);
                         rdr1 = getReader(tableName);
@@ -490,6 +490,11 @@ public class FuzzRunner {
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd) throws NumericException {
         long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
+        long end = start + partitionCount * Timestamps.DAY_MICROS;
+        return generateTransactions(tableName, rnd, start, end);
+    }
+
+    public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start) {
         long end = start + partitionCount * Timestamps.DAY_MICROS;
         return generateTransactions(tableName, rnd, start, end);
     }

@@ -32,6 +32,12 @@ import org.junit.Test;
 public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
+    public void testLeastNumericFunctionFactoryAllNulls() throws Exception {
+        assertSqlWithTypes("least\nnull:LONG\n", "select least(null::long, null::long)");
+        assertSqlWithTypes("least\nnull:DOUBLE\n", "select least(null::double, null::double)");
+    }
+
+    @Test
     public void testLeastNumericFunctionFactoryBytes() throws Exception {
         assertSqlWithTypes("least\n1:BYTE\n", "select least(1::byte, 40::byte)");
         assertSqlWithTypes("least\n1:BYTE\n", "select least(1::byte, 4::byte, 3::byte, 12::byte, 8::byte)");
@@ -43,10 +49,10 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
         assertSqlWithTypes("least\n1:LONG\n", "select least(1, 4L)");
         assertSqlWithTypes("least\n1:LONG\n", "select least(1::short, 4L)");
         assertSqlWithTypes("least\n1:SHORT\n", "select least(1::short, 4::byte)");
-        assertSqlWithTypes("least\n1.0000:FLOAT\n", "select least(1::short, 4f)");
+        assertSqlWithTypes("least\n1.0:FLOAT\n", "select least(1::short, 4f)");
         assertSqlWithTypes("least\n1.0:DOUBLE\n", "select least(1::short, 4.0)");
         assertSqlWithTypes("least\n1.0:DOUBLE\n", "select least(1f, 4.0::double)");
-        assertSqlWithTypes("least\n1.0000:FLOAT\n", "select least(1f, 4::int)");
+        assertSqlWithTypes("least\n1.0:FLOAT\n", "select least(1f, 4::int)");
     }
 
     @Test
@@ -69,8 +75,8 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testLeastNumericFunctionFactoryFloats() throws Exception {
-        assertSqlWithTypes("least\n5.3000:FLOAT\n", "select least(5.3f, 9.2f)");
-        assertSqlWithTypes("least\n3.2000:FLOAT\n", "select least(5.3f, 9.2f, 6.5f, 11.6f, 3.2f)");
+        assertSqlWithTypes("least\n5.3:FLOAT\n", "select least(5.3f, 9.2f)");
+        assertSqlWithTypes("least\n3.2:FLOAT\n", "select least(5.3f, 9.2f, 6.5f, 11.6f, 3.2f)");
     }
 
     @Test
@@ -87,7 +93,12 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testLeastNumericFunctionFactoryNulls() throws Exception {
-        assertSqlWithTypes("least\nnull:NULL\n", "select least(1L, null, 2L)");
+        assertSqlWithTypes("least\n1:LONG\n", "select least(1L, null, 2L)");
+        assertSqlWithTypes("least\n1:LONG\n", "select least(null, 1L, 2L)");
+        assertSqlWithTypes("least\n1:LONG\n", "select least(1L, 2L, null)");
+        assertSqlWithTypes("least\n1.0:DOUBLE\n", "select least(1.0, null, 2.0)");
+        assertSqlWithTypes("least\n1.0:DOUBLE\n", "select least(null, 1.0, 2.0)");
+        assertSqlWithTypes("least\n1.0:DOUBLE\n", "select least(1.0, 2.0, null)");
         // verify that we've cleaned up the counter array after the NULL returned earlier
         assertSqlWithTypes("least\n1:INT\n", "select least(1, 2)");
     }
@@ -114,6 +125,12 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
     public void testLeastNumericFunctionFactoryUnsupportedTypes() throws Exception {
         assertException("select least(5, 5.2, 'abc', 2)", 21, "unsupported type");
         assertException("select least(5, 5.2, 'abc'::varchar, 2)", 26, "unsupported type");
+    }
+
+    @Test
+    public void testLeastNumericFunctionFactoryWith1Arg() throws Exception {
+        assertSqlWithTypes("least\n40:LONG\n", "select least(40::long)");
+        assertSqlWithTypes("least\n40.2:DOUBLE\n", "select least(40.2::double)");
     }
 
     @Test
@@ -146,6 +163,11 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
                     "select least(a, b) from x"
             );
         });
+    }
+
+    @Test
+    public void testLeastNumericFunctionFactoryWithNoArgs() throws Exception {
+        assertException("select least();", 7, "at least one argument is required ");
     }
 
     @Test

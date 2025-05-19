@@ -32,6 +32,12 @@ import org.junit.Test;
 public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
+    public void testGreatestNumericFunctionFactoryAllNulls() throws Exception {
+        assertSqlWithTypes("greatest\nnull:LONG\n", "select greatest(null::long, null::long)");
+        assertSqlWithTypes("greatest\nnull:DOUBLE\n", "select greatest(null::double, null::double)");
+    }
+
+    @Test
     public void testGreatestNumericFunctionFactoryBytes() throws Exception {
         assertSqlWithTypes("greatest\n40:BYTE\n", "select greatest(1::byte, 40::byte)");
         assertSqlWithTypes("greatest\n12:BYTE\n", "select greatest(1::byte, 4::byte, 3::byte, 12::byte, 8::byte)");
@@ -43,10 +49,10 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
         assertSqlWithTypes("greatest\n4:LONG\n", "select greatest(1, 4L)");
         assertSqlWithTypes("greatest\n4:LONG\n", "select greatest(1::short, 4L)");
         assertSqlWithTypes("greatest\n4:SHORT\n", "select greatest(1::short, 4::byte)");
-        assertSqlWithTypes("greatest\n4.0000:FLOAT\n", "select greatest(1::short, 4f)");
+        assertSqlWithTypes("greatest\n4.0:FLOAT\n", "select greatest(1::short, 4f)");
         assertSqlWithTypes("greatest\n4.0:DOUBLE\n", "select greatest(1::short, 4.0)");
         assertSqlWithTypes("greatest\n4.0:DOUBLE\n", "select greatest(1f, 4.0::double)");
-        assertSqlWithTypes("greatest\n4.0000:FLOAT\n", "select greatest(1f, 4::int)");
+        assertSqlWithTypes("greatest\n4.0:FLOAT\n", "select greatest(1f, 4::int)");
     }
 
     @Test
@@ -69,8 +75,8 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
 
     @Test
     public void testGreatestNumericFunctionFactoryFloats() throws Exception {
-        assertSqlWithTypes("greatest\n9.2000:FLOAT\n", "select greatest(5.3f, 9.2f)");
-        assertSqlWithTypes("greatest\n11.6000:FLOAT\n", "select greatest(5.3f, 9.2f, 6.5f, 11.6f, 3.2f)");
+        assertSqlWithTypes("greatest\n9.2:FLOAT\n", "select greatest(5.3f, 9.2f)");
+        assertSqlWithTypes("greatest\n11.6:FLOAT\n", "select greatest(5.3f, 9.2f, 6.5f, 11.6f, 3.2f)");
     }
 
     @Test
@@ -87,7 +93,12 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
 
     @Test
     public void testGreatestNumericFunctionFactoryNulls() throws Exception {
-        assertSqlWithTypes("greatest\nnull:NULL\n", "select greatest(1L, null, 2L)");
+        assertSqlWithTypes("greatest\n2:LONG\n", "select greatest(1L, null, 2L)");
+        assertSqlWithTypes("greatest\n2:LONG\n", "select greatest(null, 1L, 2L)");
+        assertSqlWithTypes("greatest\n2:LONG\n", "select greatest(1L, 2L, null)");
+        assertSqlWithTypes("greatest\n2.0:DOUBLE\n", "select greatest(1.0, null, 2.0)");
+        assertSqlWithTypes("greatest\n2.0:DOUBLE\n", "select greatest(null, 1.0, 2.0)");
+        assertSqlWithTypes("greatest\n2.0:DOUBLE\n", "select greatest(1.0, 2.0, null)");
         // verify that we've cleaned up the counter array after the NULL returned earlier
         assertSqlWithTypes("greatest\n2:INT\n", "select greatest(1, 2)");
     }
@@ -114,6 +125,12 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
     public void testGreatestNumericFunctionFactoryUnsupportedTypes() throws Exception {
         assertException("select greatest(5, 5.2, 'abc', 2)", 24, "unsupported type");
         assertException("select greatest(5, 5.2, 'abc'::varchar, 2)", 29, "unsupported type");
+    }
+
+    @Test
+    public void testGreatestNumericFunctionFactoryWith1Arg() throws Exception {
+        assertSqlWithTypes("greatest\n40:LONG\n", "select greatest(40::long)");
+        assertSqlWithTypes("greatest\n40.2:DOUBLE\n", "select greatest(40.2::double)");
     }
 
     @Test
@@ -146,6 +163,11 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
                     "select greatest(a, b) from x"
             );
         });
+    }
+
+    @Test
+    public void testGreatestNumericFunctionFactoryWithNoArgs() throws Exception {
+        assertException("select greatest();", 7, "at least one argument is required ");
     }
 
     @Test
