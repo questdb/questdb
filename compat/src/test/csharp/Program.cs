@@ -201,24 +201,7 @@ public class TestRunner
                 for (var i = 0; i < reader.FieldCount; i++)
                 {
                     string fieldName = reader.GetName(i);
-                    var dataTypeName = reader.GetDataTypeName(i);
-                    if (dataTypeName == "double precision[]") // todo: this is ugly af
-                    {
-                        try
-                        {
-                            // we need this to support 1D arrays with nulls
-                            row[fieldName] = reader.GetFieldValue<double?[]>(i);
-                        }
-                        catch (InvalidCastException)
-                        {
-                            // multi-dimensional array
-                            row[fieldName] = reader.GetValue(i);
-                        }
-                    }
-                    else
-                    {
-                        row[fieldName] = reader.GetValue(i);
-                    }
+                    row[fieldName] = reader.GetValue(i);
                 }
 
                 result.Add(row);
@@ -370,7 +353,7 @@ public class TestRunner
                     int i => i.ToString(CultureInfo.InvariantCulture),
                     short s => s.ToString(CultureInfo.InvariantCulture),
                     decimal dec => dec.ToString(CultureInfo.InvariantCulture),
-                    double?[] doubleArray => ArrayToText(doubleArray),
+                    double[] doubleArray => ArrayToText(doubleArray),
                     double[,] array => ArrayToText(array),
                     _ => value.ToString() ?? ""
                 })
