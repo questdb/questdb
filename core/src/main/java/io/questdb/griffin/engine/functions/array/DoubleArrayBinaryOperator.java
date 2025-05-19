@@ -39,13 +39,12 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.Misc;
 
 public abstract class DoubleArrayBinaryOperator extends ArrayFunction implements BinaryFunction {
-
+    protected final DirectArray arrayOut;
+    private final Function leftArg;
     private final int leftArgPos;
     private final String opName;
+    private final Function rightArg;
     private final int rightArgPos;
-    protected DirectArray arrayOut;
-    private Function leftArg;
-    private Function rightArg;
 
     public DoubleArrayBinaryOperator(
             String opName,
@@ -55,28 +54,32 @@ public abstract class DoubleArrayBinaryOperator extends ArrayFunction implements
             int leftArgPos,
             int rightArgPos
     ) throws SqlException {
-        this.opName = opName;
-        this.leftArg = leftArg;
-        this.rightArg = rightArg;
-        this.arrayOut = new DirectArray(configuration);
-        this.leftArgPos = leftArgPos;
-        this.rightArgPos = rightArgPos;
-        int nDimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-        int nDimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
-        if (nDimsLeft != nDimsRight) {
-            throw SqlException.position(leftArgPos)
-                    .put("arrays have different number of dimensions [nDimsLeft=").put(nDimsLeft)
-                    .put(", nDimsRight=").put(nDimsRight).put(']');
+        try {
+            this.opName = opName;
+            this.leftArg = leftArg;
+            this.rightArg = rightArg;
+            this.arrayOut = new DirectArray(configuration);
+            this.leftArgPos = leftArgPos;
+            this.rightArgPos = rightArgPos;
+            int nDimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
+            int nDimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
+            if (nDimsLeft != nDimsRight) {
+                throw SqlException.position(leftArgPos)
+                        .put("arrays have different number of dimensions [nDimsLeft=").put(nDimsLeft)
+                        .put(", nDimsRight=").put(nDimsRight).put(']');
+            }
+            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDimsLeft);
+            arrayOut.setType(type);
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
-        this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDimsLeft);
-        arrayOut.setType(type);
     }
 
     @Override
     public void close() {
-        this.leftArg = Misc.free(this.leftArg);
-        this.rightArg = Misc.free(this.rightArg);
-        this.arrayOut = Misc.free(this.arrayOut);
+        BinaryFunction.super.close();
+        Misc.free(arrayOut);
     }
 
     @Override
@@ -136,6 +139,11 @@ public abstract class DoubleArrayBinaryOperator extends ArrayFunction implements
     @Override
     public boolean isOperator() {
         return true;
+    }
+
+    @Override
+    public boolean isThreadSafe() {
+        return false;
     }
 
     private void applyRecursive(

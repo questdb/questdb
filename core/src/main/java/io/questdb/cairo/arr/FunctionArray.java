@@ -25,7 +25,6 @@
 package io.questdb.cairo.arr;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -33,10 +32,10 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
 public class FunctionArray extends MutableArray implements FlatArrayView {
-
-    private Function[] functions;
+    private ObjList<Function> functions;
     private Record record;
 
     public FunctionArray(short elementType, int nDims) {
@@ -47,63 +46,62 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
     @Override
     public void appendToMemFlat(MemoryA mem) {
         final short elemType = getElemType();
-        final Function[] functions = functions();
         int elemCount = getFlatViewLength();
         switch (elemType) {
             case ColumnType.BYTE:
                 for (int i = 0; i < elemCount; i++) {
-                    mem.putByte(functions[i].getByte(record));
+                    mem.putByte(functions.getQuick(i).getByte(record));
                 }
                 break;
             case ColumnType.SHORT:
                 for (int i = 0; i < elemCount; i++) {
-                    mem.putShort(functions[i].getShort(record));
+                    mem.putShort(functions.getQuick(i).getShort(record));
                 }
                 break;
             case ColumnType.INT:
                 for (int i = 0; i < elemCount; i++) {
-                    mem.putInt(functions[i].getInt(record));
+                    mem.putInt(functions.getQuick(i).getInt(record));
                 }
                 break;
             case ColumnType.LONG:
                 for (int i = 0; i < elemCount; i++) {
-                    mem.putLong(functions[i].getLong(record));
+                    mem.putLong(functions.getQuick(i).getLong(record));
                 }
                 break;
             case ColumnType.DATE:
                 for (int i = 0; i < elemCount; i++) {
-                    mem.putLong(functions[i].getDate(record));
+                    mem.putLong(functions.getQuick(i).getDate(record));
                 }
                 break;
             case ColumnType.TIMESTAMP:
                 for (int i = 0; i < elemCount; i++) {
-                    mem.putLong(functions[i].getTimestamp(record));
+                    mem.putLong(functions.getQuick(i).getTimestamp(record));
                 }
                 break;
             case ColumnType.FLOAT:
                 for (int i = 0; i < elemCount; i++) {
-                    mem.putFloat(functions[i].getFloat(record));
+                    mem.putFloat(functions.getQuick(i).getFloat(record));
                 }
                 break;
             case ColumnType.DOUBLE:
                 for (int i = 0; i < elemCount; i++) {
-                    mem.putDouble(functions[i].getDouble(record));
+                    mem.putDouble(functions.getQuick(i).getDouble(record));
                 }
                 break;
             case ColumnType.LONG256:
                 for (int i = 0; i < elemCount; i++) {
-                    Long256 v = functions[i].getLong256A(record);
+                    Long256 v = functions.getQuick(i).getLong256A(record);
                     mem.putLong256(v.getLong0(), v.getLong1(), v.getLong2(), v.getLong3());
                 }
                 break;
             case ColumnType.UUID:
                 for (int i = 0; i < elemCount; i++) {
-                    mem.putLong128(functions[i].getLong128Lo(record), functions[i].getLong128Hi(record));
+                    mem.putLong128(functions.getQuick(i).getLong128Lo(record), functions.getQuick(i).getLong128Hi(record));
                 }
                 break;
             case ColumnType.IPv4:
                 for (int i = 0; i < elemCount; i++) {
-                    mem.putInt(functions[i].getIPv4(record));
+                    mem.putInt(functions.getQuick(i).getIPv4(record));
                 }
                 break;
             default:
@@ -113,42 +111,41 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
 
     public void applyShape(CairoConfiguration configuration, int errorPos) {
         resetToDefaultStrides(configuration.maxArrayElementCount(), errorPos);
-        if (functions == null || functions.length < flatViewLength) {
-            functions = new Function[flatViewLength];
+        if (functions == null || functions.size() < flatViewLength) {
+            functions = new ObjList<>(flatViewLength);
         }
     }
 
     @Override
     public void close() {
-        Function[] functions = functions();
-        for (int n = functions.length, i = 0; i < n; i++) {
-            functions[i] = Misc.free(functions[i]);
-        }
+        Misc.freeObjListAndClear(functions);
     }
 
     @Override
     public double getDoubleAtAbsIndex(int flatIndex) {
-        validateFlatIndex(flatIndex);
-        return functions[flatIndex].getDouble(record);
+        return functions.getQuick(flatIndex).getDouble(record);
     }
 
     public Function getFunctionAtFlatIndex(int flatIndex) {
-        return functions()[flatIndex];
+        return functions.getQuick(flatIndex);
+    }
+
+    public ObjList<Function> getFunctions() {
+        return functions;
     }
 
     @Override
     public long getLongAtAbsIndex(int flatIndex) {
-        validateFlatIndex(flatIndex);
-        return functions()[flatIndex].getLong(record);
+        return functions.getQuick(flatIndex).getLong(record);
     }
 
     @Override
     public int length() {
-        return functions.length;
+        return functions.size();
     }
 
     public void putFunction(int flatIndex, Function f) {
-        functions()[flatIndex] = f;
+        functions.extendAndSet(flatIndex, f);
     }
 
     public void setRecord(Record rec) {
@@ -158,25 +155,11 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
     public void toPlan(PlanSink sink) {
         sink.val('[');
         String comma = "";
-        for (int n = functions.length, i = 0; i < n; i++) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
             sink.val(comma);
-            sink.val(functions[i]);
+            sink.val(functions.getQuick(i));
             comma = ",";
         }
         sink.val(']');
-    }
-
-    private Function[] functions() {
-        try {
-            return functions;
-        } catch (NullPointerException e) {
-            throw new IllegalStateException("FunctionArray used before calling applyShape()");
-        }
-    }
-
-    private void validateFlatIndex(int flatIndex) {
-        if (flatIndex < 0 || flatIndex > functions.length) {
-            throw CairoException.nonCritical().put("flatIndex out of range [flatIndex=").put(flatIndex);
-        }
     }
 }

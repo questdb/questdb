@@ -43,48 +43,68 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
     private final DirectArray array = new DirectArray();
 
     public ArrayConstant(FunctionArray arrayIn) {
-        this.type = arrayIn.getType();
-        if (ColumnType.isNull(type)) {
-            array.ofNull();
-            return;
+        try {
+            this.type = arrayIn.getType();
+            if (ColumnType.isNull(type)) {
+                array.ofNull();
+                return;
+            }
+            array.setType(type);
+            int nDims = arrayIn.getDimCount();
+            for (int dim = 0; dim < nDims; dim++) {
+                array.setDimLen(dim, arrayIn.getDimLen(dim));
+            }
+            array.applyShape();
+            arrayIn.appendToMemFlat(array.startMemoryA());
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
-        array.setType(type);
-        int nDims = arrayIn.getDimCount();
-        for (int dim = 0; dim < nDims; dim++) {
-            array.setDimLen(dim, arrayIn.getDimLen(dim));
-        }
-        array.applyShape();
-        arrayIn.appendToMemFlat(array.startMemoryA());
     }
 
     private ArrayConstant(int nDims) {
-        array.setType(ColumnType.encodeArrayType(ColumnType.UNDEFINED, nDims));
-        array.applyShape();
-        this.type = array.getType();
+        try {
+            array.setType(ColumnType.encodeArrayType(ColumnType.UNDEFINED, nDims));
+            array.applyShape();
+            this.type = array.getType();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     public ArrayConstant(double[] vals) {
-        this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
-        array.setType(type);
-        array.setDimLen(0, vals.length);
-        array.applyShape();
-        MemoryA memA = array.startMemoryA();
-        for (int n = vals.length, i = 0; i < n; i++) {
-            memA.putDouble(vals[i]);
+        try {
+            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+            array.setType(type);
+            array.setDimLen(0, vals.length);
+            array.applyShape();
+            MemoryA memA = array.startMemoryA();
+            for (int n = vals.length, i = 0; i < n; i++) {
+                memA.putDouble(vals[i]);
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
     }
 
     public ArrayConstant(double[][] vals) {
-        this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
-        array.setType(type);
-        array.setDimLen(0, vals.length);
-        array.setDimLen(1, vals[0].length);
-        array.applyShape();
-        MemoryA memA = array.startMemoryA();
-        for (int n = vals.length, i = 0; i < n; i++) {
-            for (int m = vals[0].length, j = 0; j < m; j++) {
-                memA.putDouble(vals[i][j]);
+        try {
+            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
+            array.setType(type);
+            array.setDimLen(0, vals.length);
+            array.setDimLen(1, vals[0].length);
+            array.applyShape();
+            MemoryA memA = array.startMemoryA();
+            for (int n = vals.length, i = 0; i < n; i++) {
+                for (int m = vals[0].length, j = 0; j < m; j++) {
+                    memA.putDouble(vals[i][j]);
+                }
             }
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
     }
 

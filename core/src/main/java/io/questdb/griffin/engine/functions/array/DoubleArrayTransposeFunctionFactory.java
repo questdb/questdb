@@ -34,11 +34,13 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "transpose(D[])";
@@ -47,27 +49,26 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new TransposeDoubleArrayFunction(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    private static class TransposeDoubleArrayFunction extends ArrayFunction {
-
+    private static class Func extends ArrayFunction implements UnaryFunction {
+        private final Function arrayArg;
         private final DerivedArrayView borrowedView = new DerivedArrayView();
-        private Function arrayArg;
 
-        public TransposeDoubleArrayFunction(Function arrayArg) {
+        public Func(Function arrayArg) {
             this.arrayArg = arrayArg;
             this.type = arrayArg.getType();
         }
 
         @Override
-        public void close() {
-            this.arrayArg = Misc.free(this.arrayArg);
+        public Function getArg() {
+            return arrayArg;
         }
 
         @Override
@@ -76,6 +77,11 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
             borrowedView.of(array);
             borrowedView.transpose();
             return borrowedView;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override

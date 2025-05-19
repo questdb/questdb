@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public final class CastDoubleArraytoDoubleArrayFunctionFactory implements FunctionFactory {
@@ -71,7 +72,6 @@ public final class CastDoubleArraytoDoubleArrayFunctionFactory implements Functi
         private final DerivedArrayView derivedArray = new DerivedArrayView();
         private final int dimsToAdd;
 
-
         public Func(Function arg, int toType, int dimsToAdd) {
             super.type = toType;
             int fromType = arg.getType();
@@ -86,7 +86,7 @@ public final class CastDoubleArraytoDoubleArrayFunctionFactory implements Functi
         @Override
         public void close() {
             UnaryFunction.super.close();
-            derivedArray.close();
+            Misc.free(derivedArray);
         }
 
         @Override
@@ -100,6 +100,11 @@ public final class CastDoubleArraytoDoubleArrayFunctionFactory implements Functi
             derivedArray.of(array);
             derivedArray.addDimensions(dimsToAdd);
             return derivedArray;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 }

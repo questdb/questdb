@@ -39,10 +39,12 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.ColumnType.commonWideningType;
@@ -58,8 +60,8 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
@@ -71,7 +73,6 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         int arg0Pos = argPositions.getQuick(0);
         int type0 = arg0.getType();
         short commonElemType = (short) type0;
-        boolean isConstant = arg0.isConstant();
         if (!ColumnType.isArray(type0)) {
             for (int i = 1; i < outerDimLen; i++) {
                 Function argI = args.getQuick(i);
@@ -79,7 +80,6 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 if (ColumnType.isArray(typeI)) {
                     throw SqlException.$(argPositions.getQuick(i), "mixed array and non-array elements");
                 }
-                isConstant &= argI.isConstant();
                 // use commonWideningType(commonElemType, typeI) once we support more than the DOUBLE array type:
                 commonElemType = ColumnType.DOUBLE;
             }
@@ -89,14 +89,14 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                         .put(ColumnType.nameOf(commonElemType))
                         .put(']');
             }
-            FunctionArray array = new FunctionArray(commonElemType, 1);
+            final FunctionArray array = new FunctionArray(commonElemType, 1);
             array.setDimLen(0, outerDimLen);
             array.applyShape(configuration, arg0Pos);
             for (int i = 0; i < outerDimLen; i++) {
                 Function argI = args.getQuick(i);
                 array.putFunction(i, argI);
             }
-            return new FunctionArrayFunction(array, isConstant);
+            return new FunctionArrayFunction(array);
         }
 
         // First argument is an array, validate that all of them arrays. Mixed array and
@@ -115,14 +115,13 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 throw SqlException.$(argPosI, "sub-arrays don't match in number of dimensions");
             }
             commonElemType = commonWideningType(commonElemType, decodeArrayElementType(typeI));
-            isConstant &= argI.isConstant();
         }
 
-        function_array:
+        FUNCTION_ARRAY:
         if (arg0 instanceof FunctionArrayFunction) {
             for (int i = 1; i < outerDimLen; i++) {
                 if (!(args.getQuick(i) instanceof FunctionArrayFunction)) {
-                    break function_array;
+                    break FUNCTION_ARRAY;
                 }
             }
             // All arguments are of type FunctionArrayFunction, we can gather all their
@@ -134,7 +133,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                     throw SqlException.$(argPositions.getQuick(i), "element counts in sub-arrays don't match");
                 }
             }
-            FunctionArray array = new FunctionArray(commonElemType, nestedNDims + 1);
+            final FunctionArray array = new FunctionArray(commonElemType, nestedNDims + 1);
             array.setDimLen(0, outerDimLen);
             for (int i = 0; i < nestedNDims; i++) {
                 array.setDimLen(i + 1, array0.getDimLen(i));
@@ -147,7 +146,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                     array.putFunction(flatIndex++, arrayI.getFunctionAtFlatIndex(j));
                 }
             }
-            return new FunctionArrayFunction(array, isConstant);
+            return new FunctionArrayFunction(array);
         }
 
         // Arguments aren't all FunctionArrayFunctions, treat them generically as some kind of array functions.
@@ -156,8 +155,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 new ObjList<>(args),
                 new IntList(argPositions),
                 commonElemType,
-                nestedNDims,
-                isConstant
+                nestedNDims
         );
     }
 
@@ -166,26 +164,28 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         return ColumnType.ARRAY;
     }
 
-    private static class ArrayFunctionArrayFunction extends ArrayFunction {
+    private static class ArrayFunctionArrayFunction extends ArrayFunction implements MultiArgFunction {
         private final @NotNull IntList argPositions;
         private final @NotNull ObjList<Function> args;
-        private final boolean isConstant;
-        private DirectArray arrayOut;
+        private final DirectArray arrayOut;
 
         public ArrayFunctionArrayFunction(
                 @NotNull CairoConfiguration configuration,
                 @NotNull ObjList<Function> args,
                 @NotNull IntList argPositions,
                 short commonElemType,
-                int nestedNDims,
-                boolean isConstant
+                int nestedNDims
         ) {
-            this.type = ColumnType.encodeArrayType(commonElemType, nestedNDims + 1);
-            this.isConstant = isConstant;
-            this.args = args;
-            this.argPositions = argPositions;
-            this.arrayOut = new DirectArray(configuration);
-            arrayOut.setType(type);
+            try {
+                this.type = ColumnType.encodeArrayType(commonElemType, nestedNDims + 1);
+                this.args = args;
+                this.argPositions = argPositions;
+                this.arrayOut = new DirectArray(configuration);
+                arrayOut.setType(type);
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
         }
 
         @Override
@@ -196,8 +196,13 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            this.arrayOut = Misc.free(this.arrayOut);
-            Misc.freeObjList(args);
+            MultiArgFunction.super.close();
+            Misc.free(arrayOut);
+        }
+
+        @Override
+        public @NotNull ObjList<Function> getArgs() {
+            return args;
         }
 
         @Override
@@ -234,8 +239,8 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isConstant() {
-            return isConstant;
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override
@@ -251,13 +256,11 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class FunctionArrayFunction extends ArrayFunction {
-        private final boolean isConstant;
-        private FunctionArray array;
+    private static class FunctionArrayFunction extends ArrayFunction implements MultiArgFunction {
+        private final FunctionArray array;
 
-        public FunctionArrayFunction(FunctionArray array, boolean isConstant) {
+        public FunctionArrayFunction(FunctionArray array) {
             this.array = array;
-            this.isConstant = isConstant;
             this.type = array.getType();
         }
 
@@ -270,7 +273,12 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            this.array = Misc.free(this.array);
+            Misc.free(array);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return array.getFunctions();
         }
 
         @Override
@@ -280,8 +288,8 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isConstant() {
-            return isConstant;
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override

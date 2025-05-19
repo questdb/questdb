@@ -56,7 +56,7 @@ public class CastDoubleToDoubleArray implements FunctionFactory {
 
     public static class Func extends ArrayFunction implements UnaryFunction {
         private final Function arg;
-        private SingleElementDoubleArray array;
+        private final SingleElementDoubleArray array;
 
         public Func(Function arg, int arrType) {
             super.type = arrType;
@@ -67,7 +67,7 @@ public class CastDoubleToDoubleArray implements FunctionFactory {
         @Override
         public void close() {
             UnaryFunction.super.close();
-            array = Misc.free(array);
+            Misc.free(array);
         }
 
         @Override
@@ -83,6 +83,11 @@ public class CastDoubleToDoubleArray implements FunctionFactory {
             }
             array.of(val);
             return array;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override

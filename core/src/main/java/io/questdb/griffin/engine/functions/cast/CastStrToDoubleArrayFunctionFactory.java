@@ -38,15 +38,23 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(Sd[])";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         Function typeFun = args.getQuick(1);
         int type = typeFun.getType();
         return new Func(args.getQuick(0), type);
@@ -73,14 +81,17 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
             CharSequence str = function.getStrA(rec);
             assert str != null; // for now
             assert str.length() > 0; // for now
-
             try {
                 parser.of(str, dims);
             } catch (IllegalArgumentException e) {
                 parser.of(null);
             }
-
             return parser;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override

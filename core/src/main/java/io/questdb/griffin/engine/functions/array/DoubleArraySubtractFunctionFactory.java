@@ -32,8 +32,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class DoubleArraySubtractFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "-(D[]D[])";
@@ -42,12 +44,12 @@ public class DoubleArraySubtractFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new DoubleArrayAddOperator(
+        return new Func(
                 configuration,
                 args.getQuick(0),
                 args.getQuick(1),
@@ -56,9 +58,9 @@ public class DoubleArraySubtractFunctionFactory implements FunctionFactory {
         );
     }
 
-    private static class DoubleArrayAddOperator extends DoubleArrayBinaryOperator {
+    private static class Func extends DoubleArrayBinaryOperator {
 
-        DoubleArrayAddOperator(
+        private Func(
                 CairoConfiguration configuration,
                 Function leftArg,
                 Function rightArg,
@@ -75,7 +77,7 @@ public class DoubleArraySubtractFunctionFactory implements FunctionFactory {
 
         @Override
         protected void bulkApplyOperation(FlatArrayView leftFlatView, FlatArrayView rightFlatView) {
-            for (int n = leftFlatView.length(), i = 0; i < n; i++) {
+            for (int i = 0, n = leftFlatView.length(); i < n; i++) {
                 double leftVal = leftFlatView.getDoubleAtAbsIndex(i);
                 double rightVal = rightFlatView.getDoubleAtAbsIndex(i);
                 arrayOut.putDouble(i, leftVal - rightVal);

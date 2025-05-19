@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.std.ObjList;
 
 public final class ArrayCaseFunction extends ArrayFunction implements CaseFunction {
-
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;
 

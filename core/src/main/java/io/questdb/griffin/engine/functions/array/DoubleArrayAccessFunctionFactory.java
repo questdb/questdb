@@ -37,13 +37,17 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "[](D[]IV)";
@@ -52,8 +56,8 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> inputArgs,
-            IntList inputArgPositions,
+            @Transient ObjList<Function> inputArgs,
+            @Transient IntList inputArgPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
@@ -193,21 +197,20 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class AccessDoubleArrayConstantIndexFunction extends DoubleFunction {
-        final IntList indexArgPositions;
-        final IntList indexArgs;
-        Function arrayArg;
+    private static class AccessDoubleArrayConstantIndexFunction extends DoubleFunction implements UnaryFunction {
+        private final Function arrayArg;
+        private final IntList indexArgPositions;
+        private final IntList indexArgs;
 
-        AccessDoubleArrayConstantIndexFunction(Function arrayArg, IntList indexArgs, IntList indexArgPositions) {
+        private AccessDoubleArrayConstantIndexFunction(Function arrayArg, IntList indexArgs, IntList indexArgPositions) {
             this.arrayArg = arrayArg;
             this.indexArgs = indexArgs;
             this.indexArgPositions = indexArgPositions;
         }
 
         @Override
-        public void close() {
-            this.arrayArg = Misc.free(arrayArg);
-            indexArgs.clear();
+        public Function getArg() {
+            return arrayArg;
         }
 
         @Override
@@ -241,22 +244,24 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class AccessDoubleArrayFunction extends DoubleFunction {
-        final IntList indexArgPositions;
-        final ObjList<Function> indexArgs;
-        Function arrayArg;
+    private static class AccessDoubleArrayFunction extends DoubleFunction implements MultiArgFunction {
+        private final ObjList<Function> allArgs; // holds arrayArg + indexArgs
+        private final Function arrayArg;
+        private final IntList indexArgPositions;
+        private final ObjList<Function> indexArgs;
 
-        AccessDoubleArrayFunction(Function arrayArg, ObjList<Function> indexArgs, IntList indexArgPositions) {
+        private AccessDoubleArrayFunction(Function arrayArg, ObjList<Function> indexArgs, IntList indexArgPositions) {
             this.arrayArg = arrayArg;
             this.indexArgs = indexArgs;
             this.indexArgPositions = indexArgPositions;
+            this.allArgs = new ObjList<>(indexArgs.size() + 1);
+            allArgs.add(arrayArg);
+            allArgs.addAll(indexArgs);
         }
 
         @Override
-        public void close() {
-            this.arrayArg = Misc.free(arrayArg);
-            Misc.freeObjList(indexArgs);
-            indexArgs.clear();
+        public ObjList<Function> getArgs() {
+            return allArgs;
         }
 
         @Override
@@ -290,25 +295,26 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class SliceDoubleArrayFunction extends ArrayFunction {
-
+    private static class SliceDoubleArrayFunction extends ArrayFunction implements MultiArgFunction {
+        private final ObjList<Function> allArgs; // holds arrayArg + rangeArgs
         private final IntList argPositions;
+        private final Function arrayArg;
         private final DerivedArrayView derivedArray = new DerivedArrayView();
         private final ObjList<Function> rangeArgs;
-        private Function arrayArg;
 
         public SliceDoubleArrayFunction(Function arrayArg, int resultNDims, ObjList<Function> rangeArgs, IntList argPositions) {
             this.arrayArg = arrayArg;
             this.rangeArgs = rangeArgs;
             this.argPositions = argPositions;
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, resultNDims);
+            this.allArgs = new ObjList<>(rangeArgs.size() + 1);
+            allArgs.add(arrayArg);
+            allArgs.addAll(rangeArgs);
         }
 
         @Override
-        public void close() {
-            this.arrayArg = Misc.free(this.arrayArg);
-            Misc.freeObjList(rangeArgs);
-            rangeArgs.clear();
+        public ObjList<Function> getArgs() {
+            return allArgs;
         }
 
         @Override
@@ -355,6 +361,11 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 }
             }
             return derivedArray;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override

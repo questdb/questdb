@@ -34,7 +34,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class ArrayFunction implements Function {
-
     protected int type = ColumnType.UNDEFINED;
 
     @Override

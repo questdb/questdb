@@ -37,11 +37,14 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "matmul(D[]D[])";
@@ -50,50 +53,57 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new MultiplyDoubleArrayFunction(configuration,
-                args.getQuick(0), args.getQuick(1),
-                argPositions.getQuick(0), argPositions.getQuick(1));
+        return new Func(
+                configuration,
+                args.getQuick(0),
+                args.getQuick(1),
+                argPositions.getQuick(0),
+                argPositions.getQuick(1)
+        );
     }
 
-    private static class MultiplyDoubleArrayFunction extends ArrayFunction {
-
+    private static class Func extends ArrayFunction implements BinaryFunction {
+        private final DirectArray arrayOut;
+        private final Function leftArg;
         private final int leftArgPos;
-        private DirectArray arrayOut;
-        private Function leftArg;
-        private Function rightArg;
+        private final Function rightArg;
 
-        public MultiplyDoubleArrayFunction(
+        public Func(
                 CairoConfiguration configuration,
                 Function leftArg,
                 Function rightArg,
                 int leftArgPos,
                 int rightArgPos
         ) throws SqlException {
-            this.leftArg = leftArg;
-            this.rightArg = rightArg;
-            this.arrayOut = new DirectArray(configuration);
-            this.leftArgPos = leftArgPos;
-            int nDimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-            int nDimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
-            if (nDimsLeft != 2) {
-                throw SqlException.position(leftArgPos).put("left array is not two-dimensional");
+            try {
+                this.leftArg = leftArg;
+                this.rightArg = rightArg;
+                this.arrayOut = new DirectArray(configuration);
+                this.leftArgPos = leftArgPos;
+                int nDimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
+                int nDimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
+                if (nDimsLeft != 2) {
+                    throw SqlException.position(leftArgPos).put("left array is not two-dimensional");
+                }
+                if (nDimsRight != 2) {
+                    throw SqlException.position(rightArgPos).put("right array is not two-dimensional");
+                }
+                this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
+            } catch (Throwable th) {
+                close();
+                throw th;
             }
-            if (nDimsRight != 2) {
-                throw SqlException.position(rightArgPos).put("right array is not two-dimensional");
-            }
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
         }
 
         @Override
         public void close() {
-            this.leftArg = Misc.free(this.leftArg);
-            this.rightArg = Misc.free(this.rightArg);
-            this.arrayOut = Misc.free(this.arrayOut);
+            BinaryFunction.super.close();
+            Misc.free(arrayOut);
         }
 
         @Override
@@ -138,8 +148,23 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getLeft() {
+            return leftArg;
+        }
+
+        @Override
         public String getName() {
             return "matmul";
+        }
+
+        @Override
+        public Function getRight() {
+            return rightArg;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override

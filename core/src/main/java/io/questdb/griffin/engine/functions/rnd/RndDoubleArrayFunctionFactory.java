@@ -41,6 +41,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Transient;
 
 public class RndDoubleArrayFunctionFactory implements FunctionFactory {
     private static final int MAX_DIM_LEN = 16;
@@ -53,8 +54,8 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
@@ -120,13 +121,18 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         private Rnd rnd;
 
         public RndDoubleArrayFixDimLenFunction(CairoConfiguration configuration, int nDims, int nanRate, IntList dimLens, int functionPosition) {
-            this.nanRate = nanRate + 1;
-            this.nDims = nDims;
-            this.array = new DirectArray(configuration);
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
-            this.array.setType(type);
-            this.dimLens = dimLens;
-            this.functionPosition = functionPosition;
+            try {
+                this.nanRate = nanRate + 1;
+                this.nDims = nDims;
+                this.array = new DirectArray(configuration);
+                this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+                this.array.setType(type);
+                this.dimLens = dimLens;
+                this.functionPosition = functionPosition;
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
         }
 
         @Override
@@ -144,6 +150,11 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
         }
 
         @Override
@@ -175,13 +186,18 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         private Rnd rnd;
 
         public RndDoubleArrayRndDimLenFunction(CairoConfiguration configuration, int nDims, int nanRate, int maxDimLen, int functionPosition) {
-            this.nanRate = nanRate + 1;
-            this.nDims = nDims;
-            this.array = new DirectArray(configuration);
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
-            this.array.setType(type);
-            this.maxDimLen = maxDimLen;
-            this.functionPosition = functionPosition;
+            try {
+                this.nanRate = nanRate + 1;
+                this.nDims = nDims;
+                this.array = new DirectArray(configuration);
+                this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+                this.array.setType(type);
+                this.maxDimLen = maxDimLen;
+                this.functionPosition = functionPosition;
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
         }
 
         @Override
@@ -199,6 +215,11 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
         }
 
         @Override
