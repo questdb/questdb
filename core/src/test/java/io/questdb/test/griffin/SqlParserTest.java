@@ -7696,7 +7696,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPGCastToFloat4() throws SqlException {
         assertQuery(
-                "select-virtual cast(123,float) x from (long_sequence(1))",
+                "select-virtual cast(123,FLOAT) x from (long_sequence(1))",
                 "select 123::float4 x"
         );
     }
@@ -7704,7 +7704,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPGCastToFloat8() throws SqlException {
         assertQuery(
-                "select-virtual cast(123,double) x from (long_sequence(1))",
+                "select-virtual cast(123,DOUBLE) x from (long_sequence(1))",
                 "select 123::float8 x"
         );
     }

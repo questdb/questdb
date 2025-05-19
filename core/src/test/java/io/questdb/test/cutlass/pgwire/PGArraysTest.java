@@ -646,6 +646,53 @@ public class PGArraysTest extends BasePGTest {
         });
     }
 
+    @Test
+    public void testTypeRewrites() throws Exception {
+        skipOnWalRun();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            assertPgWireQuery(connection,
+                    "select '{1}'::double[] as arr from long_sequence(1)",
+                    "arr[ARRAY]\n" +
+                            "{1.0}\n");
+
+            assertPgWireQuery(connection,
+                    "select '{1}'::float[] as arr from long_sequence(1)",
+                    "arr[ARRAY]\n" +
+                            "{1.0}\n");
+
+            assertPgWireQuery(connection,
+                    "select '{1}'::float8[] as arr from long_sequence(1)",
+                    "arr[ARRAY]\n" +
+                            "{1.0}\n");
+
+            assertPgWireQuery(connection,
+                    "select '{1}'::double precision[] as arr from long_sequence(1)",
+                    "arr[ARRAY]\n" +
+                            "{1.0}\n");
+
+            assertPgWireQuery(connection,
+                    "select '{{1},{2}}'::double[][] as arr from long_sequence(1)",
+                    "arr[ARRAY]\n" +
+                            "{{1.0},{2.0}}\n");
+
+            assertPgWireQuery(connection,
+                    "select '{{1},{2}}'::douBLE pREciSioN[][] as arr from long_sequence(1)",
+                    "arr[ARRAY]\n" +
+                            "{{1.0},{2.0}}\n");
+
+            assertPgWireQuery(connection,
+                    "select '{{1},{2}}'::float8[][] as arr from long_sequence(1)",
+                    "arr[ARRAY]\n" +
+                            "{{1.0},{2.0}}\n");
+
+            assertPgWireQuery(connection,
+                    "select '{{1},{2}}'::fLOAt[][] as arr from long_sequence(1)",
+                    "arr[ARRAY]\n" +
+                            "{{1.0},{2.0}}\n");
+        });
+    }
+
     private void assertPgWireQuery(Connection conn, String query, CharSequence expected) throws Exception {
         try (PreparedStatement stmt = conn.prepareStatement(query)) {
             sink.clear();

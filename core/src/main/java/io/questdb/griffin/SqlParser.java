@@ -3599,18 +3599,59 @@ public class SqlParser {
             node.type = ExpressionNode.FUNCTION;
             node.rhs.type = ExpressionNode.CONSTANT;
             // In PG x::float casts x to "double precision" type
-            if (isFloatKeyword(node.rhs.token) || isFloat8Keyword(node.rhs.token)) {
-                node.rhs.token = "double";
-            } else if (isFloat4Keyword(node.rhs.token)) {
-                node.rhs.token = "float";
-            } else if (isInt4Keyword(node.rhs.token)) {
-                node.rhs.token = "int";
-            } else if (isInt8Keyword(node.rhs.token)) {
-                node.rhs.token = "long";
-            } else if (isInt2Keyword(node.rhs.token)) {
-                node.rhs.token = "short";
+            // also, we have to rewrite postgres types such as "float8" to our native "double" type
+            // All of the above also applies to array types: "float8[]" -> "double[]"
+            // or "double precision[][]" -> "double[][]"
+
+            if (rewritePgCast0(node.rhs, "float", ColumnType.DOUBLE)) {
+                return;
+            }
+            if (rewritePgCast0(node.rhs, "float8", ColumnType.DOUBLE)) {
+                return;
+            }
+            if (rewritePgCast0(node.rhs, "float4", ColumnType.FLOAT)) {
+                return;
+            }
+            if (rewritePgCast0(node.rhs, "int4", ColumnType.INT)) {
+                return;
+            }
+            if (rewritePgCast0(node.rhs, "int8", ColumnType.LONG)) {
+                return;
+            }
+            if (rewritePgCast0(node.rhs, "int2", ColumnType.SHORT)) {
+                return;
+            }
+            rewritePgCast0(node.rhs, "double precision", ColumnType.DOUBLE);
+        }
+    }
+
+    private boolean rewritePgCast0(ExpressionNode typeNode, String srcTypePrefix, short type) {
+        CharSequence token = typeNode.token;
+        if (!Chars.startsWithLowerCase(token, srcTypePrefix)) {
+            return false;
+        }
+
+        int len = token.length();
+        int prefixLen = srcTypePrefix.length();
+        int rem = len - prefixLen;
+
+        if (rem == 0) {
+            // full match. e.g. replacing 'float8' with 'double'
+            typeNode.token = ColumnType.nameOf(type);
+            return true;
+        }
+
+        // src has a suffix. it could be an array suffix. consider 'float8[][]' -> 'double[][]'
+        if (rem % 2 == 0) {
+            // suffix must be even, since square brackets come in pairs
+            int dims = rem / 2;
+            String suffix = ColumnType.ARRAY_DIM_SUFFIX[dims];
+            if (Chars.endsWith(token, suffix)) {
+                typeNode.token = ColumnType.nameOf(ColumnType.encodeArrayType(type, dims));
+                return true;
             }
         }
+        return false;
     }
 
     @NotNull
