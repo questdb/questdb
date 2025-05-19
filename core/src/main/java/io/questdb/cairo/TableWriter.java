@@ -1315,7 +1315,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
 
             assert txWriter.getPartitionCount() == 0 || txWriter.getMinTimestamp() >= txWriter.getPartitionTimestampByIndex(0);
-            LOG.debug().$("table ranges after the commit [table=").$(tableToken)
+            LOG.debug().$("============== table ranges after the commit [table=").$(tableToken)
                     .$(", minTs=").$ts(txWriter.getMinTimestamp())
                     .$(", maxTs=").$ts(txWriter.getMaxTimestamp()).I$();
         }
@@ -2693,13 +2693,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // One logical partition may be split into multiple physical partitions.
         // For example, partition daily '2024-02-24' can be stored as 2 pieces '2024-02-24' and '2024-02-24T12'
         long logicalPartitionTimestampToDelete = txWriter.getLogicalPartitionTimestamp(timestamp);
-        int partitionIndex = txWriter.getPartitionIndex(logicalPartitionTimestampToDelete);
+        int partitionIndex = txWriter.findAttachedPartitionRawIndexByLoTimestamp(logicalPartitionTimestampToDelete);
         if (partitionIndex < 0) {
             // A partition slit can exist without the partition itself.
             // For example, it is allowed to have partition '2024-02-24T12' without partition '2024-02-24'
             // To delete all the splits, start from the index that is next or equal to the timestamp parameter.
             partitionIndex = -partitionIndex - 1;
         }
+        partitionIndex /= LONGS_PER_TX_ATTACHED_PARTITION;
 
         boolean dropped = false;
         long partitionTimestamp;
@@ -3188,7 +3189,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private long applyFromWalLagToLastPartition(long commitToTimestamp, boolean allowPartial) {
         long lagMinTimestamp = txWriter.getLagMinTimestamp();
-        if (!isDeduplicationEnabled()
+        if (!isCommitDedupMode()
                 && txWriter.getLagRowCount() > 0
                 && txWriter.isLagOrdered()
                 && txWriter.getMaxTimestamp() <= lagMinTimestamp
@@ -3251,7 +3252,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private boolean applyFromWalLagToLastPartitionPossible(long commitToTimestamp, long lagRowCount, boolean lagOrdered, long committedMaxTimestamp, long lagMinTimestamp, long lagMaxTimestamp) {
-        return !isDeduplicationEnabled()
+        return !isCommitDedupMode()
                 && lagRowCount > 0
                 && lagOrdered
                 && committedMaxTimestamp <= lagMinTimestamp
@@ -3840,10 +3841,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             noOpRowCount = 0L;
 
-            LOG.info().$("============== table=").$(tableToken)
+            LOG.debug().$("============== table ranges after the commit [table=").$(tableToken)
                     .$(", minTs=").$ts(txWriter.getMinTimestamp())
                     .$(", maxTs=").$ts(txWriter.getMaxTimestamp())
-                    .$();
+                    .I$();
         }
     }
 
@@ -6744,7 +6745,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     // We're appending onto the last (active) partition.
-                    final boolean append = last && (srcDataMax == 0 || (isDeduplicationEnabled() && o3Timestamp > maxTimestamp) || (!isDeduplicationEnabled() && o3Timestamp >= maxTimestamp))
+                    final boolean append = last && (srcDataMax == 0 || (isCommitDedupMode() && o3Timestamp > maxTimestamp) || (!isCommitDedupMode() && o3Timestamp >= maxTimestamp))
                             // If it's replace commit, the append is only possible if the last partition data is
                             // before the replace range.
                             && (!isCommitReplaceMode() || o3TimestampMin > txWriter.getMaxTimestamp());
@@ -7138,7 +7139,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         || (configuration.getMicrosecondClock().getTicks() - lastWalCommitTimestampMicros > configuration.getCommitLatency());
 
                 boolean canFastCommit = indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
-                boolean lagOrderedNew = !isDeduplicationEnabled() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin;
+                boolean lagOrderedNew = !isCommitDedupMode() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin;
                 boolean canFastCommitNew = applyFromWalLagToLastPartitionPossible(commitToTimestamp, totalUncommitted, lagOrderedNew, txWriter.getMaxTimestamp(), newMinLagTimestamp, newMaxLagTimestamp);
 
                 // Fast commit of existing LAG data is possible but will not be possible after current transaction is added to the lag.
@@ -7203,7 +7204,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.setLagMinTimestamp(Math.min(o3TimestampMin, txWriter.getLagMinTimestamp()));
                 txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
                 boolean needsOrdering = !ordered || walLagRowCount > 0;
-                boolean needsDedup = isDeduplicationEnabled();
+                boolean needsDedup = isCommitDedupMode();
 
                 long timestampAddr = 0;
                 MemoryCR walTimestampColumn = segmentFileCache.getWalMappedColumns().getQuick(getPrimaryColumnIndex(timestampIndex));
@@ -7414,7 +7415,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3Lo;
             final long o3LoHi;
 
-            if (!isDeduplicationEnabled() && segmentCopyInfo.getAllTxnDataInOrder() && segmentCopyInfo.getSegmentCount() == 1) {
+            if (!isCommitDedupMode() && segmentCopyInfo.getAllTxnDataInOrder() && segmentCopyInfo.getSegmentCount() == 1) {
                 LOG.info().$("all data in order, single segment, processing optimised [table=").$(tableToken.getDirName()).I$();
                 // all data comes from a single segment and is already sorted
                 if (denseSymbolMapWriters.size() > 0) {

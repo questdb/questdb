@@ -4116,7 +4116,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     row.putSym(1, "sym" + i);
                     row.append();
                     if (i == 1) {
-                        walWriter.commitMatView(42, 42, 0, 0);
+                        walWriter.commitMatView(42, 42, 0, 1);
                     } else {
                         walWriter.commit();
                     }
