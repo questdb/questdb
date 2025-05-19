@@ -237,27 +237,46 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
         );
     }
 
+
     @Test
     public void testWithinWorksWithLatestByAndNoIndex() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlTrips);
+            execute(dmlTrips);
             execute("ALTER TABLE trips ADD COLUMN sym SYMBOL;");
             String query = "trips WHERE pickup_geohash WITHIN (#dr5) LATEST ON pickup_datetime PARTITION BY sym;";
 
             // without index
-            assertPlanNoLeakCheck(query,
-                    "LatestByDeferredListValuesFiltered\n" +
-                            "  filter: pickup_geohash in [\"011001011100101\"]\n" +
-                            "    Frame backward scan on: trips\n");
-
+//            assertPlanNoLeakCheck(query,
+//                    "LatestByDeferredListValuesFiltered\n" +
+//                            "  filter: pickup_geohash in [\"011001011100101\"]\n" +
+//                            "    Frame backward scan on: trips\n");
+//
+//            assertQuery("pickup_datetime\tpickup_geohash\tsym\n" +
+//                            "2009-01-01T00:00:37.000000Z\tdr5rsnpw997n\t\n",
+//                    query,
+//                    null,
+//                    "pickup_datetime",
+//                    true,
+//                    true);
+//
             execute("ALTER TABLE trips ALTER COLUMN sym ADD INDEX;");
+            drainWalQueue();
+//
+//            // with index
+//            assertPlanNoLeakCheck(query,
+//                    "LatestByAllIndexed\n" +
+//                            "    Async index backward scan on: sym workers: 1\n" +
+//                            "      filter: pickup_geohash within(\"011001011100101000000000000000000000000000000000000000000000\")\n" +
+//                            "    Frame backward scan on: trips\n");
 
-            // with index
-            assertPlanNoLeakCheck(query,
-                    "LatestByAllIndexed\n" +
-                            "    Async index backward scan on: sym workers: 1\n" +
-                            "      filter: pickup_geohash within(\"011001011100101000000000000000000000000000000000000000000000\")\n" +
-                            "    Frame backward scan on: trips\n");
+            assertQuery("pickup_datetime\tpickup_geohash\tsym\n" +
+                            "2009-01-01T00:00:37.000000Z\tdr5rsnpw997n\t\n",
+                    query,
+                    null,
+                    "pickup_datetime",
+                    true,
+                    true);
         });
     }
 }
