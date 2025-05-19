@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -592,6 +593,51 @@ public class PGArraysTest extends BasePGTest {
     }
 
     @Test
+    public void testSendBufferOverflowNonVanilla() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        int dimLen1 = 10 + bufferSizeRnd.nextInt(90);
+        int dimLen2 = 10 + bufferSizeRnd.nextInt(90);
+        String literal = buildArrayLiteral2d(dimLen1, dimLen2);
+        String result = buildArrayResult2d(1, dimLen1, 1, dimLen2);
+        assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("CREATE TABLE tango AS (SELECT x n, " + literal + " arr FROM long_sequence(1))");
+            }
+            try (PreparedStatement stmt = conn.prepareStatement("SELECT arr[2:,2:] arr FROM tango")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("arr[ARRAY]\n" +
+                                    result + "\n",
+                            sink, rs);
+                }
+            }
+        }, () -> {
+            recvBufferSize = 5 * dimLen1 * dimLen2;
+            forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+        });
+    }
+
+    @Test
+    public void testSendBufferOverflowVanilla() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        int elemCount = 100 + bufferSizeRnd.nextInt(900);
+        String arrayLiteral = buildArrayLiteral1d(elemCount);
+        assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            try (PreparedStatement stmt = conn.prepareStatement("SELECT x n, " + arrayLiteral + " arr FROM long_sequence(1)")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("n[BIGINT],arr[ARRAY]\n" +
+                                    "1," + buildArrayResult1d(elemCount) + "\n",
+                            sink, rs);
+                }
+            }
+        }, () -> {
+            recvBufferSize = 4 * elemCount;
+            forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+        });
+    }
+
+    @Test
     public void testSliceArray() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]] arr FROM long_sequence(1))");
@@ -623,8 +669,6 @@ public class PGArraysTest extends BasePGTest {
                     "SELECT arr[2, 2] element FROM tango",
                     "element[DOUBLE]\n" +
                             "4.0\n");
-        }, () -> {
-            sendBufferSize = 1000 * 1024; // use large enough buffer, otherwise we will get fragmented messages and this currently leads to non-deterministic results of rnd_double_array
         });
     }
 
@@ -700,6 +744,67 @@ public class PGArraysTest extends BasePGTest {
                 assertResultSet(expected, sink, rs);
             }
         }
+    }
+
+    private @NotNull String buildArrayLiteral1d(int elemCount) {
+        StringBuilder b = new StringBuilder();
+        b.append("ARRAY");
+        buildArrayLiteralInner(b, 0, elemCount);
+        return b.toString();
+    }
+
+    private @NotNull String buildArrayLiteral2d(int dimLen1, int dimLen2) {
+        StringBuilder b = new StringBuilder();
+        b.append("ARRAY[");
+        String comma = "";
+        for (int i = 0; i < dimLen1; i++) {
+            b.append(comma);
+            comma = ",";
+            buildArrayLiteralInner(b, i * dimLen2, (i + 1) * dimLen2);
+        }
+        b.append(']');
+        return b.toString();
+    }
+
+    private void buildArrayLiteralInner(StringBuilder b, int lowerBound, int upperBound) {
+        b.append('[');
+        String comma = "";
+        for (int i = lowerBound; i < upperBound; i++) {
+            b.append(comma);
+            comma = ",";
+            b.append(i);
+        }
+        b.append(']');
+    }
+
+    private @NotNull String buildArrayResult1d(int elemCount) {
+        StringBuilder b = new StringBuilder();
+        buildArrayResultInner(0, elemCount, b);
+        return b.toString();
+    }
+
+    private @NotNull String buildArrayResult2d(int start1, int dimLen1, int start2, int dimLen2) {
+        StringBuilder b = new StringBuilder();
+        b.append("{");
+        String comma = "";
+        for (int i = start1; i < dimLen1; i++) {
+            b.append(comma);
+            comma = ",";
+            buildArrayResultInner(i * dimLen2 + start2, (i + 1) * dimLen2, b);
+        }
+        b.append("}");
+        return b.toString();
+    }
+
+    private void buildArrayResultInner(int lowerBound, int upperBound, StringBuilder b) {
+        b.append("{");
+        String comma = "";
+        for (int i = lowerBound; i < upperBound; i++) {
+            b.append(comma);
+            comma = ",";
+            b.append(i).append(".0");
+        }
+        b.append("}");
     }
 
     private void skipOnWalRun() {
