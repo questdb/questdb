@@ -50,7 +50,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     // Flips to negative value once a refresh message is processed. Long.MIN_VALUE stands for "just invalidated" state.
     // The goal is to avoid sending excessive incremental refresh messages to the underlying queue.
     // Note: this map is grow-only, i.e. keys are never removed.
-    private final ConcurrentHashMap<AtomicLong> lastNotifiedTxnByTableName = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<AtomicLong> lastNotifiedTxnByTableName = new ConcurrentHashMap<>(false);
     private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<MatViewState> stateByTableDirName = new ConcurrentHashMap<>();
     private final ThreadLocal<MatViewRefreshTask> taskHolder = new ThreadLocal<>(MatViewRefreshTask::new);

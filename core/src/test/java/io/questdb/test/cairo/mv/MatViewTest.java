@@ -542,24 +542,28 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinBinarySearchHintInMatView() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trades as (\n" +
-                    "  select \n" +
-                    "    rnd_double() price,\n" +
-                    "    rnd_double() volume,\n" +
-                    "    ('2025'::timestamp + x * 200_000_000L + rnd_int(0, 10_000, 0))::timestamp as ts,\n" +
-                    "  from long_sequence(5_000)\n" +
-                    ") timestamp(ts) partition by day wal;");
+            execute(
+                    "create table trades as (\n" +
+                            "  select \n" +
+                            "    rnd_double() price,\n" +
+                            "    rnd_double() volume,\n" +
+                            "    ('2025'::timestamp + x * 200_000_000L + rnd_int(0, 10_000, 0))::timestamp as ts,\n" +
+                            "  from long_sequence(5_000)\n" +
+                            ") timestamp(ts) partition by day wal;"
+            );
 
-            execute("create table prices as (\n" +
-                    "  select \n" +
-                    "    rnd_double() bid,\n" +
-                    "    rnd_double() ask,\n" +
-                    "    rnd_boolean() valid,\n" +
-                    "    ('2025'::timestamp + x * 1_000_000L + rnd_int(0, 10_000, 0))::timestamp as ts,\n" +
-                    "  from long_sequence(1_000_000)\n" +
-                    ") timestamp(ts) partition by day wal;\n");
+            execute(
+                    "create table prices as (\n" +
+                            "  select \n" +
+                            "    rnd_double() bid,\n" +
+                            "    rnd_double() ask,\n" +
+                            "    rnd_boolean() valid,\n" +
+                            "    ('2025'::timestamp + x * 1_000_000L + rnd_int(0, 10_000, 0))::timestamp as ts,\n" +
+                            "  from long_sequence(1_000_000)\n" +
+                            ") timestamp(ts) partition by day wal;\n"
+            );
 
-            String mvWithoutHint = "create materialized view daily_summary \n" +
+            final String mvWithoutHint = "create materialized view daily_summary \n" +
                     "WITH BASE trades\n" +
                     "as (\n" +
                     "select trades.ts, count(*), sum(volume), min(price), max(price), avg(price)\n" +
@@ -567,8 +571,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "asof join (select * from prices where valid) prices\n" +
                     "sample by 1d\n" +
                     ");";
-
-            String mvWithHint = "create materialized view daily_summary \n" +
+            final String mvWithHint = "create materialized view daily_summary \n" +
                     "WITH BASE trades\n" +
                     "as (\n" +
                     "select /*+ USE_ASOF_BINARY_SEARCH(trades prices) */ trades.ts, count(*), sum(volume), min(price), max(price), avg(price)\n" +
@@ -577,7 +580,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "sample by 1d\n" +
                     ");";
 
-            // sanity test: without the hint it do not use binary search
+            // sanity test: without the hint it does not use binary search
             sink.clear();
             printSql("EXPLAIN " + mvWithoutHint);
             TestUtils.assertContains(sink, "AsOf Join");
@@ -591,7 +594,7 @@ public class MatViewTest extends AbstractCairoTest {
             // ok, now the real data: first try the view without the hint
             execute(mvWithoutHint);
             drainQueues();
-            String expectedView = "ts\tcount\tsum\tmin\tmax\tavg\n" +
+            final String expectedView = "ts\tcount\tsum\tmin\tmax\tavg\n" +
                     "2025-01-01T00:00:00.000000Z\t431\t215.12906540853268\t0.0031075670450616544\t0.9975907992178104\t0.4923297830071461\n" +
                     "2025-01-02T00:00:00.000000Z\t432\t214.8933638390628\t0.0027013057617086833\t0.9997998069306392\t0.5363814932706943\n" +
                     "2025-01-03T00:00:00.000000Z\t432\t211.63403995544482\t0.0014510055926236776\t0.9979936641680203\t0.4900138748185357\n" +
@@ -684,6 +687,59 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testBaseTableInvalidateOnUpdate() throws Exception {
         testBaseTableInvalidateOnOperation("update base_price set amount = 42;", "update operation");
+    }
+
+    @Test
+    public void testBaseTableNameCaseSensitivity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE 'GLBXMDP3_mbp1_es' ( " +
+                            "       ts_event TIMESTAMP, " +
+                            "       action SYMBOL, " +
+                            "       price DOUBLE, " +
+                            "       size INT, " +
+                            "       sequence LONG " +
+                            ") TIMESTAMP(ts_event) PARTITION BY HOUR WAL " +
+                            "DEDUP UPSERT KEYS(ts_event,sequence);"
+            );
+            final String viewSql = "SELECT ts_event AS time, " +
+                    "  first(price) AS open, " +
+                    "  max(price)   AS high, " +
+                    "  min(price)   AS low, " +
+                    "  last(price)  AS close, " +
+                    "  sum(size)    AS volume " +
+                    "FROM glbxmdp3_mbp1_es " +
+                    "WHERE action = 'T' " +
+                    "SAMPLE BY 1s ALIGN TO CALENDAR";
+            execute("CREATE MATERIALIZED VIEW 'mv_es_ohlcv_1s' WITH BASE 'glbxmdp3_mbp1_es' as (" + viewSql + ") partition by DAY");
+
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            drainQueues();
+
+            execute(
+                    "insert into 'GLBXMDP3_mbp1_es' values ('2024-09-10T12:01', 'T', 42, 42, 0)" +
+                            ",('2024-09-10T12:02', 'T', 42, 42, 1)" +
+                            ",('2024-09-10T12:03', 'T', 42, 42, 2)"
+            );
+
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\trefresh_limit_value\trefresh_limit_unit\n" +
+                            "mv_es_ohlcv_1s\tincremental\tglbxmdp3_mbp1_es\t2024-10-24T17:22:09.842574Z\t2024-10-24T17:22:09.842574Z\tSELECT ts_event AS time,   first(price) AS open,   max(price)   AS high,   min(price)   AS low,   last(price)  AS close,   sum(size)    AS volume FROM glbxmdp3_mbp1_es WHERE action = 'T' SAMPLE BY 1s ALIGN TO CALENDAR\tmv_es_ohlcv_1s~2\t\tvalid\t1\t1\t0\tHOUR\n",
+                    "materialized_views",
+                    null
+            );
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEquals(
+                        compiler,
+                        sqlExecutionContext,
+                        viewSql,
+                        "mv_es_ohlcv_1s"
+                );
+            }
+        });
     }
 
     @Test
@@ -1096,14 +1152,16 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             try {
-                execute("create MATERIALIZED view A as (\n" +
-                        "  SELECT\n" +
-                        "    timestamp,\n" +
-                        "    symbol,\n" +
-                        "    avg(avg_price) AS avg_price\n" +
-                        "  FROM c\n" +
-                        "  SAMPLE BY 2d\n" +
-                        ") partition by HOUR;");
+                execute(
+                        "create MATERIALIZED view A as (\n" +
+                                "  SELECT\n" +
+                                "    timestamp,\n" +
+                                "    symbol,\n" +
+                                "    avg(avg_price) AS avg_price\n" +
+                                "  FROM c\n" +
+                                "  SAMPLE BY 2d\n" +
+                                ") partition by HOUR;"
+                );
                 Assert.fail("Expected a dependency loop exception");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");

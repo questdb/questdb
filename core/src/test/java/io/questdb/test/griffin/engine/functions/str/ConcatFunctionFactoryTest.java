@@ -156,6 +156,15 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoArgs() throws Exception {
+        assertException(
+                "select concat();",
+                7,
+                "no arguments provided"
+        );
+    }
+
+    @Test
     public void testNull() throws Exception {
         assertSql(
                 "concat\n" +

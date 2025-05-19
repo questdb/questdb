@@ -83,8 +83,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     public int getReplacingColumnIndex(int columnIndex) {
-        WriterTableColumnMetadata columnMeta = (WriterTableColumnMetadata) columnMetadata.get(columnIndex);
-        return columnMeta.getReplacingIndex();
+        return columnMetadata.get(columnIndex).getReplacingIndex();
     }
 
     @Override
