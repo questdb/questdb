@@ -95,6 +95,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Job;
+import io.questdb.mp.NoOpQueue;
 import io.questdb.mp.Queue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
@@ -178,10 +179,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public CairoEngine(CairoConfiguration configuration) {
         try {
-            ffCache = new FunctionFactoryCache(
-                    configuration,
-                    getFunctionFactories()
-            );
+            this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
             this.copyContext = new CopyContext(configuration);
@@ -204,8 +202,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = createRootExecutionContext();
-            // TODO(puzpuzpuz): use no-op queue on read-only replicas
-            this.matViewRefreshIntervalQueue = new ConcurrentQueue<>(MatViewRefreshIntervalTask.ITEM_FACTORY);
+            this.matViewRefreshIntervalQueue = createMatViewRefreshIntervalQueue();
             this.matViewGraph = new MatViewGraph(matViewRefreshIntervalQueue);
 
             tableIdGenerator.open();
@@ -1778,6 +1775,11 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    // used in ent
+    protected Queue<MatViewRefreshIntervalTask> createMatViewRefreshIntervalQueue() {
+        return configuration.isMatViewEnabled() ? new ConcurrentQueue<>(MatViewRefreshIntervalTask.ITEM_FACTORY) : new NoOpQueue<>();
     }
 
     // used in ent

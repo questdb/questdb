@@ -24,11 +24,14 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.Bootstrap;
+import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewRefreshIntervalJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -38,6 +41,9 @@ import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -51,11 +57,13 @@ import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.test.tools.TestUtils.assertContains;
 
 
+// TODO(puzpuzpuz): cover refresh interval after reload
 public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
     @Before
@@ -556,6 +564,147 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         });
     }
 
+    @Test
+    public void testRefreshIntervalMatViewsReloadOnServerStart1() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String startStr = "2024-12-12T00:00:00.000000Z";
+            final long start = TimestampFormatUtils.parseUTCTimestamp(startStr);
+            final TestMicrosecondClock testClock = new TestMicrosecondClock(start);
+
+            final String firstExpected = "sym\tprice\tts\n" +
+                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n";
+
+            try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
+                execute(
+                        main1,
+                        "create table base_price (" +
+                                "sym varchar, price double, ts timestamp" +
+                                ") timestamp(ts) partition by DAY WAL"
+                );
+
+                execute(
+                        main1,
+                        "create materialized view price_1h refresh interval start '" + startStr + "' every 1h as (" +
+                                "select sym, last(price) as price, ts from base_price sample by 1h" +
+                                ") partition by DAY"
+                );
+
+                execute(
+                        main1,
+                        "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                                ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                                ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                                ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                );
+
+                try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    MatViewRefreshIntervalJob refreshIntervalJob = new MatViewRefreshIntervalJob(main1.getEngine());
+                    drainMatViewIntervalQueue(refreshIntervalJob);
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+
+                    assertSql(
+                            main1,
+                            firstExpected,
+                            "price_1h order by ts, sym"
+                    );
+                }
+            }
+
+            testClock.micros.addAndGet(Timestamps.HOUR_MICROS);
+            try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
+                assertSql(main2, firstExpected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main2, firstExpected, "price_1h order by ts, sym");
+
+                execute(
+                        main2,
+                        "insert into base_price values('gbpusd', 1.333, '2024-09-10T12:10')" +
+                                ",('gbpusd', 1.444, '2024-09-10T13:03')"
+                );
+
+                MatViewRefreshIntervalJob refreshIntervalJob = new MatViewRefreshIntervalJob(main2.getEngine());
+                drainMatViewIntervalQueue(refreshIntervalJob);
+                drainWalAndMatViewQueues(main2.getEngine());
+
+                final String secondExpected = "sym\tprice\tts\n" +
+                        "gbpusd\t1.333\t2024-09-10T12:00:00.000000Z\n" +
+                        "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                        "gbpusd\t1.444\t2024-09-10T13:00:00.000000Z\n";
+
+                assertSql(main2, secondExpected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main2, secondExpected, "price_1h order by ts, sym");
+            }
+        });
+    }
+
+    @Test
+    public void testRefreshIntervalMatViewsReloadOnServerStart2() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String startStr = "2024-12-12T00:00:00.000000Z";
+            final long start = TimestampFormatUtils.parseUTCTimestamp(startStr);
+            // Set the clock to an earlier timestamp.
+            final TestMicrosecondClock testClock = new TestMicrosecondClock(start - Timestamps.DAY_MICROS);
+
+            // Interval refresh should not kick in during the first server start.
+            final String firstExpected = "sym\tprice\tts\n";
+
+            try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
+                execute(
+                        main1,
+                        "create table base_price (" +
+                                "sym varchar, price double, ts timestamp" +
+                                ") timestamp(ts) partition by DAY WAL"
+                );
+
+                execute(
+                        main1,
+                        "create materialized view price_1h refresh interval start '" + startStr + "' every 1h as (" +
+                                "select sym, last(price) as price, ts from base_price sample by 1h" +
+                                ") partition by DAY"
+                );
+
+                execute(
+                        main1,
+                        "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                                ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                                ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                                ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                );
+
+                try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    MatViewRefreshIntervalJob refreshIntervalJob = new MatViewRefreshIntervalJob(main1.getEngine());
+                    drainMatViewIntervalQueue(refreshIntervalJob);
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+
+                    assertSql(
+                            main1,
+                            firstExpected,
+                            "price_1h order by ts, sym"
+                    );
+                }
+            }
+
+            // Now the interval refresh should happen.
+            testClock.micros.set(start);
+            try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
+                assertSql(main2, firstExpected, "price_1h order by ts, sym");
+
+                MatViewRefreshIntervalJob refreshIntervalJob = new MatViewRefreshIntervalJob(main2.getEngine());
+                drainMatViewIntervalQueue(refreshIntervalJob);
+                drainWalAndMatViewQueues(main2.getEngine());
+
+                final String secondExpected = "sym\tprice\tts\n" +
+                        "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                        "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                        "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n";
+
+                assertSql(main2, secondExpected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main2, secondExpected, "price_1h order by ts, sym");
+            }
+        });
+    }
+
     private static void assertSql(TestServerMain serverMain, final String expected, final String sql) {
         serverMain.assertSql(sql, expected);
     }
@@ -566,6 +715,25 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
     private static void execute(TestServerMain serverMain, final String sql) {
         serverMain.ddl(sql);
+    }
+
+    private static Bootstrap newBootstrapWithClock(MicrosecondClock microsecondClock, Map<String, String> envs) {
+        Map<String, String> env = new HashMap<>(System.getenv());
+        env.putAll(envs);
+        return new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public Map<String, String> getEnv() {
+                        return env;
+                    }
+                },
+                getServerMainArgs()
+        ) {
+            @Override
+            public MicrosecondClock getMicrosecondClock() {
+                return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
+            }
+        };
     }
 
     @NotNull
@@ -580,14 +748,31 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         );
     }
 
+    @NotNull
+    private static TestServerMain startMainPortsDisabled(MicrosecondClock microsecondClock) {
+        return startWithEnvVariables0(
+                microsecondClock,
+                PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
+                PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
+                PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
+                PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
+                PropertyKey.PG_ENABLED.getEnvVarName(), "false"
+        );
+    }
+
     private static TestServerMain startWithEnvVariables0(String... envs) {
+        return startWithEnvVariables0(null, envs);
+    }
+
+    private static TestServerMain startWithEnvVariables0(MicrosecondClock microsecondClock, String... envs) {
         assert envs.length % 2 == 0;
 
         Map<String, String> envMap = new HashMap<>();
         for (int i = 0; i < envs.length; i += 2) {
             envMap.put(envs[i], envs[i + 1]);
         }
-        TestServerMain serverMain = new TestServerMain(newBootstrapWithEnvVariables(envMap)) {
+        TestServerMain serverMain = new TestServerMain(newBootstrapWithClock(microsecondClock, envMap)) {
             @Override
             protected void setupMatViewJobs(
                     WorkerPool workerPool,
@@ -650,5 +835,18 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         HTTP,
         UDP,
         TCP
+    }
+
+    private static class TestMicrosecondClock implements MicrosecondClock {
+        AtomicLong micros;
+
+        public TestMicrosecondClock(long micros) {
+            this.micros = new AtomicLong(micros);
+        }
+
+        @Override
+        public long getTicks() {
+            return micros.get();
+        }
     }
 }
