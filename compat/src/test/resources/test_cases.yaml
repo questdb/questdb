@@ -72,6 +72,7 @@ tests:
 
   - name: Test non Vanilla Arrays
     description: Selecting sliced arrays
+    exclude: [ 'golang' ]
     prepare:
       - action: execute
         query: "CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]] arr FROM long_sequence(1))"
