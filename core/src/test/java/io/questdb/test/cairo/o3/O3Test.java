@@ -3448,7 +3448,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 30, 1) varc," +
                         " rnd_varchar(1, 1, 0) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -3470,7 +3470,7 @@ public class O3Test extends AbstractO3Test {
         engine.execute("alter table x add column v13 long256", sqlExecutionContext);
         engine.execute("alter table x add column v14 varchar", sqlExecutionContext);
         engine.execute("alter table x add column v15 varchar", sqlExecutionContext);
-        engine.execute("alter table x add column arr2 double[][]", sqlExecutionContext);
+        engine.execute("alter table x add column arr2 double[]", sqlExecutionContext);
 
         engine.execute("create table w as (select * from x)", sqlExecutionContext);
 
@@ -3498,7 +3498,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 30, 1) varc," +
                         " rnd_varchar(1, 1, 0) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         // ---- new columns ----
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -3516,7 +3516,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() v13," +
                         " rnd_varchar(1, 30, 1) v14," +
                         " rnd_varchar(1, 1, 0) v15," +
-                        " rnd_double_array(2,1) arr2," +
+                        " rnd_double_array(1,1) arr2," +
                         " from long_sequence(1000)" +
                         ")",
                 sqlExecutionContext
@@ -3546,7 +3546,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 30, 1) varc," +
                         " rnd_varchar(1, 1, 0) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         // --------- new columns -----------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -3564,7 +3564,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() v13," +
                         " rnd_varchar(1, 30, 1) v14," +
                         " rnd_varchar(1, 1, 0) v15," +
-                        " rnd_double_array(2,1) arr2," +
+                        " rnd_double_array(1,1) arr2," +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -3586,9 +3586,8 @@ public class O3Test extends AbstractO3Test {
     private static void testColumnTopMidDataMergeData0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext ectx
+            SqlExecutionContext executionContext
     ) throws SqlException {
-
         engine.execute(
                 "create table x as (" +
                         "select" +
@@ -3612,30 +3611,30 @@ public class O3Test extends AbstractO3Test {
                         " rnd_char() t," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
-                ectx
+                executionContext
         );
 
-        engine.execute("alter table x add column v double", ectx);
-        engine.execute("alter table x add column v1 float", ectx);
-        engine.execute("alter table x add column v2 int", ectx);
-        engine.execute("alter table x add column v3 byte", ectx);
-        engine.execute("alter table x add column v4 short", ectx);
-        engine.execute("alter table x add column v5 boolean", ectx);
-        engine.execute("alter table x add column v6 date", ectx);
-        engine.execute("alter table x add column v7 timestamp", ectx);
-        engine.execute("alter table x add column v8 symbol", ectx);
-        engine.execute("alter table x add column v10 char", ectx);
-        engine.execute("alter table x add column v11 string", ectx);
-        engine.execute("alter table x add column v12 binary", ectx);
-        engine.execute("alter table x add column v9 long", ectx);
-        engine.execute("alter table x add column v13 varchar", ectx);
-        engine.execute("alter table x add column v14 varchar", ectx);
-        engine.execute("alter table x add column arr2 double[][]", ectx);
+        engine.execute("alter table x add column v double", executionContext);
+        engine.execute("alter table x add column v1 float", executionContext);
+        engine.execute("alter table x add column v2 int", executionContext);
+        engine.execute("alter table x add column v3 byte", executionContext);
+        engine.execute("alter table x add column v4 short", executionContext);
+        engine.execute("alter table x add column v5 boolean", executionContext);
+        engine.execute("alter table x add column v6 date", executionContext);
+        engine.execute("alter table x add column v7 timestamp", executionContext);
+        engine.execute("alter table x add column v8 symbol", executionContext);
+        engine.execute("alter table x add column v10 char", executionContext);
+        engine.execute("alter table x add column v11 string", executionContext);
+        engine.execute("alter table x add column v12 binary", executionContext);
+        engine.execute("alter table x add column v9 long", executionContext);
+        engine.execute("alter table x add column v13 varchar", executionContext);
+        engine.execute("alter table x add column v14 varchar", executionContext);
+        engine.execute("alter table x add column arr2 double[]", executionContext);
 
-        engine.execute("create table w as (select * from x)", ectx);
+        engine.execute("create table w as (select * from x)", executionContext);
 
         engine.execute(
                 "create table append1 as ( " +
@@ -3660,7 +3659,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_char() t," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
 //        --------     new columns here ---------------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -3677,10 +3676,10 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long() v9," +
                         " rnd_varchar(1, 40, 1) v13," +
                         " rnd_varchar(1, 1, 1) v14," +
-                        " rnd_double_array(2,1) arr2," +
+                        " rnd_double_array(1,1) arr2," +
                         " from long_sequence(1000)" +
                         ")",
-                ectx
+                executionContext
         );
 
         engine.execute(
@@ -3706,7 +3705,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_char() t," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
 //        --------     new columns here ---------------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -3723,27 +3722,27 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long() v9," +
                         " rnd_varchar(1, 40, 1) v13," +
                         " rnd_varchar(1, 1, 1) v14," +
-                        " rnd_double_array(2,1) arr2," +
+                        " rnd_double_array(1,1) arr2," +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
-                ectx
+                executionContext
         );
 
-        engine.execute("insert into x select * from append1", ectx);
+        engine.execute("insert into x select * from append1", executionContext);
 
-        TestUtils.printSql(compiler, ectx, "select count() from (x union all append2)", sink2);
-        TestUtils.printSql(compiler, ectx, "select max(ts) from (x union all append2)", sink);
+        TestUtils.printSql(compiler, executionContext, "select count() from (x union all append2)", sink2);
+        TestUtils.printSql(compiler, executionContext, "select max(ts) from (x union all append2)", sink);
         final String expectedMaxTimestamp = Chars.toString(sink);
 
         assertO3DataConsistencyStableSort(
                 engine,
                 compiler,
-                ectx,
+                executionContext,
                 "create table y as (select * from w union all append1 union all append2)",
                 "insert into x select * from append2"
         );
 
-        assertXCount(compiler, ectx);
+        assertXCount(compiler, executionContext);
 
         assertMaxTimestamp(
                 engine,
@@ -4846,7 +4845,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(0)" +
                         "), index(sym) timestamp (ts) partition by MONTH",
                 sqlExecutionContext
@@ -4878,7 +4877,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(2096128)" +
                         ")",
                 sqlExecutionContext
@@ -6160,7 +6159,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(1000)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -6192,7 +6191,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(100)" +
                         ")",
                 sqlExecutionContext
@@ -6221,7 +6220,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(100)" +
                         ")",
                 sqlExecutionContext
@@ -6302,7 +6301,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(1000)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -6334,7 +6333,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(1000)" +
                         ")",
                 sqlExecutionContext
@@ -6364,7 +6363,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -6428,7 +6427,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(1000)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -6460,7 +6459,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(1000)" +
                         ")",
                 sqlExecutionContext
@@ -6490,7 +6489,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -6754,7 +6753,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 30, 1) varc," +
                         " rnd_varchar(1, 1, 0) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -6785,7 +6784,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 30, 1) varc," +
                         " rnd_varchar(1, 1, 0) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(500)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -6814,7 +6813,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 30, 1) varc," +
                         " rnd_varchar(1, 1, 0) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(3000)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -6982,7 +6981,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(1500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -7016,7 +7015,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(100)" +
                         ")",
                 sqlExecutionContext
@@ -7046,7 +7045,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -7095,7 +7094,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long256() l256," +
                         " rnd_varchar(1, 1, 1) varc," +
                         " rnd_varchar(1, 40, 1) varc2," +
-                        " rnd_double_array(2,1) arr," +
+                        " rnd_double_array(1,1) arr," +
                         " from long_sequence(1000)" +
                         ")",
                 sqlExecutionContext
@@ -7122,8 +7121,11 @@ public class O3Test extends AbstractO3Test {
         assertIndexConsistencySink(compiler, sqlExecutionContext);
     }
 
-    private static void testPartitionedOOONullSetters0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext)
-            throws SqlException, NumericException {
+    private static void testPartitionedOOONullSetters0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, NumericException {
         engine.execute("create table x (a int, b int, c int, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
         try (TableWriter w = TestUtils.getWriter(engine, "x")) {
             TableWriter.Row r;
