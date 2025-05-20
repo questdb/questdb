@@ -511,7 +511,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             if (rowsCommitted == 0) {
                 // No data was written, but we should mark the view as refreshed anyway.
                 refreshFinishTimestamp = microsecondClock.getTicks();
-                walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp, 0, 0);
+                walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp);
             }
             state.refreshSuccess(factory, copier, walWriter.getMetadata().getMetadataVersion(), refreshFinishTimestamp, refreshTriggerTimestamp, baseTableTxn);
             state.setLastRefreshBaseTableTxn(baseTableTxn);

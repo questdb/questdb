@@ -5967,11 +5967,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 if (isCommitReplaceMode() && srcDataOldPartitionSize > 0 && srcDataNewPartitionSize < srcDataOldPartitionSize) {
-                    if (!partitionMutates) {
-                        // Replace resulted in trimming the partition.
-                        // Now trim the column tops so that don't exceed the partition size
-                        o3ConsumePartitionUpdateSink_trimPartitionColumnTops(partitionTimestamp, srcDataNewPartitionSize);
-                    }
+                    // Replace resulted in trimming the partition.
+                    // Now trim the column tops so that don't exceed the partition size
+                    o3ConsumePartitionUpdateSink_trimPartitionColumnTops(partitionTimestamp, srcDataNewPartitionSize);
 
                     if (partitionTimestamp == lastPartitionTimestamp) {
                         // Recalculate max timestamp
