@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Chars;
@@ -114,11 +115,11 @@ public class PartitionByTest {
 
     @Test
     public void testAddCeilFloorNone() {
-        PartitionBy.PartitionAddMethod addMethod = PartitionBy.getPartitionAddMethod(PartitionBy.NONE);
+        PartitionBy.PartitionAddMethod addMethod = PartitionBy.getPartitionAddMethod(ColumnType.TIMESTAMP, PartitionBy.NONE);
         Assert.assertNull(addMethod);
-        PartitionBy.PartitionFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(PartitionBy.NONE);
+        PartitionBy.PartitionFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, PartitionBy.NONE);
         Assert.assertNull(floorMethod);
-        PartitionBy.PartitionCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(PartitionBy.NONE);
+        PartitionBy.PartitionCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, PartitionBy.NONE);
         Assert.assertNull(ceilMethod);
     }
 
@@ -169,7 +170,7 @@ public class PartitionByTest {
             long timestamp = start + i * Timestamps.DAY_MICROS;
             String date = Timestamps.toString(timestamp);
 
-            long ceil = PartitionBy.getPartitionCeilMethod(PartitionBy.WEEK).ceil(timestamp);
+            long ceil = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, PartitionBy.WEEK).ceil(timestamp);
             String ceilDate = Timestamps.toString(ceil);
             String message = "ceil(" + date + ")=" + ceilDate;
 
@@ -279,8 +280,8 @@ public class PartitionByTest {
     @SuppressWarnings("ConstantConditions")
     @Test
     public void testFloorWeek() {
-        long floor1 = PartitionBy.getPartitionFloorMethod(PartitionBy.WEEK).floor(0);
-        long floor2 = PartitionBy.getPartitionFloorMethod(PartitionBy.WEEK).floor(floor1);
+        long floor1 = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, PartitionBy.WEEK).floor(0);
+        long floor2 = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, PartitionBy.WEEK).floor(floor1);
         Assert.assertEquals(floor1, floor2);
     }
 
@@ -292,7 +293,7 @@ public class PartitionByTest {
             long timestamp = start + i * Timestamps.DAY_MICROS;
             String date = Timestamps.toString(timestamp);
 
-            long floor = PartitionBy.getPartitionFloorMethod(PartitionBy.WEEK).floor(timestamp);
+            long floor = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, PartitionBy.WEEK).floor(timestamp);
             String floorDate = Timestamps.toString(floor);
             String message = "floor(" + date + ")=" + floorDate;
 
@@ -425,8 +426,8 @@ public class PartitionByTest {
 
     @Test
     public void testPartitionDayToWeekForWholeYear() throws NumericException {
-        final DateFormat weekFormat = PartitionBy.getPartitionDirFormatMethod(PartitionBy.WEEK);
-        final DateFormat dayFormat = PartitionBy.getPartitionDirFormatMethod(PartitionBy.DAY);
+        final DateFormat weekFormat = PartitionBy.getPartitionDirFormatMethod(ColumnType.TIMESTAMP, PartitionBy.WEEK);
+        final DateFormat dayFormat = PartitionBy.getPartitionDirFormatMethod(ColumnType.TIMESTAMP, PartitionBy.DAY);
         StringSink weekSink = new StringSink();
         StringSink dateSink = new StringSink();
         dateSink.put("2023-");
@@ -502,6 +503,7 @@ public class PartitionByTest {
         sink.put("a/b/");
         PartitionBy.setSinkForPartition(
                 sink,
+                ColumnType.TIMESTAMP,
                 PartitionBy.NONE,
                 TimestampFormatUtils.parseTimestamp("2021-01-01T00:00:00.000000Z")
         );
@@ -575,7 +577,7 @@ public class PartitionByTest {
     public void testUnknowns() {
         try {
             //noinspection ResultOfMethodCallIgnored
-            PartitionBy.getPartitionDirFormatMethod(-1);
+            PartitionBy.getPartitionDirFormatMethod(ColumnType.TIMESTAMP, -1);
             Assert.fail();
         } catch (Exception ignored) {
             TestUtils.assertEquals("UNKNOWN", PartitionBy.toString(-1));
@@ -610,7 +612,7 @@ public class PartitionByTest {
 
     private static void assertFormatAndParse(CharSequence expectedDirName, CharSequence timestampString, int partitionBy) throws NumericException {
         long expected = TimestampFormatUtils.parseTimestamp(timestampString);
-        DateFormat dirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+        DateFormat dirFormatMethod = PartitionBy.getPartitionDirFormatMethod(ColumnType.TIMESTAMP, partitionBy);
         sink.clear();
         dirFormatMethod.format(expected, CommonFormatUtils.EN_LOCALE, null, sink);
         TestUtils.assertEquals(expectedDirName, sink);
@@ -675,6 +677,7 @@ public class PartitionByTest {
         sink.put("a/b/");
         PartitionBy.setSinkForPartition(
                 sink,
+                ColumnType.TIMESTAMP,
                 partitionBy,
                 TimestampFormatUtils.parseTimestamp(timestamp)
         );
@@ -689,6 +692,7 @@ public class PartitionByTest {
         sink.put("a/b/");
         PartitionBy.setSinkForPartition(
                 sink,
+                ColumnType.TIMESTAMP,
                 partitionBy,
                 TimestampFormatUtils.parseTimestamp(timestamp)
         );
@@ -705,13 +709,13 @@ public class PartitionByTest {
         final long partitionTimestamp = TimestampFormatUtils.parseTimestamp(partitionTimestampStr);
         final long midPartitionTimestamp = TimestampFormatUtils.parseTimestamp(midPartitionTimestampStr);
 
-        PartitionBy.PartitionAddMethod addMethod = PartitionBy.getPartitionAddMethod(partitionBy);
+        PartitionBy.PartitionAddMethod addMethod = PartitionBy.getPartitionAddMethod(ColumnType.TIMESTAMP, partitionBy);
         Assert.assertNotNull(addMethod);
 
-        PartitionBy.PartitionFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
+        PartitionBy.PartitionFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, partitionBy);
         Assert.assertNotNull(floorMethod);
 
-        PartitionBy.PartitionCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
+        PartitionBy.PartitionCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, partitionBy);
         Assert.assertNotNull(ceilMethod);
 
         Assert.assertEquals(expectedNextPartitionTimestamp, addMethod.calculate(partitionTimestamp, 1));
@@ -733,7 +737,7 @@ public class PartitionByTest {
 
     private void testDaySplitFuzz(int partitionBy, long multiplier, Rnd rnd) {
         StringSink tsSink = new StringSink();
-        DateFormat formatter = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+        DateFormat formatter = PartitionBy.getPartitionDirFormatMethod(ColumnType.TIMESTAMP, partitionBy);
 
         for (int i = 0; i < 10; i++) {
             long timestamp = rnd.nextLong(3000 * Timestamps.DAY_MICROS * 365L / multiplier);

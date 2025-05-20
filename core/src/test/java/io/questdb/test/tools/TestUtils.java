@@ -1023,14 +1023,28 @@ public final class TestUtils {
     }
 
     public static String createPopulateTableStmt(
-            CharSequence tableName, TableModel tableModel,
-            int totalRows, String startDate, int partitionCount
+            CharSequence tableName,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
     ) throws NumericException {
         long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
-        long increment = partitionIncrement(tableModel.getPartitionBy(), fromTimestamp, totalRows, partitionCount);
-        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
+        int timestampType = TableUtils.getTimestampType(tableModel);
+        int partitionBy = tableModel.getPartitionBy();
+        long increment = partitionIncrement(
+                timestampType,
+                partitionBy,
+                fromTimestamp,
+                totalRows,
+                partitionCount
+        );
+        if (PartitionBy.isPartitioned(partitionBy)) {
             final PartitionBy.PartitionAddMethod partitionAddMethod =
-                    PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
+                    PartitionBy.getPartitionAddMethod(
+                            timestampType,
+                            partitionBy
+                    );
             assert partitionAddMethod != null;
             long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
             increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
@@ -1433,10 +1447,19 @@ public final class TestUtils {
     }
 
     public static String insertFromSelectPopulateTableStmt(
-            TableModel tableModel, int totalRows, String startDate, int partitionCount
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
     ) throws NumericException {
         long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
-        long increment = partitionIncrement(tableModel.getPartitionBy(), fromTimestamp, totalRows, partitionCount);
+        long increment = partitionIncrement(
+                TableUtils.getTimestampType(tableModel),
+                tableModel.getPartitionBy(),
+                fromTimestamp,
+                totalRows,
+                partitionCount
+        );
 
         StringBuilder insertFromSelect = new StringBuilder();
         insertFromSelect.append("INSERT ATOMIC INTO ")
@@ -2078,10 +2101,10 @@ public final class TestUtils {
         return ss;
     }
 
-    private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
+    private static long partitionIncrement(int timestampType, int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
         long increment = 0;
         if (PartitionBy.isPartitioned(partitionBy)) {
-            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(partitionBy);
+            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(timestampType, partitionBy);
             assert partitionAddMethod != null;
             long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
             increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;

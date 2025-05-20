@@ -186,7 +186,7 @@ public class ColumnPurgeOperator implements Closeable {
                 }
 
                 path.trimTo(pathTableLen).concat(TXN_FILE_NAME);
-                txReader.ofRO(path.$(), task.getPartitionBy());
+                txReader.ofRO(path.$(), task.getTimestampType(), task.getPartitionBy());
                 txReader.unsafeLoadAll();
                 if (txReader.getTruncateVersion() != task.getTruncateVersion()) {
                     LOG.info().$("cannot purge, purge request overlaps with truncate [path=").$(path.trimTo(pathTableLen)).I$();
@@ -224,7 +224,7 @@ public class ColumnPurgeOperator implements Closeable {
                     int pathTrimToPartition;
                     CharSequence columnName = task.getColumnName();
                     if (!isSymbolRootFiles) {
-                        setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
+                        setUpPartitionPath(task.getTimestampType(), task.getPartitionBy(), partitionTimestamp, partitionTxnName);
                         pathTrimToPartition = path.size();
                         TableUtils.dFile(path, columnName, columnVersion);
                     } else {
@@ -274,7 +274,12 @@ public class ColumnPurgeOperator implements Closeable {
                         // we would have mutated the path by checking the state of the table
                         // we will have to re-set up that
                         if (!isSymbolRootFiles) {
-                            setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
+                            setUpPartitionPath(
+                                    task.getTimestampType(),
+                                    task.getPartitionBy(),
+                                    partitionTimestamp,
+                                    partitionTxnName
+                            );
                         } else {
                             path.trimTo(pathTableLen);
                         }
@@ -394,6 +399,7 @@ public class ColumnPurgeOperator implements Closeable {
         long partitionNameTxn = purgeLogWriter.getPartitionNameTxn(partitionIndex);
         TableUtils.setPathForNativePartition(
                 path,
+                purgeLogWriter.getMetadata().getTimestampType(),
                 purgeLogWriter.getPartitionBy(),
                 partitionTimestamp,
                 partitionNameTxn
@@ -450,9 +456,9 @@ public class ColumnPurgeOperator implements Closeable {
         pathTableLen = path.size();
     }
 
-    private void setUpPartitionPath(int partitionBy, long partitionTimestamp, long partitionTxnName) {
+    private void setUpPartitionPath(int timestampType, int partitionBy, long partitionTimestamp, long partitionTxnName) {
         path.trimTo(pathTableLen);
-        TableUtils.setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionTxnName);
+        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionTxnName);
     }
 
     public enum ScoreboardUseMode {

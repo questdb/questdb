@@ -114,7 +114,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             partitionIndex = rnd.nextInt(xr.getPartitionCount() - 1);
             partitionTs = xr.getPartitionTimestampByIndex(partitionIndex);
             int partitionBy = xr.getPartitionedBy();
-            PartitionBy.setSinkForPartition(stringSink, partitionBy, partitionTs);
+            PartitionBy.setSinkForPartition(stringSink, xr.getMetadata().getTimestampType(), partitionBy, partitionTs);
             engine.execute("alter table x convert partition to parquet list '" + stringSink + "'", sqlExecutionContext);
         }
 
@@ -133,7 +133,13 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             String partitionName = stringSink.toString();
 
             Path parquet = Path.getThreadLocal(root).concat(tt.getDirName());
-            TableUtils.setPathForParquetPartition(parquet, xw.getPartitionBy(), partitionTs, xw.getPartitionNameTxnByPartitionTimestamp(partitionTs));
+            TableUtils.setPathForParquetPartition(
+                    parquet,
+                    xw.getMetadata().getTimestampType(),
+                    xw.getPartitionBy(),
+                    partitionTs,
+                    xw.getPartitionNameTxnByPartitionTimestamp(partitionTs)
+            );
 
             final long fileSize = Files.length(parquet.$());
             final long checksumBefore = calcChecksum(parquet.toString(), fileSize);
@@ -175,7 +181,13 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             xw.commit();
 
             Path parquet2 = Path.getThreadLocal(root).concat(tt.getDirName());
-            TableUtils.setPathForParquetPartition(parquet2, xw.getPartitionBy(), partitionTs, xw.getPartitionNameTxnByPartitionTimestamp(partitionTs));
+            TableUtils.setPathForParquetPartition(
+                    parquet2,
+                    xw.getMetadata().getTimestampType(),
+                    xw.getPartitionBy(),
+                    partitionTs,
+                    xw.getPartitionNameTxnByPartitionTimestamp(partitionTs)
+            );
 
             final long fileSize2 = Files.length(parquet2.$());
             Assert.assertTrue(fileSize2 >= fileSize);

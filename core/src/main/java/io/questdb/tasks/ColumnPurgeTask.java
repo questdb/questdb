@@ -42,6 +42,7 @@ public class ColumnPurgeTask implements Mutable {
     private int partitionBy;
     private int tableId;
     private TableToken tableName;
+    private int timestampType;
     private long truncateVersion;
     private long updateTxn;
 
@@ -62,6 +63,7 @@ public class ColumnPurgeTask implements Mutable {
         this.tableName = inTask.tableName;
         this.columnName = inTask.columnName;
         this.tableId = inTask.tableId;
+        this.timestampType = inTask.timestampType;
         this.partitionBy = inTask.partitionBy;
         this.updateTxn = inTask.updateTxn;
         this.columnType = inTask.columnType;
@@ -90,6 +92,10 @@ public class ColumnPurgeTask implements Mutable {
         return tableName;
     }
 
+    public int getTimestampType() {
+        return timestampType;
+    }
+
     public long getTruncateVersion() {
         return truncateVersion;
     }
@@ -113,6 +119,7 @@ public class ColumnPurgeTask implements Mutable {
             int tableId,
             long truncateVersion,
             int columnType,
+            int timestampType,
             int partitionBy,
             long updateTxn
     ) {
@@ -120,6 +127,7 @@ public class ColumnPurgeTask implements Mutable {
         this.columnName = columnName;
         this.tableId = tableId;
         this.columnType = columnType;
+        this.timestampType = timestampType;
         this.partitionBy = partitionBy;
         this.updateTxn = updateTxn;
         this.truncateVersion = truncateVersion;
@@ -133,11 +141,12 @@ public class ColumnPurgeTask implements Mutable {
             int tableId,
             int truncateVersion,
             int columnType,
+            int timestampType,
             int partitionBy,
             long updateTxn,
             @Transient LongList columnVersions
     ) {
-        of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
+        of(tableName, columnName, tableId, truncateVersion, columnType, timestampType, partitionBy, updateTxn);
         this.updatedColumnInfo.add(columnVersions);
     }
 
@@ -148,13 +157,14 @@ public class ColumnPurgeTask implements Mutable {
             int tableId,
             int truncateVersion,
             int columnType,
+            int timestampType,
             int partitionBy,
             long updateTxn,
             @Transient LongList columnVersions,
             int columnVersionsLo,
             int columnVersionsHi
     ) {
-        of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
+        of(tableName, columnName, tableId, truncateVersion, columnType, timestampType, partitionBy, updateTxn);
         this.updatedColumnInfo.add(columnVersions, columnVersionsLo, columnVersionsHi);
     }
 }

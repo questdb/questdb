@@ -24,6 +24,7 @@
 
 package io.questdb.test.std.datetime.microtime;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -641,7 +642,7 @@ public class TimestampsTest {
 
     @Test
     public void testParseWW() throws NumericException {
-        DateFormat byWeek = getPartitionDirFormatMethod(PartitionBy.WEEK);
+        DateFormat byWeek = getPartitionDirFormatMethod(ColumnType.TIMESTAMP, PartitionBy.WEEK);
         try {
             byWeek.parse("2020-W00", EN_LOCALE);
             Assert.fail("ISO Week 00 is invalid");

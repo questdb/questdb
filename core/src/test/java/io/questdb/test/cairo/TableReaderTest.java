@@ -2876,7 +2876,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());
 
-                DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(PartitionBy.DAY);
+                DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(writer.getMetadata().getTimestampType(), PartitionBy.DAY);
                 assert fmt != null;
                 final long timestamp = fmt.parse("2017-12-14", EN_LOCALE);
 
@@ -4256,7 +4256,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals(expectedSize, totalCount);
 
-                    DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+                    DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(reader.getMetadata().getTimestampType(), partitionBy);
                     Assert.assertTrue(
                             // active partition
                             writer.removePartition(fmt.parse(partitionNameToDelete, EN_LOCALE))
@@ -4310,7 +4310,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());
 
-                DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+                DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(writer.getMetadata().getTimestampType(), partitionBy);
                 final long timestamp = fmt.parse(partitionNameToDelete, EN_LOCALE);
 
                 Assert.assertTrue(writer.removePartition(timestamp));
@@ -4392,7 +4392,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals(N * N_PARTITIONS, totalCount);
 
-                    DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+                    DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(reader.getMetadata().getTimestampType(), partitionBy);
                     Assert.assertTrue(
                             writer.removePartition(fmt.parse(partitionNameToDelete, EN_LOCALE))
                     );

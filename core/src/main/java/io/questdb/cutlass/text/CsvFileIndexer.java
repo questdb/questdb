@@ -336,6 +336,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
             CharSequence inputFileName,
             CharSequence importRoot,
             int index,
+            int timestampType,
             int partitionBy,
             byte columnDelimiter,
             int timestampIndex,
@@ -346,8 +347,8 @@ public class CsvFileIndexer implements Closeable, Mutable {
     ) {
         this.inputFileName = inputFileName;
         this.importRoot = importRoot;
-        this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
-        this.partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+        this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(timestampType, partitionBy);
+        this.partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy);
         this.offset = 0;
         this.columnDelimiter = columnDelimiter;
         this.columnDelimiterMask = SwarUtils.broadcast(columnDelimiter);

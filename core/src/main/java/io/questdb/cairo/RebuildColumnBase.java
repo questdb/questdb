@@ -104,7 +104,12 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         }
     }
 
-    public void reindexAfterUpdate(FilesFacade ff, long partitionTimestamp, CharSequence columnName, TableWriter tableWriter) {
+    public void reindexAfterUpdate(
+            FilesFacade ff,
+            long partitionTimestamp,
+            CharSequence columnName,
+            TableWriter tableWriter
+    ) {
         TxReader txReader = tableWriter.getTxReader();
         int partitionIndex = txReader.getPartitionIndex(partitionTimestamp);
         assert partitionIndex > -1L;
@@ -130,6 +135,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 partitionNameTxn,
                 partitionSize,
                 partitionTimestamp,
+                tableWriter.getMetadata().getTimestampType(),
                 tableWriter.getPartitionBy(),
                 indexValueBlockCapacity
         );
@@ -165,6 +171,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 partitionNameTxn,
                 partitionSize,
                 partitionTimestamp,
+                metadata.getTimestampType(),
                 partitionBy,
                 metadata.getIndexValueBlockCapacity(columnIndex)
         );
@@ -204,7 +211,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             path.trimTo(rootLen);
             final int partitionBy = metadata.getPartitionBy();
 
-            try (TxReader txReader = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy)) {
+            try (TxReader txReader = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), metadata.getTimestampType(), partitionBy)) {
                 txReader.unsafeLoadAll();
                 path.trimTo(rootLen);
 
@@ -354,6 +361,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             long partitionNameTxn,
             long partitionSize,
             long partitionTimestamp,
+            int timestampType,
             int partitionBy,
             int indexValueBlockCapacity
     );

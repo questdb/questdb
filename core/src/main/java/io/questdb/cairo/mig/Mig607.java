@@ -231,6 +231,7 @@ final class Mig607 {
                         long txSuffix = txMem.getLong(MigrationActions.prefixedBlockOffset(partitionDataOffset, 2, Long.BYTES));
                         setPathForNativePartition(
                                 path.trimTo(plen),
+                                ColumnType.TIMESTAMP,
                                 partitionBy,
                                 txMem.getLong(partitionDataOffset),
                                 txSuffix

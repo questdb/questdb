@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.mig;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryARW;
@@ -74,17 +75,17 @@ final class Mig506 {
         long maxTimestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
         long transientCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
 
-        final PartitionBy.PartitionFloorMethod partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
+        final PartitionBy.PartitionFloorMethod partitionFloorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, partitionBy);
         assert partitionFloorMethod != null;
 
-        final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(partitionBy);
+        final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(ColumnType.TIMESTAMP, partitionBy);
         assert partitionAddMethod != null;
 
         final long tsLimit = partitionFloorMethod.floor(maxTimestamp);
 
         for (long ts = partitionFloorMethod.floor(minTimestamp); ts < tsLimit; ts = partitionAddMethod.calculate(ts, 1)) {
             path.trimTo(rootLen);
-            TableUtils.setPathForNativePartition(path, partitionBy, ts, -1);
+            TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, partitionBy, ts, -1);
             if (ff.exists(path.concat(TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME).$())) {
                 if (!removedPartitionsIncludes(ts, txMem, symbolsCount)) {
                     long partitionSize = TableUtils.readLongAtOffset(ff, path.$(), tempMem8b, 0);

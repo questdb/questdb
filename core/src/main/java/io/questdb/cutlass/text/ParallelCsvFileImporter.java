@@ -178,6 +178,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     // input params end
     // index of timestamp column in input file
     private int timestampIndex;
+    private int timestampType;
     private TableWriter writer;
 
     public ParallelCsvFileImporter(CairoEngine cairoEngine, int workerCount) {
@@ -349,6 +350,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         tableToken = null;
         timestampColumn = null;
         timestampIndex = -1;
+        timestampType = ColumnType.TIMESTAMP;
         partitionBy = -1;
         columnDelimiter = -1;
         timestampAdapter = null;
@@ -409,6 +411,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
         this.forceHeader = forceHeader;
         this.timestampIndex = -1;
+        this.timestampType = ColumnType.TIMESTAMP;
         this.status = CopyTask.STATUS_STARTED;
         this.phase = CopyTask.PHASE_SETUP;
         this.targetTableStatus = -1;
@@ -599,6 +602,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             colIdx,
                             inputFileName,
                             importRoot,
+                            timestampType,
                             partitionBy,
                             columnDelimiter,
                             timestampIndex,
@@ -1195,7 +1199,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 metadata.getWriterIndex(columnIndex),
                                 tmpTableSymbolColumnIndex,
                                 tmpTableCount,
-                                partitionBy
+                                partitionBy,
+                                timestampType
                         );
                         pubSeq.done(seq);
                         queuedCount++;
@@ -1223,7 +1228,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
             tmpPath.of(importRoot).concat(tableToken.getTableName()).put('_').put(t);
 
-            try (TxReader txFile = new TxReader(ff).ofRO(tmpPath.concat(TXN_FILE_NAME).$(), partitionBy)) {
+            try (TxReader txFile = new TxReader(ff).ofRO(tmpPath.concat(TXN_FILE_NAME).$(), timestampType, partitionBy)) {
                 txFile.unsafeLoadAll();
                 final int partitionCount = txFile.getPartitionCount();
 
@@ -1340,7 +1345,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             totalSizes.add(size);
         }
 
-        DateFormat dirFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+        // for now CSV importer supports
+        DateFormat dirFormat = PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy);
 
         for (int i = 0, n = distinctKeys.size(); i < n; i++) {
             long key = distinctKeys.getQuick(i);
@@ -1422,6 +1428,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             for (int i = 0, n = names.size(); i < n; i++) {
                 if (Chars.equalsIgnoreCase(names.get(i), timestampColumn)) {
                     timestampIndex = i;
+                    timestampType = ColumnType.TIMESTAMP;
                     break;
                 }
             }

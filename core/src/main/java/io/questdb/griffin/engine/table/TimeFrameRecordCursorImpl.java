@@ -148,7 +148,10 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
         recordA.of(frameCursor);
         recordB.of(frameCursor);
         partitionHi = reader.getPartitionCount();
-        partitionCeilMethod = PartitionBy.getPartitionCeilMethod(reader.getPartitionedBy());
+        partitionCeilMethod = PartitionBy.getPartitionCeilMethod(
+                reader.getMetadata().getTimestampType(),
+                reader.getPartitionedBy()
+        );
         isFrameCacheBuilt = false;
         toTop();
         return this;

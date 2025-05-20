@@ -65,6 +65,7 @@ public class DropIndexOperator {
     }
 
     public void executeDropIndex(String columnName, int columnIndex) {
+        int timestampType = tableWriter.getMetadata().getTimestampType();
         int partitionBy = tableWriter.getPartitionBy();
         int partitionCount = tableWriter.getPartitionCount();
         try {
@@ -85,9 +86,9 @@ public class DropIndexOperator {
                         final long columnDropIndexVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
                         // create hard link to column data
                         // src
-                        partitionDFile(path, rootLen, partitionBy, pTimestamp, pVersion, columnName, columnVersion);
+                        partitionDFile(path, rootLen, timestampType, partitionBy, pTimestamp, pVersion, columnName, columnVersion);
                         // hard link
-                        partitionDFile(other, rootLen, partitionBy, pTimestamp, pVersion, columnName, columnDropIndexVersion);
+                        partitionDFile(other, rootLen, timestampType, partitionBy, pTimestamp, pVersion, columnName, columnDropIndexVersion);
                         if (ff.hardLink(path.$(), other.$()) == -1) {
                             throw CairoException.critical(ff.errno())
                                     .put("cannot hardLink [src=").put(path)
@@ -112,7 +113,7 @@ public class DropIndexOperator {
                     final long columnDropIndexVersion = rollbackColumnVersions.getQuick(i + 1);
                     final long pTimestamp = rollbackColumnVersions.getQuick(i + 2);
                     final long partitionNameTxn = rollbackColumnVersions.getQuick(i + 3);
-                    partitionDFile(other, rootLen, partitionBy, pTimestamp, partitionNameTxn, columnName, columnDropIndexVersion);
+                    partitionDFile(other, rootLen, timestampType, partitionBy, pTimestamp, partitionNameTxn, columnName, columnDropIndexVersion);
                     if (!ff.removeQuiet(other.$())) {
                         LOG.info().$("Please remove this file \"").$(other).$('"').I$();
                     }
@@ -128,6 +129,7 @@ public class DropIndexOperator {
     private static void partitionDFile(
             Path path,
             int rootLen,
+            int timestampType,
             int partitionBy,
             long partitionTimestamp,
             long partitionNameTxn,
@@ -136,6 +138,7 @@ public class DropIndexOperator {
     ) {
         TableUtils.setPathForNativePartition(
                 path.trimTo(rootLen),
+                timestampType,
                 partitionBy,
                 partitionTimestamp,
                 partitionNameTxn

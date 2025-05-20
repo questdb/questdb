@@ -507,7 +507,7 @@ public class TableUpdateDetails implements Closeable {
                         this.txReader = new TxReader(cairoConfiguration.getFilesFacade());
                     }
                     int pathLen = path.size();
-                    this.txReader.ofRO(path.concat(TXN_FILE_NAME).$(), reader.getPartitionedBy());
+                    this.txReader.ofRO(path.concat(TXN_FILE_NAME).$(), reader.getMetadata().getTimestampType(), reader.getPartitionedBy());
                     path.trimTo(pathLen);
                     this.clean = false;
                 }

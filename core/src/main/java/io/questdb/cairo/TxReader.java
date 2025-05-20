@@ -371,10 +371,10 @@ public class TxReader implements Closeable, Mutable {
         return version;
     }
 
-    public void initRO(MemoryMR txnFile, int partitionBy) {
+    public void initRO(MemoryMR txnFile, int timestampType, int partitionBy) {
         this.roTxMemBase = txnFile;
-        this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
-        this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
+        this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(timestampType, partitionBy);
+        this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(timestampType, partitionBy);
         this.partitionBy = partitionBy;
     }
 
@@ -449,11 +449,11 @@ public class TxReader implements Closeable, Mutable {
         attachedPartitions.addAll(srcReader.attachedPartitions);
     }
 
-    public TxReader ofRO(@Transient LPSZ path, int partitionBy) {
+    public TxReader ofRO(@Transient LPSZ path, int timestampType, int partitionBy) {
         clear();
         try {
             openTxnFile(ff, path);
-            this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
+            this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(timestampType, partitionBy);
             this.partitionBy = partitionBy;
         } catch (Throwable e) {
             close();

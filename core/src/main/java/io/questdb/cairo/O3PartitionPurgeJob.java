@@ -137,13 +137,14 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             CharSequence root,
             TableToken tableToken,
             TxReader txReader,
+            int timestampType,
             int partitionBy
     ) {
         LOG.info().$("processing [table=").utf8(tableToken.getDirName()).I$();
         Path path = Path.getThreadLocal(root).concat(tableToken);
         int plimit = path.size();
         partitionList.clear();
-        DateFormat partitionByFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+        DateFormat partitionByFormat = PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy);
         long p = ff.findFirst(path.$());
         if (p > 0) {
             try {
@@ -172,7 +173,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         TxnScoreboard txnScoreboard = null;
         try {
             txnScoreboard = engine.getTxnScoreboard(tableToken);
-            txReader.ofRO(path.trimTo(tableRootLen).concat(TXN_FILE_NAME).$(), partitionBy);
+            txReader.ofRO(path.trimTo(tableRootLen).concat(TXN_FILE_NAME).$(), timestampType, partitionBy);
             TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
             for (int i = 0; i < n; i += 2) {
@@ -188,6 +189,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                                 txReader,
                                 txnScoreboard,
                                 partitionTimestamp,
+                                timestampType,
                                 partitionBy,
                                 partitionList,
                                 lo,
@@ -208,6 +210,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                         txReader,
                         txnScoreboard,
                         partitionTimestamp,
+                        timestampType,
                         partitionBy,
                         partitionList,
                         lo,
@@ -242,6 +245,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             TxReader txReader,
             TxnScoreboard txnScoreboard,
             long partitionTimestamp,
+            int timestampType,
             int partitionBy,
             DirectLongList partitionList,
             int lo,
@@ -258,7 +262,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             boolean rangeUnlocked = nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
 
             path.trimTo(tableRootLen);
-            TableUtils.setPathForNativePartition(path, partitionBy, partitionTimestamp, nameTxn - 1);
+            TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn - 1);
             path.$();
 
             if (rangeUnlocked) {
@@ -282,6 +286,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             TxReader txReader,
             TxnScoreboard txnScoreboard,
             long partitionTimestamp,
+            int timestampType,
             int partitionBy,
             DirectLongList partitionList,
             int lo,
@@ -297,6 +302,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     txReader,
                     txnScoreboard,
                     partitionTimestamp,
+                    timestampType,
                     partitionBy,
                     partitionList,
                     lo,
@@ -311,6 +317,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     txReader,
                     txnScoreboard,
                     partitionTimestamp,
+                    timestampType,
                     partitionBy,
                     partitionList,
                     lo,
@@ -327,6 +334,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             TxReader txReader,
             TxnScoreboard txnScoreboard,
             long partitionTimestamp,
+            int timestampType,
             int partitionBy,
             DirectLongList partitionList,
             int lo,
@@ -346,7 +354,13 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                         && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion);
 
                 path.trimTo(tableRootLen);
-                TableUtils.setPathForNativePartition(path, partitionBy, partitionTimestamp, previousNameVersion - 1);
+                TableUtils.setPathForNativePartition(
+                        path,
+                        timestampType,
+                        partitionBy,
+                        partitionTimestamp,
+                        previousNameVersion - 1
+                );
                 path.$();
 
                 if (rangeUnlocked) {
@@ -400,6 +414,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 configuration.getDbRoot(),
                 task.getTableToken(),
                 txnReaders.get(workerId),
+                task.getTimestampType(),
                 task.getPartitionBy()
         );
         subSeq.done(cursor);

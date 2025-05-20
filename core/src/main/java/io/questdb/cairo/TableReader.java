@@ -141,7 +141,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .$(", table=").utf8(tableToken.getTableName())
                     .$(", dirName=").utf8(tableToken.getDirName())
                     .I$();
-            txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
+            txFile = new TxReader(ff).ofRO(
+                    path.trimTo(rootLen).concat(TXN_FILE_NAME).$(),
+                    metadata.getTimestampType(),
+                    partitionBy
+            );
             path.trimTo(rootLen);
             reloadSlow(false);
             init();
@@ -191,7 +195,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .$(", dirName=").utf8(tableToken.getDirName())
                     .$(", srcTxn=").$(srcReader.getTxn())
                     .I$();
-            txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
+            txFile = new TxReader(ff).ofRO(
+                    path.trimTo(rootLen).concat(TXN_FILE_NAME).$(),
+                    metadata.getTimestampType(),
+                    partitionBy
+            );
             path.trimTo(rootLen);
             reloadAtTxn(srcReader, false);
             txPartitionVersion = txFile.getPartitionTableVersion();
@@ -652,7 +660,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion && txnScoreboard.isTxnAvailable(txn)) {
                 // The last lock for this txn is released, and this is not the latest txn number
                 // Schedule a job to clean up partition versions this reader may hold
-                if (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, partitionBy)) {
+                if (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, metadata.getTimestampType(), partitionBy)) {
                     return;
                 }
 
@@ -896,6 +904,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void formatErrorPartitionDirName(int partitionIndex, Utf16Sink sink) {
         TableUtils.setSinkForNativePartition(
                 sink,
+                metadata.getTimestampType(),
                 partitionBy,
                 openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
                 -1
@@ -905,6 +914,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void formatNativePartitionDirName(int partitionIndex, Path sink, long nameTxn) {
         TableUtils.setPathForNativePartition(
                 sink,
+                metadata.getTimestampType(),
                 partitionBy,
                 openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
                 nameTxn
@@ -914,6 +924,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void formatParquetPartitionFileName(int partitionIndex, Path sink, long nameTxn) {
         TableUtils.setPathForParquetPartition(
                 sink,
+                metadata.getTimestampType(),
                 partitionBy,
                 openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
                 nameTxn

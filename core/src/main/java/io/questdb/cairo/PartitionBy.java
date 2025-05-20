@@ -111,7 +111,7 @@ public final class PartitionBy {
         return nameToIndexMapUtf8.get(name);
     }
 
-    public static PartitionAddMethod getPartitionAddMethod(int partitionBy) {
+    public static PartitionAddMethod getPartitionAddMethod(int timestampType, int partitionBy) {
         switch (partitionBy) {
             case DAY:
                 return ADD_DD;
@@ -128,7 +128,7 @@ public final class PartitionBy {
         }
     }
 
-    public static PartitionCeilMethod getPartitionCeilMethod(int partitionBy) {
+    public static PartitionCeilMethod getPartitionCeilMethod(int timestampType, int partitionBy) {
         switch (partitionBy) {
             case DAY:
                 return CEIL_DD;
@@ -145,7 +145,7 @@ public final class PartitionBy {
         }
     }
 
-    public static DateFormat getPartitionDirFormatMethod(int partitionBy) {
+    public static DateFormat getPartitionDirFormatMethod(int timestampType, int partitionBy) {
         switch (partitionBy) {
             case DAY:
                 return PARTITION_DAY_FORMAT;
@@ -164,7 +164,7 @@ public final class PartitionBy {
         }
     }
 
-    public static PartitionFloorMethod getPartitionFloorMethod(int partitionBy) {
+    public static PartitionFloorMethod getPartitionFloorMethod(int timestampType, int partitionBy) {
         switch (partitionBy) {
             case DAY:
                 return FLOOR_DD;
@@ -246,9 +246,9 @@ public final class PartitionBy {
         }
     }
 
-    public static void setSinkForPartition(CharSink<?> path, int partitionBy, long timestamp) {
+    public static void setSinkForPartition(CharSink<?> path, int timestampType, int partitionBy, long timestamp) {
         if (partitionBy != PartitionBy.NONE) {
-            getPartitionDirFormatMethod(partitionBy).format(timestamp, EN_LOCALE, null, path);
+            getPartitionDirFormatMethod(timestampType, partitionBy).format(timestamp, EN_LOCALE, null, path);
             return;
         }
         path.putAscii(DEFAULT_PARTITION_NAME);
