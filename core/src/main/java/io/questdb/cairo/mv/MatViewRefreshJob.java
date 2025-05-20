@@ -452,9 +452,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                     while (intervalIterator.next()) {
                         refreshExecutionContext.setRange(intervalIterator.getTimestampLo(), intervalIterator.getTimestampHi());
-                        if (replacementTimestampLo == Long.MIN_VALUE) {
+                        if (replacementTimestampHi != intervalIterator.getTimestampLo()) {
+                            if (rowCount > rowsCommitted) {
+                                // Gap in the refresh intervals, commit the previous batch
+                                refreshFinishTimestamp = microsecondClock.getTicks();
+                                walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
+                                commitTarget = rowCount + batchSize;
+                                rowsCommitted = rowCount;
+                            }
                             replacementTimestampLo = intervalIterator.getTimestampLo();
                         }
+
                         // Interval high and replace range high are both exclusive
                         replacementTimestampHi = intervalIterator.getTimestampHi();
 
@@ -470,7 +478,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             if (rowCount >= commitTarget) {
                                 refreshFinishTimestamp = microsecondClock.getTicks();
                                 walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
-                                replacementTimestampLo = intervalIterator.getTimestampHi();
+                                replacementTimestampLo = replacementTimestampHi;
                                 commitTarget = rowCount + batchSize;
                                 rowsCommitted = rowCount;
                             }

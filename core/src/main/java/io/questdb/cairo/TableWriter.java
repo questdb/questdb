@@ -5967,9 +5967,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 if (isCommitReplaceMode() && srcDataOldPartitionSize > 0 && srcDataNewPartitionSize < srcDataOldPartitionSize) {
-                    // Replace resulted in trimming the partition.
-                    // Now trim the column tops so that don't exceed the partition size
-                    o3ConsumePartitionUpdateSink_trimPartitionColumnTops(partitionTimestamp, srcDataNewPartitionSize);
+                    if (!partitionMutates) {
+                        // Replace resulted in trimming the partition.
+                        // Now trim the column tops so that don't exceed the partition size
+                        o3ConsumePartitionUpdateSink_trimPartitionColumnTops(partitionTimestamp, srcDataNewPartitionSize);
+                    }
 
                     if (partitionTimestamp == lastPartitionTimestamp) {
                         // Recalculate max timestamp
@@ -9190,9 +9192,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryMA auxMem = getSecondaryColumn(columnIndex);
             int columnType = metadata.getColumnType(columnIndex);
             if (columnType > 0) { // Not deleted
-                // Sometimes column tops can be greater than the rows in the partition
-                // this can happen when the partition is split and then the split part is dropped
-//                final long pos = Math.max(0, size - getColumnTop(columnIndex));
                 final long pos = size - getColumnTop(columnIndex);
                 if (ColumnType.isVarSize(columnType)) {
                     ColumnTypeDriver driver = ColumnType.getDriver(columnType);

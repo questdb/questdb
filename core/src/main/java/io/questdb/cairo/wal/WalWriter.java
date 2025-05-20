@@ -314,13 +314,12 @@ public class WalWriter implements TableWriterAPI {
         commit0(Long.MIN_VALUE, Long.MIN_VALUE, 0, 0, WAL_DEDUP_MODE_DEFAULT);
     }
 
-    // Called as the last transaction of a materialized view refresh.
-
     /**
-     * Commit the materialized view with the last refresh transaction number and
+     * Commit the materialized view to update last refresh timestamp.
+     * Called as the last transaction of a materialized view refresh.
      *
-     * @param lastRefreshBaseTxn    the base table seqTxn the mat view is refreshed at
-     * @param lastRefreshTimestamp  the wall clock timestamp when the refresh is done
+     * @param lastRefreshBaseTxn   the base table seqTxn the mat view is refreshed at
+     * @param lastRefreshTimestamp the wall clock timestamp when the refresh is done
      */
     public void commitMatView(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
         assert lastRefreshBaseTxn != Numbers.LONG_NULL;
@@ -333,7 +332,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     /**
-     * Commit the materialized view with the last refresh transaction number and
+     * Commit the materialized view to update last refresh timestamp and refresh ranges.
      *
      * @param lastRefreshBaseTxn    the base table seqTxn the mat view is refreshed at
      * @param lastRefreshTimestamp  the wall clock timestamp when the refresh is done
