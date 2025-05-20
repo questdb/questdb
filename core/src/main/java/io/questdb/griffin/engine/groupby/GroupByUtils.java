@@ -122,10 +122,6 @@ public class GroupByUtils {
                             executionContext
                     );
 
-                    if (model.isMatView() && function.isNonDeterministic()) {
-                        throw SqlException.nonDeterministicColumn(node.position, node.token);
-                    }
-
                     // record functions will have all model function, including consecutive duplicates
                     outRecordFunctions.add(function);
 

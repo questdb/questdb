@@ -36,7 +36,7 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
     public String invalidationReason;
     public TableToken matViewToken;
     public int operation = UNDEFINED;
-    public long refreshTriggeredTimestamp = -1;
+    public long refreshTriggerTimestamp = -1;
 
     @Override
     public void clear() {
@@ -44,7 +44,7 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
         baseTableToken = null;
         matViewToken = null;
         invalidationReason = null;
-        refreshTriggeredTimestamp = -1;
+        refreshTriggerTimestamp = -1;
     }
 
     @Override
@@ -53,7 +53,7 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
         anotherHolder.baseTableToken = baseTableToken;
         anotherHolder.matViewToken = matViewToken;
         anotherHolder.invalidationReason = invalidationReason;
-        anotherHolder.refreshTriggeredTimestamp = refreshTriggeredTimestamp;
+        anotherHolder.refreshTriggerTimestamp = refreshTriggerTimestamp;
     }
 
     public boolean isBaseTableTask() {

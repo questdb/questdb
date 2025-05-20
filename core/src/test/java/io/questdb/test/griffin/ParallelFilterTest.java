@@ -412,6 +412,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             }
                         }
                     } finally {
+                        Path.clearThreadLocals();
                         haltLatch.countDown();
                     }
                 }).start();

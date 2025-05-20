@@ -33,51 +33,51 @@ import org.jetbrains.annotations.NotNull;
 
 public class CairoTable implements Sinkable {
     public final LowerCaseCharSequenceIntHashMap columnNameIndexMap;
-    public final IntList columnOrderMap;
+    public final IntList columnOrderList;
     public final ObjList<CairoColumn> columns;
-    private boolean isDedup;
-    private boolean isSoftLink;
+    private boolean dedup;
+    private int matViewRefreshLimitHoursOrMonths;
     private int maxUncommittedRows;
     private long metadataVersion = -1;
     private long o3MaxLag;
     private int partitionBy;
+    private boolean softLink;
     private int timestampIndex;
     private TableToken token;
     private int ttlHoursOrMonths;
 
     public CairoTable(@NotNull TableToken token) {
-        setTableToken(token);
+        this.token = token;
+
         columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
-        columnOrderMap = new IntList();
+        columnOrderList = new IntList();
         columns = new ObjList<>();
     }
 
     public CairoTable(@NotNull TableToken token, CairoTable fromTab) {
-        setTableToken(token);
-        columnOrderMap = fromTab.columnOrderMap;
+        this.token = token;
+
+        columnOrderList = fromTab.columnOrderList;
         columns = fromTab.columns;
         columnNameIndexMap = fromTab.columnNameIndexMap;
-        this.metadataVersion = fromTab.getMetadataVersion();
-        this.partitionBy = fromTab.getPartitionBy();
-        this.maxUncommittedRows = fromTab.getMaxUncommittedRows();
-        this.o3MaxLag = fromTab.getO3MaxLag();
-        this.timestampIndex = fromTab.getTimestampIndex();
-        this.ttlHoursOrMonths = fromTab.getTtlHoursOrMonths();
-        this.isSoftLink = fromTab.getIsSoftLink();
-        this.isDedup = fromTab.getIsDedup();
-    }
 
-    public void clear() {
-        columns.clear();
-        columnOrderMap.clear();
+        metadataVersion = fromTab.getMetadataVersion();
+        partitionBy = fromTab.getPartitionBy();
+        maxUncommittedRows = fromTab.getMaxUncommittedRows();
+        o3MaxLag = fromTab.getO3MaxLag();
+        timestampIndex = fromTab.getTimestampIndex();
+        ttlHoursOrMonths = fromTab.getTtlHoursOrMonths();
+        softLink = fromTab.isSoftLink();
+        dedup = fromTab.hasDedup();
+        matViewRefreshLimitHoursOrMonths = fromTab.getMatViewRefreshLimitHoursOrMonths();
     }
 
     public int getColumnCount() {
-        return this.columns.size();
+        return columns.size();
     }
 
     public ObjList<CharSequence> getColumnNames() {
-        return this.columnNameIndexMap.keys();
+        return columnNameIndexMap.keys();
     }
 
     public CairoColumn getColumnQuiet(@NotNull CharSequence columnName) {
@@ -94,19 +94,15 @@ public class CairoTable implements Sinkable {
     }
 
     public String getDirectoryName() {
-        return getTableToken().getDirName();
+        return token.getDirName();
     }
 
     public int getId() {
-        return getTableToken().getTableId();
+        return token.getTableId();
     }
 
-    public boolean getIsDedup() {
-        return isDedup;
-    }
-
-    public boolean getIsSoftLink() {
-        return isSoftLink;
+    public int getMatViewRefreshLimitHoursOrMonths() {
+        return matViewRefreshLimitHoursOrMonths;
     }
 
     public int getMaxUncommittedRows() {
@@ -130,7 +126,7 @@ public class CairoTable implements Sinkable {
     }
 
     public @NotNull String getTableName() {
-        return getTableToken().getTableName();
+        return token.getTableName();
     }
 
     public TableToken getTableToken() {
@@ -142,8 +138,8 @@ public class CairoTable implements Sinkable {
     }
 
     public CharSequence getTimestampName() {
-        if (this.timestampIndex != -1) {
-            final CairoColumn timestampColumn = getColumnQuiet(this.timestampIndex);
+        if (timestampIndex != -1) {
+            final CairoColumn timestampColumn = getColumnQuiet(timestampIndex);
             if (timestampColumn != null) {
                 return timestampColumn.getName();
             }
@@ -159,16 +155,24 @@ public class CairoTable implements Sinkable {
         return ttlHoursOrMonths;
     }
 
-    public boolean getWalEnabled() {
-        return getTableToken().isWal();
+    public boolean hasDedup() {
+        return dedup;
     }
 
-    public void setIsDedup(boolean isDedup) {
-        this.isDedup = isDedup;
+    public boolean isSoftLink() {
+        return softLink;
     }
 
-    public void setIsSoftLink(boolean isSoftLink) {
-        this.isSoftLink = isSoftLink;
+    public boolean isWalEnabled() {
+        return token.isWal();
+    }
+
+    public void setDedupFlag(boolean dedup) {
+        this.dedup = dedup;
+    }
+
+    public void setMatViewRefreshLimitHoursOrMonths(int matViewRefreshLimitHoursOrMonths) {
+        this.matViewRefreshLimitHoursOrMonths = matViewRefreshLimitHoursOrMonths;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {
@@ -185,6 +189,10 @@ public class CairoTable implements Sinkable {
 
     public void setPartitionBy(int partitionBy) {
         this.partitionBy = partitionBy;
+    }
+
+    public void setSoftLinkFlag(boolean softLink) {
+        this.softLink = softLink;
     }
 
     public void setTableToken(TableToken token) {
@@ -205,21 +213,21 @@ public class CairoTable implements Sinkable {
         sink.put("name=").put(getTableName()).put(", ");
         sink.put("id=").put(getId()).put(", ");
         sink.put("directoryName=").put(getDirectoryName()).put(", ");
-        sink.put("isDedup=").put(getIsDedup()).put(", ");
-        sink.put("isSoftLink=").put(getIsSoftLink()).put(", ");
+        sink.put("hasDedup=").put(hasDedup()).put(", ");
+        sink.put("isSoftLink=").put(isSoftLink()).put(", ");
         sink.put("metadataVersion=").put(getMetadataVersion()).put(", ");
         sink.put("maxUncommittedRows=").put(getMaxUncommittedRows()).put(", ");
         sink.put("o3MaxLag=").put(getO3MaxLag()).put(", ");
         sink.put("partitionBy=").put(getPartitionByName()).put(", ");
         sink.put("timestampIndex=").put(getTimestampIndex()).put(", ");
         sink.put("timestampName=").put(getTimestampName()).put(", ");
-        int ttlHoursOrMonths = getTtlHoursOrMonths();
+        final int ttlHoursOrMonths = getTtlHoursOrMonths();
         if (ttlHoursOrMonths >= 0) {
             sink.put("ttlHours=").put(ttlHoursOrMonths).put(", ");
         } else {
             sink.put("ttlMonths=").put(-ttlHoursOrMonths).put(", ");
         }
-        sink.put("walEnabled=").put(getWalEnabled()).put(", ");
+        sink.put("walEnabled=").put(isWalEnabled()).put(", ");
         sink.put("columnCount=").put(getColumnCount()).put("]");
         sink.put('\n');
         for (int i = 0, n = columns.size(); i < n; i++) {

@@ -50,6 +50,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
     private long affectedRowsCount;
     private AlterOperation alterOp;
+    private boolean done;
     private InsertOperation insertOp;
     private boolean isExecutedAtParseTime;
     private Operation operation;
@@ -62,14 +63,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private UpdateOperation updateOp;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        // type inference fails on java 8 if <UpdateOperation> is removed
         updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution") {
             @Override
             protected long apply(UpdateOperation operation, TableWriterAPI writerAPI) {
                 return writerAPI.apply(operation);
             }
         };
-        // type inference fails on java 8 if <AlterOperation> is removed
         alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute") {
             @Override
             protected long apply(AlterOperation operation, TableWriterAPI writerAPI) {
@@ -93,6 +92,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.statementName = null;
         this.operation = null;
         this.isExecutedAtParseTime = false;
+        this.done = false;
+    }
+
+    public void done() {
+        this.done = true;
     }
 
     @Override
@@ -106,6 +110,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
             SCSequence eventSubSeq,
             boolean closeOnDone
     ) throws SqlException {
+        if (done) {
+            return doneFuture.of(0);
+        }
+
         switch (type) {
             case INSERT:
             case INSERT_AS_SELECT:

@@ -172,6 +172,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean cairoSqlLegacyOperatorPrecedence;
     private final long cairoTableRegistryAutoReloadFrequency;
     private final int cairoTableRegistryCompactionThreshold;
+    private final int cairoTxnScoreboardFormat;
     private final long cairoWriteBackOffTimeoutOnMemPressureMs;
     private final boolean checkpointRecoveryEnabled;
     private final String checkpointRoot;
@@ -747,6 +748,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.isQueryTracingEnabled = getBoolean(properties, env, PropertyKey.QUERY_TRACING_ENABLED, false);
         this.cairoTableRegistryAutoReloadFrequency = getMillis(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
+        this.cairoTxnScoreboardFormat = getInt(properties, env, PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, 2);
         this.cairoWriteBackOffTimeoutOnMemPressureMs = getMillis(properties, env, PropertyKey.CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE, 4000);
         this.repeatMigrationFromVersion = getInt(properties, env, PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
         this.mkdirMode = getInt(properties, env, PropertyKey.CAIRO_MKDIR_MODE, 509);
@@ -968,17 +970,18 @@ public class PropServerConfiguration implements ServerConfiguration {
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathExec, httpContextWebConsole + "/exec");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_WARNINGS, this.httpContextPathWarnings, httpContextWebConsole + "/warnings");
 
-            // If any of the REST services the Web Console depends on are overridden, we need to make sure
-            // the context paths the Web Console requires are also present, so customization does not break the Web Console.
+            // If any REST services that the Web Console depends on are overridden,
+            // ensure the required context paths remain available,
+            // so that customization does not break the Web Console.
 
             // The following paths need to be added for the Web Console to work properly. This
-            // deals with the cases where context path was overridden by the user. Adding duplicate
-            // paths is ok, because duplicates are squashed by the HTTP server.
+            // deals with the cases where the context path was overridden by the user. Adding duplicate
+            // paths is ok because duplicates are squashed by the HTTP server.
             // 1. import, to support CSV import UI
             // 2. export, to support CSV export UI
             // 3. settings, that is what the Web Console loads on startup
-            // 4. table status, to support CSV import UI
-            // 5. JSON query execution, e.g. exec
+            // 4. table status to support CSV import UI
+            // 5. JSON query execution, e.g., exec
             // 6. warnings, that displays warnings in the table view
 
             // we use defaults, because this is what the Web Console expects
@@ -1102,7 +1105,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             final String publicDirectory = getString(properties, env, PropertyKey.HTTP_STATIC_PUBLIC_DIRECTORY, "public");
-            // translate public directory into absolute path
+            // translate public directory into an absolute path
             // this will generate some garbage, but this is ok - we're just doing this once on startup
             if (new File(publicDirectory).isAbsolute()) {
                 this.publicDirectory = publicDirectory;
@@ -1261,7 +1264,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplySleepTimeout = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
 
-            // reuse wal apply defaults for mat view workers
+            // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
@@ -1607,13 +1610,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (pgEnabled) {
                 this.pgSelectCacheEnabled = getBoolean(properties, env, PropertyKey.PG_SELECT_CACHE_ENABLED, true);
                 final int effectivePGWorkerCount = pgWorkerCount > 0 ? pgWorkerCount : sharedWorkerCount;
-                this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 8 * effectivePGWorkerCount);
-                this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, 2 * effectivePGWorkerCount);
+                this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 32);
+                this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, Math.max(effectivePGWorkerCount, 4));
             }
             final int effectiveHttpWorkerCount = httpWorkerCount > 0 ? httpWorkerCount : sharedWorkerCount;
             this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
-            this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 8 * effectiveHttpWorkerCount);
-            this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, 2 * effectiveHttpWorkerCount);
+            this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 32);
+            this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, Math.max(effectiveHttpWorkerCount, 4));
             this.queryCacheEventQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY, 4));
 
             this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + sharedWorkerCount + walApplyWorkerCount);
@@ -1782,7 +1785,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         return configReloadEnabled;
     }
 
-    // Used by dynamic configuration to reuse already created factory provider.
+    // Used by dynamic configuration to reuse the already created factory provider.
     public void reinit(FactoryProvider factoryProvider) {
         this.factoryProvider = factoryProvider;
     }
@@ -1950,13 +1953,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             throw new ServerConfigurationException("Cannot calculate canonical path for configuration property [key=" + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + ",value=" + path + "]");
         }
     }
-
-/*
-    protected String getContextPath(Properties properties, @Nullable Map<String, String> env) {
-        final String contextPath = getString(properties, env, PropertyKey.HTTP_CONTEXT_PATH, "");
-        return !contextPath.isEmpty() && !contextPath.startsWith("/") ? "/" + contextPath : contextPath;
-    }
-*/
 
     protected double getDouble(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultValue) throws ServerConfigurationException {
         final String value = getString(properties, env, key, defaultValue);
@@ -3143,6 +3139,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSampleByIndexSearchPageSize() {
             return sqlSampleByIndexSearchPageSize;
+        }
+
+        @Override
+        public int getScoreboardFormat() {
+            return cairoTxnScoreboardFormat;
         }
 
         @Override

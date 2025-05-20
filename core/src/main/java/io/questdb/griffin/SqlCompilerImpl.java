@@ -847,7 +847,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok != null && isExistsKeyword(tok)) {
                         tok = SqlUtil.fetchNext(lexer); // captured column name
-                        if (tableMetadata.getColumnIndexQuiet(tok) != -1) {
+                        final int columnIndex = tableMetadata.getColumnIndexQuiet(tok);
+                        if (columnIndex != -1) {
+                            tok = expectToken(lexer, "column type");
+                            final int columnType = ColumnType.typeOf(tok);
+                            if (columnType == -1) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "unrecognized column type: ").put(tok);
+                            }
+                            final int existingType = tableMetadata.getColumnType(columnIndex);
+                            if (existingType != columnType) {
+                                throw SqlException
+                                        .$(lexer.lastTokenPosition(), "column already exists with a different column type [current type=")
+                                        .put(ColumnType.nameOf(existingType))
+                                        .put(", requested type=")
+                                        .put(ColumnType.nameOf(columnType))
+                                        .put(']');
+                            }
                             break;
                         }
                     } else {
@@ -888,6 +903,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         addColumnSuffix(securityContext, null, tableToken, alterOperationBuilder);
         compiledQuery.ofAlter(alterOperationBuilder.build());
+        if (alterOperationBuilder.getExtraStrInfo().size() == 0) {
+            // there is no column to add, set the done flag to avoid execution of the query
+            compiledQuery.done();
+        }
     }
 
     private void alterTableChangeColumnType(
@@ -1573,6 +1592,36 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         tableMetadata,
                         columnIndex
                 );
+            } else if (isSetKeyword(tok)) {
+                tok = expectToken(lexer, "'ttl' or 'refresh'");
+                if (isTtlKeyword(tok)) {
+                    final int ttlValuePos = lexer.getPosition();
+                    final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+                    try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                        CairoTable table = metadataRO.getTable(matViewToken);
+                        assert table != null : "CairoTable == null after we already checked it exists";
+                        PartitionBy.validateTtlGranularity(table.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
+                    }
+                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
+                            matViewNamePosition,
+                            matViewToken,
+                            tableMetadata.getTableId(),
+                            ttlHoursOrMonths
+                    );
+                    compiledQuery.ofAlter(setTtl.build());
+                } else if (isRefreshKeyword(tok)) {
+                    expectKeyword(lexer, "limit");
+                    final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetMatViewRefreshLimit(
+                            matViewNamePosition,
+                            matViewToken,
+                            tableMetadata.getTableId(),
+                            limitHoursOrMonths
+                    );
+                    compiledQuery.ofAlter(setTtl.build());
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' expected");
+                }
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(matViewToken, matViewNamePosition, executionContext);
             } else if (isSuspendKeyword(tok)) {
@@ -1794,17 +1843,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
                     }
                 } else if (isTtlKeyword(tok)) {
-                    int ttlValuePos = lexer.getPosition();
-                    int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+                    final int ttlValuePos = lexer.getPosition();
+                    final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
                     try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                         CairoTable table = metadataRO.getTable(tableToken);
                         assert table != null : "CairoTable == null after we already checked it exists";
                         PartitionBy.validateTtlGranularity(table.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
                     }
-                    compiledQuery.ofAlter(
-                            alterOperationBuilder.ofSetTtlHoursOrMonths(tableNamePosition, tableToken, tableMetadata.getTableId(), ttlHoursOrMonths)
-                                    .build()
+                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
+                            tableNamePosition,
+                            tableToken,
+                            tableMetadata.getTableId(),
+                            ttlHoursOrMonths
                     );
+                    compiledQuery.ofAlter(setTtl.build());
                 } else if (isTypeKeyword(tok)) {
                     tok = expectToken(lexer, "'bypass' or 'wal'");
                     if (isBypassKeyword(tok)) {
@@ -1839,7 +1891,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                 if (isDisableKeyword(tok)) {
                     executionContext.getSecurityContext().authorizeAlterTableDedupDisable(tableToken);
-                    AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupDisable(
+                    final AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupDisable(
                             tableNamePosition,
                             tableToken
                     );
@@ -2477,12 +2529,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw e;
             }
             createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
-            queryModel.setIsMatView(true);
+
+            final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
+            executionContext.setAllowNonDeterministicFunction(false);
             try {
                 compiledQuery.ofSelect(generateSelectWithRetries(queryModel, executionContext, false));
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
+            } finally {
+                executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
             }
         } catch (Throwable th) {
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);

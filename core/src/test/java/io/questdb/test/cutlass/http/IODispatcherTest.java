@@ -40,6 +40,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxnScoreboardPoolFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -161,7 +162,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 import static io.questdb.test.cutlass.http.HttpUtils.urlEncodeQuery;
-import static io.questdb.test.tools.TestUtils.*;
+import static io.questdb.test.tools.TestUtils.assertEventually;
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.assertTrue;
 
 public class IODispatcherTest extends AbstractTest {
@@ -656,7 +658,8 @@ public class IODispatcherTest extends AbstractTest {
                                 "\"timestamp\":-1," +
                                 "\"dataset\":[" + sink + "]," +
                                 "\"count\":" + (numOfRows + 1) + "," +
-                                "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
+                                "\"error\":\"simulated cairo exception\", " +
+                                "\"errorPos\":222" +
                                 "}",
                         "select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")"
                 )
@@ -680,7 +683,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[[]]," +
                             "\"count\":1," +
-                            "\"error\":\"HTTP 403 (Forbidden), simulated authorization exception\"" +
+                            "\"error\":\"simulated authorization exception\", " +
+                            "\"errorPos\":0" +
                             "}",
                     "select simulate_crash('A') from long_sequence(5)"
             );
@@ -6420,8 +6424,6 @@ public class IODispatcherTest extends AbstractTest {
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt")) {
                     try {
                         Rnd rnd = new Rnd();
-                        final int diskBufferLen = 1024 * 1024;
-
                         writeRandomFile(path, rnd, 122299092L);
 
                         long fd = Net.socketTcp(true);
@@ -6434,18 +6436,6 @@ public class IODispatcherTest extends AbstractTest {
                                 long buffer = Unsafe.calloc(netBufferLen, MemoryTag.NATIVE_DEFAULT);
                                 try {
 
-                                    // send request to server to download file we just created
-                                    final String request = "GET /questdb-temp.txt HTTP/1.1\r\n" +
-                                            "Host: localhost:9000\r\n" +
-                                            "Connection: keep-alive\r\n" +
-                                            "Cache-Control: max-age=0\r\n" +
-                                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
-                                            "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
-                                            "Accept-Encoding: gzip,deflate,sdch\r\n" +
-                                            "Accept-Language: en-US,en;q=0.8\r\n" +
-                                            "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
-                                            "\r\n";
-
                                     String expectedResponseHeader = "HTTP/1.1 200 OK\r\n" +
                                             "Server: questDB/1.0\r\n" +
                                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -6455,8 +6445,8 @@ public class IODispatcherTest extends AbstractTest {
                                             "\r\n";
 
                                     for (int j = 0; j < 10; j++) {
-                                        sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971667);
+                                        sendRequest(fd, buffer);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, expectedResponseHeader);
                                     }
 
                                     // send few requests to receive 304
@@ -6483,8 +6473,8 @@ public class IODispatcherTest extends AbstractTest {
 
                                     // couple more full downloads after 304
                                     for (int j = 0; j < 2; j++) {
-                                        sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971667);
+                                        sendRequest(fd, buffer);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, expectedResponseHeader);
                                     }
 
                                     // get a 404 now
@@ -8089,7 +8079,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[[]]," +
                             "\"count\":1," +
-                            "\"error\":\"HTTP 500 (Internal server error), simulated cairo error\"" +
+                            "\"error\":\"simulated cairo error\", " +
+                            "\"errorPos\":0" +
                             "}",
                     "select simulate_crash('E')"
             );
@@ -8107,7 +8098,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[[]]," +
                             "\"count\":1," +
-                            "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
+                            "\"error\":\"simulated cairo exception\", " +
+                            "\"errorPos\":222" +
                             "}",
                     "select simulate_crash('0')"
             );
@@ -8125,7 +8117,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[[]]," +
                             "\"count\":1," +
-                            "\"error\":\"HTTP 500 (Internal server error)\"" +
+                            "\"error\":\"Internal server error\", " +
+                            "\"errorPos\":0" +
                             "}",
                     "select npe()"
             );
@@ -8635,15 +8628,13 @@ public class IODispatcherTest extends AbstractTest {
             Rnd rnd,
             long buffer,
             int len,
-            int nonRepeatedContentLength,
-            String expectedResponseHeader,
-            long expectedResponseLen
+            String expectedResponseHeader
     ) {
         int expectedHeaderLen = expectedResponseHeader.length();
         int headerCheckRemaining = expectedResponseHeader.length();
         long downloadedSoFar = 0;
         int contentRemaining = 0;
-        while (downloadedSoFar < expectedResponseLen) {
+        while (downloadedSoFar < 20971667) {
             int contentOffset = 0;
             int n = Net.recv(fd, buffer, len);
             assertTrue(n > -1);
@@ -8661,7 +8652,7 @@ public class IODispatcherTest extends AbstractTest {
                 if (headerCheckRemaining == 0) {
                     for (int i = contentOffset; i < n; i++) {
                         if (contentRemaining == 0) {
-                            contentRemaining = nonRepeatedContentLength;
+                            contentRemaining = 1048576;
                             rnd.reset();
                         }
                         Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
@@ -8783,7 +8774,17 @@ public class IODispatcherTest extends AbstractTest {
                 .execute(request, response);
     }
 
-    private static void sendRequest(String request, long fd, long buffer) {
+    private static void sendRequest(long fd, long buffer) {
+        final String request = "GET /questdb-temp.txt HTTP/1.1\r\n" +
+                "Host: localhost:9000\r\n" +
+                "Connection: keep-alive\r\n" +
+                "Cache-Control: max-age=0\r\n" +
+                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                "Accept-Encoding: gzip,deflate,sdch\r\n" +
+                "Accept-Language: en-US,en;q=0.8\r\n" +
+                "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                "\r\n";
         final int requestLen = request.length();
         Utf8s.strCpyAscii(request, requestLen, buffer);
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
@@ -8839,7 +8840,7 @@ public class IODispatcherTest extends AbstractTest {
         String dirName = TableUtils.getTableDir(mangleTableDirNames, tableName, 1, false);
         TableToken tableToken = new TableToken(tableName, dirName, 1, false, false, false);
         try (
-                TableReader reader = new TableReader(configuration, tableToken);
+                TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, tableToken, TxnScoreboardPoolFactory.createPool(configuration));
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
         ) {
             cursor.of(reader);
@@ -8859,7 +8860,7 @@ public class IODispatcherTest extends AbstractTest {
         String telemetry = TelemetryTask.TABLE_NAME;
         TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false, false, true);
         try (
-                TableReader reader = new TableReader(configuration, telemetryTableName);
+                TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, telemetryTableName, TxnScoreboardPoolFactory.createPool(configuration));
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
         ) {
             cursor.of(reader);
@@ -9224,7 +9225,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[" + rows + "]," +
                             "\"count\":" + (numOfRows + 1) + "," +
-                            "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
+                            "\"error\":\"simulated cairo exception\", " +
+                            "\"errorPos\":222" +
                             "}",
                     "select simulate_crash('" + numOfRows + "') from long_sequence(5)"
             );

@@ -22,37 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm;
+package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.str.LPSZ;
+import io.questdb.std.Mutable;
+import io.questdb.std.QuietCloseable;
 
-public class MemoryFMCRImpl extends MemoryFCRImpl implements MemoryMR {
-
-    @Override
-    public long detachFdClose() {
-        close();
-        return -1;
-    }
+public interface TxnScoreboardPool extends QuietCloseable, Mutable {
 
     @Override
-    public long getFd() {
-        return -1;
+    default void close() {
+        clear();
     }
 
-    @Override
-    public boolean isMapped(long offset, long len) {
-        return false;
-    }
+    TxnScoreboard getTxnScoreboard(TableToken token);
 
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
-        throw new UnsupportedOperationException();
-    }
+    boolean releaseInactive();
 
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
-        throw new UnsupportedOperationException();
-    }
+    void remove(TableToken token);
 }

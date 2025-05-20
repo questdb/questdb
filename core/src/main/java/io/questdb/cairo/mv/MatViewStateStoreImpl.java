@@ -49,7 +49,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     // Flips to negative value once a refresh message is processed. Long.MIN_VALUE stands for "just invalidated" state.
     // The goal is to avoid sending excessive incremental refresh messages to the underlying queue.
     // Note: this map is grow-only, i.e. keys are never removed.
-    private final ConcurrentHashMap<AtomicLong> lastNotifiedTxnByTableName = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<AtomicLong> lastNotifiedTxnByTableName = new ConcurrentHashMap<>(false);
     private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<MatViewState> stateByTableDirName = new ConcurrentHashMap<>();
     private final ThreadLocal<MatViewRefreshTask> taskHolder = new ThreadLocal<>(MatViewRefreshTask::new);
@@ -171,7 +171,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         final AtomicLong lastNotifiedTxn = lastNotifiedTxnByTableName.get(task.baseTableToken.getTableName());
         if (lastNotifiedTxn != null && notifyOnBaseTableRefreshed(lastNotifiedTxn, seqTxn)) {
             // While refreshing more txn were committed. Refresh will need to re-run.
-            task.refreshTriggeredTimestamp = microsecondClock.getTicks();
+            task.refreshTriggerTimestamp = microsecondClock.getTicks();
             taskQueue.enqueue(task);
         }
     }
@@ -184,7 +184,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
             // Always notify refresh job in case of mat view invalidation or full refresh.
             // For incremental refresh we check if we haven't already notified on the given txn.
             if (task.operation != MatViewRefreshTask.INCREMENTAL_REFRESH || notifyBaseTableCommit(lastNotifiedBaseTableTxn, seqTxn)) {
-                task.refreshTriggeredTimestamp = microsecondClock.getTicks();
+                task.refreshTriggerTimestamp = microsecondClock.getTicks();
                 taskQueue.enqueue(task);
                 if (task.operation == MatViewRefreshTask.INVALIDATE) {
                     LOG.error()
@@ -223,7 +223,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         task.operation = operation;
         task.invalidationReason = invalidationReason;
         if (operation == MatViewRefreshTask.INCREMENTAL_REFRESH || operation == MatViewRefreshTask.FULL_REFRESH) {
-            task.refreshTriggeredTimestamp = microsecondClock.getTicks();
+            task.refreshTriggerTimestamp = microsecondClock.getTicks();
         }
         taskQueue.enqueue(task);
     }
