@@ -70,11 +70,11 @@ class DateBindVariable extends DateFunction implements ScalarFunction, Mutable, 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         if (value == Numbers.LONG_NULL) {
-            sink.put("null");
+            sink.putAscii("null");
         } else {
-            sink.put('\'').putISODateMillis(value).put('\'');
+            sink.putAscii('\'').putISODateMillis(value).putAscii('\'');
         }
-        sink.put("::date");
+        sink.putAscii("::date");
     }
 
 }

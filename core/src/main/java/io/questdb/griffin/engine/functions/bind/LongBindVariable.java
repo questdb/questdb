@@ -70,10 +70,10 @@ class LongBindVariable extends LongFunction implements ScalarFunction, Mutable, 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         if (value == Numbers.LONG_NULL) {
-            sink.put("null");
+            sink.putAscii("null");
         } else {
             sink.put(value);
         }
-        sink.put("::long");
+        sink.putAscii("::long");
     }
 }

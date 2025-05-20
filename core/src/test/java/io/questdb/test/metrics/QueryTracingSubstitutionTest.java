@@ -63,12 +63,12 @@ public class QueryTracingSubstitutionTest extends AbstractBootstrapTest {
                         stmt.setInt(5, 987654);
                         stmt.setLong(6, 987654L);
                         stmt.setShort(7, (short) 11111);
-                        stmt.setString(8, "test");
+                        stmt.setString(8, "te'st");
 
                         try (final ResultSet resultSet = stmt.executeQuery()) {
                             assertResultSet(
                                     "$1[BIT],$2[SMALLINT],$3[DOUBLE],$4[REAL],$5[INTEGER],$6[BIGINT],$7[SMALLINT],$8[VARCHAR]\n" +
-                                            "true,111,123.456,123.456,987654,987654,11111,test\n",
+                                            "true,111,123.456,123.456,987654,987654,11111,te'st\n",
                                     Misc.getThreadLocalSink(),
                                     resultSet
                             );

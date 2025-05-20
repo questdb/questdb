@@ -90,7 +90,7 @@ class GeoHashBindVariable extends AbstractGeoHashFunction implements ScalarFunct
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         if (value == GeoHashes.NULL) {
-            sink.put("null");
+            sink.putAscii("null");
         } else {
             int bitFlags = GeoHashes.getBitFlags(type);
             sink.putAscii('\"');

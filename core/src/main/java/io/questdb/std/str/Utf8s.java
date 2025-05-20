@@ -1170,6 +1170,17 @@ public final class Utf8s {
         return utf8Decode4Bytes(lo, hi, b, sink);
     }
 
+    public static int utf8DecodeMultiByte(Utf8Sequence seq, int index, byte b, @NotNull Utf16Sink sink) {
+        if (b >> 5 == -2 && (b & 30) != 0) {
+            // we should allow 11000001, as it is a valid UTF8 byte?
+            return utf8Decode2Bytes(seq, index, b, sink);
+        }
+        if (b >> 4 == -2) {
+            return utf8Decode3Bytes(seq, index, b, sink);
+        }
+        return utf8Decode4Bytes(seq, index, b, sink);
+    }
+
     public static char utf8ToChar(byte b1, byte b2, byte b3) {
         return (char) (b1 << 12 ^ b2 << 6 ^ b3 ^ -123008);
     }
@@ -1751,17 +1762,6 @@ public final class Utf8s {
             return -1;
         }
         return utf8Decode4Bytes0(b, sink, b2, b3, b4);
-    }
-
-    private static int utf8DecodeMultiByte(Utf8Sequence seq, int index, byte b, @NotNull Utf16Sink sink) {
-        if (b >> 5 == -2 && (b & 30) != 0) {
-            // we should allow 11000001, as it is a valid UTF8 byte?
-            return utf8Decode2Bytes(seq, index, b, sink);
-        }
-        if (b >> 4 == -2) {
-            return utf8Decode3Bytes(seq, index, b, sink);
-        }
-        return utf8Decode4Bytes(seq, index, b, sink);
     }
 
     private static int utf8DecodeMultiByteZ(long lo, byte b, @NotNull Utf16Sink sink) {

@@ -68,7 +68,6 @@ class ShortBindVariable extends ShortFunction implements ScalarFunction, Mutable
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.put(value);
-        sink.put("::short");
+        sink.put(value).put("::short");
     }
 }

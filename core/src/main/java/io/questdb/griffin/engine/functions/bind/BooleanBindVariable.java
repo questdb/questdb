@@ -68,6 +68,6 @@ public class BooleanBindVariable extends BooleanFunction implements ScalarFuncti
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.put(value ? "true" : "false").put("::boolean");
+        sink.put(value).putAscii("::boolean");
     }
 }

@@ -234,10 +234,10 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         if (isNull) {
-            sink.put("null");
+            sink.putAscii("null");
         } else {
-            sink.put('\'').put(utf16Sink).put('\'');
+            sink.putAscii('\'').putEscapeSingles(utf16Sink).putAscii('\'');
         }
-        sink.put("::string");
+        sink.putAscii("::string");
     }
 }

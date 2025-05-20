@@ -34,6 +34,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -204,10 +205,11 @@ public class VarcharBindVariable extends VarcharFunction implements ScalarFuncti
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         if (isNull) {
-            sink.put("null");
+            sink.putAscii("null");
         } else {
-            sink.put('\'').put(utf8Sink).put('\'');
+            assert sink instanceof Utf16Sink;
+            ((Utf16Sink) sink).putAscii('\'').putEscapeSingles(utf8Sink).putAscii('\'');
         }
-        sink.put("::varchar");
+        sink.putAscii("::varchar");
     }
 }

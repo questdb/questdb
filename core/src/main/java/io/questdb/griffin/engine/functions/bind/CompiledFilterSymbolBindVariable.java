@@ -104,7 +104,12 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.put('\'').put(getSymbol(null)).put('\'').put("::symbol");
+        if (getSymbol(null) == null) {
+            sink.put(getSymbol(null));
+        } else {
+            sink.put('\'').put(getSymbol(null)).put('\'');
+        }
+        sink.put("::symbol");
     }
 
     @Override

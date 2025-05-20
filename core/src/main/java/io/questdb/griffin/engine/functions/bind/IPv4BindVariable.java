@@ -70,12 +70,12 @@ public class IPv4BindVariable extends IPv4Function implements ScalarFunction, Mu
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         if (value == Numbers.IPv4_NULL) {
-            sink.put("null");
+            sink.putAscii("null");
         } else {
-            sink.put('\'');
+            sink.putAscii('\'');
             Numbers.intToIPv4Sink(sink, value);
-            sink.put('\'');
+            sink.putAscii('\'');
         }
-        sink.put("::ipv4");
+        sink.putAscii("::ipv4");
     }
 }

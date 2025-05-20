@@ -69,10 +69,10 @@ class FloatBindVariable extends FloatFunction implements ScalarFunction, Mutable
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         if (Float.isNaN(value)) {
-            sink.put("null");
+            sink.putAscii("null");
         } else {
             sink.put(value);
         }
-        sink.put("::float");
+        sink.putAscii("::float");
     }
 }

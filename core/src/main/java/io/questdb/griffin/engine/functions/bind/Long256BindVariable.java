@@ -90,10 +90,10 @@ class Long256BindVariable extends Long256Function implements ScalarFunction, Mut
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         if (Long256Impl.isNull(value)) {
-            sink.put("null");
+            sink.putAscii("null");
         } else {
-            sink.put('\'').put(value).put('\'');
+            sink.putAscii('\'').put(value).putAscii('\'');
         }
-        sink.put("::long256");
+        sink.putAscii("::long256");
     }
 }

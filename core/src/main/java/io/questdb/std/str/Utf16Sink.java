@@ -24,6 +24,7 @@
 
 package io.questdb.std.str;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -116,6 +117,32 @@ public interface Utf16Sink extends CharSink<Utf16Sink> {
     @Override
     default Utf16Sink putAscii(@Nullable CharSequence cs) {
         return put(cs);
+    }
+
+    default Utf16Sink putEscapeSingles(@Nullable Utf8Sequence us) {
+        if (us != null) {
+            int i = 0;
+            int size = us.size();
+            while (i < size) {
+                byte b = us.byteAt(i);
+                if (b < 0) {
+                    int n = Utf8s.utf8DecodeMultiByte(us, i, b, this);
+                    if (n == -1) {
+                        // UTF-8 error
+                        throw CairoException.nonCritical().put("could not decode UTF-8 [pos=").put(i).put("seq=").put(us).put(']');
+                    }
+                    i += n;
+                } else {
+                    if ((char) b == '\'') {
+                        put('\\');
+                    } else {
+                        put((char) b);
+                    }
+                    ++i;
+                }
+            }
+        }
+        return this;
     }
 
     default Utf16Sink putNonAscii(long lo, long hi) {

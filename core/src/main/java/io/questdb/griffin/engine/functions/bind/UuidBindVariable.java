@@ -69,11 +69,11 @@ public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mu
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         if (Uuid.isNull(value.getLo(), value.getHi())) {
-            sink.put("null");
+            sink.putAscii("null");
         } else {
-            sink.put('\'').put(value).put('\'');
+            sink.putAscii('\'').put(value).putAscii('\'');
         }
-        sink.put("::uuid");
+        sink.putAscii("::uuid");
     }
 
     void set(long lo, long hi) {

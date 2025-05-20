@@ -69,10 +69,10 @@ class DoubleBindVariable extends DoubleFunction implements ScalarFunction, Mutab
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         if (Double.isNaN(value)) {
-            sink.put("null");
+            sink.putAscii("null");
         } else {
             sink.put(value);
         }
-        sink.put("::double");
+        sink.putAscii("::double");
     }
 }

@@ -168,6 +168,19 @@ public interface CharSink<T extends CharSink<?>> {
         return putAscii(Misc.EOL);
     }
 
+    default T putEscapeSingles(@Nullable CharSequence cs) {
+        if (cs != null) {
+            for (int i = 0, n = cs.length(); i < n; i++) {
+                final char c = cs.charAt(i);
+                if (c == '\'') {
+                    put('\\');
+                }
+                put(cs.charAt(i));
+            }
+        }
+        return (T) this;
+    }
+
     default T putISODate(long value) {
         TimestampFormatUtils.appendDateTimeUSec(this, value);
         return (T) this;

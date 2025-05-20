@@ -68,6 +68,6 @@ class CharBindVariable extends CharFunction implements ScalarFunction, Mutable, 
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.put('\'').put(value).put('\'').put("::char");
+        sink.putAscii('\'').put(value).putAscii('\'').putAscii("::char");
     }
 }

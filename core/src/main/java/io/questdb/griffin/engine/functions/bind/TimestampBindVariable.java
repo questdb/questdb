@@ -70,10 +70,10 @@ class TimestampBindVariable extends TimestampFunction implements ScalarFunction,
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         if (value == Numbers.LONG_NULL) {
-            sink.put("null");
+            sink.putAscii("null");
         } else {
-            sink.put('\'').putISODate(value).put('\'');
+            sink.putAscii('\'').putISODate(value).putAscii('\'');
         }
-        sink.put("::timestamp");
+        sink.putAscii("::timestamp");
     }
 }

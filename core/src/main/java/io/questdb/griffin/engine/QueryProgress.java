@@ -405,6 +405,15 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     }
 
 
+    /**
+     * This function creates a (hopefully accurate) SQL string which represents a version of the query if the bind variables
+     * had been interpolated into the query text.
+     * <p>
+     * This is used in the query tracing table.
+     * <p>
+     * It assumes that the query text was correctly parsed and compiled, and therefore does not handle cases
+     * where quotes might be unmatched.
+     */
     private static String substituteBindVariablesIntoQueryText(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) {
         StringSink sink = Misc.getThreadLocalSink();
 

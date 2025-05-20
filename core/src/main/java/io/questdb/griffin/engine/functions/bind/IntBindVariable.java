@@ -70,10 +70,10 @@ class IntBindVariable extends IntFunction implements ScalarFunction, Mutable, Si
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         if (value == Numbers.INT_NULL) {
-            sink.put("null");
+            sink.putAscii("null");
         } else {
             sink.put(value);
         }
-        sink.put("::int");
+        sink.putAscii("::int");
     }
 }

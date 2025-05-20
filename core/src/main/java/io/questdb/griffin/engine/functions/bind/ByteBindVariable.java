@@ -68,6 +68,6 @@ class ByteBindVariable extends ByteFunction implements ScalarFunction, Mutable, 
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.put(value).put("::byte");
+        sink.put(value).putAscii("::byte");
     }
 }
