@@ -880,21 +880,39 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         if (prefixType == O3_BLOCK_DATA && prefixHi >= prefixLo && suffixType == O3_BLOCK_NONE) {
                             // No merge, no suffix, only data prefix
-                            // If the number of rows is the same as the number of rows in the partition
-                            // There is nothing to do
 
-                            // Nothing to do, use the existing partition to the prefix size
-                            updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, newMinPartitionTimestamp, prefixHi + 1, oldPartitionSize, 0);
+                            if (prefixHi - prefixLo + 1 == srcDataMax) {
+                                // If the number of rows is the same as the number of rows in the partition
+                                // There is nothing to do
 
-                            O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-                            O3Utils.close(ff, srcTimestampFd);
+                                // Nothing to do, use the existing partition to the prefix size
+                                updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, newMinPartitionTimestamp, prefixHi + 1, oldPartitionSize, 0);
 
-                            tableWriter.o3ClockDownPartitionUpdateCount();
-                            tableWriter.o3CountDownDoneLatch();
+                                O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
+                                O3Utils.close(ff, srcTimestampFd);
 
-                            return;
+                                tableWriter.o3ClockDownPartitionUpdateCount();
+                                tableWriter.o3CountDownDoneLatch();
+
+                                return;
+                            }
+
+                            // The number of rows in the partition is lower.
+                            // We cannot simply trim partition to lower row numbers
+                            // because next commit can start overwriting the tail of the partition
+                            // while there can be old readers that still read the data
+                            // Proceed with another copy of the partition
+                            // TODO: it is possible to optimise this case by trimming the partition and
+                            // leaving a flag that this partition cannot be appended, so that instead
+                            // it is forced to split or split 1 line from this partition instead of trimming the row number
+
+                            // Split the last line of the partition
+                            if (prefixHi > prefixLo) {
+                                suffixHi = suffixLo = prefixHi;
+                                suffixType = O3_BLOCK_DATA;
+                                prefixHi--;
+                            }
                         }
-
                     }
                 }
 
@@ -924,6 +942,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 oldPartitionTimestamp = partitionTimestamp;
                 boolean partitionSplit = false;
 
+                // Split partition if the prefix is large enough (relatively and absolutely)
                 if (
                         prefixType == O3_BLOCK_DATA
                                 && prefixHi >= tableWriter.getPartitionO3SplitThreshold()

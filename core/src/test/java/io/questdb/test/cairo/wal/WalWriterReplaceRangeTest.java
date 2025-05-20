@@ -190,6 +190,11 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceRangeFirstPartitionNoImpact() throws Exception {
+        testReplaceRangeCommit(null, "2022-02-24T23:59:30", "2022-02-24T23:59:31", false, false);
+    }
+
+    @Test
     public void testReplaceRangeLastPartitionPrefix() throws Exception {
         testReplaceRangeCommit("2022-02-25T00:53", "2022-02-25T00:00", "2022-02-25T04");
     }
@@ -520,7 +525,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertSqlCursors("select count(*), min(ts), max(ts) from expected", "select count(*), min(ts), max(ts) from rg");
     }
 
-    private void testReplaceRangeCommit(String tsStr, String rangeStartStr, String rangeEndStr) throws Exception {
+    private void testReplaceRangeCommit(String tsStr, String rangeStartStr, String rangeEndStr, boolean compareTxns, boolean compareTruncateVersion) throws Exception {
         assertMemoryLeak(() -> {
             execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
@@ -529,8 +534,11 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(100)");
             drainWalQueue();
 
-            insertRowWithReplaceRange(tsStr, rangeStartStr, rangeEndStr, tableToken, true, true);
+            insertRowWithReplaceRange(tsStr, rangeStartStr, rangeEndStr, tableToken, compareTxns, compareTruncateVersion);
         });
     }
 
+    private void testReplaceRangeCommit(String tsStr, String rangeStartStr, String rangeEndStr) throws Exception {
+        testReplaceRangeCommit(tsStr, rangeStartStr, rangeEndStr, true, true);
+    }
 }

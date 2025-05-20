@@ -318,6 +318,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final FragileCode RECOVER_FROM_SWAP_RENAME_FAILURE = this::recoverFromSwapRenameFailure;
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
     private UpdateOperatorImpl updateOperatorImpl;
+    private long walRowsProcessed;
     private WalTxnDetails walTxnDetails;
     private final ColumnTaskHandler cthMapSymbols = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mapSymbols;
     private final ColumnTaskHandler cthMergeWalColumnManySegments = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mergeShuffleWalColumnManySegments;
@@ -1257,6 +1258,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         boolean committed;
         final long initialCommittedRowCount = txWriter.getRowCount();
+        walRowsProcessed = 0;
 
         try {
             if (transactionBlock == 1) {
@@ -1299,8 +1301,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw e;
         }
 
-        final long rowsAdded = txWriter.getRowCount() - initialCommittedRowCount;
-//        walTxnDetails.setIncrementRowsCommitted(txWriter.getRowCount() + txWriter.getLagRowCount() - initialCommittedRowCountWithLag);
+        walTxnDetails.setIncrementRowsCommitted(walRowsProcessed);
         if (committed) {
             assert txWriter.getLagRowCount() == 0;
 
@@ -1313,18 +1314,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             housekeep();
             shrinkO3Mem();
 
-
             assert txWriter.getPartitionCount() == 0 || txWriter.getMinTimestamp() >= txWriter.getPartitionTimestampByIndex(0);
-            LOG.debug().$("============== table ranges after the commit [table=").$(tableToken)
+            LOG.info().$("============== table ranges after the commit [table=").$(tableToken)
                     .$(", minTs=").$ts(txWriter.getMinTimestamp())
                     .$(", maxTs=").$ts(txWriter.getMaxTimestamp()).I$();
         }
 
-        // Nothing was committed to the table, only copied to LAG.
+        // Sometimes nothing is committed to the table, only copied to LAG.
         // Sometimes data from LAG is made visible to the table using fast commit that increment transient row count.
         // Keep in memory last committed seq txn, but do not write it to _txn file.
         assert txWriter.getLagTxnCount() == (seqTxn - txWriter.getSeqTxn());
-        metrics.tableWriterMetrics().addCommittedRows(rowsAdded);
+        metrics.tableWriterMetrics().addCommittedRows(txWriter.getRowCount() - initialCommittedRowCount);
     }
 
     @Override
@@ -3841,7 +3841,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             noOpRowCount = 0L;
 
-            LOG.debug().$("============== table ranges after the commit [table=").$(tableToken)
+            LOG.info().$("============== table ranges after the commit [table=").$(tableToken)
                     .$(", minTs=").$ts(txWriter.getMinTimestamp())
                     .$(", maxTs=").$ts(txWriter.getMaxTimestamp())
                     .I$();
@@ -5966,10 +5966,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
                 }
 
-                if (isCommitReplaceMode() && srcDataOldPartitionSize > 0 && srcDataNewPartitionSize < srcDataOldPartitionSize && !partitionMutates) {
-                    // Replace resulted in trimming the partition.
-                    // Now trim the column tops so that don't exceed the partition size
-                    o3ConsumePartitionUpdateSink_trimPartitionColumnTops(partitionTimestamp, srcDataNewPartitionSize);
+                if (isCommitReplaceMode() && srcDataOldPartitionSize > 0 && srcDataNewPartitionSize < srcDataOldPartitionSize) {
+                    if (!partitionMutates) {
+                        // Replace resulted in trimming the partition.
+                        // Now trim the column tops so that don't exceed the partition size
+                        o3ConsumePartitionUpdateSink_trimPartitionColumnTops(partitionTimestamp, srcDataNewPartitionSize);
+                    }
+
                     if (partitionTimestamp == lastPartitionTimestamp) {
                         // Recalculate max timestamp
                         partitionsRemoved = true;
@@ -7343,6 +7346,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         SymbolMapDiffCursor mapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(seqTxn);
 
         long walIdSegmentId = Numbers.encodeLowHighInts(segmentId, walId);
+        walRowsProcessed = rowHi - rowLo;
+
         if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
             processWalCommitDedupReplace(
                     walPath,
@@ -7403,6 +7408,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", maxTimestamp=").$ts(segmentCopyInfo.getMaxTimestamp())
                 .I$();
 
+        walRowsProcessed = segmentCopyInfo.getTotalRows();
         if (segmentCopyInfo.hasSegmentGaps()) {
             LOG.info().$("some segments have gaps in committed rows [table=").$(tableToken).I$();
             throw CairoException.txnApplyBlockError(tableToken);
