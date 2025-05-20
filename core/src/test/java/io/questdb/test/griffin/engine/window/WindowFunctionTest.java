@@ -3796,12 +3796,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
         );
 
         assertExceptionNoLeakCheck(
-                "select lead(ts, 1, s) over () from tab",
-                19,
-                "default value must be can cast to timestamp"
-        );
-
-        assertExceptionNoLeakCheck(
                 "select lead(d, 1, d + 1, d) over () from tab",
                 25,
                 "too many arguments"
