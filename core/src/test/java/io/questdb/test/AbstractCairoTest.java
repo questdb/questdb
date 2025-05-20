@@ -1650,7 +1650,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    void assertFactoryCursor(
+    protected void assertFactoryCursor(
             String expected,
             String expectedTimestamp,
             RecordCursorFactory factory,

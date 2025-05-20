@@ -90,9 +90,9 @@ jobs:
         # thus we take src.rpm from nasm project and rebuild it in the manylinux2014 container
         # this way we get a nasm binary that is compatible with the manylinux2014 environment
         run: |
-          wget https://dl.fedoraproject.org/pub/fedora/linux/development/42/Everything/source/tree/Packages/n/nasm-2.16.03-3.fc42.src.rpm
-          rpmbuild --rebuild ./nasm-2.16.03-3.fc42.src.rpm
-          rpm -i ~/rpmbuild/RPMS/x86_64/nasm-2.16.03-3.el7.x86_64.rpm
+          wget https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/linux/nasm-2.16.03-0.fc39.src.rpm
+          rpmbuild --rebuild ./nasm-2.16.03-0.fc39.src.rpm
+          rpm -i ~/rpmbuild/RPMS/x86_64/nasm-2.16.03-0.el7.x86_64.rpm
       - name: Install Node.js 20 glibc2.17
         # A hack to override default nodejs 20 to a build compatible with older glibc.
         # Inspired by https://github.com/pytorch/test-infra/pull/5959 If it's good for pytorch, it's good for us too! :)
