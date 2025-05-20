@@ -69,7 +69,7 @@ public class JsonLexer implements Mutable, Closeable {
     public JsonLexer(int cacheSize, int cacheSizeLimit) {
         this.cacheSizeLimit = cacheSizeLimit;
         // if cacheSizeLimit is 0 or negative, the cache is disabled
-        // only disable the cache, if you know for sure that parse() is called only once with the full json message
+        // only disable the cache, if parse() is called only once for every message with the full json structure
         if (cacheSizeLimit > 0) {
             this.cacheCapacity = cacheSize;
             this.cache = Unsafe.malloc(cacheSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
