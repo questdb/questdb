@@ -77,6 +77,14 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         checkWindowParameter(position, sqlExecutionContext);
+        if (rowsHi < rowsLo) {
+            return new DoubleNullFunction(args.get(0),
+                    NAME,
+                    rowsLo,
+                    rowsHi,
+                    windowContext.getFramingMode() == WindowColumn.FRAMING_RANGE,
+                    windowContext.getPartitionByRecord());
+        }
         return windowContext.isIgnoreNulls() ?
                 this.generateIgnoreNullsFunction(position, args, configuration) :
                 this.generateRespectNullsFunction(position, args, configuration);
