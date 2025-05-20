@@ -1049,13 +1049,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private long calculateRecordTailSize(
             Record record,
-            int startFrom,
             int columnCount,
             long maxBlobSize,
             long sendBufferSize
     ) throws BadProtocolException {
         long recordSize = 0;
-        for (int i = startFrom; i < columnCount; i++) {
+        for (int i = outResendColumnIndex; i < columnCount; i++) {
             final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
             final int typeTag = ColumnType.tagOf(columnType);
             final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, typeTag);
@@ -1064,8 +1063,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 return -1;
             }
             // number of bits or chars for geohash
-            final int bitFlags = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
-            final int columnValueSize = calculateColumnBinSize(this, record, i, columnType, bitFlags, maxBlobSize);
+            final int geohashSize = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
+            final int columnValueSize = calculateColumnBinSize(
+                    this, record, i, columnType, geohashSize, maxBlobSize, outResendArrayFlatIndex);
 
             if (columnValueSize < 0) {
                 return -1; // unsupported type
@@ -1341,14 +1341,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, typeTag);
 
             // number of bits or chars for geohash
-            final int bitFlags = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
+            final int geohashSize = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
 
             final long columnValueSize;
             // if column is not variable size and format code is text, we can't calculate size
             if (columnBinaryFlag == 0 && txtAndBinSizesCanBeDifferent(columnType)) {
                 columnValueSize = estimateColumnTxtSize(record, i, typeTag);
             } else {
-                columnValueSize = calculateColumnBinSize(this, record, i, columnType, bitFlags, Long.MAX_VALUE);
+                columnValueSize = calculateColumnBinSize(this, record, i, columnType, geohashSize, Long.MAX_VALUE, 0);
             }
 
             if (columnValueSize < 0) {
@@ -1649,17 +1649,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             int nDims = array.getDimCount();
             int componentTypeOid = getTypeOid(elemType);
 
-            // array header
-            utf8Sink.putNetworkInt(PGUtils.calculateArrayColBinSize(array));
-            utf8Sink.putNetworkInt(nDims);
+            // The size field indicates the size of what follows, excluding its own size,
+            // that's why we subtract Integer.BYTES from it. The same method is used to calculate
+            // the full size of the message, and in that case this field must be included.
+            utf8Sink.putNetworkInt(PGUtils.calculateArrayColBinSize(array, 0) - Integer.BYTES);
 
+            utf8Sink.putNetworkInt(nDims);
             utf8Sink.putIntDirect(0); // "has nulls" flag: always 0 because QuestDB doesn't support NULL as array element
             utf8Sink.putNetworkInt(componentTypeOid);
-
-            // Write dimension information
             for (int i = 0; i < nDims; i++) {
                 utf8Sink.putNetworkInt(array.getDimLen(i)); // length of each dimension
-                utf8Sink.putNetworkInt(1); // lower bound, always 1 in Postgres
+                utf8Sink.putNetworkInt(1); // lower bound, always 1 in QuestDB
             }
         }
         try {
@@ -1669,8 +1669,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 // Note that we rely on a HotSpot optimization: Loop-invariant code motion.
                 // It moves the switch outside the loop.
                 for (int i = outResendArrayFlatIndex; i < len; i++) {
-                    utf8Sink.bookmark();
-                    outResendArrayFlatIndex = i;
                     switch (elemType) {
                         case ColumnType.LONG:
                             utf8Sink.putNetworkInt(Long.BYTES);
@@ -1681,9 +1679,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             utf8Sink.putNetworkDouble(flatView.getDoubleAtAbsIndex(i));
                             break;
                     }
+                    utf8Sink.bookmark();
+                    outResendArrayFlatIndex = i + 1;
                 }
             } else {
-                outColBinArrRecursive(utf8Sink, array, elemType, 0, 0);
+                outColBinArrRecursive(utf8Sink, array, elemType, 0, 0, 0);
             }
             outResendArrayFlatIndex = 0;
         } catch (NoSpaceLeftInResponseBufferException e) {
@@ -1692,16 +1692,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColBinArrRecursive(
-            PGResponseSink utf8Sink, ArrayView array, short elemType, int dim, int flatIndex
+    private int outColBinArrRecursive(
+            PGResponseSink utf8Sink, ArrayView array, short elemType, int dim, int flatIndex, int outFlatIndex
     ) {
         final int count = array.getDimLen(dim);
         final int stride = array.getStride(dim);
-        final boolean atDeepestDim = dim == array.getDimCount() - 1;
-        if (atDeepestDim) {
+        if (dim < array.getDimCount() - 1) {
             for (int i = 0; i < count; i++) {
-                if (flatIndex == outResendArrayFlatIndex) {
-                    utf8Sink.bookmark();
+                outFlatIndex = outColBinArrRecursive(utf8Sink, array, elemType, dim + 1, flatIndex, outFlatIndex);
+                flatIndex += stride;
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                if (outFlatIndex == outResendArrayFlatIndex) {
                     switch (elemType) {
                         case ColumnType.LONG: {
                             long val = array.getLong(flatIndex);
@@ -1716,19 +1719,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             break;
                         }
                     }
-                    outResendArrayFlatIndex += stride;
+                    utf8Sink.bookmark();
+                    outResendArrayFlatIndex++;
                 }
+                outFlatIndex++;
                 flatIndex += stride;
-            }
-        } else {
-            for (int i = 0; i < count; i++) {
-                outColBinArrRecursive(utf8Sink, array, elemType, dim + 1, flatIndex);
-                flatIndex += stride;
-                if (flatIndex > outResendArrayFlatIndex) {
-                    outResendArrayFlatIndex = flatIndex;
-                }
             }
         }
+        return outFlatIndex;
     }
 
     private void outColBinBool(PGResponseSink utf8Sink, Record record, int columnIndex) {
@@ -2376,17 +2374,16 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 if (isMsgLengthRequired) {
                     final long sizeInBuffer = utf8Sink.getSendBufferPtr() - messageLengthAddress;
                     assert sizeInBuffer > 0;
-
                     try {
                         final long recordTailSize = calculateRecordTailSize(
                                 record,
-                                outResendColumnIndex,
                                 columnCount,
                                 utf8Sink.getMaxBlobSize(),
                                 utf8Sink.getSendBufferSize()
                         );
-                        if (recordTailSize > 0 && sizeInBuffer + recordTailSize <= Integer.MAX_VALUE) {
-                            putInt(messageLengthAddress, (int) (sizeInBuffer + recordTailSize));
+                        long msgLength = sizeInBuffer + recordTailSize;
+                        if (recordTailSize > 0 && msgLength <= Integer.MAX_VALUE) {
+                            putInt(messageLengthAddress, (int) msgLength);
                             outResendRecordHeader = false;
                         } else {
                             resetIncompleteRecord(utf8Sink, messageLengthAddress);

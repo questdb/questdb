@@ -598,16 +598,24 @@ public class PGArraysTest extends BasePGTest {
         int dimLen1 = 10 + bufferSizeRnd.nextInt(90);
         int dimLen2 = 10 + bufferSizeRnd.nextInt(90);
         String literal = buildArrayLiteral2d(dimLen1, dimLen2);
-        String result = buildArrayResult2d(1, dimLen1, 1, dimLen2);
+        String result = buildArrayResult2d(1, dimLen1, 1, dimLen2) + '\n';
         assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
             try (Statement stmt = conn.createStatement()) {
-                stmt.execute("CREATE TABLE tango AS (SELECT x n, " + literal + " arr FROM long_sequence(1))");
+                stmt.execute("CREATE TABLE tango AS (SELECT x n, " + literal + " arr FROM long_sequence(9))");
             }
-            try (PreparedStatement stmt = conn.prepareStatement("SELECT arr[2:,2:] arr FROM tango")) {
+            try (PreparedStatement stmt = conn.prepareStatement("SELECT n, arr[2:,2:] arr FROM tango")) {
                 sink.clear();
                 try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet("arr[ARRAY]\n" +
-                                    result + "\n",
+                    assertResultSet("n[BIGINT],arr[ARRAY]\n" +
+                                    "1," + result +
+                                    "2," + result +
+                                    "3," + result +
+                                    "4," + result +
+                                    "5," + result +
+                                    "6," + result +
+                                    "7," + result +
+                                    "8," + result +
+                                    "9," + result,
                             sink, rs);
                 }
             }
@@ -621,13 +629,22 @@ public class PGArraysTest extends BasePGTest {
     public void testSendBufferOverflowVanilla() throws Exception {
         Assume.assumeTrue(walEnabled);
         int elemCount = 100 + bufferSizeRnd.nextInt(900);
-        String arrayLiteral = buildArrayLiteral1d(elemCount);
+        String literal = buildArrayLiteral1d(elemCount);
+        String result = buildArrayResult1d(elemCount) + '\n';
         assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
-            try (PreparedStatement stmt = conn.prepareStatement("SELECT x n, " + arrayLiteral + " arr FROM long_sequence(1)")) {
+            try (PreparedStatement stmt = conn.prepareStatement("SELECT x n, " + literal + " arr FROM long_sequence(9)")) {
                 sink.clear();
                 try (ResultSet rs = stmt.executeQuery()) {
                     assertResultSet("n[BIGINT],arr[ARRAY]\n" +
-                                    "1," + buildArrayResult1d(elemCount) + "\n",
+                                    "1," + result +
+                                    "2," + result +
+                                    "3," + result +
+                                    "4," + result +
+                                    "5," + result +
+                                    "6," + result +
+                                    "7," + result +
+                                    "8," + result +
+                                    "9," + result,
                             sink, rs);
                 }
             }

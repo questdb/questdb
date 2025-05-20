@@ -59,14 +59,22 @@ class PGUtils {
     private PGUtils() {
     }
 
-    public static int calculateArrayColBinSize(ArrayView array) {
-        return Integer.BYTES // dimension count
+    public static int calculateArrayColBinSize(ArrayView array, int resumePoint) {
+        // When this method is called while resuming the sending of an array (resumePoint > 0),
+        // the header has already been sent. That's why we set header size to 0 in that case.
+        // The calling code must ensure at least one element follows the header, otherwise
+        // resumePoint may stay at 0 even though the header was already sent.
+        int headerSize = resumePoint == 0
+                ? Integer.BYTES // size field (stores the number returned from this method)
+                + Integer.BYTES // dimension count
                 + Integer.BYTES // "has nulls" flag
                 + Integer.BYTES // component type
                 + array.getDimCount() * (2 * Integer.BYTES) // dimension lengths
-                + array.getCardinality() * (
-                Integer.BYTES // element size
-                        + Long.BYTES); // element value
+                : 0;
+        return headerSize +
+                (array.getCardinality() - resumePoint) * // number of elements left to send
+                        (Integer.BYTES // element size
+                                + Long.BYTES); // element value
     }
 
     /**
@@ -79,8 +87,9 @@ class PGUtils {
             Record record,
             int columnIndex,
             int columnType,
-            int bitFlags,
-            long maxBlobSize
+            int geohashSize,
+            long maxBlobSize,
+            int arrayResumePoint
     ) throws BadProtocolException {
         final short typeTag = ColumnType.tagOf(columnType);
         switch (typeTag) {
@@ -123,13 +132,13 @@ class PGUtils {
                 final Long256 long256Value = record.getLong256A(columnIndex);
                 return Long256Impl.isNull(long256Value) ? Integer.BYTES : Integer.BYTES + Numbers.hexDigitsLong256(long256Value);
             case ColumnType.GEOBYTE:
-                return geoHashBytes(record.getGeoByte(columnIndex), bitFlags);
+                return geoHashBytes(record.getGeoByte(columnIndex), geohashSize);
             case ColumnType.GEOSHORT:
-                return geoHashBytes(record.getGeoShort(columnIndex), bitFlags);
+                return geoHashBytes(record.getGeoShort(columnIndex), geohashSize);
             case ColumnType.GEOINT:
-                return geoHashBytes(record.getGeoInt(columnIndex), bitFlags);
+                return geoHashBytes(record.getGeoInt(columnIndex), geohashSize);
             case ColumnType.GEOLONG:
-                return geoHashBytes(record.getGeoLong(columnIndex), bitFlags);
+                return geoHashBytes(record.getGeoLong(columnIndex), geohashSize);
             case ColumnType.VARCHAR:
                 final Utf8Sequence vcValue = record.getVarcharA(columnIndex);
                 return vcValue == null ? Integer.BYTES : Integer.BYTES + vcValue.size();
@@ -162,9 +171,8 @@ class PGUtils {
                 }
                 assert ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE ||
                         ColumnType.decodeArrayElementType(columnType) == ColumnType.LONG
-                        : "implemented only for double and long";
-                return Integer.BYTES // size
-                        + calculateArrayColBinSize(array); // encoded array size
+                        : "implemented only for DOUBLE and LONG";
+                return calculateArrayColBinSize(array, arrayResumePoint);
             default:
                 assert false : "unsupported type: " + typeTag;
                 return -1;
@@ -238,13 +246,13 @@ class PGUtils {
         }
     }
 
-    private static int geoHashBytes(long value, int bitFlags) {
+    private static int geoHashBytes(long value, int size) {
         if (value == GeoHashes.NULL) {
             return Integer.BYTES;
         } else {
-            assert bitFlags > 0;
+            assert size > 0;
             // chars or bits
-            return Integer.BYTES + bitFlags;
+            return Integer.BYTES + size;
         }
     }
 }
