@@ -1341,14 +1341,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, typeTag);
 
             // number of bits or chars for geohash
-            final int bitFlags = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
+            final int geohashSize = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
 
             final long columnValueSize;
             // if column is not variable size and format code is text, we can't calculate size
             if (columnBinaryFlag == 0 && txtAndBinSizesCanBeDifferent(columnType)) {
                 columnValueSize = estimateColumnTxtSize(record, i, typeTag);
             } else {
-                columnValueSize = calculateColumnBinSize(this, record, i, columnType, bitFlags, Long.MAX_VALUE);
+                columnValueSize = calculateColumnBinSize(this, record, i, columnType, geohashSize, Long.MAX_VALUE, 0);
             }
 
             if (columnValueSize < 0) {
