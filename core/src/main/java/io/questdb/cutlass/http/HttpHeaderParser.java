@@ -86,7 +86,6 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private boolean isUrl = true;
     private DirectUtf8String method;
     private DirectUtf8String methodLine;
-    private boolean multiPartRequest = false;
     private boolean needMethod;
     private boolean needProtocol = true;
     private boolean postRequest = false;

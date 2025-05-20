@@ -39,7 +39,7 @@ import static org.junit.Assert.fail;
 public class PreferencesParserTest extends AbstractCairoTest {
 
     @Test
-    public void testFragmentedInput() throws Exception {
+    public void testFragmentedInputNotSupported() throws Exception {
         assertMemoryLeak(() -> {
             final CharSequenceObjHashMap<CharSequence> parserMap = new CharSequenceObjHashMap<>();
             try (PreferencesParser parser = new PreferencesParser(engine.getConfiguration(), parserMap)) {

@@ -980,11 +980,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             // paths is ok because duplicates are squashed by the HTTP server.
             // 1. import, to support CSV import UI
             // 2. export, to support CSV export UI
-            // 3. preferences, the Web Console can persist preferences via this endpoint
-            // 4. settings, a union of selected config properties and the preferences, the Web Console loads it on startup
-            // 5. table status, to support CSV import UI
-            // 6. JSON query execution, e.g. exec
-            // 7. warnings, that displays warnings in the table view
+            // 3. settings, a union of selected config properties and preferences,
+            //     the Web Console loads it on startup, the preferences part can be updated via POST/PUT
+            // 4. table status, to support CSV import UI
+            // 5. JSON query execution, e.g. exec
+            // 6. warnings, that displays warnings in the table view
 
             // we use defaults, because this is what the Web Console expects
             httpContextPathImport.add(httpContextWebConsole + "/imp");
