@@ -59,14 +59,22 @@ class PGUtils {
     private PGUtils() {
     }
 
-    public static int calculateArrayColBinSize(ArrayView array) {
-        return Integer.BYTES // dimension count
+    public static int calculateArrayColBinSize(ArrayView array, int resumePoint) {
+        // When this method is called while resuming the sending of an array (resumePoint > 0),
+        // the header has already been sent. That's why we set header size to 0 in that case.
+        // The calling code must ensure at least one element follows the header, otherwise
+        // resumePoint may stay at 0 even though the header was already sent.
+        int headerSize = resumePoint == 0
+                ? Integer.BYTES // size field (stores the number returned from this method)
+                + Integer.BYTES // dimension count
                 + Integer.BYTES // "has nulls" flag
                 + Integer.BYTES // component type
                 + array.getDimCount() * (2 * Integer.BYTES) // dimension lengths
-                + array.getCardinality() * (
-                Integer.BYTES // element size
-                        + Long.BYTES); // element value
+                : 0;
+        return headerSize +
+                (array.getCardinality() - resumePoint) * // number of elements left to send
+                        (Integer.BYTES // element size
+                                + Long.BYTES); // element value
     }
 
     /**
@@ -79,8 +87,9 @@ class PGUtils {
             Record record,
             int columnIndex,
             int columnType,
-            long maxBlobSize
             int geohashSize,
+            long maxBlobSize,
+            int arrayResumePoint
     ) throws BadProtocolException {
         final short typeTag = ColumnType.tagOf(columnType);
         switch (typeTag) {
@@ -162,9 +171,8 @@ class PGUtils {
                 }
                 assert ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE ||
                         ColumnType.decodeArrayElementType(columnType) == ColumnType.LONG
-                        : "implemented only for double and long";
-                return Integer.BYTES // size
-                        + calculateArrayColBinSize(array); // encoded array size
+                        : "implemented only for DOUBLE and LONG";
+                return calculateArrayColBinSize(array, arrayResumePoint);
             default:
                 assert false : "unsupported type: " + typeTag;
                 return -1;
