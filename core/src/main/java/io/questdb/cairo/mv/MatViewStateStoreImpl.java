@@ -106,6 +106,9 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     @TestOnly
     public void clear() {
         close();
+        taskQueue.clear();
+        stateByTableDirName.clear();
+        lastNotifiedTxnByTableName.clear();
     }
 
     @Override
@@ -113,8 +116,6 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         for (MatViewState state : stateByTableDirName.values()) {
             Misc.free(state);
         }
-        stateByTableDirName.clear();
-        lastNotifiedTxnByTableName.clear();
     }
 
     @Override

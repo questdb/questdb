@@ -1632,6 +1632,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             // no refresh should happen as the start timestamp is in future
             currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            final MatViewRefreshIntervalJob refreshIntervalJob = new MatViewRefreshIntervalJob(engine);
+            drainMatViewIntervalQueue(refreshIntervalJob);
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -1647,6 +1649,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             // the view should refresh after an explicit incremental refresh call
             execute("refresh materialized view price_1h incremental;");
+            drainMatViewIntervalQueue(refreshIntervalJob);
             drainQueues();
 
             assertQueryNoLeakCheck(

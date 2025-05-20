@@ -99,6 +99,11 @@ public class ConcurrentQueue<T extends ValueHolder<T>> implements Queue<T> {
         return tail.getCapacity();
     }
 
+    @Override
+    public void clear() {
+        tail = head = new ConcurrentQueueSegment<>(factory, INITIAL_SEGMENT_LENGTH);
+    }
+
     /**
      * Gets the number of items in the queue.
      *

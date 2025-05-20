@@ -469,7 +469,8 @@ public class CairoEngine implements Closeable, WriterSource {
             w.clearCache();
         }
         matViewGraph.clear();
-        matViewStateStore.close();
+        matViewStateStore.clear();
+        matViewRefreshIntervalQueue.clear();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableSequencerAPI.releaseAll();
@@ -497,6 +498,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(checkpointAgent);
         Misc.free(metadataCache);
         Misc.free(scoreboardPool);
+        Misc.free(matViewStateStore);
     }
 
     @TestOnly

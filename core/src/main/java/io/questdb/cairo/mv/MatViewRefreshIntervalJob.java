@@ -42,13 +42,13 @@ public class MatViewRefreshIntervalJob extends SynchronizedJob {
     private final ObjList<RefreshIntervalTimingWheel.Timer> expired = new ObjList<>();
     private final MatViewGraph matViewGraph;
     private final MatViewStateStore matViewStateStore;
-    private final Queue<MatViewRefreshIntervalTask> refreshIntervalQueue;
     private final MatViewRefreshIntervalTask refreshIntervalTask = new MatViewRefreshIntervalTask();
     private final ObjObjHashMap<TableToken, RefreshIntervalTimingWheel.Timer> refreshIntervalTimers = new ObjObjHashMap<>();
+    private final Queue<MatViewRefreshIntervalTask> taskQueue;
     private final RefreshIntervalTimingWheel timingWheel;
 
     public MatViewRefreshIntervalJob(CairoEngine engine) {
-        this.refreshIntervalQueue = engine.getMatViewRefreshIntervalQueue();
+        this.taskQueue = engine.getMatViewRefreshIntervalQueue();
         this.matViewGraph = engine.getMatViewGraph();
         this.matViewStateStore = engine.getMatViewStateStore();
         final CairoConfiguration configuration = engine.getConfiguration();
@@ -90,7 +90,7 @@ public class MatViewRefreshIntervalJob extends SynchronizedJob {
     protected boolean runSerially() {
         boolean ran = false;
         // check created/dropped event queue
-        while (refreshIntervalQueue.tryDequeue(refreshIntervalTask)) {
+        while (taskQueue.tryDequeue(refreshIntervalTask)) {
             final TableToken viewToken = refreshIntervalTask.getMatViewToken();
             switch (refreshIntervalTask.getOperation()) {
                 case MatViewRefreshIntervalTask.CREATED:
