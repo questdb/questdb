@@ -425,6 +425,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             factory = state.acquireRecordFactory();
             copier = state.getRecordToRowCopier();
 
+            long rowCount = 0;
             for (int i = 0; i <= maxRetries; i++) {
                 try {
                     if (factory == null) {
@@ -458,7 +459,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     assert cursorTimestampIndex > -1;
 
                     long commitTarget = batchSize;
-                    long rowCount = 0;
+                    rowCount = 0;
 
                     intervalIterator.toTop(intervalStep);
                     while (intervalIterator.next()) {
@@ -505,7 +506,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final long refreshFinishTimestamp = microsecondClock.getTicks();
             if (baseTableTxn == -1) {
                 // It's a range refresh, so we don't bump last refresh base table txn.
-                walWriter.commit();
+                // Keep the last refresh txn as is and only update the finish timestamp.
+                if (rowCount > 0) {
+                    walWriter.commitMatView(state.getLastRefreshBaseTxn(), refreshFinishTimestamp);
+                } else {
+                    walWriter.resetMatViewState(state.getLastRefreshBaseTxn(), refreshFinishTimestamp, false, null);
+                }
                 state.rangeRefreshSuccess(
                         factory,
                         copier,
@@ -515,7 +521,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 );
             } else {
                 // It's an incremental/full refresh.
-                walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp);
+                if (rowCount > 0) {
+                    walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp);
+                } else {
+                    walWriter.resetMatViewState(baseTableTxn, refreshFinishTimestamp, false, null);
+                }
                 state.refreshSuccess(
                         factory,
                         copier,
@@ -792,7 +802,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private void refreshFailState(MatViewState state, @Nullable WalWriter walWriter, CharSequence errorMessage) {
         state.refreshFail(microsecondClock.getTicks(), errorMessage);
         if (walWriter != null) {
-            walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshFinishTimestamp(), true, errorMessage);
+            walWriter.resetMatViewState(state.getLastRefreshBaseTxn(), state.getLastRefreshFinishTimestamp(), true, errorMessage);
         }
         // Invalidate dependent views recursively.
         enqueueInvalidateDependentViews(state.getViewDefinition().getMatViewToken(), "base materialized view refresh failed");
@@ -876,7 +886,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         assert state.isLocked();
 
         final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
-        long toBaseTxn = baseSeqTracker.getWriterTxn();
+        final long toBaseTxn = baseSeqTracker.getWriterTxn();
 
         final long fromBaseTxn = state.getLastRefreshBaseTxn();
         if (fromBaseTxn >= 0 && fromBaseTxn >= toBaseTxn) {
@@ -914,13 +924,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         state.markAsValid();
         state.setLastRefreshBaseTableTxn(-1);
         state.setLastRefreshTimestamp(Numbers.LONG_NULL);
-        walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshFinishTimestamp(), false, null);
+        walWriter.resetMatViewState(state.getLastRefreshBaseTxn(), state.getLastRefreshFinishTimestamp(), false, null);
     }
 
     private void setInvalidState(MatViewState state, WalWriter walWriter, CharSequence invalidationReason, long invalidationTimestamp) {
         state.markAsInvalid(invalidationReason);
         state.setLastRefreshTimestamp(invalidationTimestamp);
         state.setLastRefreshStartTimestamp(invalidationTimestamp);
-        walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshFinishTimestamp(), true, invalidationReason);
+        walWriter.resetMatViewState(state.getLastRefreshBaseTxn(), state.getLastRefreshFinishTimestamp(), true, invalidationReason);
     }
 }
