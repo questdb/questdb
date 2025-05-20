@@ -114,7 +114,6 @@ public class Rnd {
     }
 
     public void nextDoubleArray(int dimCount, DirectArray array, int nanRate, int maxDimLen, int errorPosition) {
-
         array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, dimCount));
 
         int size = 1;
@@ -130,7 +129,6 @@ public class Rnd {
     }
 
     public void nextDoubleArray(int dimCount, DirectArray array, int nanRate, IntList dimLens, int errorPosition) {
-
         assert dimLens.size() == dimCount;
 
         array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, dimCount));

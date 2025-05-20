@@ -56,86 +56,82 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            @Transient ObjList<Function> inputArgs,
-            @Transient IntList inputArgPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        Function arrayArg = null;
-        try {
-            arrayArg = inputArgs.getQuick(0);
-            inputArgs.remove(0);
-            inputArgPositions.removeIndex(0);
-            ObjList<Function> args = null;
-            IntList argPositions = null;
-            validateArgs(inputArgs, inputArgPositions);
-            // If the array argument is another array slicing function, and if all its arguments are indexes
-            // (not ranges for slicing), we can inline it into this function by prepending all its args to
-            // our args, and by using its array argument as our array argument.
-            if (arrayArg instanceof SliceDoubleArrayFunction) {
-                boolean canInline = true;
-                SliceDoubleArrayFunction sliceFn = (SliceDoubleArrayFunction) arrayArg;
-                ObjList<Function> rangeArgs = sliceFn.rangeArgs;
-                for (int n = rangeArgs.size(), i = 0; i < n; i++) {
-                    if (ColumnType.isInterval(rangeArgs.getQuick(i).getType())) {
-                        canInline = false;
-                        break;
-                    }
-                }
-                if (canInline) {
-                    arrayArg = sliceFn.arrayArg;
-                    args = new ObjList<>(rangeArgs);
-                    args.addAll(inputArgs);
-                    argPositions = new IntList();
-                    argPositions.addAll(sliceFn.argPositions);
-                    argPositions.addAll(inputArgPositions);
-                }
-            }
-            if (args == null) {
-                args = new ObjList<>(inputArgs);
-                argPositions = new IntList(inputArgPositions);
-            }
+        validateIndexArgs(args, argPositions);
 
-            int nDims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
-            int nArgs = args.size();
-            if (nArgs > nDims) {
-                throw SqlException
-                        .position(argPositions.get(nDims))
-                        .put("too many array access arguments [nArgs=").put(nArgs)
-                        .put(", nDims=").put(nDims)
-                        .put(']');
-            }
-            int resultNDims = nDims;
-            for (int n = args.size(), i = 0; i < n; i++) {
-                int argType = args.getQuick(i).getType();
-                if (isIndexArg(argType)) {
-                    resultNDims--;
+        Function arrayArg = args.getQuick(0);
+        ObjList<Function> argsCopy = null;
+        IntList argPositionsCopy = null;
+        // If the array argument is another array slicing function, and if all its arguments are indexes
+        // (not ranges for slicing), we can inline it into this function by prepending all its args to
+        // our args, and by using its array argument as our array argument.
+        if (arrayArg instanceof SliceDoubleArrayFunction) {
+            boolean canInline = true;
+            final SliceDoubleArrayFunction sliceFn = (SliceDoubleArrayFunction) arrayArg;
+            final ObjList<Function> rangeArgs = sliceFn.allArgs;
+            for (int n = rangeArgs.size(), i = 0; i < n; i++) {
+                if (ColumnType.isInterval(rangeArgs.getQuick(i).getType())) {
+                    canInline = false;
+                    break;
                 }
             }
-            if (resultNDims == 0) {
-                boolean indexArgsAreConstant = true;
-                for (int n = args.size(), i = 0; i < n; i++) {
-                    if (!args.getQuick(i).isConstant()) {
-                        indexArgsAreConstant = false;
-                        break;
-                    }
+            if (canInline) {
+                arrayArg = sliceFn.arrayArg;
+                argsCopy = new ObjList<>(rangeArgs.size() + args.size());
+                argsCopy.addAll(rangeArgs); // rangeArgs includes sliceFn.arrayArg
+                argPositionsCopy = new IntList();
+                argPositionsCopy.addAll(sliceFn.allArgPositions); // includes sliceFn.arrayArg's position
+                for (int i = 1, n = args.size(); i < n; i++) {
+                    argsCopy.add(args.getQuick(i));
+                    argPositionsCopy.add(argPositions.getQuick(i));
                 }
-                if (indexArgsAreConstant) {
-                    IntList indexArgs = new IntList(args.size());
-                    for (int n = args.size(), i = 0; i < n; i++) {
-                        indexArgs.add(args.getQuick(i).getInt(null));
-                    }
-                    Misc.freeObjList(args);
-                    return new AccessDoubleArrayConstantIndexFunction(arrayArg, indexArgs, argPositions);
-                }
-                return new AccessDoubleArrayFunction(arrayArg, args, argPositions);
             }
-            return new SliceDoubleArrayFunction(arrayArg, resultNDims, args, argPositions);
-        } catch (Throwable e) {
-            Misc.free(arrayArg);
-            Misc.freeObjList(inputArgs);
-            throw e;
         }
+        if (argsCopy == null) {
+            argsCopy = new ObjList<>(args);
+            argPositionsCopy = new IntList(argPositions);
+        }
+
+        final int nDims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
+        final int nArgs = argsCopy.size() - 1;
+        if (nArgs > nDims) {
+            throw SqlException
+                    .position(argPositionsCopy.get(nDims + 1))
+                    .put("too many array access arguments [nArgs=").put(nArgs)
+                    .put(", nDims=").put(nDims)
+                    .put(']');
+        }
+        int resultNDims = nDims;
+        for (int i = 1, n = argsCopy.size(); i < n; i++) {
+            final int argType = argsCopy.getQuick(i).getType();
+            if (isIndexArg(argType)) {
+                resultNDims--;
+            }
+        }
+        if (resultNDims == 0) {
+            boolean indexArgsAreConstant = true;
+            for (int i = 1, n = argsCopy.size(); i < n; i++) {
+                if (!argsCopy.getQuick(i).isConstant()) {
+                    indexArgsAreConstant = false;
+                    break;
+                }
+            }
+            if (indexArgsAreConstant) {
+                IntList indexArgs = new IntList(argsCopy.size() - 1);
+                for (int i = 1, n = argsCopy.size(); i < n; i++) {
+                    indexArgs.add(argsCopy.getQuick(i).getInt(null));
+                    Misc.free(argsCopy.getQuick(i));
+                }
+                argPositionsCopy.removeIndex(0); // remove arrayArg's position
+                return new AccessDoubleArrayConstantIndexFunction(arrayArg, indexArgs, argPositionsCopy);
+            }
+            return new AccessDoubleArrayFunction(arrayArg, argsCopy, argPositionsCopy);
+        }
+        return new SliceDoubleArrayFunction(arrayArg, resultNDims, argsCopy, argPositionsCopy);
     }
 
     private static int flatIndexDelta(ArrayView array, int dim, int indexAtDim, int argPos) {
@@ -159,8 +155,8 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         return argType == ColumnType.INT || argType == ColumnType.SHORT || argType == ColumnType.BYTE;
     }
 
-    private static void validateArgs(ObjList<Function> args, IntList argPositions) throws SqlException {
-        for (int n = args.size(), i = 0; i < n; i++) {
+    private static void validateIndexArgs(ObjList<Function> args, IntList argPositions) throws SqlException {
+        for (int i = 1, n = args.size(); i < n; i++) {
             Function arg = args.getQuick(i);
             int argType = arg.getType();
             if (!isIndexArg(argType) && !ColumnType.isInterval(argType)) {
@@ -176,12 +172,12 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 long hi = range.getHi();
                 if (lo < 1) {
                     throw SqlException.position(argPositions.getQuick(i))
-                            .put("array slice bounds must be positive [dim=").put(i + 1)
+                            .put("array slice bounds must be positive [dim=").put(i)
                             .put(", lowerBound=").put(lo)
                             .put(']');
                 } else if (hi < 1 && hi != Numbers.LONG_NULL) {
                     throw SqlException.position(argPositions.getQuick(i))
-                            .put("array slice bounds must be positive [dim=").put(i + 1)
+                            .put("array slice bounds must be positive [dim=").put(i)
                             .put(", upperBound=").put(hi)
                             .put(']');
                 }
@@ -189,7 +185,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 int index = arg.getInt(null);
                 if (index < 1) {
                     throw SqlException.position(argPositions.getQuick(i))
-                            .put("array index must be positive [dim=").put(i + 1)
+                            .put("array index must be positive [dim=").put(i)
                             .put(", index=").put(index)
                             .put(']');
                 }
@@ -220,7 +216,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 return Double.NaN;
             }
             int flatIndex = 0;
-            for (int n = indexArgs.size(), dim = 0; dim < n; dim++) {
+            for (int dim = 0, n = indexArgs.size(); dim < n; dim++) {
                 // Decrement the index in the argument because Postgres uses 1-based array indexing
                 int indexAtDim = indexArgs.get(dim) - 1;
                 int indexDelta = flatIndexDelta(array, dim, indexAtDim, indexArgPositions.get(dim));
@@ -245,18 +241,14 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     }
 
     private static class AccessDoubleArrayFunction extends DoubleFunction implements MultiArgFunction {
-        private final ObjList<Function> allArgs; // holds arrayArg + indexArgs
+        private final IntList allArgPositions;
+        private final ObjList<Function> allArgs; // holds [arrayArg, indexArgs...]
         private final Function arrayArg;
-        private final IntList indexArgPositions;
-        private final ObjList<Function> indexArgs;
 
-        private AccessDoubleArrayFunction(Function arrayArg, ObjList<Function> indexArgs, IntList indexArgPositions) {
+        private AccessDoubleArrayFunction(Function arrayArg, ObjList<Function> allArgs, IntList allArgPositions) {
             this.arrayArg = arrayArg;
-            this.indexArgs = indexArgs;
-            this.indexArgPositions = indexArgPositions;
-            this.allArgs = new ObjList<>(indexArgs.size() + 1);
-            allArgs.add(arrayArg);
-            allArgs.addAll(indexArgs);
+            this.allArgs = allArgs;
+            this.allArgPositions = allArgPositions;
         }
 
         @Override
@@ -271,10 +263,10 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 return Double.NaN;
             }
             int flatIndex = 0;
-            for (int n = indexArgs.size(), dim = 0; dim < n; dim++) {
+            for (int i = 1, n = allArgs.size(); i < n; i++) {
                 // Decrement the index in the argument because Postgres uses 1-based array indexing
-                int indexAtDim = indexArgs.getQuick(dim).getInt(rec) - 1;
-                int indexDelta = flatIndexDelta(array, dim, indexAtDim, indexArgPositions.get(dim));
+                int indexAtDim = allArgs.getQuick(i).getInt(rec) - 1;
+                int indexDelta = flatIndexDelta(array, i - 1, indexAtDim, allArgPositions.get(i));
                 if (indexDelta == Numbers.INT_NULL) {
                     return Double.NaN;
                 }
@@ -287,8 +279,8 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(arrayArg).val('[');
             String comma = "";
-            for (int n = indexArgs.size(), i = 0; i < n; i++) {
-                sink.val(comma).val(indexArgs.getQuick(i));
+            for (int i = 1, n = allArgs.size(); i < n; i++) {
+                sink.val(comma).val(allArgs.getQuick(i));
                 comma = ",";
             }
             sink.val(']');
@@ -296,20 +288,16 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     }
 
     private static class SliceDoubleArrayFunction extends ArrayFunction implements MultiArgFunction {
-        private final ObjList<Function> allArgs; // holds arrayArg + rangeArgs
-        private final IntList argPositions;
+        private final IntList allArgPositions;
+        private final ObjList<Function> allArgs; // holds [arrayArg, rangeArgs...]
         private final Function arrayArg;
         private final DerivedArrayView derivedArray = new DerivedArrayView();
-        private final ObjList<Function> rangeArgs;
 
-        public SliceDoubleArrayFunction(Function arrayArg, int resultNDims, ObjList<Function> rangeArgs, IntList argPositions) {
+        public SliceDoubleArrayFunction(Function arrayArg, int resultNDims, ObjList<Function> allArgs, IntList allArgPositions) {
             this.arrayArg = arrayArg;
-            this.rangeArgs = rangeArgs;
-            this.argPositions = argPositions;
+            this.allArgs = allArgs;
+            this.allArgPositions = allArgPositions;
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, resultNDims);
-            this.allArgs = new ObjList<>(rangeArgs.size() + 1);
-            allArgs.add(arrayArg);
-            allArgs.addAll(rangeArgs);
         }
 
         @Override
@@ -325,9 +313,9 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 return derivedArray;
             }
             int dim = 0;
-            for (int n = rangeArgs.size(), i = 0; i < n; i++) {
-                Function rangeFn = rangeArgs.getQuick(i);
-                int argPos = argPositions.get(i);
+            for (int i = 1, n = allArgs.size(); i < n; i++) {
+                final Function rangeFn = allArgs.getQuick(i);
+                final int argPos = allArgPositions.get(i);
                 if (ColumnType.isInterval(rangeFn.getType())) {
                     Interval range = rangeFn.getInterval(rec);
                     long loLong = range.getLo();
@@ -352,7 +340,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     if (index < 0) {
                         throw CairoException.nonCritical()
                                 .position(argPos)
-                                .put("array index must be positive [dim=").put(i + 1)
+                                .put("array index must be positive [dim=").put(dim + 1)
                                 .put(", index=").put(index + 1)
                                 .put(", dimLen=").put(dimLen)
                                 .put(']');
@@ -372,8 +360,8 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(arrayArg).val('[');
             String comma = "";
-            for (int n = rangeArgs.size(), i = 0; i < n; i++) {
-                sink.val(comma).val(rangeArgs.getQuick(i));
+            for (int i = 1, n = allArgs.size(); i < n; i++) {
+                sink.val(comma).val(allArgs.getQuick(i));
                 comma = ",";
             }
             sink.val(']');

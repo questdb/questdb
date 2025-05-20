@@ -37,7 +37,6 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -82,9 +81,20 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testAccess1d() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT ARRAY[1.0, 2, 3] arr FROM long_sequence(1))");
-            assertSql("x\n2.0\n", "SELECT arr[2] x FROM tango");
-            assertSql("x\n2.0\n", "SELECT arr[arr[2]::int] x FROM tango");
+            execute("CREATE TABLE tango AS (SELECT ARRAY[1.0, 2, 3] arr1, ARRAY[1.0, 2, 3] arr2 FROM long_sequence(1))");
+            execute("INSERT INTO tango VALUES (ARRAY[1.0, 2, 3], null)");
+            execute("INSERT INTO tango VALUES (null, null)");
+            assertSql("x\n2.0\n2.0\nnull\n", "SELECT arr1[2] x FROM tango");
+            assertSql("x\n2.0\n2.0\nnull\n", "SELECT arr1[arr1[2]::int] x FROM tango");
+            assertSql("x\n2.0\nnull\nnull\n", "SELECT arr1[arr2[2]::int] x FROM tango");
+            assertPlanNoLeakCheck(
+                    "SELECT arr1[arr2[2]::int] x FROM tango",
+                    "VirtualRecord\n" +
+                            "  functions: [arr1[arr2[2]::int]]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tango\n"
+            );
         });
     }
 
@@ -99,30 +109,44 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("x\n8.0\n", "SELECT arr[2, 2][2] x FROM tango");
             assertSql("x\n8.0\n", "SELECT arr[2][2, 2] x FROM tango");
             assertSql("x\n8.0\n", "SELECT arr[2][2][2] x FROM tango");
+            assertPlanNoLeakCheck(
+                    "SELECT arr[2][2][2] x FROM tango",
+                    "VirtualRecord\n" +
+                            "  functions: [arr[2,2,2]]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tango\n"
+            );
         });
     }
 
     @Test
     public void testAccessInvalid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4]] arr FROM long_sequence(1))");
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4]] arr1, ARRAY[-1, -2] arr2 FROM long_sequence(1))");
 
-            assertExceptionNoLeakCheck("SELECT arr['1', 1] FROM tango",
-                    11, "invalid type for array access [type=4]");
-            assertExceptionNoLeakCheck("SELECT arr[1, 1::long] FROM tango",
-                    15, "invalid type for array access [type=6]");
-            assertExceptionNoLeakCheck("SELECT arr[1, true] FROM tango",
-                    14, "invalid type for array access [type=1]");
-            assertExceptionNoLeakCheck("SELECT arr[1, '1'] FROM tango",
-                    14, "invalid type for array access [type=4]");
-            assertExceptionNoLeakCheck("SELECT arr[1, 1, 1] FROM tango",
-                    17, "too many array access arguments [nArgs=3, nDims=2]");
-            assertExceptionNoLeakCheck("SELECT arr[0, 1] FROM tango",
-                    11, "array index must be positive [dim=1, index=0]");
-            assertExceptionNoLeakCheck("SELECT arr[1:2, 0] FROM tango",
-                    16, "array index must be positive [dim=2, index=0]");
-            assertExceptionNoLeakCheck("SELECT arr[1, 0] FROM tango",
-                    14, "array index must be positive [dim=2, index=0]");
+            assertExceptionNoLeakCheck("SELECT arr1[] FROM tango",
+                    12, "empty brackets");
+            assertExceptionNoLeakCheck("SELECT arr1['1', 1] FROM tango",
+                    12, "invalid type for array access [type=4]");
+            assertExceptionNoLeakCheck("SELECT arr1[1, 1::long] FROM tango",
+                    16, "invalid type for array access [type=6]");
+            assertExceptionNoLeakCheck("SELECT arr1[1, true] FROM tango",
+                    15, "invalid type for array access [type=1]");
+            assertExceptionNoLeakCheck("SELECT arr1[1, '1'] FROM tango",
+                    15, "invalid type for array access [type=4]");
+            assertExceptionNoLeakCheck("SELECT arr1[1, 1, 1] FROM tango",
+                    18, "too many array access arguments [nArgs=3, nDims=2]");
+            assertExceptionNoLeakCheck("SELECT arr1[0, 1] FROM tango",
+                    12, "array index must be positive [dim=1, index=0]");
+            assertExceptionNoLeakCheck("SELECT arr1[1:2, 0] FROM tango",
+                    17, "array index must be positive [dim=2, index=0]");
+            assertExceptionNoLeakCheck("SELECT arr1[1, 0] FROM tango",
+                    15, "array index must be positive [dim=2, index=0]");
+            assertExceptionNoLeakCheck("SELECT arr1[1, arr2[1]::int] FROM tango",
+                    22, "array index must be positive [dim=2, index=-1, dimLen=2]");
+            assertExceptionNoLeakCheck("SELECT arr1[1:2][arr2[1]::int] FROM tango",
+                    24, "array index must be positive [dim=1, index=-1, dimLen=1]");
         });
     }
 
@@ -588,7 +612,6 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[[1.0, 3], [5.0, 7]], ARRAY[[1.0, 2], [5.0, 7]]), " +
                     "(ARRAY[[1.0], [3.0]], ARRAY[[2.0], [3.0]]), " +
                     "(ARRAY[[1.0], [3.0]], ARRAY[[2.0], [1.0]])"
-
             );
             assertSql("eq\ntrue\ntrue\nfalse\n", "SELECT (left[2] = right[2]) eq FROM tango");
             assertSql("eq\ntrue\ntrue\nfalse\n", "SELECT (left[2:] = right[2:]) eq FROM tango");
@@ -1014,8 +1037,9 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[2.0, 3.0], ARRAY[4.0, 5]), " +
-                    "(ARRAY[6.0, 7], ARRAY[8.0, 9])");
-            assertSql("product\n[15.0]\n[63.0]\n", "SELECT a[2:] * b[2:] product FROM tango");
+                    "(ARRAY[6.0, 7], ARRAY[8.0, 9])," +
+                    "(null, null)");
+            assertSql("product\n[15.0]\n[63.0]\nnull\n", "SELECT a[2:] * b[2:] product FROM tango");
         });
     }
 
@@ -1023,11 +1047,11 @@ public class ArrayTest extends AbstractCairoTest {
     public void testMultiplySlice3d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE[][][], b DOUBLE[][][])");
-            execute("INSERT INTO tango VALUES (" +
-                    "ARRAY[ [ [2.0, 3], [4.0, 5] ], [ [6.0, 7], [8.0, 9] ]  ], " +
-                    "ARRAY[ [ [10.0, 11], [12.0, 13] ], [ [14.0, 15], [16.0, 17] ]  ]" +
-                    ")");
-            assertSql("product\n[[[34.0]]]\n",
+            execute("INSERT INTO tango VALUES " +
+                    "( ARRAY[ [ [2.0, 3], [4.0, 5] ], [ [6.0, 7], [8.0, 9] ]  ], " +
+                    "  ARRAY[ [ [10.0, 11], [12.0, 13] ], [ [14.0, 15], [16.0, 17] ]  ] ), " +
+                    "( null, null )");
+            assertSql("product\n[[[34.0]]]\nnull\n",
                     "SELECT a[1:2, 1:2, 1:2] * b[2:, 2:, 2:] product FROM tango");
         });
     }
@@ -1387,6 +1411,14 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("x\n[8.0]\n", "SELECT arr[2,2,2:] x FROM tango");
             assertSql("x\n[[8.0]]\n", "SELECT arr[2,2:,2:] x FROM tango");
             assertSql("x\n[[8.0]]\n", "SELECT arr[2,3-1:,2:] x FROM tango");
+            assertPlanNoLeakCheck(
+                    "SELECT arr[2,3-1:,2:] x FROM tango",
+                    "VirtualRecord\n" +
+                            "  functions: [arr[2,3-1:,2:]]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tango\n"
+            );
         });
     }
 

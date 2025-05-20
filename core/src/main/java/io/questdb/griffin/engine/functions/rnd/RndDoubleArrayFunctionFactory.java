@@ -142,7 +142,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public ArrayView getArray(Record rec) {
-            regenerate();
+            rnd.nextDoubleArray(nDims, array, nanRate, dimLens, functionPosition);
             return array;
         }
 
@@ -170,10 +170,6 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
                 sink.val(dimLens.getQuick(i));
             }
             sink.val(')');
-        }
-
-        private void regenerate() {
-            rnd.nextDoubleArray(nDims, array, nanRate, dimLens, functionPosition);
         }
     }
 
@@ -207,7 +203,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public ArrayView getArray(Record rec) {
-            regenerate();
+            rnd.nextDoubleArray(nDims, array, nanRate, maxDimLen, functionPosition);
             return array;
         }
 
@@ -229,10 +225,6 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
                     .val(nanRate - 1).val(',')
                     .val(maxDimLen)
                     .val(')');
-        }
-
-        private void regenerate() {
-            rnd.nextDoubleArray(nDims, array, nanRate, maxDimLen, functionPosition);
         }
     }
 }
