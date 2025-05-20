@@ -601,13 +601,13 @@ public class PGArraysTest extends BasePGTest {
         String result = buildArrayResult2d(1, dimLen1, 1, dimLen2);
         assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
             try (Statement stmt = conn.createStatement()) {
-                stmt.execute("CREATE TABLE tango AS (SELECT x n, " + literal + " arr FROM long_sequence(1))");
+                stmt.execute("CREATE TABLE tango AS (SELECT x n, " + literal + " arr FROM long_sequence(3))");
             }
-            try (PreparedStatement stmt = conn.prepareStatement("SELECT arr[2:,2:] arr FROM tango")) {
+            try (PreparedStatement stmt = conn.prepareStatement("SELECT n, arr[2:,2:] arr FROM tango")) {
                 sink.clear();
                 try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet("arr[ARRAY]\n" +
-                                    result + "\n",
+                    assertResultSet("n[BIGINT],arr[ARRAY]\n" +
+                                    "1," + result + "\n2," + result + "\n3," + result + "\n",
                             sink, rs);
                 }
             }
@@ -621,13 +621,14 @@ public class PGArraysTest extends BasePGTest {
     public void testSendBufferOverflowVanilla() throws Exception {
         Assume.assumeTrue(walEnabled);
         int elemCount = 100 + bufferSizeRnd.nextInt(900);
-        String arrayLiteral = buildArrayLiteral1d(elemCount);
+        String literal = buildArrayLiteral1d(elemCount);
+        String result = buildArrayResult1d(elemCount);
         assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
-            try (PreparedStatement stmt = conn.prepareStatement("SELECT x n, " + arrayLiteral + " arr FROM long_sequence(1)")) {
+            try (PreparedStatement stmt = conn.prepareStatement("SELECT x n, " + literal + " arr FROM long_sequence(3)")) {
                 sink.clear();
                 try (ResultSet rs = stmt.executeQuery()) {
                     assertResultSet("n[BIGINT],arr[ARRAY]\n" +
-                                    "1," + buildArrayResult1d(elemCount) + "\n",
+                                    "1," + result + "\n2," + result + "\n3," + result + "\n",
                             sink, rs);
                 }
             }
