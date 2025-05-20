@@ -64,8 +64,8 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         // - rnd_double_array(dimensionCount, nanRate) - 2 args, generates random dim lengths up to 16 and random element values. NaN frequency is using (rndInt() % nanRate == 0)
         // - rnd_double_array(dimensionCount, nanRate, maxDimLength) - 3 args, same as the previous, except maxDimLen is not 16 but whatever is provided as the arg
         // - rnd_double_array(dimensionCount, nanRate, 0, dim1Len, dim2Len, dim3Len, ...) - 4+ args - generates fixed size array with random elements, NaN rate is as the above
-        int dimensionCount = args.getQuick(0).getInt(null);
-        if (dimensionCount <= 0) {
+        final int dimensionCount;
+        if (args == null || args.size() == 0 || (dimensionCount = args.getQuick(0).getInt(null)) <= 0) {
             return NullConstant.NULL;
         }
 
@@ -73,7 +73,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
             return new RndDoubleArrayRndDimLenFunction(configuration, dimensionCount, 0, MAX_DIM_LEN, position);
         }
 
-        int nanRate = args.getQuick(1).getInt(null);
+        final int nanRate = args.getQuick(1).getInt(null);
         if (nanRate < 0) {
             throw SqlException.$(argPositions.getQuick(1), "invalid NaN rate [nanRate=").put(nanRate).put(']');
         }
@@ -82,7 +82,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
             return new RndDoubleArrayRndDimLenFunction(configuration, dimensionCount, nanRate, MAX_DIM_LEN, position);
         }
 
-        int maxDimLen = args.getQuick(2).getInt(null);
+        final int maxDimLen = args.getQuick(2).getInt(null);
         // ignore validation for signature where user provides fixed size array
         if (maxDimLen <= 0 && args.size() == 3) {
             throw SqlException.$(argPositions.getQuick(2), "maxDimLen must be positive int [maxDimLen=").put(maxDimLen).put(']');
@@ -104,7 +104,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
                     .put(']');
         }
 
-        IntList dimLens = new IntList(dimensionCount);
+        final IntList dimLens = new IntList(dimensionCount);
         for (int i = 3, n = args.size(); i < n; i++) {
             dimLens.add(args.getQuick(i).getInt(null));
         }
