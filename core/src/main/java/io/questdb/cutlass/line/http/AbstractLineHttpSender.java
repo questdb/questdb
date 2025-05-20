@@ -208,14 +208,34 @@ public abstract class AbstractLineHttpSender implements Sender {
 
         if (protocolVersion == PROTOCOL_VERSION_V1) {
             return new LineHttpSenderV1(
-                    host, port, path, clientConfiguration, tlsConfig, cli, autoFlushRows,
-                    authToken, username, password, maxRetriesNanos, minRequestThroughput,
+                    host,
+                    port,
+                    path,
+                    clientConfiguration,
+                    tlsConfig,
+                    cli,
+                    autoFlushRows,
+                    authToken,
+                    username,
+                    password,
+                    maxRetriesNanos,
+                    minRequestThroughput,
                     flushIntervalNanos
             );
         } else {
             return new LineHttpSenderV2(
-                    host, port, path, clientConfiguration, tlsConfig, cli, autoFlushRows,
-                    authToken, username, password, maxRetriesNanos, minRequestThroughput,
+                    host,
+                    port,
+                    path,
+                    clientConfiguration,
+                    tlsConfig,
+                    cli,
+                    autoFlushRows,
+                    authToken,
+                    username,
+                    password,
+                    maxRetriesNanos,
+                    minRequestThroughput,
                     flushIntervalNanos
             );
         }

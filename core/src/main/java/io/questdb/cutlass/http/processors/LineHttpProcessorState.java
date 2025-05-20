@@ -425,7 +425,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                         if (!recvBuffer.tryCompactOrGrowBuffer()) {
                             errorLine = ++line;
                             int errorPos = error.length();
-                            error.put("unable to read data: ILP line does not fit QuestDB ILP buffer size");
+                            error.putAscii("unable to read data: ILP line does not fit QuestDB ILP buffer size");
                             logError(parser, errorPos, true);
                             return Status.MESSAGE_TOO_LARGE;
                         }

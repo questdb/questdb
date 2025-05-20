@@ -223,6 +223,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean httpNetConnectionHint;
     private final String httpPassword;
     private final boolean httpPessimisticHealthCheckEnabled;
+    private final long httpRecvMaxBufferSize;
     private final int httpSendBufferSize;
     private final boolean httpServerEnabled;
     private final int httpSqlCacheBlockCount;
@@ -546,7 +547,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpNetConnectionSndBuf;
     private long httpNetConnectionTimeout;
     private int httpRecvBufferSize;
-    private long httpRecvMaxBufferSize;
     private short integerDefaultColumnType;
     private int jsonQueryConnectionCheckFrequency;
     private boolean lineLogMessageOnError;

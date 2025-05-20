@@ -954,7 +954,7 @@ public class WalWriter implements TableWriterAPI {
                 // flush disk before getting next txn
                 syncIfRequired();
                 final long seqTxn = getSequencerTxn();
-                LOG.info().$("commit [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
+                LOG.debug().$("commit [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                         .$(", segTxn=").$(lastSegmentTxn)
                         .$(", seqTxn=").$(seqTxn)
                         .$(", rowLo=").$(currentTxnStartRowNum).$(", rowHi=").$(segmentRowCount)
