@@ -15,7 +15,7 @@ public final class PreferencesParser extends AbstractJsonParser {
     private int state = STATE_START;
 
     public PreferencesParser(CairoConfiguration configuration, CharSequenceObjHashMap<CharSequence> parserMap) {
-        super(16384, configuration.getPreferencesParserCacheSizeLimit(), configuration.getPreferencesStringPoolCapacity());
+        super(configuration.getPreferencesStringPoolCapacity());
         this.parserMap = parserMap;
     }
 

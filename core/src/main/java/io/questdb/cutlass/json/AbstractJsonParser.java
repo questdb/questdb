@@ -20,6 +20,10 @@ public abstract class AbstractJsonParser implements JsonParser, Mutable, QuietCl
     private long bufCapacity = 0;
     private int bufSize = 0;
 
+    protected AbstractJsonParser(int initialStringPoolCapacity) {
+        this(0, 0, initialStringPoolCapacity);
+    }
+
     protected AbstractJsonParser(int initialCacheSize, int cacheSizeLimit, int initialStringPoolCapacity) {
         csPool = new ObjectPool<>(FloatingCharSequence::new, initialStringPoolCapacity);
         lexer = new JsonLexer(initialCacheSize, cacheSizeLimit);

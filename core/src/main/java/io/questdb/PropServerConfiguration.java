@@ -2539,16 +2539,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         };
 
         @Override
-        public boolean exportConfiguration(Utf8StringSink sink) {
-            str(RELEASE_TYPE, getReleaseType(), sink);
-            str(RELEASE_VERSION, getBuildInformation().getSwVersion(), sink);
-            if (!Chars.empty(httpUsername)) {
-                bool(ACL_ENABLED, true, sink);
-            }
-            return true;
-        }
-
-        @Override
         public boolean attachPartitionCopy() {
             return cairoAttachPartitionCopy;
         }
@@ -2556,6 +2546,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean enableTestFactories() {
             return enableTestFactories;
+        }
+
+        @Override
+        public boolean exportConfiguration(Utf8StringSink sink) {
+            str(RELEASE_TYPE, getReleaseType(), sink);
+            str(RELEASE_VERSION, getBuildInformation().getSwVersion(), sink);
+            if (!Chars.empty(httpUsername)) {
+                bool(ACL_ENABLED, true, sink);
+            }
+            return true;
         }
 
         @Override
@@ -3114,13 +3114,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPartitionPurgeListCapacity() {
             return o3PartitionPurgeListCapacity;
-        }
-
-        @Override
-        public int getPreferencesParserCacheSizeLimit() {
-            // the JSON to be parsed comes from the http receive buffer
-            // so setting the max size to the same
-            return httpRecvBufferSize;
         }
 
         @Override

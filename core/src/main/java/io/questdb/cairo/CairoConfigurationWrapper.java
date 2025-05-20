@@ -62,11 +62,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean exportConfiguration(Utf8StringSink sink) {
-        return getDelegate().exportConfiguration(sink);
-    }
-
-    @Override
     public boolean attachPartitionCopy() {
         return getDelegate().attachPartitionCopy();
     }
@@ -74,6 +69,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean enableTestFactories() {
         return getDelegate().enableTestFactories();
+    }
+
+    @Override
+    public boolean exportConfiguration(Utf8StringSink sink) {
+        return getDelegate().exportConfiguration(sink);
     }
 
     @Override
@@ -629,11 +629,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getPartitionPurgeListCapacity() {
         return getDelegate().getPartitionPurgeListCapacity();
-    }
-
-    @Override
-    public int getPreferencesParserCacheSizeLimit() {
-        return getDelegate().getPreferencesParserCacheSizeLimit();
     }
 
     @Override

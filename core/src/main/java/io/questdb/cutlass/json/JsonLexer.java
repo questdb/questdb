@@ -24,7 +24,13 @@
 
 package io.questdb.cutlass.json;
 
-import io.questdb.std.*;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntStack;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 
@@ -61,9 +67,13 @@ public class JsonLexer implements Mutable, Closeable {
     private boolean useCache = false;
 
     public JsonLexer(int cacheSize, int cacheSizeLimit) {
-        this.cacheCapacity = cacheSize;
-        this.cache = Unsafe.malloc(cacheSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         this.cacheSizeLimit = cacheSizeLimit;
+        // if cacheSizeLimit is 0 or negative, the cache is disabled
+        // only disable the cache, if you know for sure that parse() is called only once with the full json message
+        if (cacheSizeLimit > 0) {
+            this.cacheCapacity = cacheSize;
+            this.cache = Unsafe.malloc(cacheSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
+        }
     }
 
     @Override
@@ -281,6 +291,9 @@ public class JsonLexer implements Mutable, Closeable {
     }
 
     private void addToStash(long lo, long hi) throws JsonException {
+        if (cacheSizeLimit < 1) {
+            throw JsonException.$(position, "JSON lexer cache is disabled");
+        }
         final int len = (int) (hi - lo);
         int n = len + cacheSize;
         if (n > cacheCapacity) {

@@ -655,11 +655,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getPreferencesParserCacheSizeLimit() {
-        return 16384;
-    }
-
-    @Override
     public int getPreferencesStringPoolCapacity() {
         return 64;
     }
