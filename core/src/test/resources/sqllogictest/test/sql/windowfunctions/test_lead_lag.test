@@ -9,7 +9,7 @@ insert into basic values
                   	(4, 5)
 
 query II
-select c1, lead(c1, 2) over (order by c0 rows between 4 preceding and  2 preceding) as b
+select c1, lead(c1, 2) over (order by c0 rows between 2 preceding and  4 preceding) as b
 from basic;
 ----
 2	4
