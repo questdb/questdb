@@ -133,9 +133,11 @@ import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
 import io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LagDateFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagLongFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LeadDateFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LeadDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LeadLongFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LeadTimestampFunctionFactory;
@@ -2454,7 +2456,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         sigArgType = ColumnType.DOUBLE;
                                     } else if (factory instanceof LagDoubleFunctionFactory || factory instanceof LeadDoubleFunctionFactory
                                             || factory instanceof LagLongFunctionFactory || factory instanceof LeadLongFunctionFactory
-                                            || factory instanceof LagTimestampFunctionFactory || factory instanceof LeadTimestampFunctionFactory) {
+                                            || factory instanceof LagTimestampFunctionFactory || factory instanceof LeadTimestampFunctionFactory
+                                            || factory instanceof LagDateFunctionFactory || factory instanceof LeadDateFunctionFactory) {
                                         sigArgType = ColumnType.INT;
                                         useConst = true;
                                     } else {
