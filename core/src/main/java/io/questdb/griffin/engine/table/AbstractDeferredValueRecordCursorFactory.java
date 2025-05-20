@@ -98,6 +98,8 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
             PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        symbolFunc.init(pageFrameCursor, executionContext);
+
         if (lookupDeferredSymbol(pageFrameCursor)) {
             if (recordCursorSupportsRandomAccess()) {
                 return EmptyTableRandomRecordCursor.INSTANCE;
