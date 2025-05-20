@@ -33,7 +33,7 @@ import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.StringSink;
 
 public interface ServerConfiguration {
     String OSS = "OSS";
@@ -44,14 +44,14 @@ public interface ServerConfiguration {
      *
      * @param sink the target sink
      */
-    default void exportConfiguration(Utf8StringSink sink) {
+    default void exportConfiguration(StringSink sink) {
         sink.putAscii("\"config\":{");
         // bitwise OR below is intentional, always want to append passthrough config
         if (
                 getCairoConfiguration().exportConfiguration(sink)
                         | getPublicPassthroughConfiguration().exportConfiguration(sink)
         ) {
-            sink.clear(sink.size() - 1);
+            sink.clear(sink.length() - 1);
         }
         sink.putAscii("},");
     }

@@ -699,15 +699,22 @@ public class HttpResponseSink implements Closeable, Mutable {
         public void sendStatusJsonContent(
                 int code
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusJsonContent(code, null, null, null, null);
+            sendStatusJsonContent(code, null, null, null, null, true);
         }
 
-        @SuppressWarnings("unused")
         public void sendStatusJsonContent(
                 int code,
                 @Nullable CharSequence message
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusJsonContent(code, message, null, null, null);
+            sendStatusJsonContent(code, message, null, null, null, true);
+        }
+
+        public void sendStatusJsonContent(
+                int code,
+                @Nullable CharSequence message,
+                boolean appendEOL
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatusJsonContent(code, message, null, null, null, appendEOL);
         }
 
         public void sendStatusJsonContent(
@@ -715,9 +722,10 @@ public class HttpResponseSink implements Closeable, Mutable {
                 @Nullable CharSequence message,
                 @Nullable CharSequence header,
                 @Nullable CharSequence cookieName,
-                @Nullable CharSequence cookieValue
+                @Nullable CharSequence cookieValue,
+                boolean appendEOL
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusWithContent(CONTENT_TYPE_JSON, code, message, header, cookieName, cookieValue, message != null ? message.length() : -1);
+            sendStatusWithContent(CONTENT_TYPE_JSON, code, message, header, cookieName, cookieValue, message != null ? message.length() : -1, appendEOL);
         }
 
         public void sendStatusNoContent(int code, @Nullable CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -767,7 +775,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 @Nullable CharSequence cookieName,
                 @Nullable CharSequence cookieValue
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusWithContent(CONTENT_TYPE_TEXT, code, message, header, cookieName, cookieValue, -1);
+            sendStatusWithContent(CONTENT_TYPE_TEXT, code, message, header, cookieName, cookieValue, -1, true);
         }
 
         public void sendStatusTextContent(
@@ -801,7 +809,8 @@ public class HttpResponseSink implements Closeable, Mutable {
                 @Nullable CharSequence header,
                 @Nullable CharSequence cookieName,
                 @Nullable CharSequence cookieValue,
-                long contentLength
+                long contentLength,
+                boolean appendEOL
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
             if (!headerSent) {
                 buffer.clearAndPrepareToWriteToBuffer();
@@ -820,13 +829,16 @@ public class HttpResponseSink implements Closeable, Mutable {
                 flushSingle();
                 buffer.clearAndPrepareToWriteToBuffer();
                 if (message == null) {
-                    sink.put(httpStatusMap.get(code)).putEOL();
+                    sink.put(httpStatusMap.get(code));
                 } else {
                     // this is ugly, add a putUtf16() method to the response sink?
                     final Utf8StringSink utf8Sink = tlSink.get();
                     utf8Sink.clear();
                     utf8Sink.put(message);
-                    sink.put(utf8Sink).putEOL();
+                    sink.put(utf8Sink);
+                }
+                if (appendEOL) {
+                    sink.putEOL();
                 }
                 final boolean chunked = headerImpl.isChunked();
                 buffer.prepareToReadFromBuffer(chunked, chunked);

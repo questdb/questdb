@@ -41,7 +41,6 @@ import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -51,6 +50,7 @@ import java.util.HashMap;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
+import static io.questdb.PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.preferences.SettingsStore.Mode.MERGE;
 import static io.questdb.preferences.SettingsStore.Mode.OVERWRITE;
 import static io.questdb.test.tools.TestUtils.*;
@@ -90,7 +90,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "}" +
             "}";
 
-    private final Utf8StringSink sink = new Utf8StringSink();
+    private final StringSink sink = new StringSink();
 
     public static void assertSettingsRequest(HttpClient httpClient, String expectedHttpResponse) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
@@ -106,9 +106,10 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testFragmentedPreferencesRequest() throws Exception {
+    public void testFragmentedPreferences() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "19");
                 put(DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "17");
             }})
             ) {
@@ -461,7 +462,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             public CairoConfiguration getCairoConfiguration() {
                                 return new DefaultCairoConfiguration(bootstrap.getRootDirectory()) {
                                     @Override
-                                    public boolean exportConfiguration(Utf8StringSink sink) {
+                                    public boolean exportConfiguration(StringSink sink) {
                                         final CairoConfiguration config = getCairoConfiguration();
                                         str(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID.getPropertyPath(), config.getDbDirectory(), sink);
                                         integer(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.getPropertyPath(), config.getMaxFileNameLength(), sink);
@@ -475,7 +476,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
                                 return new DefaultPublicPassthroughConfiguration() {
                                     @Override
-                                    public boolean exportConfiguration(Utf8StringSink sink) {
+                                    public boolean exportConfiguration(StringSink sink) {
                                         final PublicPassthroughConfiguration config = getPublicPassthroughConfiguration();
                                         bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), config.isPosthogEnabled(), sink);
                                         str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), config.getPosthogApiKey(), sink);
@@ -525,7 +526,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
     private void assertPreferencesStore(SettingsStore settingsStore, int expectedVersion, String expectedPreferences) {
         Assert.assertEquals(expectedVersion, settingsStore.getVersion());
         sink.clear();
-        settingsStore.appendToSettingsSink(sink);
+        settingsStore.exportPreferences(sink);
         assertEquals(expectedPreferences, sink);
     }
 

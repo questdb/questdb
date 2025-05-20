@@ -40,7 +40,7 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -72,7 +72,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean exportConfiguration(Utf8StringSink sink) {
+    public boolean exportConfiguration(StringSink sink) {
         return getDelegate().exportConfiguration(sink);
     }
 

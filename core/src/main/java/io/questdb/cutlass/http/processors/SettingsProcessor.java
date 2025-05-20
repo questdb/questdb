@@ -28,7 +28,6 @@ import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpPostPutProcessor;
 import io.questdb.cutlass.http.HttpRequestHandler;
@@ -43,12 +42,10 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
-import io.questdb.std.str.Utf8StringSink;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.integer;
-import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
 import static java.net.HttpURLConnection.*;
 
 public class SettingsProcessor implements HttpRequestHandler {
@@ -57,9 +54,9 @@ public class SettingsProcessor implements HttpRequestHandler {
     // processor. For different threads to lookup the same value from local value map the key,
     // which is LV, has to be the same between processor instances
     private static final LocalValue<SettingsProcessorState> LV = new LocalValue<>();
+    private static final LocalValue<StringSink> LV_GET = new LocalValue<>();
     private static final String PREFERENCES_VERSION = "preferences.version";
     private static final Utf8String URL_PARAM_VERSION = new Utf8String("version");
-    private static final ThreadLocal<Utf8StringSink> tlSink = new ThreadLocal<>(Utf8StringSink::new);
     private final GetProcessor getProcessor = new GetProcessor();
     private final PostPutProcessor postPutProcessor = new PostPutProcessor();
     private final byte requiredAuthTypeForUpdate;
@@ -85,20 +82,31 @@ public class SettingsProcessor implements HttpRequestHandler {
         }
 
         @Override
+        public void onHeadersReady(HttpConnectionContext context) {
+            final StringSink settings = LV_GET.get(context);
+            if (settings == null) {
+                LOG.debug().$("new settings sink").$();
+                LV_GET.set(context, new StringSink());
+            }
+        }
+
+        @Override
         public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            final Utf8StringSink settings = tlSink.get();
+            final StringSink settings = LV_GET.get(context);
             settings.clear();
             settings.putAscii('{');
             serverConfiguration.exportConfiguration(settings);
             integer(PREFERENCES_VERSION, settingsStore.getVersion(), settings);
-            settingsStore.appendToSettingsSink(settings);
+            settingsStore.exportPreferences(settings);
             settings.putAscii('}');
 
-            final HttpChunkedResponse r = context.getChunkedResponse();
-            r.status(HTTP_OK, CONTENT_TYPE_JSON);
-            r.sendHeader();
-            r.put(settings);
-            r.sendChunk(true);
+            context.simpleResponse().sendStatusJsonContent(HTTP_OK, settings, false);
+        }
+
+        @Override
+        public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+            final StringSink settings = LV_GET.get(context);
+            context.simpleResponse().sendStatusJsonContent(HTTP_OK, settings, false);
         }
     }
 

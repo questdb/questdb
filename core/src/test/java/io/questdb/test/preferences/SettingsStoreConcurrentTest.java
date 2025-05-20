@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -92,10 +92,10 @@ public class SettingsStoreConcurrentTest extends AbstractCairoTest {
                     new Thread(() -> {
                         await(start);
                         try {
-                            final Utf8StringSink sink = new Utf8StringSink();
+                            final StringSink sink = new StringSink();
                             for (int j = 0; j < numOfReads; j++) {
                                 sink.clear();
-                                settingsStore.appendToSettingsSink(sink);
+                                settingsStore.exportPreferences(sink);
                                 assertEquals("\"preferences\":{\"key1\":\"value1\",\"key2\":\"value2\",\"key3\":\"value3\"}", sink);
                             }
                         } catch (Throwable th) {

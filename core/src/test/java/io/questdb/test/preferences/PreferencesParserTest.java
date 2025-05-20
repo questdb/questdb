@@ -33,7 +33,7 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
-import static org.junit.Assert.assertEquals;
+import static io.questdb.test.tools.TestUtils.assertEquals;
 import static org.junit.Assert.fail;
 
 public class PreferencesParserTest extends AbstractCairoTest {
@@ -44,22 +44,18 @@ public class PreferencesParserTest extends AbstractCairoTest {
             final CharSequenceObjHashMap<CharSequence> parserMap = new CharSequenceObjHashMap<>();
             try (PreferencesParser parser = new PreferencesParser(engine.getConfiguration(), parserMap)) {
                 try (DirectUtf8Sink sink = new DirectUtf8Sink(1024)) {
-                    sink.put("{\"key1\":\"v");
+                    sink.put("{\"key1\":\"value1\",");
                     parser.parse(sink);
 
                     sink.clear();
-                    sink.put("alue1\",\"key2\":\"valu");
-                    parser.parse(sink);
-
-                    sink.clear();
-                    sink.put("e2\",\"key3\":\"value3\"}");
-                    parser.parse(sink);
+                    sink.put("\"key2\":\"va");
+                    try {
+                        parser.parse(sink);
+                        fail();
+                    } catch (JsonException e) {
+                        assertEquals("JSON lexer cache is disabled", e.getFlyweightMessage());
+                    }
                 }
-
-                assertEquals(3, parserMap.size());
-                assertEquals("value1", parserMap.get("key1").toString());
-                assertEquals("value2", parserMap.get("key2").toString());
-                assertEquals("value3", parserMap.get("key3").toString());
             }
         });
     }
