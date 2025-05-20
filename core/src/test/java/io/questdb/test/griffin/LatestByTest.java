@@ -146,6 +146,8 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedWithPrefixes() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             execute(
                     "create table pos_test\n" +

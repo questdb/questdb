@@ -3114,7 +3114,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         assert intrinsicModel.keyValueFuncs.size() == 0;
         // get the latest rows for all values of "latest by" column
 
-        if (indexed && filter == null) {
+        if (indexed && filter == null && configuration.useWithinLatestByOptimisation()) {
             return new LatestByAllIndexedRecordCursorFactory(
                     configuration,
                     metadata,
@@ -5403,7 +5403,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final TableToken tableToken = metadata.getTableToken();
         ExpressionNode withinExtracted;
 
-        if (latestByColumnCount > 0) {
+        if (latestByColumnCount > 0 && configuration.useWithinLatestByOptimisation()) {
             withinExtracted = whereClauseParser.extractWithin(
                     model,
                     model.getWhereClause(),

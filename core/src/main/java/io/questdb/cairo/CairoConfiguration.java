@@ -733,4 +733,6 @@ public interface CairoConfiguration {
     }
 
     boolean useFastAsOfJoin();
+
+    boolean useWithinLatestByOptimisation();
 }
