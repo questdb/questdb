@@ -94,7 +94,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testABCSegfault() throws Exception {
+    public void testWithinDoesNotThrowSegfaultWithEmptySymbolColumn() throws Exception {
         String ddlTrips = "CREATE TABLE trips (\n" +
                 "pickup_datetime TIMESTAMP,\n" +
                 "pickup_geohash GEOHASH(12c)\n" +
