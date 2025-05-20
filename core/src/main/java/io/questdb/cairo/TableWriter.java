@@ -1315,7 +1315,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             shrinkO3Mem();
 
             assert txWriter.getPartitionCount() == 0 || txWriter.getMinTimestamp() >= txWriter.getPartitionTimestampByIndex(0);
-            LOG.info().$("============== table ranges after the commit [table=").$(tableToken)
+            LOG.debug().$("table ranges after the commit [table=").$(tableToken)
                     .$(", minTs=").$ts(txWriter.getMinTimestamp())
                     .$(", maxTs=").$ts(txWriter.getMaxTimestamp()).I$();
         }
@@ -3841,7 +3841,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             noOpRowCount = 0L;
 
-            LOG.info().$("============== table ranges after the commit [table=").$(tableToken)
+            LOG.debug().$("table ranges after the commit [table=").$(tableToken)
                     .$(", minTs=").$ts(txWriter.getMinTimestamp())
                     .$(", maxTs=").$ts(txWriter.getMaxTimestamp())
                     .I$();

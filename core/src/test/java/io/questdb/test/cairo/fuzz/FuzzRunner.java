@@ -1167,7 +1167,7 @@ public class FuzzRunner {
                         0.1 * rnd.nextDouble(),
                         rnd.nextDouble(),
                         0.0,
-                        0.1
+                        0.05
                 );
             }
             if (randomiseCounts) {

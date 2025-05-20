@@ -77,13 +77,15 @@ public class WalTxnRangeLoader implements QuietCloseable {
             long txnHi
     ) {
         try (TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, txnLo)) {
+            // We need to load replace range timestamps from WAL-E files, even when we can read min/max timestamps
+            // from the transaction log when it's in V2 format.
             tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken);
             int rootLen = tempPath.size();
-            loadTransactionDetailsV1(tempPath, rootLen, transactionLogCursor, intervals, txnLo, txnHi);
+            loadTransactionDetailsFromWalE(tempPath, rootLen, transactionLogCursor, intervals, txnLo, txnHi);
         }
     }
 
-    private void loadTransactionDetailsV1(Path tempPath, int rootLen, TransactionLogCursor transactionLogCursor, LongList intervals, long txnLo, long txnHi) {
+    private void loadTransactionDetailsFromWalE(Path tempPath, int rootLen, TransactionLogCursor transactionLogCursor, LongList intervals, long txnLo, long txnHi) {
         txnDetails.clear();
 
         try (WalEventReader eventReader = walEventReader) {
@@ -173,23 +175,6 @@ public class WalTxnRangeLoader implements QuietCloseable {
             }
         } finally {
             txnDetails.resetCapacity();
-        }
-    }
-
-    private void loadTransactionDetailsV2(TransactionLogCursor transactionLogCursor, LongList intervals, long txnLo, long txnHi) {
-        minTimestamp = Long.MAX_VALUE;
-        maxTimestamp = Long.MIN_VALUE;
-
-        while (txnLo++ < txnHi && transactionLogCursor.hasNext()) {
-            if (transactionLogCursor.getTxnRowCount() > 0) {
-                intervals.add(transactionLogCursor.getTxnMinTimestamp(), transactionLogCursor.getTxnMaxTimestamp());
-                IntervalUtils.unionInPlace(intervals, intervals.size() - 2);
-            }
-        }
-
-        if (intervals.size() > 0) {
-            minTimestamp = intervals.getQuick(0);
-            maxTimestamp = intervals.getQuick(intervals.size() - 1);
         }
     }
 }
