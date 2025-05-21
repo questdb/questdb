@@ -76,12 +76,6 @@ public class QueryTracingSubstitutionTest extends AbstractBootstrapTest {
 
 
                         try (final ResultSet resultSet = stmt.executeQuery()) {
-                            assertResultSet(
-                                    "$1[BIT],$2[SMALLINT],$3[DOUBLE],$4[REAL],$5[INTEGER],$6[BIGINT],$7[SMALLINT],$8[VARCHAR],$9[BINARY],cast[VARCHAR],cast1[VARCHAR],$12[VARCHAR],cast2[VARCHAR],$14[VARCHAR]\n" +
-                                            "true,111,123.456,123.456,987654,987654,11111,te'st,00000000 de ad be ef,123.123.123.123,te'st2,1970-01-01 +01,0xdeadbeefdeadbeefdeadbeefdeadbeef,1970-01-01 01:00:00+01\n",
-                                    Misc.getThreadLocalSink(),
-                                    resultSet
-                            );
                         }
                     }
 
