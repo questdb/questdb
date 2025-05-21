@@ -422,13 +422,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         state.setLastRefreshStartTimestamp(refreshStartTimestamp);
         final TableToken viewTableToken = viewDef.getMatViewToken();
         long refreshFinishTimestamp = 0;
+        long commitBaseRefreshTxn = baseTableTxn == -1 ? state.getLastRefreshBaseTxn() : baseTableTxn;
 
         try {
             factory = state.acquireRecordFactory();
             copier = state.getRecordToRowCopier();
-            long rowsCommitted = 0;
+            int commitCount = 0;
 
-            long rowCount = 0;
             for (int i = 0; i <= maxRetries; i++) {
                 try {
                     if (factory == null) {
@@ -462,7 +462,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     assert cursorTimestampIndex > -1;
 
                     long commitTarget = batchSize;
-                    rowCount = 0;
+                    long rowCount = 0;
+
 
                     intervalIterator.toTop(intervalStep);
                     long replacementTimestampLo = Long.MIN_VALUE;
@@ -471,13 +472,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     while (intervalIterator.next()) {
                         refreshExecutionContext.setRange(intervalIterator.getTimestampLo(), intervalIterator.getTimestampHi());
                         if (replacementTimestampHi != intervalIterator.getTimestampLo()) {
-                            if (rowCount > rowsCommitted) {
+                            if (replacementTimestampHi > replacementTimestampLo) {
                                 // Gap in the refresh intervals, commit the previous batch
                                 // so that the replacement interval does not span across the gap.
                                 refreshFinishTimestamp = microsecondClock.getTicks();
-                                walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
+                                walWriter.commitMatView(commitBaseRefreshTxn, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
+                                commitCount++;
                                 commitTarget = rowCount + batchSize;
-                                rowsCommitted = rowCount;
                             }
                             replacementTimestampLo = intervalIterator.getTimestampLo();
                         }
@@ -496,18 +497,18 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                             if (rowCount >= commitTarget) {
                                 refreshFinishTimestamp = microsecondClock.getTicks();
-                                walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
+                                walWriter.commitMatView(commitBaseRefreshTxn, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
+                                commitCount++;
                                 replacementTimestampLo = replacementTimestampHi;
                                 commitTarget = rowCount + batchSize;
-                                rowsCommitted = rowCount;
                             }
                         }
                     }
 
-                    if (rowCount > rowsCommitted) {
+                    if (replacementTimestampHi > replacementTimestampLo) {
                         refreshFinishTimestamp = microsecondClock.getTicks();
-                        walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
-                        rowsCommitted = rowCount;
+                        walWriter.commitMatView(commitBaseRefreshTxn, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
+                        commitCount++;
                     }
                     break;
                 } catch (TableReferenceOutOfDateException e) {
@@ -535,20 +536,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             }
 
-            if (rowsCommitted == 0) {
-                // No data was written, but we should mark the view as refreshed anyway.
+            if (commitCount == 0) {
+                // No data was committed, but we should mark the view as refreshed anyway.
                 refreshFinishTimestamp = microsecondClock.getTicks();
-                walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp);
+                walWriter.commitMatView(commitBaseRefreshTxn, refreshFinishTimestamp);
             }
 
             if (baseTableTxn == -1) {
                 // It's a range refresh, so we don't bump last refresh base table txn.
                 // Keep the last refresh txn as is and only update the finish timestamp.
-                if (rowCount > 0) {
-                    walWriter.commitMatView(state.getLastRefreshBaseTxn(), refreshFinishTimestamp);
-                } else {
-                    walWriter.resetMatViewState(state.getLastRefreshBaseTxn(), refreshFinishTimestamp, false, null);
-                }
                 state.rangeRefreshSuccess(
                         factory,
                         copier,
@@ -558,11 +554,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 );
             } else {
                 // It's an incremental/full refresh.
-                if (rowCount > 0) {
-                    walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp);
-                } else {
-                    walWriter.resetMatViewState(baseTableTxn, refreshFinishTimestamp, false, null);
-                }
                 state.refreshSuccess(
                         factory,
                         copier,
