@@ -67,7 +67,7 @@ public class QueryTracingSubstitutionTest extends AbstractBootstrapTest {
                         stmt.setLong(6, 987654L);
                         stmt.setShort(7, (short) 11111);
                         stmt.setString(8, "te'st");
-                        stmt.setBytes(9, new byte[]{1, 2, 3, 4, 5});
+                        stmt.setBytes(9, new byte[]{(byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF});
                         stmt.setString(10, "123.123.123.123");
                         stmt.setString(11, "te'st2");
                         stmt.setDate(12, new java.sql.Date(0));
@@ -78,7 +78,7 @@ public class QueryTracingSubstitutionTest extends AbstractBootstrapTest {
                         try (final ResultSet resultSet = stmt.executeQuery()) {
                             assertResultSet(
                                     "$1[BIT],$2[SMALLINT],$3[DOUBLE],$4[REAL],$5[INTEGER],$6[BIGINT],$7[SMALLINT],$8[VARCHAR],$9[BINARY],cast[VARCHAR],cast1[VARCHAR],$12[VARCHAR],cast2[VARCHAR],$14[VARCHAR]\n" +
-                                            "true,111,123.456,123.456,987654,987654,11111,te'st,00000000 01 02 03 04 05,123.123.123.123,te'st2,1970-01-01 +01,0xdeadbeefdeadbeefdeadbeefdeadbeef,1970-01-01 01:00:00+01\n",
+                                            "true,111,123.456,123.456,987654,987654,11111,te'st,00000000 de ad be ef,123.123.123.123,te'st2,1970-01-01 +01,0xdeadbeefdeadbeefdeadbeefdeadbeef,1970-01-01 01:00:00+01\n",
                                     Misc.getThreadLocalSink(),
                                     resultSet
                             );
@@ -98,10 +98,10 @@ public class QueryTracingSubstitutionTest extends AbstractBootstrapTest {
                                     boolean matched = false;
                                     for (int i = 0, n = parts.length; i < n; i++) {
                                         try {
-                                            Assert.assertEquals("SELECT true::boolean, 111::short, 123.456::double, 123.456::float, 987654::int, 987654::long, 11111::short, 'te''st'::string, '\\x0102030405'::binary, '123.123.123.123'::string::ipv4, 'te''st2'::string::varchar, '1970-01-01 +01'::string, '0xDEADBEEFDEADBEEFDEADBEEFDEADBEEF'::string::long256, '1970-01-01 01:00:00+01'::string",
+                                            Assert.assertEquals("SELECT true::boolean, 111::short, 123.456::double, 123.456::float, 987654::int, 987654::long, 11111::short, 'te''st'::string, '\\xDEADBEEF'::binary, '123.123.123.123'::string::ipv4, 'te''st2'::string::varchar, '1970-01-01 +01'::string, '0xDEADBEEFDEADBEEFDEADBEEFDEADBEEF'::string::long256, '1970-01-01 01:00:00+01'::string",
                                                     parts[i]);
                                             matched = true;
-                                        } catch (ComparisonFailure ex) {
+                                        } catch (ComparisonFailure ignored) {
                                         }
                                     }
                                     Assert.assertTrue(matched);

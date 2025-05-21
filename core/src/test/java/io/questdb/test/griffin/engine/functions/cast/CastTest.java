@@ -30,6 +30,19 @@ import org.junit.Test;
 public class CastTest extends AbstractCairoTest {
 
     @Test
+    public void testBinaryToString() throws Exception {
+        assertQuery(
+                "cast\n" +
+                        "\\xDEADBEEF\n",
+                "select ('\\xDEADBEEF'::binary)::string;",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testBooleanToBoolean() throws Exception {
         assertQuery(
                 "a\n",
@@ -6058,6 +6071,19 @@ public class CastTest extends AbstractCairoTest {
                         "1259\tpg_class\n",
                 "select cast(a as string)::regclass b, a from tab",
                 "create table tab as (select rnd_symbol('pg_namespace', 'pg_class') a from long_sequence(5))",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testStringToBinary() throws Exception {
+        assertQuery(
+                "cast\n" +
+                        "00000000 de ad be ef\n",
+                "select '\\xDEADBEEF'::binary;",
+                null,
                 null,
                 true,
                 true
