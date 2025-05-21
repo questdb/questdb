@@ -149,7 +149,7 @@ public class SettingsProcessor implements HttpRequestHandler {
                 sendOk();
             } catch (CairoException e) {
                 LOG.error().$("could not save preferences").$((Throwable) e).$();
-                sendErr(e.isAuthorizationError() ? HTTP_UNAUTHORIZED : HTTP_BAD_REQUEST, e.getFlyweightMessage());
+                sendErr(e);
             }
             transientState.clear();
         }
@@ -174,8 +174,13 @@ public class SettingsProcessor implements HttpRequestHandler {
             }
         }
 
-        private void sendErr(int statusCode, CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            transientContext.simpleResponse().sendStatusJsonContent(statusCode, message);
+        private void sendErr(CairoException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            transientContext.simpleResponse().sendStatusJsonContent(
+                    e.isPreferencesOutOfDateError() ? HTTP_CONFLICT
+                            : e.isAuthorizationError() ? HTTP_UNAUTHORIZED
+                            : HTTP_BAD_REQUEST,
+                    e.getFlyweightMessage()
+            );
         }
 
         private void sendOk() throws PeerDisconnectedException, PeerIsSlowToReadException {

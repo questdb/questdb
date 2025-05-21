@@ -218,7 +218,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
 
                     // out of date version rejected
                     assertPreferencesRequest(httpClient, "{\"key1\":\"value111\",\"instance_desc\":\"desc222\"}", MERGE, 1L,
-                            HTTP_BAD_REQUEST, "preferences view is out of date [currentVersion=2, expectedVersion=1]\r\n");
+                            HTTP_CONFLICT, "preferences view is out of date [currentVersion=2, expectedVersion=1]\r\n");
                     assertPreferencesStore(settingsStore, 2, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}");
 
                     // same update based on latest version accepted
