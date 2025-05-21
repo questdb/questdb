@@ -34,6 +34,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
@@ -46,7 +47,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private String baseTableName;
     private int baseTableNamePosition;
-    private long intervalStart;
+    private long intervalStart = Numbers.LONG_NULL;
     private int intervalStride;
     private char intervalUnit;
     private int refreshType = -1;
@@ -78,7 +79,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         baseTableNamePosition = 0;
         timeZone = null;
         timeZoneOffset = null;
-        intervalStart = 0;
+        intervalStart = Numbers.LONG_NULL;
         intervalStride = 0;
         intervalUnit = 0;
     }
@@ -147,8 +148,8 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
             sink.putAscii(" with base ");
             sink.put(baseTableName);
         }
-        if (refreshType == MatViewDefinition.INTERVAL_REFRESH_TYPE) {
-            sink.putAscii(" refresh incremental start '");
+        if (refreshType == MatViewDefinition.INCREMENTAL_INTERVAL_REFRESH_TYPE) {
+            sink.putAscii(" refresh start '");
             sink.putISODate(intervalStart);
             sink.putAscii("' every ");
             sink.put(intervalStride);

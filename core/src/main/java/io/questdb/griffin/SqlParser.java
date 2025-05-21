@@ -887,33 +887,41 @@ public class SqlParser {
 
         int refreshType = MatViewDefinition.INCREMENTAL_REFRESH_TYPE;
         if (isRefreshKeyword(tok)) {
-            tok = tok(lexer, "'incremental' or 'interval' expected");
-            if (isIntervalKeyword(tok)) {
-                tok = tok(lexer, "'start' or 'as'");
-                if (isStartKeyword(tok)) {
-                    refreshType = MatViewDefinition.INTERVAL_REFRESH_TYPE;
-                    tok = tok(lexer, "START timestamp");
-                    final long start;
-                    try {
-                        start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
-                    } catch (NumericException e) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
-                    }
-                    mvOpBuilder.setIntervalStart(start);
-                    expectTok(lexer, "every");
-                    tok = tok(lexer, "interval");
-                    final int stride = Timestamps.getStrideMultiple(tok);
-                    final char unit = Timestamps.getStrideUnit(tok);
-                    validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
-                    mvOpBuilder.setIntervalStride(stride);
-                    mvOpBuilder.setIntervalUnit(unit);
-                } else if (!isAsKeyword(tok)) {
-                    throw SqlException.position(lexer.lastTokenPosition()).put("'start' expected");
-                }
-            } else if (!isIncrementalKeyword(tok)) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("'incremental' or 'interval' expected");
+            tok = tok(lexer, "'incremental' or 'start' or 'every' or 'as' expected");
+            if (isIncrementalKeyword(tok)) {
+                tok = tok(lexer, "'start' or 'every' or 'as'");
+            } else if (!isStartKeyword(tok) && !isEveryKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'incremental' or 'start' or 'every' or 'as' expected");
             }
-            tok = tok(lexer, "'as'");
+
+            long start = Numbers.LONG_NULL;
+            if (isStartKeyword(tok)) {
+                tok = tok(lexer, "START timestamp");
+                try {
+                    start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
+                }
+                tok = tok(lexer, "'every' expected");
+            }
+
+            if (isEveryKeyword(tok)) {
+                if (start == Numbers.LONG_NULL) {
+                    // Use the current time as the start timestamp if it wasn't specified.
+                    start = configuration.getMicrosecondClock().getTicks();
+                }
+                tok = tok(lexer, "interval");
+                final int stride = Timestamps.getStrideMultiple(tok);
+                final char unit = Timestamps.getStrideUnit(tok);
+                validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
+                refreshType = MatViewDefinition.INCREMENTAL_INTERVAL_REFRESH_TYPE;
+                mvOpBuilder.setIntervalStart(start);
+                mvOpBuilder.setIntervalStride(stride);
+                mvOpBuilder.setIntervalUnit(unit);
+                tok = tok(lexer, "'as'");
+            } else if (start != Numbers.LONG_NULL) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("'every' expected");
+            }
         }
         mvOpBuilder.setRefreshType(refreshType);
 
@@ -989,7 +997,7 @@ public class SqlParser {
                 return mvOpBuilder;
             }
         } else {
-            throw SqlException.position(lexer.lastTokenPosition()).put("'as' or 'refresh' expected");
+            throw SqlException.position(lexer.lastTokenPosition()).put("'refresh' or 'as' expected");
         }
 
         // Optional clauses that go after the parentheses.

@@ -146,7 +146,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view test select as sym",
                     30,
-                    "'as' or 'refresh' expected"
+                    "'refresh' or 'as' expected"
             );
             assertNull(getMatViewDefinition("test"));
         });
@@ -372,7 +372,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewInterval() throws Exception {
+    public void testCreateMatViewInterval1() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
@@ -380,12 +380,37 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final long startEpoch = TimestampFormatUtils.parseTimestamp(start);
             final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute(
-                    "CREATE MATERIALIZED VIEW test REFRESH INTERVAL START '" + start + "' EVERY 5m AS (" +
+                    "CREATE MATERIALIZED VIEW test REFRESH START '" + start + "' EVERY 5m AS (" +
                             query +
                             ") PARTITION BY YEAR;"
             );
-            assertMatViewDefinition(MatViewDefinition.INTERVAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, startEpoch, 5, 'm');
-            assertMatViewDefinitionFile(MatViewDefinition.INTERVAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, startEpoch, 5, 'm');
+            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_INTERVAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, startEpoch, 5, 'm');
+            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_INTERVAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, startEpoch, 5, 'm');
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertEquals(0, metadata.getTimestampIndex());
+                assertTrue(metadata.isDedupKey(0));
+                assertTrue(metadata.isDedupKey(1));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewInterval2() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String start = "2002-01-01T00:00:00.000000Z";
+            final long startEpoch = TimestampFormatUtils.parseTimestamp(start);
+            final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s";
+            currentMicros = startEpoch;
+            execute(
+                    "CREATE MATERIALIZED VIEW test REFRESH EVERY 5m AS (" +
+                            query +
+                            ") PARTITION BY YEAR;"
+            );
+            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_INTERVAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, startEpoch, 5, 'm');
+            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_INTERVAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, startEpoch, 5, 'm');
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
@@ -944,7 +969,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             assertQuery0("ts\tavg\n", "test", "ts");
             assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, null);
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, null, 0, 0, (char) 0);
+            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, null, Numbers.LONG_NULL, 0, (char) 0);
         });
     }
 
@@ -959,7 +984,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             assertQuery0("ts\tavg\n", "test", "ts");
             assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, null);
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, null, 0, 0, (char) 0);
+            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, null, Numbers.LONG_NULL, 0, (char) 0);
         });
     }
 
@@ -1902,19 +1927,19 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     private static void assertMatViewDefinition(int refreshType, String name, String query, String baseTableName, int samplingInterval, char samplingIntervalUnit, String timeZone, String timeZoneOffset) {
-        assertMatViewDefinition(refreshType, name, query, baseTableName, samplingInterval, samplingIntervalUnit, timeZone, timeZoneOffset, 0, 0, (char) 0);
+        assertMatViewDefinition(refreshType, name, query, baseTableName, samplingInterval, samplingIntervalUnit, timeZone, timeZoneOffset, Numbers.LONG_NULL, 0, (char) 0);
     }
 
     private static void assertMatViewDefinition(int refreshType, String name, String query, String baseTableName, int samplingInterval, char samplingIntervalUnit) {
-        assertMatViewDefinition(refreshType, name, query, baseTableName, samplingInterval, samplingIntervalUnit, null, null, 0, 0, (char) 0);
+        assertMatViewDefinition(refreshType, name, query, baseTableName, samplingInterval, samplingIntervalUnit, null, null, Numbers.LONG_NULL, 0, (char) 0);
     }
 
     private static void assertMatViewDefinitionFile(int refreshType, String name, String query, String baseTableName, int samplingInterval, char samplingIntervalUnit) {
-        assertMatViewDefinitionFile(refreshType, name, query, baseTableName, samplingInterval, samplingIntervalUnit, null, null, 0, 0, (char) 0);
+        assertMatViewDefinitionFile(refreshType, name, query, baseTableName, samplingInterval, samplingIntervalUnit, null, null, Numbers.LONG_NULL, 0, (char) 0);
     }
 
     private static void assertMatViewDefinitionFile(int refreshType, String name, String query, String baseTableName, int samplingInterval, char samplingIntervalUnit, String timeZone, String timeZoneOffset) {
-        assertMatViewDefinitionFile(refreshType, name, query, baseTableName, samplingInterval, samplingIntervalUnit, timeZone, timeZoneOffset, 0, 0, (char) 0);
+        assertMatViewDefinitionFile(refreshType, name, query, baseTableName, samplingInterval, samplingIntervalUnit, timeZone, timeZoneOffset, Numbers.LONG_NULL, 0, (char) 0);
     }
 
     private static void assertMatViewDefinitionFile(

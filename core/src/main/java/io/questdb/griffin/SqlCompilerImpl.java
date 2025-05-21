@@ -2908,7 +2908,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
         if (createMatViewOp.getRefreshType() != MatViewDefinition.INCREMENTAL_REFRESH_TYPE
-                && createMatViewOp.getRefreshType() != MatViewDefinition.INTERVAL_REFRESH_TYPE) {
+                && createMatViewOp.getRefreshType() != MatViewDefinition.INCREMENTAL_INTERVAL_REFRESH_TYPE) {
             throw SqlException.$(createMatViewOp.getTableNamePosition(), "unexpected refresh type: ").put(createMatViewOp.getRefreshType());
         }
 

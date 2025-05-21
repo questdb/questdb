@@ -346,7 +346,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     private static void createRefreshIntervalMatView(String viewSql, String mvName, long start, int intervalStride, char intervalUnit) throws SqlException {
         sink.clear();
         TimestampFormatUtils.appendDateTimeUSec(sink, start);
-        execute("create materialized view " + mvName + " refresh interval start '" + sink + "' every " + intervalStride + intervalUnit + " as (" + viewSql + ") partition by DAY");
+        execute("create materialized view " + mvName + " refresh start '" + sink + "' every " + intervalStride + intervalUnit + " as (" + viewSql + ") partition by DAY");
     }
 
     private ObjList<FuzzTransaction> createTransactionsAndMv(Rnd rnd, String tableNameBase, String matViewName, String viewSql) throws SqlException, NumericException {
