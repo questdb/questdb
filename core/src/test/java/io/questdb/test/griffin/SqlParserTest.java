@@ -160,11 +160,66 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testACExprFollowingExprFollowingClauseInvalid() throws Exception {
-        assertWindowSyntaxError(
+    public void testACExprFollowingExprFollowingClauseValid() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 22 #UNIT following and 3 #UNIT following exclude no others) from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 22 following and 3 following) from xyz",
-                65,
-                "start of window must be lower than end of window",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprFrameEndUnboundedProceeding() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 2 following and unbounded preceding) from xyz",
+                91,
+                "'following' expected",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprFrameStartCurrentRowWithProceeding() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between current row and 2 preceding) from xyz",
+                83,
+                "start row is CURRENT, end row not must be PRECEDING",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprFrameStartFollowingWithProceeding() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 2 following and 2 preceding) from xyz",
+                83,
+                "start row is FOLLOWING, end row not must be PRECEDING",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprFrameStartUnboundedFollowing() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between unbounded following and 3 preceding) from xyz",
+                75,
+                "'preceding' expected",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -280,41 +335,39 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testACExprPrecedingExprPrecedingClauseInvalid() throws Exception {
-        assertWindowSyntaxError(
-                "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 20 preceding) from xyz",
-                65,
-                "start of window must be lower than end of window",
-                modelOf("xyz")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("c", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testACExprPrecedingExprPrecedingClauseInvalidUnion() throws Exception {
-        assertWindowSyntaxError(
-                "select a, b, c from xyz" +
-                        " union all " +
-                        "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 20 preceding) from xyz",
-                99,
-                "start of window must be lower than end of window",
-                modelOf("xyz")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("c", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testACExprPrecedingExprPrecedingClauseValid() throws Exception {
+    public void testACExprPrecedingExprPrecedingClauseValid1() throws Exception {
         assertWindowQuery(
                 "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 20 #UNIT preceding and 10 #UNIT preceding exclude no others) " +
                         "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 20 preceding and 10 preceding) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingExprPrecedingClauseValid2() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 10 #UNIT preceding and 20 #UNIT preceding exclude no others) from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 20 preceding) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingExprPrecedingClauseValidUnion() throws Exception {
+        assertWindowQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz timestamp (ts)) union all select-window a, b, f(c) f over (partition by b order by ts #FRAME between 10 #UNIT preceding and 20 #UNIT preceding exclude no others) from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a, b, c from xyz" +
+                        " union all " +
+                        "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 20 preceding) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)

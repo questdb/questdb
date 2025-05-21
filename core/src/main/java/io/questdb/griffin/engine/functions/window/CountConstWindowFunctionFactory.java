@@ -63,6 +63,15 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
+        if (rowsHi < rowsLo) {
+            return new LongNullFunction(null,
+                    CountFunctionFactoryHelper.COUNT_NAME,
+                    rowsLo,
+                    rowsHi,
+                    framingMode == WindowColumn.FRAMING_RANGE,
+                    partitionByRecord,
+                    0);
+        }
 
         if (partitionByRecord != null) {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
@@ -246,11 +255,11 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
     }
 
     // fast path of handles count() over (partition by x [order by o] rows between y and z)
-    public static class CountOverPartitionRowsFrameFunction extends BasePartitionedLongWindowFunction {
+    public static class CountOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
         private final long frameSize;
-        private long count;
         private final long rowsHi;
         private final long rowsLo;
+        private long count;
 
         public CountOverPartitionRowsFrameFunction(
                 Map map,
@@ -268,6 +277,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.rowsHi = rowsHi;
             this.rowsLo = rowsLo;
         }
+
 
         @Override
         public void close() {
@@ -312,6 +322,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
+
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -359,11 +370,11 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
     }
 
     // fast path of handles count() over ([order by o] rows between y and z), there's no partition by.
-    public static class CountOverRowsFrameFunction extends BaseLongWindowFunction {
+    public static class CountOverRowsFrameFunction extends BaseWindowFunction implements WindowLongFunction {
         private final long frameSize;
-        private long count;
         private final long rowsHi;
         private final long rowsLo;
+        private long count;
 
         public CountOverRowsFrameFunction(long rowsLo, long rowsHi) {
             super(null);
@@ -406,6 +417,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
+
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {

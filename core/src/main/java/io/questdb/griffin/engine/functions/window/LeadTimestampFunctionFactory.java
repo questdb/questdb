@@ -41,9 +41,9 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
-public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
+public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory {
 
-    private static final String SIGNATURE = LeadLagWindowFunctionFactoryHelper.LEAD_NAME + "(DV)";
+    private static final String SIGNATURE = LeadLagWindowFunctionFactoryHelper.LEAD_NAME + "(NV)";
 
     @Override
     public String getSignature() {
@@ -65,40 +65,40 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 configuration,
                 sqlExecutionContext,
                 (defaultValue) -> {
-                    if (!ColumnType.isAssignableFrom(defaultValue.getType(), ColumnType.DOUBLE)) {
-                        throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to double");
+                    if (!ColumnType.isAssignableFrom(defaultValue.getType(), ColumnType.TIMESTAMP)) {
+                        throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to timestamp");
                     }
                 },
                 LeadFunction::new,
-                LagDoubleFunctionFactory.LeadLagValueCurrentRow::new,
+                LagLongFunctionFactory.LeadLagValueCurrentRow::new,
                 LeadOverPartitionFunction::new
         );
     }
 
-    static class LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowDoubleFunction {
+    static class LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowTimestampFunction {
         public LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
             super(arg, defaultValueFunc, offset, memory, ignoreNulls);
         }
 
         @Override
         protected boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
-            double leadValue;
+            long leadValue;
             if (count < offset) {
-                leadValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(record);
+                leadValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getTimestamp(record);
             } else {
-                leadValue = buffer.getDouble((long) loIdx * Double.BYTES);
+                leadValue = buffer.getLong((long) loIdx * Long.BYTES);
             }
-            double d = arg.getDouble(record);
-            boolean respectNull = !ignoreNulls || Numbers.isFinite(d);
+            long l = arg.getTimestamp(record);
+            boolean respectNull = !ignoreNulls || l != Numbers.LONG_NULL;
             if (respectNull) {
-                buffer.putDouble((long) loIdx * Double.BYTES, d);
+                buffer.putLong((long) loIdx * Long.BYTES, l);
             }
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), leadValue);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
             return respectNull;
         }
     }
 
-    static class LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction implements WindowDoubleFunction {
+    static class LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction implements WindowTimestampFunction {
         public LeadOverPartitionFunction(Map map,
                                          VirtualRecord partitionByRecord,
                                          RecordSink partitionBySink,
@@ -118,18 +118,18 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                                   Record record,
                                   long recordOffset,
                                   WindowSPI spi) {
-            double d = arg.getDouble(record);
-            double leadValue;
+            long l = arg.getTimestamp(record);
+            long leadValue;
             if (count < offset) {
-                leadValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(record);
+                leadValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getTimestamp(record);
             } else {
-                leadValue = memory.getDouble(startOffset + firstIdx * Double.BYTES);
+                leadValue = memory.getLong(startOffset + firstIdx * Long.BYTES);
             }
-            boolean respectNulls = !ignoreNulls || Numbers.isFinite(d);
+            boolean respectNulls = !ignoreNulls || l != Numbers.LONG_NULL;
             if (respectNulls) {
-                memory.putDouble(startOffset + firstIdx * Double.BYTES, d);
+                memory.putLong(startOffset + firstIdx * Long.BYTES, l);
             }
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), leadValue);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
             return respectNulls;
         }
     }

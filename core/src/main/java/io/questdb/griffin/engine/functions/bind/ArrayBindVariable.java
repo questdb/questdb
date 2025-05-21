@@ -67,7 +67,6 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
         if (view == null) {
             return ArrayConstant.NULL;
         }
-
         return view;
     }
 

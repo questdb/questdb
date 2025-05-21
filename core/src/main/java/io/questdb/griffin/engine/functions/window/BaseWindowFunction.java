@@ -24,70 +24,71 @@
 
 package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.Reopenable;
-import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.Misc;
 
-abstract class BasePartitionedDoubleWindowFunction extends BaseDoubleWindowFunction implements Reopenable {
-    protected final Map map;
-    protected final VirtualRecord partitionByRecord;
-    protected final RecordSink partitionBySink;
+public abstract class BaseWindowFunction implements WindowFunction {
+    protected final Function arg;
+    protected int columnIndex;
 
-    public BasePartitionedDoubleWindowFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
-        super(arg);
-        this.map = map;
-        this.partitionByRecord = partitionByRecord;
-        this.partitionBySink = partitionBySink;
+    public BaseWindowFunction(Function arg) {
+        this.arg = arg;
     }
 
     @Override
     public void close() {
-        super.close();
-        Misc.free(map);
-        Misc.freeObjList(partitionByRecord.getFunctions());
+        Misc.free(arg);
     }
+
+    @Override
+    public void cursorClosed() {
+        if (arg != null) {
+            arg.cursorClosed();
+        }
+    }
+
+    @Override
+    public abstract String getName();
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        super.init(symbolTableSource, executionContext);
-        Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
-    }
-
-    @Override
-    public void reopen() {
-        if (map != null) {
-            map.reopen();
+        if (arg != null) {
+            arg.init(symbolTableSource, executionContext);
         }
     }
 
     @Override
     public void reset() {
-        Misc.free(map);
+    }
+
+    @Override
+    public void setColumnIndex(int columnIndex) {
+        this.columnIndex = columnIndex;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(getName());
-        sink.val('(').val(arg).val(')');
+        if (arg != null) {
+            sink.val('(').val(arg).val(')');
+        } else {
+            sink.val("(*)");
+        }
         if (isIgnoreNulls()) {
             sink.val(" ignore nulls");
         }
-        sink.val(" over (");
-        sink.val("partition by ");
-        sink.val(partitionByRecord.getFunctions());
-        sink.val(')');
+        sink.val(" over ()");
     }
 
     @Override
     public void toTop() {
-        super.toTop();
-        Misc.clear(map);
+        if (arg != null) {
+            arg.toTop();
+        }
     }
 }

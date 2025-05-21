@@ -2910,6 +2910,9 @@ public class SqlParser {
                                                 // In this case the end point cannot be value_expr PRECEDING.
                                                 throw SqlException.$(lexer.lastTokenPosition(), "start row is CURRENT, end row not must be PRECEDING");
                                             }
+                                            if (winCol.getRowsLoKind() == WindowColumn.FOLLOWING) {
+                                                throw SqlException.$(lexer.lastTokenPosition(), "start row is FOLLOWING, end row not must be PRECEDING");
+                                            }
                                             winCol.setRowsHiKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
                                         } else if (isFollowingKeyword(tok)) {
                                             winCol.setRowsHiKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
