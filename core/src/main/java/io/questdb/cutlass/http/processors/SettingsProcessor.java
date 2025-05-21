@@ -122,7 +122,7 @@ public class SettingsProcessor implements HttpRequestHandler {
         @Override
         public void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
             if (hi > lo) {
-                transientState.sink.putNonAscii(lo, hi);
+                transientState.utf8Sink.putNonAscii(lo, hi);
             }
         }
 
@@ -137,15 +137,15 @@ public class SettingsProcessor implements HttpRequestHandler {
 
             transientState.mode = SettingsStore.Mode.of(context.getRequestHeader().getMethod());
 
-            transientState.version.clear();
-            transientState.version.put(context.getRequestHeader().getUrlParam(URL_PARAM_VERSION));
+            transientState.utf16Sink.clear();
+            transientState.utf16Sink.put(context.getRequestHeader().getUrlParam(URL_PARAM_VERSION));
         }
 
         @Override
         public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
             try {
                 context.getSecurityContext().authorizeSettings();
-                settingsStore.save(transientState.sink, transientState.mode, parseVersion(transientState.version));
+                settingsStore.save(transientState.utf8Sink, transientState.mode, parseVersion(transientState.utf16Sink));
                 sendOk();
             } catch (CairoException e) {
                 LOG.error().$("could not save preferences").$((Throwable) e).$();
@@ -175,11 +175,13 @@ public class SettingsProcessor implements HttpRequestHandler {
         }
 
         private void sendErr(CairoException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            transientState.utf16Sink.clear();
+            transientState.utf16Sink.put("{\"error\":\"").escapeJsonStr(e.getFlyweightMessage()).put("\"}");
             transientContext.simpleResponse().sendStatusJsonContent(
                     e.isPreferencesOutOfDateError() ? HTTP_CONFLICT
                             : e.isAuthorizationError() ? HTTP_UNAUTHORIZED
                             : HTTP_BAD_REQUEST,
-                    e.getFlyweightMessage()
+                    transientState.utf16Sink
             );
         }
 

@@ -37,7 +37,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.Zip;
@@ -48,7 +47,6 @@ import io.questdb.std.ex.ZLibException;
 import io.questdb.std.str.StdoutSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
-import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -64,7 +62,6 @@ public class HttpResponseSink implements Closeable, Mutable {
     private static final int HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE = 431;
     private static final Log LOG = LogFactory.getLog(HttpResponseSink.class);
     private static final IntObjHashMap<String> httpStatusMap = new IntObjHashMap<>();
-    private static final ThreadLocal<Utf8StringSink> tlSink = new ThreadLocal<>(Utf8StringSink::new);
     private final ChunkUtf8Sink buffer;
     private final ChunkedResponseImpl chunkedResponse = new ChunkedResponseImpl();
     private final ChunkUtf8Sink compressOutBuffer;
@@ -828,15 +825,7 @@ public class HttpResponseSink implements Closeable, Mutable {
             if (!contentSent) {
                 flushSingle();
                 buffer.clearAndPrepareToWriteToBuffer();
-                if (message == null) {
-                    sink.put(httpStatusMap.get(code));
-                } else {
-                    // this is ugly, add a putUtf16() method to the response sink?
-                    final Utf8StringSink utf8Sink = tlSink.get();
-                    utf8Sink.clear();
-                    utf8Sink.put(message);
-                    sink.put(utf8Sink);
-                }
+                sink.put(message == null ? httpStatusMap.get(code) : message);
                 if (appendEOL) {
                     sink.putEOL();
                 }

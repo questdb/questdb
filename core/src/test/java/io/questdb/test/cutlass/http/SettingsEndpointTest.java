@@ -218,7 +218,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
 
                     // out of date version rejected
                     assertPreferencesRequest(httpClient, "{\"key1\":\"value111\",\"instance_desc\":\"desc222\"}", MERGE, 1L,
-                            HTTP_CONFLICT, "preferences view is out of date [currentVersion=2, expectedVersion=1]\r\n");
+                            HTTP_CONFLICT, "{\"error\":\"preferences view is out of date [currentVersion=2, expectedVersion=1]\"}\r\n");
                     assertPreferencesStore(settingsStore, 2, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}");
 
                     // same update based on latest version accepted
@@ -315,7 +315,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     final String missingQuote = "{\"instance_name:\"instance1\",\"instance_desc\":\"desc1\"}";
                     assertPreferencesRequest(httpClient, missingQuote, MERGE, 0L,
-                            HTTP_BAD_REQUEST, "Malformed preferences message [error=Unexpected symbol, preferences=" + missingQuote + "]\r\n");
+                            HTTP_BAD_REQUEST, "{\"error\":\"Malformed preferences message [error=Unexpected symbol, preferences={\\\"instance_name:\\\"instance1\\\",\\\"instance_desc\\\":\\\"desc1\\\"}]\"}\r\n");
                     assertPreferencesStore(settingsStore, 0, "\"preferences\":{}");
 
                     assertSettingsRequest(httpClient, "{" +
@@ -533,7 +533,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
     private void testInvalidPreferencesVersion(HttpClient httpClient, SettingsStore settingsStore, String version) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT).POST();
         request.url("/settings?version=" + version).withContent().put("{\"key1\":\"value111\",\"instance_desc\":\"desc222\"}");
-        assertResponse(request, HTTP_BAD_REQUEST, "Invalid version, numeric value expected [version='" + version + "']\r\n");
+        assertResponse(request, HTTP_BAD_REQUEST, "{\"error\":\"Invalid version, numeric value expected [version='" + version + "']\"}\r\n");
 
         assertPreferencesStore(settingsStore, 0, "\"preferences\":{}");
 

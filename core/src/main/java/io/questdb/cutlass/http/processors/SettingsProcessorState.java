@@ -32,24 +32,24 @@ import io.questdb.std.str.StringSink;
 import java.io.Closeable;
 
 class SettingsProcessorState implements Mutable, Closeable {
-    final DirectUtf8Sink sink;
-    final StringSink version;
+    final StringSink utf16Sink;
+    final DirectUtf8Sink utf8Sink;
     SettingsStore.Mode mode;
 
     SettingsProcessorState(int size) {
-        sink = new DirectUtf8Sink(size);
-        version = new StringSink();
+        utf8Sink = new DirectUtf8Sink(size);
+        utf16Sink = new StringSink();
     }
 
     @Override
     public void clear() {
-        sink.clear();
-        version.clear();
+        utf8Sink.clear();
+        utf16Sink.clear();
         mode = null;
     }
 
     @Override
     public void close() {
-        sink.close();
+        utf8Sink.close();
     }
 }
