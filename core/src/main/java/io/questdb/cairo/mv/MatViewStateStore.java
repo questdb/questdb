@@ -56,6 +56,8 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
 
     void enqueueInvalidate(TableToken matViewToken, String invalidationReason);
 
+    void enqueueRangeRefresh(TableToken matViewToken, long rangeFrom, long rangeTo);
+
     @Nullable
     MatViewState getViewState(TableToken matViewToken);
 
