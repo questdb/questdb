@@ -658,7 +658,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         childViewSink.clear();
         graph.getDependentViews(baseTableToken, childViewSink);
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
-            final TableToken viewToken = childViewSink.get(v);
+            TableToken viewToken = childViewSink.get(v);
             final MatViewState state = stateStore.getViewState(viewToken);
             if (state != null && !state.isPendingInvalidation() && !state.isInvalid() && !state.isDropped()) {
                 if (!state.tryLock()) {
@@ -666,11 +666,25 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     stateStore.enqueueIncrementalRefresh(viewToken);
                     continue;
                 }
-                try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
-                    try {
-                        refreshed |= refreshIncremental0(state, baseTableToken, walWriter, refreshTriggerTimestamp);
-                    } catch (Throwable th) {
-                        refreshFailState(state, walWriter, th);
+                try {
+                    try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
+                        try {
+                            refreshed |= refreshIncremental0(state, baseTableToken, walWriter, refreshTriggerTimestamp);
+                        } catch (Throwable th) {
+                            refreshFailState(state, walWriter, th);
+                        }
+                    } catch (CairoException ex) {
+                        if (ex.isTableDoesNotExist()) {
+                            // Can be that the mat view underlying table is in the middle of being renamed at this moment,
+                            // do not invalidate the view in this case.
+                            TableToken updatedToken = engine.getUpdatedTableToken(viewToken);
+                            if (updatedToken != null && updatedToken != viewToken) {
+                                // The table was renamed, so we need to update the state
+                                stateStore.enqueueIncrementalRefresh(updatedToken);
+                                continue;
+                            }
+                        }
+                        throw ex;
                     }
                 } catch (Throwable th) {
                     // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write

@@ -291,6 +291,9 @@ public class CairoEngine implements Closeable, WriterSource {
         if (token.isWal()) {
             tableSequencerAPI.applyRename(updatedTableToken);
         }
+        if (updatedTableToken.isMatView()) {
+            matViewGraph.updateToken(updatedTableToken);
+        }
     }
 
     public void attachReader(TableReader reader) {

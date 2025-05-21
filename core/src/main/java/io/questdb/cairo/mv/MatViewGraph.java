@@ -154,6 +154,27 @@ public class MatViewGraph implements Mutable {
         }
     }
 
+    public void updateToken(TableToken updatedToken) {
+        final MatViewDefinition viewDefinition = definitionByTableDirName.get(updatedToken.getDirName());
+        if (viewDefinition != null) {
+            viewDefinition.updateToken(updatedToken);
+            MatViewDependencyList viewList = dependentViewsByTableName.get(viewDefinition.getBaseTableName());
+            if (viewList != null) {
+                var matViews = viewList.lockForWrite();
+                try {
+                    for (int i = 0, n = matViews.size(); i < n; i++) {
+                        if (matViews.get(i).getDirName().equals(updatedToken.getDirName())) {
+                            matViews.set(i, updatedToken);
+                            return;
+                        }
+                    }
+                } finally {
+                    viewList.unlockAfterWrite();
+                }
+            }
+        }
+    }
+
     @NotNull
     private MatViewDependencyList getOrCreateDependentViews(CharSequence baseTableName) {
         return dependentViewsByTableName.computeIfAbsent(baseTableName, createDependencyList);
