@@ -24,7 +24,15 @@
 
 package io.questdb.cutlass.line.array;
 
-@FunctionalInterface
-public interface ArrayDataAppender<T> {
-    void append(ArrayBufferAppender mem, T values);
+
+public interface ArrayBufferAppender {
+    void putBlockOfBytes(long from, long len);
+
+    void putByte(byte b);
+
+    void putDouble(double value);
+
+    void putInt(int value);
+
+    void putLong(long value);
 }

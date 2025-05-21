@@ -25,8 +25,8 @@
 package io.questdb.cutlass.line;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.client.Sender;
+import io.questdb.cutlass.line.array.ArrayBufferAppender;
 import io.questdb.cutlass.line.array.ArrayDataAppender;
 import io.questdb.cutlass.line.array.ArrayShapeAppender;
 import io.questdb.cutlass.line.array.DoubleArray;
@@ -35,16 +35,11 @@ import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
-public class LineTcpSenderV2 extends AbstractLineTcpSender implements MemoryA {
+public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBufferAppender {
     public LineTcpSenderV2(LineChannel channel, int bufferCapacity) {
         super(channel, bufferCapacity);
     }
@@ -120,21 +115,6 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements MemoryA {
     }
 
     @Override
-    public long getAppendOffset() {
-        return ptr;
-    }
-
-    @Override
-    public long getExtendSegmentSize() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void jumpTo(long offset) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public Sender longArray(@NotNull CharSequence name, long[] values) {
         return arrayColumn(name, ColumnType.LONG, (byte) 1, values,
                 FlattenArrayUtils::putShapeToBuf,
@@ -168,16 +148,6 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements MemoryA {
         return this;
     }
 
-    @Override
-    public long putBin(BinarySequence value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putBin(long from, long len) {
-        putBlockOfBytes(from, len);
-        return ptr;
-    }
 
     @Override
     public void putBlockOfBytes(long from, long len) {
@@ -193,18 +163,8 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements MemoryA {
     }
 
     @Override
-    public void putBool(boolean value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void putByte(byte value) {
         put(value);
-    }
-
-    @Override
-    public void putChar(char value) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -214,11 +174,6 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements MemoryA {
         }
         Unsafe.getUnsafe().putDouble(ptr, value);
         ptr += Double.BYTES;
-    }
-
-    @Override
-    public void putFloat(float value) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -237,91 +192,6 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements MemoryA {
         }
         Unsafe.getUnsafe().putLong(ptr, value);
         ptr += Long.BYTES;
-    }
-
-    @Override
-    public void putLong128(long lo, long hi) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putLong256(long l0, long l1, long l2, long l3) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putLong256(Long256 value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putLong256(@Nullable CharSequence hexString) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putLong256(@NotNull CharSequence hexString, int start, int end) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putLong256Utf8(@Nullable Utf8Sequence hexString) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putNullBin() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putNullStr() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putShort(short value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putStr(CharSequence value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putStr(char value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putStr(CharSequence value, int pos, int len) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putStrUtf8(DirectUtf8Sequence value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putVarchar(@NotNull Utf8Sequence value, int lo, int hi) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void skip(long bytes) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void truncate() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void zeroMem(int length) {
-        throw new UnsupportedOperationException();
     }
 
     private <T> Sender arrayColumn(

@@ -25,8 +25,8 @@
 package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
-import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.http.HttpHeaderParser;
+import io.questdb.cutlass.line.array.ArrayBufferAppender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOOperation;
@@ -35,7 +35,6 @@ import io.questdb.network.Socket;
 import io.questdb.network.SocketFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
-import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -44,7 +43,6 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
@@ -56,7 +54,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.net.HttpURLConnection;
 
-import static io.questdb.cutlass.http.HttpConstants.*;
+import static io.questdb.cutlass.http.HttpConstants.HEADER_TRANSFER_ENCODING;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 public abstract class HttpClient implements QuietCloseable {
@@ -110,13 +108,6 @@ public abstract class HttpClient implements QuietCloseable {
 
     public void disconnect() {
         Misc.free(socket);
-    }
-
-    @TestOnly
-    public String getDebugBuffer() {
-        DirectUtf8String s = new DirectUtf8String();
-        s.of(bufLo, ptr);
-        return Utf8s.toString(s).replace('\0', '␀');
     }
 
     @TestOnly
@@ -271,7 +262,7 @@ public abstract class HttpClient implements QuietCloseable {
         }
     }
 
-    public class Request implements Utf8Sink, MemoryA {
+    public class Request implements Utf8Sink, ArrayBufferAppender {
         private static final int STATE_CONTENT = 5;
         private static final int STATE_HEADER = 4;
         private static final int STATE_QUERY = 3;
@@ -334,26 +325,12 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
-        @Override
-        public void close() {
-        }
-
-        @Override
-        public long getAppendOffset() {
-            return ptr;
-        }
-
         public int getContentLength() {
             if (contentStart > -1) {
                 return (int) (ptr - contentStart);
             } else {
                 return 0;
             }
-        }
-
-        @Override
-        public long getExtendSegmentSize() {
-            throw new UnsupportedOperationException();
         }
 
         public long getPtr() {
@@ -364,11 +341,6 @@ public abstract class HttpClient implements QuietCloseable {
             beforeHeader();
             put(name).putAsciiInternal(": ").put(value);
             return eol();
-        }
-
-        @Override
-        public void jumpTo(long offset) {
-            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -425,26 +397,10 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         @Override
-        public long putBin(BinarySequence value) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long putBin(long from, long len) {
-            putBlockOfBytes(from, len);
-            return ptr;
-        }
-
-        @Override
         public void putBlockOfBytes(long from, long len) {
             checkCapacity(len);
             Vect.memcpy(ptr, from, len);
             ptr += len;
-        }
-
-        @Override
-        public void putBool(boolean value) {
-            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -453,20 +409,10 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         @Override
-        public void putChar(char value) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public void putDouble(double value) {
             checkCapacity(Double.BYTES);
             Unsafe.getUnsafe().putDouble(ptr, value);
             ptr += Double.BYTES;
-        }
-
-        @Override
-        public void putFloat(float value) {
-            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -484,36 +430,6 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         @Override
-        public void putLong128(long lo, long hi) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void putLong256(long l0, long l1, long l2, long l3) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void putLong256(Long256 value) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void putLong256(@Nullable CharSequence hexString) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void putLong256(@NotNull CharSequence hexString, int start, int end) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void putLong256Utf8(@Nullable Utf8Sequence hexString) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public Request putNonAscii(long lo, long hi) {
             final long size = hi - lo;
             checkCapacity(size);
@@ -523,49 +439,9 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         @Override
-        public long putNullBin() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long putNullStr() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public Request putQuoted(@NotNull CharSequence cs) {
             putAsciiInternal('\"').put(cs).putAsciiInternal('\"');
             return this;
-        }
-
-        @Override
-        public void putShort(short value) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long putStr(CharSequence value) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long putStr(char value) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long putStr(CharSequence value, int pos, int len) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long putStrUtf8(DirectUtf8Sequence value) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long putVarchar(@NotNull Utf8Sequence value, int lo, int hi) {
-            throw new UnsupportedOperationException();
         }
 
         public Request query(CharSequence name, CharSequence value) {
@@ -625,26 +501,10 @@ public abstract class HttpClient implements QuietCloseable {
             sendHeaderAndContent(maxContentLen, timeout);
         }
 
-        public Request setCookie(CharSequence name, CharSequence value) {
-            beforeHeader();
-            put(HEADER_COOKIE).putAscii(": ").put(name);
-            if (value != null) {
-                putAscii(COOKIE_VALUE_SEPARATOR).put(value);
-            }
-            eol();
-            return this;
-        }
-
-        @Override
-        public void skip(long bytes) {
-            throw new UnsupportedOperationException();
-        }
-
         public void trimContentToLen(int contentLen) {
             ptr = contentStart + contentLen;
         }
 
-        @Override
         public void truncate() {
             throw new UnsupportedOperationException();
         }
@@ -677,11 +537,6 @@ public abstract class HttpClient implements QuietCloseable {
             contentStart = ptr;
             state = STATE_CONTENT;
             return this;
-        }
-
-        @Override
-        public void zeroMem(int length) {
-            throw new UnsupportedOperationException();
         }
 
         private void beforeHeader() {

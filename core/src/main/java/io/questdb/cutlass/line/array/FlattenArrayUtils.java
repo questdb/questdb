@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.array;
 
-import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.line.LineSenderException;
 
 /**
@@ -35,13 +34,13 @@ import io.questdb.cutlass.line.LineSenderException;
  */
 public class FlattenArrayUtils {
 
-    public static void putDataToBuf(MemoryA mem, double[] array) {
+    public static void putDataToBuf(ArrayBufferAppender mem, double[] array) {
         for (int n = array.length, i = 0; i < n; i++) {
             mem.putDouble(array[i]);
         }
     }
 
-    public static void putDataToBuf(MemoryA mem, double[][] array) {
+    public static void putDataToBuf(ArrayBufferAppender mem, double[][] array) {
         final int dim1Len = array[0].length;
         for (int n = array.length, i = 0; i < n; i++) {
             double[] subArr = array[i];
@@ -52,7 +51,7 @@ public class FlattenArrayUtils {
         }
     }
 
-    public static void putDataToBuf(MemoryA mem, double[][][] array) {
+    public static void putDataToBuf(ArrayBufferAppender mem, double[][][] array) {
         final int dim1Len = array[0].length;
         for (int n = array.length, i = 0; i < n; i++) {
             double[][] v = array[i];
@@ -63,14 +62,14 @@ public class FlattenArrayUtils {
         }
     }
 
-    public static void putDataToBuf(MemoryA mem, long[] array) {
+    public static void putDataToBuf(ArrayBufferAppender mem, long[] array) {
         for (int n = array.length, i = 0; i < n; i++) {
             long v = array[i];
             mem.putLong(v);
         }
     }
 
-    public static void putDataToBuf(MemoryA mem, long[][] array) {
+    public static void putDataToBuf(ArrayBufferAppender mem, long[][] array) {
         final int dim1Len = array[0].length;
         for (int n = array.length, i = 0; i < n; i++) {
             long[] v = array[i];
@@ -81,7 +80,7 @@ public class FlattenArrayUtils {
         }
     }
 
-    public static void putDataToBuf(MemoryA mem, long[][][] array) {
+    public static void putDataToBuf(ArrayBufferAppender mem, long[][][] array) {
         final int dim1Len = array[0].length;
         for (int n = array.length, i = 0; i < n; i++) {
             long[][] v = array[i];
@@ -92,22 +91,14 @@ public class FlattenArrayUtils {
         }
     }
 
-    public static void putShapeToBuf(MemoryA mem, double[] array) {
+    public static void putShapeToBuf(ArrayBufferAppender mem, double[] array) {
         if (array.length == 0) {
             throw new LineSenderException("zero length array not supported");
         }
         mem.putInt(array.length);
     }
 
-    public static void putShapeToBuf(MemoryA mem, double[][] array) {
-        if (array.length == 0) {
-            throw new LineSenderException("zero length array not supported");
-        }
-        mem.putInt(array.length);
-        putShapeToBuf(mem, array[0]);
-    }
-
-    public static void putShapeToBuf(MemoryA mem, double[][][] array) {
+    public static void putShapeToBuf(ArrayBufferAppender mem, double[][] array) {
         if (array.length == 0) {
             throw new LineSenderException("zero length array not supported");
         }
@@ -115,14 +106,7 @@ public class FlattenArrayUtils {
         putShapeToBuf(mem, array[0]);
     }
 
-    public static void putShapeToBuf(MemoryA mem, long[] array) {
-        if (array.length == 0) {
-            throw new LineSenderException("zero length array not supported");
-        }
-        mem.putInt(array.length);
-    }
-
-    public static void putShapeToBuf(MemoryA mem, long[][] array) {
+    public static void putShapeToBuf(ArrayBufferAppender mem, double[][][] array) {
         if (array.length == 0) {
             throw new LineSenderException("zero length array not supported");
         }
@@ -130,7 +114,22 @@ public class FlattenArrayUtils {
         putShapeToBuf(mem, array[0]);
     }
 
-    public static void putShapeToBuf(MemoryA mem, long[][][] array) {
+    public static void putShapeToBuf(ArrayBufferAppender mem, long[] array) {
+        if (array.length == 0) {
+            throw new LineSenderException("zero length array not supported");
+        }
+        mem.putInt(array.length);
+    }
+
+    public static void putShapeToBuf(ArrayBufferAppender mem, long[][] array) {
+        if (array.length == 0) {
+            throw new LineSenderException("zero length array not supported");
+        }
+        mem.putInt(array.length);
+        putShapeToBuf(mem, array[0]);
+    }
+
+    public static void putShapeToBuf(ArrayBufferAppender mem, long[][][] array) {
         if (array.length == 0) {
             throw new LineSenderException("zero length array not supported");
         }

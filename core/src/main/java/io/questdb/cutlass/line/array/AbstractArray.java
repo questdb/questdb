@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.array;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.BorrowedFlatArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.line.LineSenderException;
@@ -72,14 +73,17 @@ public abstract class AbstractArray implements QuietCloseable {
     /**
      * Appends this array to the ILP request buffer, in the proper protocol format.
      */
-    public void appendToBufPtr(MemoryA mem) {
+    public void appendToBufPtr(ArrayBufferAppender mem) {
         assert !closed;
         byte nDims = (byte) array.getDimCount();
         mem.putByte(nDims);
         for (byte i = 0; i < nDims; i++) {
             mem.putInt(array.getDimLen(i));
         }
-        array.appendToMem(mem);
+        if (!array.isNull() && !array.isEmpty()) {
+            BorrowedFlatArrayView view = array.borrowedFlatView();
+            mem.putBlockOfBytes(view.ptr(), view.size());
+        }
     }
 
     @Override
