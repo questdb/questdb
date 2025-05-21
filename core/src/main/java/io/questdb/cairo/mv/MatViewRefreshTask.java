@@ -26,17 +26,25 @@ package io.questdb.cairo.mv;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.mp.ValueHolder;
+import io.questdb.std.Numbers;
 
 public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
     public static final int FULL_REFRESH = 1;
     public static final int INCREMENTAL_REFRESH = 0;
-    public static final int INVALIDATE = 2;
+    public static final int INVALIDATE = 3;
+    public static final int RANGE_REFRESH = 2;
     public static final int UNDEFINED = -1;
     public TableToken baseTableToken;
     public String invalidationReason;
     public TableToken matViewToken;
     public int operation = UNDEFINED;
-    public long refreshTriggerTimestamp = -1;
+    public long rangeFrom = Numbers.LONG_NULL;
+    public long rangeTo = Numbers.LONG_NULL;
+    public long refreshTriggerTimestamp = Numbers.LONG_NULL;
+
+    public static boolean isRefreshOperation(int operation) {
+        return operation == INCREMENTAL_REFRESH || operation == RANGE_REFRESH || operation == FULL_REFRESH;
+    }
 
     @Override
     public void clear() {
@@ -44,7 +52,9 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
         baseTableToken = null;
         matViewToken = null;
         invalidationReason = null;
-        refreshTriggerTimestamp = -1;
+        refreshTriggerTimestamp = Numbers.LONG_NULL;
+        rangeFrom = Numbers.LONG_NULL;
+        rangeTo = Numbers.LONG_NULL;
     }
 
     @Override
@@ -54,6 +64,8 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
         anotherHolder.matViewToken = matViewToken;
         anotherHolder.invalidationReason = invalidationReason;
         anotherHolder.refreshTriggerTimestamp = refreshTriggerTimestamp;
+        anotherHolder.rangeFrom = rangeFrom;
+        anotherHolder.rangeTo = rangeTo;
     }
 
     public boolean isBaseTableTask() {
