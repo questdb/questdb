@@ -111,7 +111,7 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
 
     public void applyShape(CairoConfiguration configuration, int errorPos) {
         resetToDefaultStrides(configuration.maxArrayElementCount(), errorPos);
-        if (functions == null || functions.size() < flatViewLength) {
+        if (functions == null) {
             functions = new ObjList<>(flatViewLength);
         }
     }
