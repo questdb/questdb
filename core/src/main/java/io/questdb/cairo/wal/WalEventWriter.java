@@ -138,13 +138,13 @@ class WalEventWriter implements Closeable {
 
         if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
             if (replaceRangeLowTs >= replaceRangeHiTs) {
-                throw CairoException.nonCritical().put("replaceRangeLowTs must be less than replaceRangeHiTs");
+                throw CairoException.nonCritical().put("Replace range low timestamp must be less than replace range high timestamp.");
             }
             if (replaceRangeLowTs > minTimestamp) {
-                throw CairoException.nonCritical().put("replace range low must before or equal to min timestamp");
+                throw CairoException.nonCritical().put("Replace range low timestamp must be less than or equal to the minimum timestamp.");
             }
             if (replaceRangeHiTs <= maxTimestamp) {
-                throw CairoException.nonCritical().put("replace range must greater than max timestamp");
+                throw CairoException.nonCritical().put("Replace range high timestamp must be greater than the maximum timestamp.");
             }
         }
 
