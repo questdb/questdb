@@ -3525,7 +3525,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByAllIndexedMixed() throws Exception {
         configOverrideUseWithinLatestByOptimisation();
-        
+
         final String expected = "a\tk\tb\n" +
                 "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
                 "2.6836863013701473\t1970-01-13T17:33:20.000000Z\tHYRX\n" +
