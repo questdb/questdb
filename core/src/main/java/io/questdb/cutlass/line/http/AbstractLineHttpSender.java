@@ -270,7 +270,6 @@ public abstract class AbstractLineHttpSender implements Sender {
         if (rowAdded()) {
             flush();
         }
-        rowBookmark = request.getContentLength();
     }
 
     @Override
@@ -371,6 +370,8 @@ public abstract class AbstractLineHttpSender implements Sender {
         if (table.length() == 0) {
             throw new LineSenderException("table name cannot be empty");
         }
+        // set bookmark at start of the line.
+        rowBookmark = request.getContentLength();
         state = RequestState.TABLE_NAME_SET;
         escapeQuotedString(table);
         return this;
