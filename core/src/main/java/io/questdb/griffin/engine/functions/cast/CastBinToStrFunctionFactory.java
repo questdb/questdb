@@ -79,7 +79,7 @@ public class CastBinToStrFunctionFactory implements FunctionFactory {
             if (bs == null) {
                 return null;
             } else {
-                sink.putAscii("'\\x").putHex(bs).putAscii('\'');
+                sink.putAscii("\\x").putHex(bs);
             }
             return sink;
         }

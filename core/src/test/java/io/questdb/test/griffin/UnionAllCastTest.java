@@ -1693,9 +1693,9 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testLongBin() throws Exception {
         testUnionAll("a\n" +
                         "\n" +
-                        "'\\xFAD8CC14CEF15988C4913B72DBF3041B'\n" +
+                        "\\xFAD8CC14CEF15988C4913B72DBF3041B\n" +
                         "\n" +
-                        "'\\xA0793C7715686126AF19C4'\n" +
+                        "\\xA0793C7715686126AF19C4\n" +
                         "\n" +
                         "4689592037643856\n" +
                         "4729996258992366\n" +
@@ -2141,10 +2141,10 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "aa\n" +
                         "bb\n" +
                         "aa\n" +
-                        "'\\x411D15558A17FAD8CC14CEF15988C491'\n" +
+                        "\\x411D15558A17FAD8CC14CEF15988C491\n" +
                         "\n" +
-                        "'\\xF3041BC788DEA0793C7715686126AF19C49594'\n" +
-                        "'\\x49B4597E3B08A11E388D1B9EF4C8'\n" +
+                        "\\xF3041BC788DEA0793C7715686126AF19C49594\n" +
+                        "\\x49B4597E3B08A11E388D1B9EF4C8\n" +
                         "\n",
                 "create table x as (select rnd_symbol('aa','bb') a from long_sequence(5))",
                 "create table y as (select rnd_bin(10, 24, 1) b from long_sequence(5))",

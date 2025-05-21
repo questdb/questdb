@@ -75,8 +75,8 @@ public class QueryTracingSubstitutionTest extends AbstractBootstrapTest {
                         stmt.setTimestamp(14, Timestamp.from(Instant.EPOCH));
 
 
-                        try (final ResultSet resultSet = stmt.executeQuery()) {
-                        }
+                        final ResultSet ignore = stmt.executeQuery();
+                        ignore.close();
                     }
 
                     int sleepMillis = 100;
