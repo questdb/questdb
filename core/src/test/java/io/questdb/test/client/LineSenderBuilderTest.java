@@ -279,11 +279,13 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("http::addr=localhost;protocol_version=10", "current client only supports protocol version 1(text format for all datatypes), 2(binary format for part datatypes) or explicitly unset");
             assertConfStrError("http::addr=localhost:48884;auto_flush=off;protocol_version=auto;", "Failed to detect server line protocol version");
             assertConfStrError("http::addr=localhost:48884;auto_flush=off;", "Failed to detect server line protocol version");
+            assertConfStrError("http::addr=localhost:48884;max_name_len=10;", "max_name_len must be at least 16 bytes [max_name_len=10]");
 
             assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100", "protocol_version=1");
             assertConfStrOk("addr=localhost:8080", "auto_flush=on", "auto_flush_rows=100", "protocol_version=2");
             assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100", "auto_flush=on", "protocol_version=2");
             assertConfStrOk("addr=localhost", "auto_flush=on", "protocol_version=2");
+            assertConfStrOk("addr=localhost:8080", "max_name_len=1024", "protocol_version=2");
 
             runInContext(r -> {
                 String tcpAddr = "tcp::addr=localhost:" + bindPort;
@@ -294,6 +296,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
 
                 assertConfStrOk(tcpAddr + ";init_buf_size=1024");
                 assertConfStrOk(tcpAddr + ";init_buf_size=1024;");
+                assertConfStrOk(tcpAddr + ";max_name_len=1024;");
 
                 assertConfStrOk(tcpAddr + ";init_buf_size=1024;auto_flush_bytes=1024");
                 assertConfStrOk(tcpAddr + ";init_buf_size=1024;auto_flush_bytes=1024;");
@@ -327,6 +330,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrOk("addr=localhost:8080", "token=foo", "retry_timeout=1000", "max_buf_size=1000000", "protocol_version=1");
             assertConfStrOk("http::addr=localhost:8080;token=foo;max_buf_size=1000000;retry_timeout=1000;protocol_version=2;");
             assertConfStrOk("https::addr=localhost:8080;tls_verify=unsafe_off;auto_flush_rows=100;protocol_version=2;");
+            assertConfStrOk("https::addr=localhost:8080;tls_verify=unsafe_off;auto_flush_rows=100;protocol_version=2;max_name_len=256;");
             assertConfStrOk("https::addr=localhost:8080;tls_verify=on;protocol_version=2;");
             assertConfStrError("https::addr=2001:0db8:85a3:0000:0000:8a2e:0370:7334;tls_verify=on;", "cannot parse a port from the address, use IPv4 address or a domain name [address=2001:0db8:85a3:0000:0000:8a2e:0370:7334]");
             assertConfStrError("https::addr=[2001:0db8:85a3:0000:0000:8a2e:0370:7334]:9000;tls_verify=on;", "cannot parse a port from the address, use IPv4 address or a domain name [address=[2001:0db8:85a3:0000:0000:8a2e:0370:7334]:9000]");
@@ -868,6 +872,20 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 fail("should not allow double port set");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "already configured");
+            }
+        });
+    }
+
+    @Test
+    public void testSmallMaxNameLen() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.LineSenderBuilder builder = Sender
+                        .builder(Sender.Transport.TCP)
+                        .maxNameLength(10);
+                fail("should not allow double buffer capacity set");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "max_name_len must be at least 16 bytes [max_name_len=10]");
             }
         });
     }

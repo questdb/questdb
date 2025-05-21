@@ -559,7 +559,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testInvalidZeroSignature() throws Exception {
         test(AUTH_KEY_ID1, 768, 100, true, () -> {
             PlainTcpLineChannel channel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, Net.parseIPv4("127.0.0.1"), bindPort, 4096);
-            AbstractLineTcpSender sender = new LineTcpSenderV2(channel, 4096) {
+            AbstractLineTcpSender sender = new LineTcpSenderV2(channel, 4096, 127) {
                 @Override
                 protected byte[] signAndEncode(PrivateKey privateKey, byte[] challengeBytes) {
                     byte[] rawSignature = new byte[64];

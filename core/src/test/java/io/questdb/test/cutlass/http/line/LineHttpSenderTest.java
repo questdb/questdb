@@ -191,6 +191,30 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testAutoDetectMaxNameLen() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .maxNameLength(20)
+                        .build()
+                ) {
+                    sender.table("table_with_long________________________________name")
+                            .longColumn("column_with_long________________________________name", 1)
+                            .at(100000, ChronoUnit.MICROS);
+                }
+                serverMain.awaitTable("table_with_long________________________________name");
+                serverMain.assertSql("select * from 'table_with_long________________________________name'",
+                        "column_with_long________________________________name\ttimestamp\n" +
+                                "1\t1970-01-01T00:00:00.100000Z\n");
+            }
+        });
+    }
+
+    @Test
     public void testAutoFlush() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
@@ -203,7 +227,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 int totalCount = 100_000;
                 int autoFlushRows = 1000;
-                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 0, 0, Long.MAX_VALUE)) {
+                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 127, 0, 0, Long.MAX_VALUE)) {
                     for (int i = 0; i < totalCount; i++) {
                         if (i != 0 && i % autoFlushRows == 0) {
                             serverMain.awaitTable("table with space");
@@ -364,7 +388,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int autoFlushRows = 1000;
                 String tableName = "accounts";
 
-                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 0, 0, Long.MAX_VALUE)) {
+                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 127, 0, 0, Long.MAX_VALUE)) {
                     for (int i = 0; i < totalCount; i++) {
                         // Add new symbol column with each second row
                         sender.table(tableName)
@@ -763,7 +787,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 int totalCount = 1_000;
-                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, 100_000, null, null, null, 0, 0, Long.MAX_VALUE)) {
+                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, 100_000, null, null, null, 127, 0, 0, Long.MAX_VALUE)) {
                     for (int i = 0; i < totalCount; i++) {
                         sender.table("table")
                                 .longColumn("lcol1", i)
@@ -776,6 +800,34 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         TestUtils.assertContains(e.getMessage(), "http-status=404");
                         TestUtils.assertContains(e.getMessage(), "Could not flush buffer: HTTP endpoint does not support ILP.");
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMaxNameLength() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                    .address("localhost:1123")
+                    .retryTimeoutMillis(Integer.MAX_VALUE)
+                    .maxNameLength(20)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
+                    .build()
+            ) {
+                try {
+                    sender.table("table_with_long______________________name");
+                    Assert.fail("Expected exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "table name is too long: [name = table_with_long______________________name, maxNameLength=20]");
+                }
+
+                try {
+                    sender.table("table")
+                            .doubleColumn("column_with_long______________________name", 1.0);
+                    Assert.fail("Expected exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "column name is too long: [name = column_with_long______________________name, maxNameLength=20]");
                 }
             }
         });
@@ -897,7 +949,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 int totalCount = 1_000_000;
-                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, 100_000, null, null, null, 0, 0, Long.MAX_VALUE)) {
+                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, 100_000, null, null, null, 127, 0, 0, Long.MAX_VALUE)) {
                     for (int i = 0; i < totalCount; i++) {
                         sender.table("table with space")
                                 .symbol("tag1", "value" + i % 10)

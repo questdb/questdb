@@ -61,12 +61,14 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     private boolean hasTable;
     private long lineStart;
     private long lo;
+    private int maxNameLength;
     private boolean quoted = false;
 
-    public AbstractLineSender(LineChannel lineChannel, int capacity) {
+    public AbstractLineSender(LineChannel lineChannel, int capacity, int maxNameLength) {
         this.lineChannel = lineChannel;
         this.capacity = capacity;
         this.enableValidation = true;
+        this.maxNameLength = maxNameLength;
 
         bufA = Unsafe.malloc(capacity, MemoryTag.NATIVE_ILP_RSS);
         bufB = Unsafe.malloc(capacity, MemoryTag.NATIVE_ILP_RSS);
@@ -393,7 +395,14 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         if (!enableValidation) {
             return;
         }
-        if (!TableUtils.isValidColumnName(name, Integer.MAX_VALUE)) {
+        if (!TableUtils.isValidColumnName(name, maxNameLength)) {
+            if (name.length() > maxNameLength) {
+                throw new LineSenderException("column name is too long: [name = ")
+                        .putAsPrintable(name)
+                        .put(", maxNameLength=")
+                        .put(maxNameLength)
+                        .put(']');
+            }
             throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
                     ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
         }
@@ -403,7 +412,14 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         if (!enableValidation) {
             return;
         }
-        if (!TableUtils.isValidTableName(name, Integer.MAX_VALUE)) {
+        if (!TableUtils.isValidTableName(name, maxNameLength)) {
+            if (name.length() > maxNameLength) {
+                throw new LineSenderException("table name is too long: [name = ")
+                        .putAsPrintable(name)
+                        .put(", maxNameLength=")
+                        .put(maxNameLength)
+                        .put(']');
+            }
             throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
                     "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
         }

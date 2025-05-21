@@ -61,6 +61,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "\"acl.enabled\":false," +
             "\"line.proto.support.versions\":[1,2]," +
             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
+            "\"cairo.max.file.name.length\":127," +
             "\"posthog.enabled\":false," +
             "\"posthog.api.key\":null" +
             "}";

@@ -30,12 +30,8 @@ import io.questdb.cutlass.line.array.LongArray;
 import org.jetbrains.annotations.NotNull;
 
 public class LineTcpSenderV1 extends AbstractLineTcpSender {
-    public LineTcpSenderV1(int ip, int port, int bufferCapacity) {
-        super(ip, port, bufferCapacity);
-    }
-
-    public LineTcpSenderV1(LineChannel channel, int bufferCapacity) {
-        super(channel, bufferCapacity);
+    public LineTcpSenderV1(LineChannel channel, int bufferCapacity, int maxNameLength) {
+        super(channel, bufferCapacity, maxNameLength);
     }
 
     @Override

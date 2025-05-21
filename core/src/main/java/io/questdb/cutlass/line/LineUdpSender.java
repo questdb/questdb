@@ -44,7 +44,7 @@ public class LineUdpSender extends AbstractLineSender {
     }
 
     public LineUdpSender(NetworkFacade nf, int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int capacity, int ttl) {
-        super(new UdpLineChannel(nf, interfaceIPv4Address, sendToIPv4Address, sendToPort, ttl), capacity);
+        super(new UdpLineChannel(nf, interfaceIPv4Address, sendToIPv4Address, sendToPort, ttl), capacity, Integer.MAX_VALUE);
     }
 
     @Override

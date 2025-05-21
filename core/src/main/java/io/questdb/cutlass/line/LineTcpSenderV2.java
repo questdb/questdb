@@ -40,8 +40,8 @@ import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBufferAppender {
-    public LineTcpSenderV2(LineChannel channel, int bufferCapacity) {
-        super(channel, bufferCapacity);
+    public LineTcpSenderV2(LineChannel channel, int bufferCapacity, int maxNameLength) {
+        super(channel, bufferCapacity, maxNameLength);
     }
 
     /**
@@ -60,7 +60,7 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
     public static LineTcpSenderV2 newSender(int ip, int port, int bufferCapacity) {
         PlainTcpLineChannel channel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, ip, port, bufferCapacity * 2);
         try {
-            return new LineTcpSenderV2(channel, bufferCapacity);
+            return new LineTcpSenderV2(channel, bufferCapacity, 127);
         } catch (Throwable t) {
             channel.close();
             throw t;

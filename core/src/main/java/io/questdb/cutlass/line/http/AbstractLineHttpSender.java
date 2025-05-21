@@ -69,12 +69,13 @@ public abstract class AbstractLineHttpSender implements Sender {
     private final int baseTimeoutMillis;
     private final long flushIntervalNanos;
     private final String host;
+    private final int maxNameLength;
     private final long maxRetriesNanos;
     private final long minRequestThroughput;
     private final String password;
     private final String path;
     private final int port;
-    private final CharSequence questdbVersion;
+    private final CharSequence questDBVersion;
     private final Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
     private final StringSink sink = new StringSink();
     private final String url;
@@ -97,6 +98,7 @@ public abstract class AbstractLineHttpSender implements Sender {
             String authToken,
             String username,
             String password,
+            int maxNameLength,
             long maxRetriesNanos,
             long minRequestThroughput,
             long flushIntervalNanos
@@ -112,6 +114,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                 authToken,
                 username,
                 password,
+                maxNameLength,
                 maxRetriesNanos,
                 minRequestThroughput,
                 flushIntervalNanos
@@ -129,6 +132,7 @@ public abstract class AbstractLineHttpSender implements Sender {
             String authToken,
             String username,
             String password,
+            int maxNameLength,
             long maxRetriesNanos,
             long minRequestThroughput,
             long flushIntervalNanos
@@ -152,8 +156,9 @@ public abstract class AbstractLineHttpSender implements Sender {
             this.client = client == null ? HttpClientFactory.newPlainTextInstance(clientConfiguration) : client;
             this.url = "http://" + host + ":" + port + this.path;
         }
-        this.questdbVersion = new BuildInformationHolder().getSwVersion();
+        this.questDBVersion = new BuildInformationHolder().getSwVersion();
         this.request = newRequest();
+        this.maxNameLength = maxNameLength;
     }
 
     public static AbstractLineHttpSender createLineSender(
@@ -166,6 +171,7 @@ public abstract class AbstractLineHttpSender implements Sender {
             String authToken,
             String username,
             String password,
+            int maxNameLength,
             long maxRetriesNanos,
             long minRequestThroughput,
             long flushIntervalNanos,
@@ -188,6 +194,9 @@ public abstract class AbstractLineHttpSender implements Sender {
                     try (JsonSettingsParser parser = new JsonSettingsParser()) {
                         parser.parse(responseHeaders.getResponse());
                         protocolVersion = parser.getDefaultProtocolVersion();
+                        if (parser.getMaxNameLen() != 0) {
+                            maxNameLength = parser.getMaxNameLen();
+                        }
                     }
                 } else if (Utf8s.equalsNcAscii("404", responseHeaders.getStatusCode())) {
                     // The client is unable to differentiate between a server shutdown and connecting to an older version.
@@ -218,6 +227,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                     authToken,
                     username,
                     password,
+                    maxNameLength,
                     maxRetriesNanos,
                     minRequestThroughput,
                     flushIntervalNanos
@@ -234,6 +244,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                     authToken,
                     username,
                     password,
+                    maxNameLength,
                     maxRetriesNanos,
                     minRequestThroughput,
                     flushIntervalNanos
@@ -560,7 +571,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         HttpClient.Request r = client.newRequest(host, port)
                 .POST()
                 .url(path)
-                .header("User-Agent", "QuestDB/java/" + questdbVersion);
+                .header("User-Agent", "QuestDB/java/" + questDBVersion);
         if (username != null) {
             r.authBasic(username, password);
         } else if (authToken != null) {
@@ -635,7 +646,14 @@ public abstract class AbstractLineHttpSender implements Sender {
     }
 
     private void validateTableName(CharSequence name) {
-        if (!TableUtils.isValidTableName(name, Integer.MAX_VALUE)) {
+        if (!TableUtils.isValidTableName(name, maxNameLength)) {
+            if (name.length() > maxNameLength) {
+                throw new LineSenderException("table name is too long: [name = ")
+                        .putAsPrintable(name)
+                        .put(", maxNameLength=")
+                        .put(maxNameLength)
+                        .put(']');
+            }
             throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
                     "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ")
                     .putAsPrintable(name);
@@ -662,7 +680,14 @@ public abstract class AbstractLineHttpSender implements Sender {
     }
 
     protected void validateColumnName(CharSequence name) {
-        if (!TableUtils.isValidColumnName(name, Integer.MAX_VALUE)) {
+        if (!TableUtils.isValidColumnName(name, maxNameLength)) {
+            if (name.length() > maxNameLength) {
+                throw new LineSenderException("column name is too long: [name = ")
+                        .putAsPrintable(name)
+                        .put(", maxNameLength=")
+                        .put(maxNameLength)
+                        .put(']');
+            }
             throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
                     ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ")
                     .putAsPrintable(name);
@@ -841,8 +866,10 @@ public abstract class AbstractLineHttpSender implements Sender {
 
     public static class JsonSettingsParser implements JsonParser, Closeable {
         private final static byte LINE_PROTO_SUPPORT_VERSIONS = 1;
+        private final static byte MAX_NAME_LEN = 2;
         private final JsonLexer lexer = new JsonLexer(1024, 1024);
         private final IntList supportVersions = new IntList(8);
+        private int maxNameLen = 0;
         private byte nextJsonValueFlag = 0;
 
         @Override
@@ -863,14 +890,28 @@ public abstract class AbstractLineHttpSender implements Sender {
             }
         }
 
+        public int getMaxNameLen() {
+            return maxNameLen;
+        }
+
         @Override
         public void onEvent(int code, CharSequence tag, int position) {
             switch (code) {
                 case JsonLexer.EVT_NAME:
                     if (tag.equals("line.proto.support.versions")) {
                         nextJsonValueFlag = LINE_PROTO_SUPPORT_VERSIONS;
+                    } else if (tag.equals("cairo.max.file.name.length")) {
+                        nextJsonValueFlag = MAX_NAME_LEN;
                     } else {
                         nextJsonValueFlag = 0;
+                    }
+                    break;
+                case JsonLexer.EVT_VALUE:
+                    if (nextJsonValueFlag == MAX_NAME_LEN) {
+                        try {
+                            maxNameLen = Numbers.parseInt(tag);
+                        } catch (NumericException ignored) {
+                        }
                     }
                     break;
                 case JsonLexer.EVT_ARRAY_VALUE:

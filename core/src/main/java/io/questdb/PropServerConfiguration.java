@@ -3828,6 +3828,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             settings.put(ACL_ENABLED, Boolean.toString(!Chars.empty(httpUsername)));
             settings.put(ILP_PROTO_SUPPORT_VERSIONS_NAME, ILP_PROTO_SUPPORT_VERSIONS);
             settings.put(ILP_PROTO_TRANSPORTS, ilpProtoTransports);
+            settings.put(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.toString(), Integer.toString(maxFileNameLength));
         }
 
         @Override

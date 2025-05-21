@@ -141,7 +141,7 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
             serverMain.start();
 
             try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", serverMain.getHttpServerPort(),
-                    DefaultHttpClientConfiguration.INSTANCE, null, 1000, null, null, null, 0, 0, Long.MAX_VALUE
+                    DefaultHttpClientConfiguration.INSTANCE, null, 1000, null, null, null, 127, 0, 0, Long.MAX_VALUE
             )) {
                 sender.table("accounts").symbol("balance", "BOOOO").atNow();
                 sender.flush();

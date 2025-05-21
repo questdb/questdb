@@ -48,11 +48,11 @@ public abstract class AbstractLineTcpSender extends AbstractLineSender {
      */
     @Deprecated
     public AbstractLineTcpSender(int ip, int port, int bufferCapacity) {
-        super(new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, ip, port, bufferCapacity * 2), bufferCapacity);
+        super(new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, ip, port, bufferCapacity * 2), bufferCapacity, 127);
     }
 
-    public AbstractLineTcpSender(LineChannel channel, int bufferCapacity) {
-        super(channel, bufferCapacity);
+    public AbstractLineTcpSender(LineChannel channel, int bufferCapacity, int maxNameLength) {
+        super(channel, bufferCapacity, maxNameLength);
     }
 
     @Override

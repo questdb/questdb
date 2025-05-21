@@ -38,8 +38,10 @@ import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.cutlass.line.array.DoubleArray;
+import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.network.Net;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -275,7 +277,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testCannotStartNewRowBeforeClosingTheExistingAfterValidationError() {
         StringChannel channel = new StringChannel();
-        try (Sender sender = new LineTcpSenderV2(channel, 1000)) {
+        try (Sender sender = new LineTcpSenderV2(channel, 1000, 127)) {
             sender.table("mytable");
             try {
                 sender.boolColumn("col\n", true);
@@ -296,7 +298,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testCloseIdempotent() {
         DummyLineChannel channel = new DummyLineChannel();
-        AbstractLineTcpSender sender = new LineTcpSenderV2(channel, 1000);
+        AbstractLineTcpSender sender = new LineTcpSenderV2(channel, 1000, 127);
         sender.close();
         sender.close();
         assertEquals(1, channel.closeCounter);
@@ -627,6 +629,29 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testMaxNameLength() throws Exception {
+        runInContext(r -> {
+            PlainTcpLineChannel channel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, HOST, bindPort, 1024);
+            try (AbstractLineTcpSender sender = new LineTcpSenderV2(channel, 1024, 20);) {
+                try {
+                    sender.table("table_with_long______________________name");
+                    fail();
+                } catch (LineSenderException e) {
+                    assertContains(e.getMessage(), "table name is too long: [name = table_with_long______________________name, maxNameLength=20]");
+                }
+
+                try {
+                    sender.table("tab")
+                            .doubleColumn("column_with_long______________________name", 1.0);
+                    fail();
+                } catch (LineSenderException e) {
+                    assertContains(e.getMessage(), "column name is too long: [name = column_with_long______________________name, maxNameLength=20]");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMinBufferSizeWhenAuth() throws Exception {
         authKeyId = AUTH_KEY_ID1;
         int tinyCapacity = 42;
@@ -698,7 +723,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testUnfinishedRowDoesNotContainNewLine() {
         StringChannel channel = new StringChannel();
-        try (Sender sender = new LineTcpSenderV2(channel, 1000)) {
+        try (Sender sender = new LineTcpSenderV2(channel, 1000, 127)) {
             sender.table("mytable");
             sender.boolColumn("col\n", true);
         } catch (LineSenderException e) {
@@ -853,7 +878,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     private static void assertControlCharacterException() {
         DummyLineChannel channel = new DummyLineChannel();
-        try (Sender sender = new LineTcpSenderV2(channel, 1000)) {
+        try (Sender sender = new LineTcpSenderV2(channel, 1000, 127)) {
             sender.table("mytable");
             sender.boolColumn("col\u0001", true);
             fail("control character in column or table name must throw exception");
@@ -866,7 +891,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     private static void assertExceptionOnClosedSender(Consumer<Sender> beforeCloseAction, Consumer<Sender> afterCloseAction) {
         DummyLineChannel channel = new DummyLineChannel();
-        Sender sender = new LineTcpSenderV2(channel, 1000);
+        Sender sender = new LineTcpSenderV2(channel, 1000, 127);
         beforeCloseAction.accept(sender);
         sender.close();
         try {

@@ -59,7 +59,7 @@ public class LineTCPSenderMainVarLenStrings {
                 logFd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
             }
             PlainTcpLineChannel tcpLineChannel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, Net.parseIPv4(hostIPv4), port, bufferCapacity * 2);
-            try (AbstractLineTcpSender sender = new LineTcpSenderV2(new LoggingLineChannel(tcpLineChannel, logFd, ff), bufferCapacity)) {
+            try (AbstractLineTcpSender sender = new LineTcpSenderV2(new LoggingLineChannel(tcpLineChannel, logFd, ff), bufferCapacity, 127)) {
                 for (int i = 0; i < count; i++) {
                     sender.metric("md_msgs");
                     sender

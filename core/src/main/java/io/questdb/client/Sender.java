@@ -417,6 +417,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private static final int DEFAULT_HTTP_PORT = 9000;
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 100 * 1024 * 1024;
+        private static final int DEFAULT_MAX_NAME_LEN = 127;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
         private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100 * 1024; // 100KB/s, keep in sync with the contract of the configuration method
         private static final int DEFAULT_TCP_PORT = 9009;
@@ -437,6 +438,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private int httpTimeout = PARAMETER_NOT_SET_EXPLICITLY;
         private String httpToken;
         private String keyId;
+        private int maxNameLength = PARAMETER_NOT_SET_EXPLICITLY;
         private int maximumBufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
         private final HttpClientConfiguration httpClientConfiguration = new DefaultHttpClientConfiguration() {
             @Override
@@ -671,7 +673,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                     tlsConfig = new ClientTlsConfiguration(trustStorePath, trustStorePassword, tlsValidationMode == TlsValidationMode.DEFAULT ? ClientTlsConfiguration.TLS_VALIDATION_MODE_FULL : ClientTlsConfiguration.TLS_VALIDATION_MODE_NONE);
                 }
                 return AbstractLineHttpSender.createLineSender(host, port, httpPath, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken,
-                        username, password, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis, protocolVersion);
+                        username, password, maxNameLength, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis, protocolVersion);
             }
             assert protocol == PROTOCOL_TCP;
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
@@ -688,9 +690,9 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             }
             try {
                 if (protocolVersion == PROTOCOL_VERSION_V1) {
-                    sender = new LineTcpSenderV1(channel, bufferCapacity);
+                    sender = new LineTcpSenderV1(channel, bufferCapacity, maxNameLength);
                 } else {
-                    sender = new LineTcpSenderV2(channel, bufferCapacity);
+                    sender = new LineTcpSenderV2(channel, bufferCapacity, maxNameLength);
                 }
             } catch (Throwable t) {
                 channel.close();
@@ -943,6 +945,26 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         }
 
         /**
+         * Set the maximum length of a table or column name in bytes.
+         * Matches the `cairo.max.file.name.length` setting in the server.
+         * The default is 127 bytes.
+         * If running over HTTP and protocol version 2 is auto-negotiated, this
+         * value is picked up from the server.
+         */
+        public LineSenderBuilder maxNameLength(int maxNameLength) {
+            if (this.maxNameLength != PARAMETER_NOT_SET_EXPLICITLY) {
+                throw new LineSenderException("max name length was already configured ")
+                        .put("[max_name_len=").put(this.maxNameLength).put("]");
+            }
+            if (maxNameLength < 16) {
+                throw new LineSenderException("max_name_len must be at least 16 bytes ")
+                        .put("[max_name_len=").put(maxNameLength).put("]");
+            }
+            this.maxNameLength = maxNameLength;
+            return this;
+        }
+
+        /**
          * Minimum expected throughput in bytes per second for HTTP requests.
          * <br>
          * If the throughput is lower than this value, the connection will time out.
@@ -1095,6 +1117,9 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 // keep protocol_version = 1 as default when use does not set protocol_version explicit for tcp/tcps protocol.
                 protocolVersion = PROTOCOL_VERSION_V1;
             }
+            if (maxNameLength == PARAMETER_NOT_SET_EXPLICITLY) {
+                maxNameLength = DEFAULT_MAX_NAME_LEN;
+            }
         }
 
         /**
@@ -1236,6 +1261,10 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                     pos = getValue(configurationString, pos, sink, "max_buf_size");
                     int maxBufferSize = parseIntValue(sink, "max_buf_size");
                     maxBufferCapacity(maxBufferSize);
+                } else if (Chars.equals("max_name_len", sink)) {
+                    pos = getValue(configurationString, pos, sink, "max_name_len");
+                    int len = parseIntValue(sink, "max_name_len");
+                    maxNameLength(len);
                 } else if (Chars.equals("init_buf_size", sink)) {
                     pos = getValue(configurationString, pos, sink, "init_buf_size");
                     int initBufSize = parseIntValue(sink, "init_buf_size");

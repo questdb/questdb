@@ -61,7 +61,7 @@ public class ClientInteropTest {
         StringChannel channel = new StringChannel();
         try (JsonLexer lexer = new JsonLexer(1024, 1024);
              Path path = new Path().of(pp);
-             Sender sender = new LineTcpSenderV2(channel, 1024)) {
+             Sender sender = new LineTcpSenderV2(channel, 1024, 127)) {
             JsonTestSuiteParser parser = new JsonTestSuiteParser(sender, channel);
             long fd = ff.openRO(path.$());
             assert fd > 0;

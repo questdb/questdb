@@ -47,6 +47,7 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                             String authToken,
                             String username,
                             String password,
+                            int maxNameLength,
                             long maxRetriesNanos,
                             long minRequestThroughput,
                             long flushIntervalNanos) {
@@ -58,6 +59,7 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 authToken,
                 username,
                 password,
+                maxNameLength,
                 maxRetriesNanos,
                 minRequestThroughput,
                 flushIntervalNanos);
@@ -73,6 +75,7 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                                String authToken,
                                String username,
                                String password,
+                               int maxNameLength,
                                long maxRetriesNanos,
                                long minRequestThroughput,
                                long flushIntervalNanos) {
@@ -86,6 +89,7 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 authToken,
                 username,
                 password,
+                maxNameLength,
                 maxRetriesNanos,
                 minRequestThroughput,
                 flushIntervalNanos);
