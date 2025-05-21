@@ -156,7 +156,12 @@ public abstract class HttpClient implements QuietCloseable {
 
     private void growBuffer(long requiredSize) {
         if (requiredSize > maxBufferSize) {
-            throw new HttpClientException("maximum buffer size exceeded [maxBufferSize=").put(maxBufferSize).put(", requiredSize=").put(requiredSize).put(']');
+            throw new HttpClientException("transaction is too large, either flush more frequently or " +
+                    "increase buffer size \"max_buf_size\" [maxBufferSize=")
+                    .putSize(maxBufferSize)
+                    .put(", transactionSize=")
+                    .putSize(requiredSize)
+                    .put(']');
         }
         long newBufferSize = Math.min(Numbers.ceilPow2((int) requiredSize), maxBufferSize);
         long newBufLo = Unsafe.realloc(bufLo, bufferSize, newBufferSize, MemoryTag.NATIVE_DEFAULT);

@@ -425,7 +425,9 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                         if (!recvBuffer.tryCompactOrGrowBuffer()) {
                             errorLine = ++line;
                             int errorPos = error.length();
-                            error.putAscii("unable to read data: ILP line does not fit QuestDB ILP buffer size");
+                            error.putAscii("transaction is too large, either flush more frequently or increase buffer size \"line.http.max.recv.buffer.size\" [maxBufferSize=")
+                                    .putSize(recvBuffer.getMaxBufSize())
+                                    .putAscii(']');
                             logError(parser, errorPos, true);
                             return Status.MESSAGE_TOO_LARGE;
                         }

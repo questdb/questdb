@@ -263,7 +263,8 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
             }
             Assert.fail();
         } catch (HttpClientException e) {
-            TestUtils.assertContains(e.getMessage(), "maximum buffer size exceeded [maxBufferSize=65536, requiredSize=65537]");
+            TestUtils.assertContains(e.getMessage(), "transaction is too large, either flush more frequently or " +
+                    "increase buffer size \"max_buf_size\" [maxBufferSize=64.0 KiB, transactionSize=64.001 KiB]");
         }
     }
 

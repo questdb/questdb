@@ -389,7 +389,8 @@ public class InfluxDBClientTest extends AbstractTest {
                         "very_long_field=92827791";
 
                 assertRequestErrorContains(influxDB, points, line, "{\"code\":\"request too large\"," +
-                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):unable to read data: ILP line does not fit QuestDB ILP buffer size\"," +
+                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):transaction is too large, " +
+                        "either flush more frequently or increase buffer size \\\"line.http.max.recv.buffer.size\\\" [maxBufferSize=512 B]\"," +
                         "\"line\":1,\"errorId\":");
 
                 // Fail on second line
@@ -409,7 +410,8 @@ public class InfluxDBClientTest extends AbstractTest {
                         "very_long_field=92827791";
 
                 assertRequestErrorContains(influxDB, points, line2, "{\"code\":\"request too large\"," +
-                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):unable to read data: ILP line does not fit QuestDB ILP buffer size\"," +
+                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):transaction is too large," +
+                        " either flush more frequently or increase buffer size \\\"line.http.max.recv.buffer.size\\\" [maxBufferSize=512 B]\"," +
                         "\"line\":2,\"errorId\":");
             }
         }

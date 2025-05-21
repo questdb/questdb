@@ -94,6 +94,10 @@ public class AdaptiveRecvBuffer implements QuietCloseable {
         return bufStartOfMeasurement;
     }
 
+    public long getMaxBufSize() {
+        return maxBufSize;
+    }
+
     public AdaptiveRecvBuffer of(long initialBufSize, long maxBufferSize) {
         assert bufStart == 0;
         this.initialBufSize = initialBufSize;
