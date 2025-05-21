@@ -74,6 +74,7 @@ public class CastBinToStrFunctionFactory implements FunctionFactory {
         }
 
         public CharSequence getStr(Record rec, StringSink sink) {
+            sink.clear();
             BinarySequence bs = arg.getBin(rec);
             if (bs == null) {
                 return null;
