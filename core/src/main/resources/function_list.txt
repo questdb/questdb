@@ -853,14 +853,6 @@ io.questdb.griffin.engine.functions.window.CountVarcharWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory
-io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory
-io.questdb.griffin.engine.functions.window.LeadDoubleFunctionFactory
-io.questdb.griffin.engine.functions.window.LagLongFunctionFactory
-io.questdb.griffin.engine.functions.window.LeadLongFunctionFactory
-io.questdb.griffin.engine.functions.window.LagTimestampFunctionFactory
-io.questdb.griffin.engine.functions.window.LeadTimestampFunctionFactory
-io.questdb.griffin.engine.functions.window.LagDateFunctionFactory
-io.questdb.griffin.engine.functions.window.LeadDateFunctionFactory
 
 # Bitwise operators
 io.questdb.griffin.engine.functions.math.BitwiseAndLongFunctionFactory
