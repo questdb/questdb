@@ -1364,6 +1364,9 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(23, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
             Assert.assertEquals(33, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
             Assert.assertEquals(33033, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
+
+            Assert.assertEquals(true, configuration.getCairoConfiguration().isQueryTracingEnabled());
+            Assert.assertEquals(true, configuration.getCairoConfiguration().isQueryTracingBindVariableSubstitutionEnabled());
         }
     }
 

@@ -30,8 +30,11 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
-public class BinBindVariable extends BinFunction implements ScalarFunction {
+public class BinBindVariable extends BinFunction implements ScalarFunction, Sinkable {
     BinarySequence value;
 
     public BinBindVariable(BinarySequence value) {
@@ -66,5 +69,11 @@ public class BinBindVariable extends BinFunction implements ScalarFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("?::binary");
+    }
+
+    // there is no binary literal
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.putAscii("'\\x").putHex(value).putAscii('\'').putAscii("::binary");
     }
 }

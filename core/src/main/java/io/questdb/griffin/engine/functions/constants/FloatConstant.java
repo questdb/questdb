@@ -37,6 +37,7 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
     }
 
     public static FloatConstant newInstance(float value) {
+        //noinspection ExpressionComparedToItself
         return value == value ? new FloatConstant(value) : NULL;
     }
 
@@ -48,7 +49,8 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
     @Override
     public boolean isNullConstant() {
         // NaN is used as a marker for NULL
-        // we can't use value != value because it will always be false
+        // NaN will never compare true with itself.
+        //noinspection ExpressionComparedToItself
         return value != value;
     }
 

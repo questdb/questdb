@@ -33,8 +33,10 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
-class Long256BindVariable extends Long256Function implements ScalarFunction, Mutable {
+class Long256BindVariable extends Long256Function implements ScalarFunction, Mutable, Sinkable {
     final Long256Impl value = new Long256Impl();
 
     @Override
@@ -83,5 +85,15 @@ class Long256BindVariable extends Long256Function implements ScalarFunction, Mut
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("?::long256");
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        if (Long256Impl.isNull(value)) {
+            sink.putAscii("null");
+        } else {
+            sink.putAscii('\'').put(value).putAscii('\'');
+        }
+        sink.putAscii("::long256");
     }
 }

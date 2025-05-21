@@ -29,8 +29,11 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.std.Mutable;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
-class ByteBindVariable extends ByteFunction implements ScalarFunction, Mutable {
+class ByteBindVariable extends ByteFunction implements ScalarFunction, Mutable, Sinkable {
     byte value;
 
     @Override
@@ -61,5 +64,10 @@ class ByteBindVariable extends ByteFunction implements ScalarFunction, Mutable {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("?::byte");
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.put(value).putAscii("::byte");
     }
 }

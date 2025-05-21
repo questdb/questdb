@@ -29,8 +29,11 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Uuid;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
-public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mutable {
+public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mutable, Sinkable {
     final Uuid value = new Uuid();
 
     @Override
@@ -61,6 +64,16 @@ public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mu
     @Override
     public boolean isThreadSafe() {
         return true;
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        if (Uuid.isNull(value.getLo(), value.getHi())) {
+            sink.putAscii("null");
+        } else {
+            sink.putAscii('\'').put(value).putAscii('\'');
+        }
+        sink.putAscii("::uuid");
     }
 
     void set(long lo, long hi) {

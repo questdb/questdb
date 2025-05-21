@@ -76,6 +76,7 @@ import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.cast.CastBinToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToVarcharFunctionFactory;
@@ -1701,12 +1702,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastIntervalToStrFunctionFactory.Func(new IntervalColumn(i)));
                                 break;
                             case ColumnType.BINARY:
-                                throw SqlException.unsupportedCast(
-                                        modelPosition,
-                                        castFromMetadata.getColumnName(i),
-                                        fromType,
-                                        toType
-                                );
+                                castFunctions.add(new CastBinToStrFunctionFactory.Func(new BinColumn(i)));
+                                break;
                             case ColumnType.IPv4:
                                 castFunctions.add(new CastIPv4ToStrFunctionFactory.Func(new IPv4Column(i)));
                                 break;
@@ -1912,6 +1909,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         break;
                     case ColumnType.BINARY:
+                        if (fromTag == ColumnType.STRING) {
+                            castFunctions.add(new StrColumn(i));
+                            break;
+                        }
                         castFunctions.add(new BinColumn(i));
                         break;
                     case ColumnType.VARCHAR:

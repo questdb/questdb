@@ -34,13 +34,16 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
  * String bind variable function wrapper used in SQL JIT. Also used to handle deferred
  * (unknown at compile time) symbol literals.
  */
-public class CompiledFilterSymbolBindVariable extends SymbolFunction implements ScalarFunction {
+public class CompiledFilterSymbolBindVariable extends SymbolFunction implements ScalarFunction, Sinkable {
 
     private final int columnIndex;
     private final Function symbolFunction;
@@ -97,6 +100,16 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("?::symbol");
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        if (getSymbol(null) == null) {
+            sink.put(getSymbol(null));
+        } else {
+            sink.put('\'').put(getSymbol(null)).put('\'');
+        }
+        sink.put("::symbol");
     }
 
     @Override

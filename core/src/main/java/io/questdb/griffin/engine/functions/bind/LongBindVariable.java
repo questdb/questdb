@@ -30,8 +30,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
-class LongBindVariable extends LongFunction implements ScalarFunction, Mutable {
+class LongBindVariable extends LongFunction implements ScalarFunction, Mutable, Sinkable {
     long value;
 
     @Override
@@ -62,5 +65,15 @@ class LongBindVariable extends LongFunction implements ScalarFunction, Mutable {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("?::long");
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        if (value == Numbers.LONG_NULL) {
+            sink.putAscii("null");
+        } else {
+            sink.put(value);
+        }
+        sink.putAscii("::long");
     }
 }

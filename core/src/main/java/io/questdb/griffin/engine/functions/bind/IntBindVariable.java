@@ -30,8 +30,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
-class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
+class IntBindVariable extends IntFunction implements ScalarFunction, Mutable, Sinkable {
     int value;
 
     @Override
@@ -62,5 +65,15 @@ class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("?::int");
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        if (value == Numbers.INT_NULL) {
+            sink.putAscii("null");
+        } else {
+            sink.put(value);
+        }
+        sink.putAscii("::int");
     }
 }

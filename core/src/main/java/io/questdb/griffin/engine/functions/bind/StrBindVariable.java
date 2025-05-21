@@ -32,11 +32,14 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.NotNull;
 
-public class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
+public class StrBindVariable extends StrFunction implements ScalarFunction, Mutable, Sinkable {
     private final StringSink utf16Sink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private boolean isNull = true;
@@ -225,5 +228,16 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("?::string");
+    }
+
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        if (isNull) {
+            sink.putAscii("null");
+        } else {
+            sink.putAscii('\'').putEscapeSingles(utf16Sink).putAscii('\'');
+        }
+        sink.putAscii("::string");
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.BinarySequence;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -37,6 +38,8 @@ import org.jetbrains.annotations.Nullable;
  */
 @SuppressWarnings("unchecked")
 public interface CharSink<T extends CharSink<?>> {
+
+    char[] HEX_ARRAY = "0123456789ABCDEF".toCharArray();
 
     /**
      * Assumes the char is ASCII and appends it to the sink n times.
@@ -166,6 +169,30 @@ public interface CharSink<T extends CharSink<?>> {
 
     default T putEOL() {
         return putAscii(Misc.EOL);
+    }
+
+    default T putEscapeSingles(@Nullable CharSequence cs) {
+        if (cs != null) {
+            for (int i = 0, n = cs.length(); i < n; i++) {
+                final char c = cs.charAt(i);
+                if (c == '\'') {
+                    put('\'');
+                }
+                put(cs.charAt(i));
+            }
+        }
+        return (T) this;
+    }
+
+    default T putHex(BinarySequence bs) {
+        if (bs != null) {
+            for (long i = 0, n = bs.length(); i < n; i++) {
+                final int v = bs.byteAt(i) & 0xFF;
+                put(HEX_ARRAY[v >>> 4]);
+                put(HEX_ARRAY[v & 0xF]);
+            }
+        }
+        return (T) this;
     }
 
     default T putISODate(long value) {

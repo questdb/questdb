@@ -29,8 +29,11 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Mutable;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
-class DoubleBindVariable extends DoubleFunction implements ScalarFunction, Mutable {
+class DoubleBindVariable extends DoubleFunction implements ScalarFunction, Mutable, Sinkable {
     double value;
 
     @Override
@@ -61,5 +64,15 @@ class DoubleBindVariable extends DoubleFunction implements ScalarFunction, Mutab
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("?::double");
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        if (Double.isNaN(value)) {
+            sink.putAscii("null");
+        } else {
+            sink.put(value);
+        }
+        sink.putAscii("::double");
     }
 }

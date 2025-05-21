@@ -31,8 +31,11 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
 import io.questdb.std.Mutable;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
-class GeoHashBindVariable extends AbstractGeoHashFunction implements ScalarFunction, Mutable {
+class GeoHashBindVariable extends AbstractGeoHashFunction implements ScalarFunction, Mutable, Sinkable {
     long value;
 
     public GeoHashBindVariable() {
@@ -82,6 +85,22 @@ class GeoHashBindVariable extends AbstractGeoHashFunction implements ScalarFunct
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("?::geohash");
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        if (value == GeoHashes.NULL) {
+            sink.putAscii("null");
+        } else {
+            int bitFlags = GeoHashes.getBitFlags(type);
+            sink.putAscii('\"');
+            if (bitFlags < 0) {
+                GeoHashes.appendCharsUnsafe(value, -bitFlags, sink);
+            } else {
+                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, sink);
+            }
+            sink.putAscii('\"');
+        }
     }
 
     void setType(int type) {

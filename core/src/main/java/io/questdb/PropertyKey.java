@@ -511,6 +511,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     POSTHOG_API_KEY("posthog.api.key"),
     POSTHOG_ENABLED("posthog.enabled"),
     QUERY_TRACING_ENABLED("query.tracing.enabled"),
+    QUERY_TRACING_BIND_VARIABLE_SUBSTITUTION_ENABLED("query.tracing.bind.variable.substitution.enabled"),
     LOG_LEVEL_VERBOSE("log.level.verbose"),
     LOG_TIMESTAMP_TIMEZONE("log.timestamp.timezone"),
     LOG_TIMESTAMP_LOCALE("log.timestamp.locale"),

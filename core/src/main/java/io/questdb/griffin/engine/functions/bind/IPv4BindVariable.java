@@ -30,8 +30,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
-public class IPv4BindVariable extends IPv4Function implements ScalarFunction, Mutable {
+public class IPv4BindVariable extends IPv4Function implements ScalarFunction, Mutable, Sinkable {
     int value;
 
     @Override
@@ -62,5 +65,17 @@ public class IPv4BindVariable extends IPv4Function implements ScalarFunction, Mu
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("?::IPv4");
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        if (value == Numbers.IPv4_NULL) {
+            sink.putAscii("null");
+        } else {
+            sink.putAscii('\'');
+            Numbers.intToIPv4Sink(sink, value);
+            sink.putAscii('\'');
+        }
+        sink.putAscii("::ipv4");
     }
 }

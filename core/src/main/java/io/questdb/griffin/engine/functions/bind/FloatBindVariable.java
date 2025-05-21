@@ -29,8 +29,11 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.std.Mutable;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
-class FloatBindVariable extends FloatFunction implements ScalarFunction, Mutable {
+class FloatBindVariable extends FloatFunction implements ScalarFunction, Mutable, Sinkable {
     float value;
 
     @Override
@@ -61,5 +64,15 @@ class FloatBindVariable extends FloatFunction implements ScalarFunction, Mutable
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("?::float");
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        if (Float.isNaN(value)) {
+            sink.putAscii("null");
+        } else {
+            sink.put(value);
+        }
+        sink.putAscii("::float");
     }
 }

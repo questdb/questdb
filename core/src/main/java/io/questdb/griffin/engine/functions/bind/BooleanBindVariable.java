@@ -29,8 +29,11 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.Mutable;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
-public class BooleanBindVariable extends BooleanFunction implements ScalarFunction, Mutable {
+public class BooleanBindVariable extends BooleanFunction implements ScalarFunction, Mutable, Sinkable {
     boolean value;
 
     @Override
@@ -61,5 +64,10 @@ public class BooleanBindVariable extends BooleanFunction implements ScalarFuncti
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("?::boolean");
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.put(value).putAscii("::boolean");
     }
 }
