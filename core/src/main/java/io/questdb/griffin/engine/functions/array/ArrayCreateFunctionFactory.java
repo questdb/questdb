@@ -72,7 +72,9 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         Function arg0 = args.getQuick(0);
         int arg0Pos = argPositions.getQuick(0);
         int type0 = arg0.getType();
-        short commonElemType = (short) type0;
+        // once we support more than the DOUBLE array type, use
+        // short commonElemType = (short) type0;
+        short commonElemType = ColumnType.DOUBLE;
         if (!ColumnType.isArray(type0)) {
             for (int i = 1; i < outerDimLen; i++) {
                 Function argI = args.getQuick(i);
@@ -80,8 +82,8 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 if (ColumnType.isArray(typeI)) {
                     throw SqlException.$(argPositions.getQuick(i), "mixed array and non-array elements");
                 }
-                // use commonWideningType(commonElemType, typeI) once we support more than the DOUBLE array type:
-                commonElemType = ColumnType.DOUBLE;
+                // once we support more than the DOUBLE array type, uncomment this:
+                // commonElemType = commonWideningType(commonElemType, typeI):
             }
             if (!ColumnType.isSupportedArrayElementType(commonElemType)) {
                 throw SqlException.position(arg0Pos)
