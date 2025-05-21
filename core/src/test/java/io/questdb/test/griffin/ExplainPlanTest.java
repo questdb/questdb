@@ -2640,6 +2640,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 try {
                                     function = factory.newInstance(0, args, argPositions, engine.getConfiguration(), sqlExecutionContext);
                                     function.toPlan(planSink);
+                                } catch (Throwable th) {
+                                    Misc.freeObjListAndClear(args);
                                 } finally {
                                     sqlExecutionContext.clearWindowContext();
                                 }
