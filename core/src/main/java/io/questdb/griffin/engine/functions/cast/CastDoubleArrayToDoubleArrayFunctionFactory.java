@@ -38,19 +38,27 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
-public final class CastDoubleArraytoDoubleArrayFunctionFactory implements FunctionFactory {
+public final class CastDoubleArrayToDoubleArrayFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(D[]d[])";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        Function fromFun = args.getQuick(0);
-        int fromType = fromFun.getType();
-        int toType = args.getQuick(1).getType();
-        int dimsToAdd = ColumnType.decodeArrayDimensionality(toType) - ColumnType.decodeArrayDimensionality(fromType);
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final Function fromFunc = args.getQuick(0);
+        final int fromType = fromFunc.getType();
+        final int toType = args.getQuick(1).getType();
+        final int dimsToAdd = ColumnType.decodeArrayDimensionality(toType) - ColumnType.decodeArrayDimensionality(fromType);
         if (dimsToAdd < 0) {
             throw SqlException.$(position, "cannot cast array to lower dimension [from=").put(ColumnType.nameOf(fromType))
                     .put(" (").put(ColumnType.decodeArrayDimensionality(fromType)).put("D)")
@@ -61,10 +69,10 @@ public final class CastDoubleArraytoDoubleArrayFunctionFactory implements Functi
         }
         if (dimsToAdd == 0) {
             // nothing to do
-            return fromFun;
+            return fromFunc;
         }
 
-        return new Func(fromFun, toType, dimsToAdd);
+        return new Func(fromFunc, toType, dimsToAdd);
     }
 
     public static final class Func extends ArrayFunction implements UnaryFunction {
@@ -74,7 +82,7 @@ public final class CastDoubleArraytoDoubleArrayFunctionFactory implements Functi
 
         public Func(Function arg, int toType, int dimsToAdd) {
             super.type = toType;
-            int fromType = arg.getType();
+            final int fromType = arg.getType();
             assert ColumnType.isArray(fromType);
             assert ColumnType.isArray(toType);
             assert ColumnType.decodeArrayElementType(fromType) == ColumnType.decodeArrayElementType(toType);
@@ -96,7 +104,7 @@ public final class CastDoubleArraytoDoubleArrayFunctionFactory implements Functi
 
         @Override
         public ArrayView getArray(Record rec) {
-            ArrayView array = arg.getArray(rec);
+            final ArrayView array = arg.getArray(rec);
             derivedArray.of(array);
             derivedArray.addDimensions(dimsToAdd);
             return derivedArray;

@@ -285,7 +285,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         if (pastBy == 0) {
             return 0;
         }
-
         // The number of bytes to skip is the complement of how many we're past by.
         return byteAlignment - pastBy;
     }

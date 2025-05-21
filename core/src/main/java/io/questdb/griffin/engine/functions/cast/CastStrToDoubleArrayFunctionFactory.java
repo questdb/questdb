@@ -55,8 +55,8 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        Function typeFun = args.getQuick(1);
-        int type = typeFun.getType();
+        final Function typeFunc = args.getQuick(1);
+        final int type = typeFunc.getType();
         return new Func(args.getQuick(0), type);
     }
 
@@ -78,7 +78,7 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public ArrayView getArray(Record rec) {
-            CharSequence str = function.getStrA(rec);
+            final CharSequence str = function.getStrA(rec);
             assert str != null; // for now
             assert str.length() > 0; // for now
             try {

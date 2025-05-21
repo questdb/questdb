@@ -993,7 +993,6 @@ public class O3Test extends AbstractO3Test {
         executeWithPool(0, O3Test::testRebuildIndexLastPartitionWithColumnTop);
     }
 
-
     @Test
     public void testRebuildIndexWithColumnTopPrevPartitionParallel() throws Exception {
         executeWithPool(4, O3Test::testRebuildIndexWithColumnTopPrevPartition);
@@ -1003,7 +1002,6 @@ public class O3Test extends AbstractO3Test {
     public void testRebuildIndexWithColumnTopPrevPartitionParallelContended() throws Exception {
         executeWithPool(0, O3Test::testRebuildIndexWithColumnTopPrevPartition);
     }
-
 
     @Test
     public void testRepeatedIngest() throws Exception {

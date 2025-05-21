@@ -82,9 +82,9 @@ import io.questdb.griffin.engine.functions.cast.CastByteToVarcharFunctionFactory
 import io.questdb.griffin.engine.functions.cast.CastDateToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToVarcharFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastDoubleArraytoDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleToDoubleArray;
 import io.questdb.griffin.engine.functions.cast.CastDoubleToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleToVarcharFunctionFactory;
@@ -305,8 +305,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
@@ -2052,7 +2052,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     castFunctions.add(ArrayColumn.newInstance(i, fromType));
                                 } else {
                                     assert fromDims < toDims; // can cast to higher dimensionality only
-                                    castFunctions.add(new CastDoubleArraytoDoubleArrayFunctionFactory.Func(ArrayColumn.newInstance(i, toType), toType, toDims - fromDims));
+                                    castFunctions.add(new CastDoubleArrayToDoubleArrayFunctionFactory.Func(ArrayColumn.newInstance(i, fromType), toType, toDims - fromDims));
                                 }
                                 break;
                             case DOUBLE:

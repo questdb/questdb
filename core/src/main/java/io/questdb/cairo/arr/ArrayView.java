@@ -173,7 +173,7 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     public final boolean arrayEquals(ArrayView other) {
-        if (this.type != other.type || !this.shapeEquals(other)) {
+        if (type != other.type || !shapeEquals(other)) {
             return false;
         }
         // We need this check to protect from running arrayEqualsRecursive() for an almost unbounded
@@ -182,7 +182,7 @@ public abstract class ArrayView implements QuietCloseable {
         if (isEmpty()) {
             return true;
         }
-        if (this.isVanilla && other.isVanilla) {
+        if (isVanilla && other.isVanilla) {
             FlatArrayView flatViewLeft = flatView;
             FlatArrayView flatViewRight = other.flatView;
             int length = flatViewLeft.length();

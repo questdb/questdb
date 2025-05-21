@@ -62,7 +62,7 @@ public class DerivedArrayView extends ArrayView {
         strides.rshift(count);
         for (int i = 0; i < count; i++) {
             shape.setQuick(i, 1); // new dimensions have all length 1
-            strides.add(newStride); // new dimensions have the same stride as the outermost existing dimension
+            strides.setQuick(i, newStride); // new dimensions have the same stride as the outermost existing dimension
         }
 
         // Update the type to reflect the new dimension count
