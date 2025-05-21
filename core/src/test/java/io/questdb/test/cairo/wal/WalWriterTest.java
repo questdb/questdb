@@ -1785,7 +1785,7 @@ public class WalWriterTest extends AbstractCairoTest {
             ) {
                 for (int i = 0; i < rowsToInsertTotal; i++) {
                     if (rnd.nextBoolean()) {
-                        walWriter.invalidateMatView(i, i, true, "Invalidating " + i);
+                        walWriter.resetMatViewState(i, i, true, "Invalidating " + i);
                     }
                     String symbol = rnd.nextInt(10) == 5 ? null : rnd.nextString(rnd.nextInt(9) + 1);
                     int v = rnd.nextInt(rowsToInsertTotal);
@@ -4129,7 +4129,7 @@ public class WalWriterTest extends AbstractCairoTest {
             assertEquals(42, matViewStateReader.getLastRefreshBaseTxn()); // refresh commit
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                walWriter.invalidateMatView(45, 45, true, "test_invalidate");
+                walWriter.resetMatViewState(45, 45, true, "test_invalidate");
             }
 
 
@@ -4140,7 +4140,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 // reset invalidation
-                walWriter.invalidateMatView(43, 43, false, "test_invalidate");
+                walWriter.resetMatViewState(43, 43, false, "test_invalidate");
             }
 
             drainWalQueue();
@@ -4229,7 +4229,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
             }
             if (newFormat) {
-                walWriter.invalidateMatView(1, 1, true, "test_invalidate");
+                walWriter.resetMatViewState(1, 1, true, "test_invalidate");
             }
         }
         return tableToken;
