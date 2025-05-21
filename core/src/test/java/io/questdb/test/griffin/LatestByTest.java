@@ -24,10 +24,14 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -588,6 +592,67 @@ public class LatestByTest extends AbstractCairoTest {
                     false,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testLatestBySymbolDifferentBindingService() throws Exception {
+        // Test that a parametrized latest-by <symbol_column> is re-initialized to a different parameter value
+        // when the query is re-executed with a different binding variable service
+
+        assertMemoryLeak(() -> {
+            execute("create table t as (" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    ") timestamp(ts) partition by DAY");
+
+            // we'll use the global 'bindVariableService' to compile the query
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "c");
+
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 final RecordCursorFactory factory = CairoEngine.select(compiler, "select ts, s from t " +
+                         "where s = :sym " +
+                         "latest on ts partition by s", sqlExecutionContext)) {
+
+
+                // sanity check: verify it returns the expected result when using a new binding variable service
+                // with the same value for the parameter as was injected into the global binding variable service
+                try (SqlExecutionContextImpl localContext = new SqlExecutionContextImpl(engine, 1)) {
+                    BindVariableServiceImpl localBindings = new BindVariableServiceImpl(configuration);
+                    localContext.with(localBindings);
+                    localBindings.setStr("sym", "c");
+
+                    assertFactoryCursor(
+                            "ts\ts\n" +
+                                    "1970-01-03T00:00:00.000000Z\tc\n",
+                            "ts",
+                            factory,
+                            true,
+                            localContext,
+                            false,
+                            false
+                    );
+                }
+
+                // re-execute with a different binding variable service and a different value
+                // this must yield a different result
+                try (SqlExecutionContextImpl localContext = new SqlExecutionContextImpl(engine, 1)) {
+                    BindVariableServiceImpl localBindings = new BindVariableServiceImpl(configuration);
+                    localContext.with(localBindings);
+                    localBindings.setStr("sym", "a");
+
+                    assertFactoryCursor(
+                            "ts\ts\n" +
+                                    "1970-01-02T23:00:00.000000Z\ta\n",
+                            "ts",
+                            factory,
+                            true,
+                            localContext,
+                            false,
+                            false
+                    );
+                }
+            }
         });
     }
 

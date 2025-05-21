@@ -2055,6 +2055,175 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRangeRefresh() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x ( " +
+                            "sym varchar, price double, ts timestamp " +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create table y (sym varchar)");
+
+            execute(
+                    "create materialized view x_1h with base x as " +
+                            "select x.sym, last(x.price) as price, x.ts " +
+                            "from x join y on (sym) " +
+                            "sample by 1h"
+            );
+
+            final String insertOlderRows = "insert into x values ('gbpusd', 1.320, '2024-09-09T12:01')" +
+                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                    ",('jpyusd', 103.21, '2024-09-11T12:02')" +
+                    ",('gbpusd', 1.321, '2024-09-12T13:02')";
+            execute(insertOlderRows);
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            drainQueues();
+            assertQueryNoLeakCheck("sym\tprice\tts\n", "x_1h order by sym");
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "x_1h\tincremental\tx\tvalid\t\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\t1\t1\n",
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
+                            "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "refresh_base_table_txn, base_table_txn " +
+                            "from materialized_views",
+                    null
+            );
+
+            // Insert data into y. Range refresh should aggregate rows within the interval only.
+            execute("insert into y values ('gbpusd'),('jpyusd')");
+            execute("refresh materialized view x_1h range from '2024-09-10T12:02' to '2024-09-11T12:02'");
+            drainQueues();
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n",
+                    "x_1h order by sym, ts"
+            );
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "x_1h\tincremental\tx\tvalid\t\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\t1\t1\n",
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
+                            "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "refresh_base_table_txn, base_table_txn " +
+                            "from materialized_views",
+                    null
+            );
+
+            // Insert a row with newer timestamp. This time incremental refresh should only aggregate the new row.
+            execute("insert into x (sym, price, ts) values ('gbpusd', 1.320, '2024-09-13T13:13');");
+            drainQueues();
+            final String expected = "sym\tprice\tts\n" +
+                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                    "gbpusd\t1.32\t2024-09-13T13:00:00.000000Z\n" + // newer timestamp
+                    "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n";
+            assertQueryNoLeakCheck(expected, "x_1h order by sym, ts");
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "x_1h\tincremental\tx\tvalid\t\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\t2\t2\n",
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
+                            "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "refresh_base_table_txn, base_table_txn " +
+                            "from materialized_views",
+                    null
+            );
+
+            // Make the view invalid. Range refresh should be ignored.
+            execute("truncate table x;");
+            execute(insertOlderRows);
+            drainQueues();
+            execute("refresh materialized view x_1h range from '2024-09-10T12:02' to '2024-09-11T12:02';");
+            assertQueryNoLeakCheck(expected, "x_1h order by sym, ts");
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "x_1h\tincremental\tx\tinvalid\ttruncate operation\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\t2\t4\n",
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
+                            "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "refresh_base_table_txn, base_table_txn " +
+                            "from materialized_views",
+                    null
+            );
+        });
+    }
+
+    @Test
+    public void testRangeRefreshIgnoresRefreshLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price ( " +
+                            "sym varchar, price double, ts timestamp " +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price values ('gbpusd', 1.320, '2024-09-09T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-11T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-12T13:02')"
+            );
+            currentMicros = parseFloorPartialTimestamp("2024-09-13T00:00:00.000000Z");
+            drainQueues();
+            final String ogExpected = "sym\tprice\tts\n" +
+                    "gbpusd\t1.32\t2024-09-09T12:00:00.000000Z\n" +
+                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                    "gbpusd\t1.321\t2024-09-12T13:00:00.000000Z\n" +
+                    "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n";
+            assertQueryNoLeakCheck(ogExpected, "price_1h order by sym, ts");
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\tvalid\t\t2024-09-13T00:00:00.000000Z\t2024-09-13T00:00:00.000000Z\t1\t1\n",
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
+                            "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "refresh_base_table_txn, base_table_txn " +
+                            "from materialized_views",
+                    null
+            );
+
+            execute("alter materialized view price_1h set refresh limit 8h;");
+
+            // Insert rows with older timestamps. They should be ignored due to the refresh limit.
+            execute(
+                    "insert into base_price values ('gbpusd', 2.431, '2024-09-09T00:01')" +
+                            ",('jpyusd', 214.32, '2024-09-11T00:02')"
+            );
+            drainQueues();
+            assertQueryNoLeakCheck(ogExpected, "price_1h order by sym, ts");
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\tvalid\t\t2024-09-13T00:00:00.000000Z\t2024-09-13T00:00:00.000000Z\t1\t2\n",
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
+                            "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "refresh_base_table_txn, base_table_txn " +
+                            "from materialized_views",
+                    null
+            );
+
+            // Run range refresh. The newly inserted rows should now be reflected in the mat view.
+            execute("refresh materialized view price_1h range from '2024-09-09' to '2024-09-12';");
+            drainQueues();
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t2.431\t2024-09-09T00:00:00.000000Z\n" + // new row
+                            "gbpusd\t1.32\t2024-09-09T12:00:00.000000Z\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-12T13:00:00.000000Z\n" +
+                            "jpyusd\t214.32\t2024-09-11T00:00:00.000000Z\n" + // new row
+                            "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n",
+                    "price_1h order by sym, ts"
+            );
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\tvalid\t\t2024-09-13T00:00:00.000000Z\t2024-09-13T00:00:00.000000Z\t1\t2\n",
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
+                            "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "refresh_base_table_txn, base_table_txn " +
+                            "from materialized_views",
+                    null
+            );
+        });
+    }
+
+    @Test
     public void testRecursiveInvalidation() throws Exception {
         assertMemoryLeak(() -> {
             long startTs = TimestampFormatUtils.parseUTCTimestamp("2025-02-18T00:00:00.000000Z");
