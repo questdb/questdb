@@ -455,6 +455,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         if (replacementTimestampHi != intervalIterator.getTimestampLo()) {
                             if (rowCount > rowsCommitted) {
                                 // Gap in the refresh intervals, commit the previous batch
+                                // so that the replacement interval does not span across the gap.
                                 refreshFinishTimestamp = microsecondClock.getTicks();
                                 walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
                                 commitTarget = rowCount + batchSize;
