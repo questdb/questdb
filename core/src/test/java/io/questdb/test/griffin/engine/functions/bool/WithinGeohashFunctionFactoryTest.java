@@ -344,8 +344,8 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
                             "      filter: pickup_geohash within(\"011001011100101000000000000000000000000000000000000000000000\")\n" +
                             "    Frame backward scan on: trips\n");
 
-            assertQuery("pickup_datetime\tpickup_geohash\tsym\n" +
-                            "2009-01-01T00:00:37.000000Z\tdr5rsnpw997n\t\n",
+            // no result expected, beause this special case factory execute LATEST BY before WHERE.
+            assertQuery("pickup_datetime\tpickup_geohash\tsym\n",
                     query,
                     null,
                     "pickup_datetime",
