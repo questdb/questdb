@@ -103,7 +103,7 @@ public class MatViewStateTest extends AbstractCairoTest {
                 for (int i = 0; i < iterations; i++) {
                     boolean invalidate = rnd.nextBoolean();
                     if (invalidate) {
-                        walWriter.invalidateMatView(i, i, true, "Invalidating " + i);
+                        walWriter.resetMatViewState(i, i, true, "Invalidating " + i);
                         assertState(tableToken, i, i, true, "Invalidating " + i);
                     }
                     TableWriter.Row row = walWriter.newRow(0);
@@ -126,7 +126,7 @@ public class MatViewStateTest extends AbstractCairoTest {
                     assertState(tableToken, iterations - 1, iterations - 1, false, null);
                 }
 
-                walWriter.invalidateMatView(42, 42, true, "missed invalidation");
+                walWriter.resetMatViewState(42, 42, true, "missed invalidation");
                 drainWalQueue();
                 assertState(tableToken, iterations - 1, iterations - 1, false, null);
             }
