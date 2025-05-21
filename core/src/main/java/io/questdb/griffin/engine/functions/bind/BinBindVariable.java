@@ -74,6 +74,6 @@ public class BinBindVariable extends BinFunction implements ScalarFunction, Sink
     // there is no binary literal
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        throw new UnsupportedOperationException();
+        sink.putAscii("'\\x").putHex(value).putAscii('\'').putAscii("::binary");
     }
 }

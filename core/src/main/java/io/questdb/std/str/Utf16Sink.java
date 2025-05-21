@@ -134,7 +134,7 @@ public interface Utf16Sink extends CharSink<Utf16Sink> {
                     i += n;
                 } else {
                     if ((char) b == '\'') {
-                        put('\\');
+                        put('\'');
                     } else {
                         put((char) b);
                     }
