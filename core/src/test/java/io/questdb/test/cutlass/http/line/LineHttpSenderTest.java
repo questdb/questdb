@@ -806,34 +806,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testMaxNameLength() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                    .address("localhost:1123")
-                    .retryTimeoutMillis(Integer.MAX_VALUE)
-                    .maxNameLength(20)
-                    .protocolVersion(PROTOCOL_VERSION_V2)
-                    .build()
-            ) {
-                try {
-                    sender.table("table_with_long______________________name");
-                    Assert.fail("Expected exception");
-                } catch (LineSenderException e) {
-                    TestUtils.assertContains(e.getMessage(), "table name is too long: [name = table_with_long______________________name, maxNameLength=20]");
-                }
-
-                try {
-                    sender.table("table")
-                            .doubleColumn("column_with_long______________________name", 1.0);
-                    Assert.fail("Expected exception");
-                } catch (LineSenderException e) {
-                    TestUtils.assertContains(e.getMessage(), "column name is too long: [name = column_with_long______________________name, maxNameLength=20]");
-                }
-            }
-        });
-    }
-
-    @Test
     public void testNegativeDesignatedTimestampDoesNotRetry() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -932,6 +904,34 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "http-status=400",
                             "error in line 1: table: ex_tbl2; table does not exist, creating new tables is disabled"
                     );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSmallMaxNameLen() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                    .address("localhost:1123")
+                    .retryTimeoutMillis(Integer.MAX_VALUE)
+                    .maxNameLength(20)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
+                    .build()
+            ) {
+                try {
+                    sender.table("table_with_long______________________name");
+                    Assert.fail("Expected exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "table name is too long: [name = table_with_long______________________name, maxNameLength=20]");
+                }
+
+                try {
+                    sender.table("table")
+                            .doubleColumn("column_with_long______________________name", 1.0);
+                    Assert.fail("Expected exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "column name is too long: [name = column_with_long______________________name, maxNameLength=20]");
                 }
             }
         });
