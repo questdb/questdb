@@ -101,7 +101,10 @@ public class ConcurrentQueue<T extends ValueHolder<T>> implements Queue<T> {
 
     @Override
     public void clear() {
-        tail = head = new ConcurrentQueueSegment<>(factory, INITIAL_SEGMENT_LENGTH);
+        final T tmp = factory.newInstance();
+        //noinspection StatementWithEmptyBody
+        while (tryDequeue(tmp)) {
+        }
     }
 
     /**
