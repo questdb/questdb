@@ -47,6 +47,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.bytes.DirectByteSlice;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -67,6 +68,7 @@ public abstract class AbstractLineHttpSender implements Sender {
     private final String authToken;
     private final int autoFlushRows;
     private final int baseTimeoutMillis;
+    private final DirectByteSlice bufferView = new DirectByteSlice();
     private final long flushIntervalNanos;
     private final String host;
     private final int maxNameLength;
@@ -288,6 +290,10 @@ public abstract class AbstractLineHttpSender implements Sender {
         writeFieldName(name);
         request.put(value ? 't' : 'f');
         return this;
+    }
+
+    public DirectByteSlice bufferView() {
+        return bufferView.of(request.getContentStart(), request.getContentLength());
     }
 
     @Override

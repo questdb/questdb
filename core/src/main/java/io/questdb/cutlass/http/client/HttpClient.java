@@ -338,6 +338,10 @@ public abstract class HttpClient implements QuietCloseable {
             }
         }
 
+        public long getContentStart() {
+            return contentStart;
+        }
+
         public long getPtr() {
             return ptr;
         }

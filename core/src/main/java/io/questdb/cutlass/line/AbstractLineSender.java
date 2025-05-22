@@ -32,6 +32,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.bytes.DirectByteSlice;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
@@ -51,6 +52,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     protected final int capacity;
     private final long bufA;
     private final long bufB;
+    private final DirectByteSlice bufferView = new DirectByteSlice();
+    private final int maxNameLength;
     protected long hi;
     protected LineChannel lineChannel;
     protected long ptr;
@@ -61,7 +64,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     private boolean hasTable;
     private long lineStart;
     private long lo;
-    private int maxNameLength;
     private boolean quoted = false;
 
     public AbstractLineSender(LineChannel lineChannel, int capacity, int maxNameLength) {
@@ -119,6 +121,10 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     @Override
     public final AbstractLineSender boolColumn(CharSequence name, boolean value) {
         return field(name, value);
+    }
+
+    public DirectByteSlice bufferView() {
+        return bufferView.of(lo, (int) (ptr - lo));
     }
 
     @Override

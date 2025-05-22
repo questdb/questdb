@@ -42,6 +42,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.bytes.DirectByteSlice;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -220,6 +221,17 @@ public interface Sender extends Closeable, ArraySender<Sender> {
      * @return this instance for method chaining
      */
     Sender boolColumn(CharSequence name, boolean value);
+
+    /**
+     * Returns a direct view of the current sender's internal not flush data.
+     * <p>
+     * The returned {@link DirectByteSlice} provides borrowed access to the raw byte buffer
+     * that hasn't been flush yet.
+     * </p>
+     *
+     * @return a read-only view of the pending transmission data buffer
+     */
+    DirectByteSlice bufferView();
 
     /**
      * Cancel the current row. This method is useful when you want to discard a row that you started, but

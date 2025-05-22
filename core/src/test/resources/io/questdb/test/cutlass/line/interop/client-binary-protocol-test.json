@@ -1,0 +1,153 @@
+[
+  {
+    "testName": "double test",
+    "table": "double_test",
+    "columns": [
+      {
+        "type": "DOUBLE",
+        "name": "d0",
+        "value": 0.0
+      }
+    ],
+    "buffer": {
+      "status": "SUCCESS",
+      "base64Content": "ZG91YmxlX3Rlc3QgZDA9PRAAAAAAAAAAAAo="
+    },
+    "querys": [
+      {
+        "status": "SUCCESS",
+        "query": "select * from double_test",
+        "expected": "d0\ttimestamp\n0.0\t1970-01-02T03:46:40.000000Z\n",
+        "error": ""
+      },
+      {
+        "status": "SUCCESS",
+        "query": "select count() from double_test",
+        "expected": "count\n1\n",
+        "error": ""
+      }
+    ]
+  },
+  {
+    "testName": "basic array test",
+    "table": "array_test",
+    "columns": [
+      {
+        "type": "ARRAY",
+        "name": "a0",
+        "value": {
+          "elemType": "DOUBLE",
+          "rank": 2,
+          "shape": [
+            2,
+            3
+          ],
+          "strides": null,
+          "data": [
+            1.1,
+            2.2,
+            3.3,
+            4.4,
+            5.5,
+            6.6
+          ]
+        }
+      }
+    ],
+    "buffer": {
+      "status": "SUCCESS",
+      "base64Content": "YXJyYXlfdGVzdCBhMD09DgoCAgAAAAMAAAAAAACgmZnxPwAAAKCZmQFAAAAAYGZmCkAAAACgmZkRQAAAAAAAABZAAAAAYGZmGkAK"
+    },
+    "querys": [
+      {
+        "status": "SUCCESS",
+        "query": "select * from array_test",
+        "expected": "a0\ttimestamp\n[[1.100000023841858,2.200000047683716,3.299999952316284],[4.400000095367432,5.5,6.599999904632568]]\t1970-01-02T03:46:40.000000Z\n",
+        "error": ""
+      },
+      {
+        "status": "SUCCESS",
+        "query": "select count() from array_test",
+        "expected": "count\n1\n",
+        "error": ""
+      }
+    ]
+  },
+  {
+    "testName": "empty array test",
+    "table": "empty_test",
+    "columns": [
+      {
+        "type": "ARRAY",
+        "name": "a0",
+        "value": {
+          "elemType": "DOUBLE",
+          "rank": 3,
+          "shape": [
+            2,
+            3,
+            0
+          ],
+          "strides": null,
+          "data": []
+        }
+      }
+    ],
+    "buffer": {
+      "status": "SUCCESS",
+      "base64Content": "ZW1wdHlfdGVzdCBhMD09DgoDAgAAAAMAAAAAAAAAIDEwMDAwMDAwMDAwMHQK"
+    },
+    "querys": [
+      {
+        "status": "SUCCESS",
+        "query": "select * from empty_test",
+        "expected": "a0\ttimestamp\n[]\t1970-01-02T03:46:40.000000Z\n",
+        "error": ""
+      },
+      {
+        "status": "SUCCESS",
+        "query": "select count() from empty_test",
+        "expected": "count\n1\n",
+        "error": ""
+      }
+    ]
+  },
+  {
+    "testName": "1D array test",
+    "table": "array_1d",
+    "columns": [
+      {
+        "type": "ARRAY",
+        "name": "a1",
+        "value": {
+          "elemType": "DOUBLE",
+          "rank": 1,
+          "shape": [
+            6
+          ],
+          "strides": null,
+          "data": [
+            1.1,
+            2.2,
+            3.3,
+            4.4,
+            5.5,
+            6.6
+          ]
+        }
+      }
+    ],
+    "buffer": {
+      "status": "SUCCESS",
+      "base64Content": "YXJyYXlfMWQgYTE9PQ4KAQYAAAAAAACgmZnxPwAAAKCZmQFAAAAAYGZmCkAAAACgmZkRQAAAAAAAABZAAAAAYGZmGkAgMTAwMDAwMDAwMDAwdAo"
+    },
+    "querys": [
+      {
+        "status": "SUCCESS",
+        "query": "select * from array_1d",
+        "expected": "a1\ttimestamp\n[1.100000023841858,2.200000047683716,3.299999952316284,4.400000095367432,5.5,6.599999904632568]\t1970-01-02T03:46:40.000000Z\n",
+        "error": ""
+      }
+    ]
+  }
+]
