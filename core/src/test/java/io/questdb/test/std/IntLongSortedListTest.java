@@ -26,7 +26,7 @@ package io.questdb.test.std;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.IntPriorityQueue;
+import io.questdb.std.IntLongSortedList;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -34,28 +34,28 @@ import org.junit.Test;
 
 import java.util.PriorityQueue;
 
-public class IntPriorityQueueTest {
-    private static final Log LOG = LogFactory.getLog(IntPriorityQueueTest.class);
+public class IntLongSortedListTest {
+    private static final Log LOG = LogFactory.getLog(IntLongSortedListTest.class);
 
     @Test
     public void testFuzz() {
         final int N = 10000;
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final PriorityQueue<Integer> oracle = new PriorityQueue<>(N);
-        IntPriorityQueue queue = new IntPriorityQueue();
+        IntLongSortedList queue = new IntLongSortedList();
 
         for (int i = 0; i < N; i++) {
             int v = rnd.nextInt();
-            queue.add(v);
+            queue.add(v, v);
             oracle.add(v);
         }
 
         Assert.assertEquals(oracle.size(), queue.size());
-        while (!queue.notEmpty()) {
+        while (queue.hasNext()) {
             Integer expected = oracle.poll();
-            int actual = queue.poll();
+            long actual = queue.pollValue();
             Assert.assertNotNull(expected);
-            Assert.assertEquals((int) expected, actual);
+            Assert.assertEquals((int) expected, (int) actual);
         }
     }
 }

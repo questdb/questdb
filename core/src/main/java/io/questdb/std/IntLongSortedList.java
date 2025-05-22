@@ -24,47 +24,71 @@
 
 package io.questdb.std;
 
-public class IntPriorityQueue implements Mutable {
-    private int[] buffer;
+public class IntLongSortedList implements Mutable {
+    private final LongList buf;
+    private final IntList src;
     private int size;
 
-    public IntPriorityQueue() {
-        this(8);
-    }
-
-    private IntPriorityQueue(int size) {
-        this.buffer = new int[size];
+    public IntLongSortedList() {
+        this.buf = new LongList(8);
+        this.src = new IntList(8);
         this.size = 0;
     }
 
-    public void add(int value) {
+    public void add(int index, long value) {
         int p = binSearch(value);
-        if (size == buffer.length) {
-            resize();
-        }
         if (p < size) {
-            System.arraycopy(buffer, p, buffer, p + 1, size - p);
+            buf.setPos(size + 1);
+            src.setPos(size + 1);
+            buf.arrayCopy(p, p + 1, size - p);
+            src.arrayCopy(p, p + 1, size - p);
         }
-        buffer[p] = value;
+        buf.extendAndSet(p, value);
+        src.extendAndSet(p, index);
         size++;
     }
 
     @Override
     public void clear() {
-        for (int i = 0; i < size; i++) {
-            buffer[i] = 0;
-        }
+        buf.zero(0);
+        src.zero(0);
         size = 0;
     }
 
-    public boolean notEmpty() {
+    public boolean hasNext() {
         return size > 0;
     }
 
-    public int poll() {
-        int v = buffer[0];
+    public int peekBottom() {
+        return src.getQuick(size - 1);
+    }
+
+    public int peekIndex() {
+        return src.getQuick(0);
+    }
+
+    public long pollAndReplace(int index, long value) {
+        long v = buf.getQuick(0);
+        int p = binSearch(value);
+        if (p > 1) {
+            p--;
+            buf.arrayCopy(1, 0, p);
+            src.arrayCopy(1, 0, p);
+
+            buf.setQuick(p, value);
+            src.setQuick(p, index);
+        } else {
+            buf.setQuick(0, value);
+            src.setQuick(0, index);
+        }
+        return v;
+    }
+
+    public long pollValue() {
+        long v = buf.getQuick(0);
         if (size > 0) {
-            System.arraycopy(buffer, 1, buffer, 0, --size);
+            buf.arrayCopy(1, 0, --size);
+            src.arrayCopy(1, 0, size);
         }
         return v;
     }
@@ -74,20 +98,20 @@ public class IntPriorityQueue implements Mutable {
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
-    private int binSearch(int v) {
+    private int binSearch(long v) {
         int low = 0;
         int high = size;
 
         while (high - low > 65) {
             int mid = (low + high - 1) >>> 1;
-            int midVal = buffer[mid];
+            long midVal = buf.getQuick(mid);
 
             if (midVal < v)
                 low = mid + 1;
             else if (midVal > v)
                 high = mid;
             else {
-                while (++mid < high && buffer[mid] == v) {
+                while (++mid < high && buf.getQuick(mid) == v) {
                 }
                 return mid;
             }
@@ -95,15 +119,9 @@ public class IntPriorityQueue implements Mutable {
         return scanSearch(v, low);
     }
 
-    private void resize() {
-        int[] tmp = new int[buffer.length * 2];
-        System.arraycopy(buffer, 0, tmp, 0, buffer.length);
-        buffer = tmp;
-    }
-
-    private int scanSearch(int v, int low) {
+    private int scanSearch(long v, int low) {
         for (int i = low; i < size; i++) {
-            if (buffer[i] > v) {
+            if (buf.getQuick(i) > v) {
                 return i;
             }
         }

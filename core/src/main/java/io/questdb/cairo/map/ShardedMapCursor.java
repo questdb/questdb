@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.DirectLongLongPriorityQueue;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -85,9 +85,9 @@ public class ShardedMapCursor implements MapRecordCursor {
     }
 
     @Override
-    public void longTopK(DirectLongLongPriorityQueue heap, Function recordFunction) {
+    public void longTopK(DirectLongLongSortedList list, Function recordFunction) {
         for (int i = 0, n = shardCursors.size(); i < n; i++) {
-            shardCursors.getQuick(i).longTopK(heap, recordFunction);
+            shardCursors.getQuick(i).longTopK(list, recordFunction);
         }
     }
 

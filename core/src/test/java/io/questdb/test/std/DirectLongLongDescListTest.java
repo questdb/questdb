@@ -26,7 +26,7 @@ package io.questdb.test.std;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.DirectLongLongDescQueue;
+import io.questdb.std.DirectLongLongDescList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
@@ -35,22 +35,22 @@ import org.junit.Test;
 
 import java.util.PriorityQueue;
 
-public class DirectLongLongDescQueueTest {
-    private static final Log LOG = LogFactory.getLog(DirectLongLongDescQueueTest.class);
+public class DirectLongLongDescListTest {
+    private static final Log LOG = LogFactory.getLog(DirectLongLongDescListTest.class);
 
     @Test
     public void testFuzz() {
         final int N = 10000;
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final PriorityQueue<Long> oracle = new PriorityQueue<>(100, (l1, l2) -> Long.compare(l2, l1));
-        try (DirectLongLongDescQueue queue = new DirectLongLongDescQueue(100, MemoryTag.NATIVE_DEFAULT)) {
+        try (DirectLongLongDescList queue = new DirectLongLongDescList(100, MemoryTag.NATIVE_DEFAULT)) {
             for (long i = 0; i < N; i++) {
                 long v = rnd.nextLong();
                 queue.add(v, v);
                 oracle.add(v);
             }
 
-            DirectLongLongDescQueue.Cursor cursor = queue.getCursor();
+            DirectLongLongDescList.Cursor cursor = queue.getCursor();
             for (int i = 0, n = queue.size(); i < n; i++) {
                 Long v = oracle.poll();
                 Assert.assertNotNull(v);
@@ -64,7 +64,7 @@ public class DirectLongLongDescQueueTest {
 
     @Test
     public void testReopen() {
-        try (DirectLongLongDescQueue queue = new DirectLongLongDescQueue(10, MemoryTag.NATIVE_DEFAULT)) {
+        try (DirectLongLongDescList queue = new DirectLongLongDescList(10, MemoryTag.NATIVE_DEFAULT)) {
             Assert.assertEquals(10, queue.getCapacity());
             Assert.assertEquals(0, queue.size());
             Assert.assertFalse(queue.getCursor().hasNext());
@@ -87,7 +87,7 @@ public class DirectLongLongDescQueueTest {
 
             queue.add(1, 1);
 
-            DirectLongLongDescQueue.Cursor cursor = queue.getCursor();
+            DirectLongLongDescList.Cursor cursor = queue.getCursor();
             cursor.toTop();
             Assert.assertTrue(cursor.hasNext());
             Assert.assertEquals(1, cursor.index());
@@ -98,7 +98,7 @@ public class DirectLongLongDescQueueTest {
 
     @Test
     public void testSmoke() {
-        try (DirectLongLongDescQueue queue = new DirectLongLongDescQueue(10, MemoryTag.NATIVE_DEFAULT)) {
+        try (DirectLongLongDescList queue = new DirectLongLongDescList(10, MemoryTag.NATIVE_DEFAULT)) {
             Assert.assertEquals(10, queue.getCapacity());
             Assert.assertEquals(0, queue.size());
             Assert.assertFalse(queue.getCursor().hasNext());
@@ -109,7 +109,7 @@ public class DirectLongLongDescQueueTest {
             Assert.assertEquals(10, queue.getCapacity());
             Assert.assertEquals(10, queue.size());
 
-            DirectLongLongDescQueue.Cursor cursor = queue.getCursor();
+            DirectLongLongDescList.Cursor cursor = queue.getCursor();
             cursor.toTop();
             for (long i = 99; i > 89; i--) {
                 Assert.assertTrue(cursor.hasNext());

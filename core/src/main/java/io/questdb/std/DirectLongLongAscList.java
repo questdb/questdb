@@ -24,14 +24,14 @@
 
 package io.questdb.std;
 
-public class DirectLongLongDescQueue implements DirectLongLongPriorityQueue {
+public class DirectLongLongAscList implements DirectLongLongSortedList {
     private final int capacity;
     private final Cursor cursor = new Cursor();
     private final int memoryTag;
     private long ptr;
     private int size;
 
-    public DirectLongLongDescQueue(int capacity, int memoryTag) {
+    public DirectLongLongAscList(int capacity, int memoryTag) {
         this.capacity = capacity;
         this.memoryTag = memoryTag;
         this.ptr = Unsafe.malloc(16L * capacity, memoryTag);
@@ -41,7 +41,7 @@ public class DirectLongLongDescQueue implements DirectLongLongPriorityQueue {
     @Override
     public void add(long index, long value) {
         // fast path
-        if (size == capacity && Unsafe.getUnsafe().getLong(ptr + 16L * (size - 1)) >= value) {
+        if (size == capacity && Unsafe.getUnsafe().getLong(ptr + 16L * (size - 1)) <= value) {
             return;
         }
         // slow path
@@ -100,9 +100,9 @@ public class DirectLongLongDescQueue implements DirectLongLongPriorityQueue {
             int mid = (low + high - 1) >>> 1;
             long midVal = Unsafe.getUnsafe().getLong(ptr + 16L * mid);
 
-            if (midVal > v) {
+            if (midVal < v) {
                 low = mid + 1;
-            } else if (midVal < v) {
+            } else if (midVal > v) {
                 high = mid;
             } else {
                 while (++mid < high && Unsafe.getUnsafe().getLong(ptr + 16L * mid) == v) {
@@ -115,14 +115,14 @@ public class DirectLongLongDescQueue implements DirectLongLongPriorityQueue {
 
     private int scanSearch(long v, int low) {
         for (int i = low; i < size; i++) {
-            if (Unsafe.getUnsafe().getLong(ptr + 16L * i) < v) {
+            if (Unsafe.getUnsafe().getLong(ptr + 16L * i) > v) {
                 return i;
             }
         }
         return size;
     }
 
-    public class Cursor implements DirectLongLongPriorityQueue.Cursor {
+    public class Cursor implements DirectLongLongSortedList.Cursor {
         private int pos = -1;
 
         @Override

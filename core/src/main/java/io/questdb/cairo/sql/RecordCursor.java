@@ -25,7 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.DataUnavailableException;
-import io.questdb.std.DirectLongLongPriorityQueue;
+import io.questdb.std.DirectLongLongSortedList;
 
 import java.io.Closeable;
 
@@ -129,7 +129,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * @param columnIndex index of order by column
      * @see RecordCursorFactory#recordCursorSupportsLongTopK()
      */
-    default void longTopK(DirectLongLongPriorityQueue heap, int columnIndex) {
+    default void longTopK(DirectLongLongSortedList heap, int columnIndex) {
         throw new UnsupportedOperationException();
     }
 

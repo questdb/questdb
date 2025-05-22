@@ -27,7 +27,7 @@ package io.questdb.test.std;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjPriorityQueue;
+import io.questdb.std.ObjSortedList;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -35,15 +35,15 @@ import org.junit.Test;
 
 import java.util.PriorityQueue;
 
-public class ObjPriorityQueueTest {
-    private static final Log LOG = LogFactory.getLog(ObjPriorityQueueTest.class);
+public class ObjSortedListTest {
+    private static final Log LOG = LogFactory.getLog(ObjSortedListTest.class);
 
     @Test
     public void testFuzz() {
         final int N = 10000;
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final PriorityQueue<Long> oracle = new PriorityQueue<>(N);
-        ObjPriorityQueue<Long> queue = new ObjPriorityQueue<>(Long::compare);
+        ObjSortedList<Long> queue = new ObjSortedList<>(Long::compare);
 
         for (long i = 0; i < N; i++) {
             long v = rnd.nextLong();
@@ -61,7 +61,7 @@ public class ObjPriorityQueueTest {
 
     @Test
     public void testRemove() {
-        ObjPriorityQueue<Integer> queue = new ObjPriorityQueue<>(Integer::compare);
+        ObjSortedList<Integer> queue = new ObjSortedList<>(Integer::compare);
 
         for (int i = 0; i < 10; i++) {
             queue.add(i);
@@ -95,7 +95,7 @@ public class ObjPriorityQueueTest {
 
     @Test
     public void testRemoveDuplicates() {
-        ObjPriorityQueue<Integer> queue = new ObjPriorityQueue<>(Integer::compare);
+        ObjSortedList<Integer> queue = new ObjSortedList<>(Integer::compare);
 
         queue.add(0);
         for (int i = 0; i < 3; i++) {
@@ -118,7 +118,7 @@ public class ObjPriorityQueueTest {
 
     @Test
     public void testSmoke() {
-        ObjPriorityQueue<Integer> queue = new ObjPriorityQueue<>(Integer::compare);
+        ObjSortedList<Integer> queue = new ObjSortedList<>(Integer::compare);
         Assert.assertEquals(16, queue.getCapacity());
         Assert.assertEquals(0, queue.size());
 

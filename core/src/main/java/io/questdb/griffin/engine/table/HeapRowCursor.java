@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.std.IntLongPriorityQueue;
+import io.questdb.std.IntLongSortedList;
 import io.questdb.std.ObjList;
 
 /**
@@ -35,11 +35,11 @@ import io.questdb.std.ObjList;
  * from related cursor into queue until all cursors are exhausted.
  */
 class HeapRowCursor implements RowCursor {
-    private final IntLongPriorityQueue heap;
+    private final IntLongSortedList heap;
     private ObjList<RowCursor> cursors;
 
     public HeapRowCursor() {
-        this.heap = new IntLongPriorityQueue();
+        this.heap = new IntLongSortedList();
     }
 
     @Override

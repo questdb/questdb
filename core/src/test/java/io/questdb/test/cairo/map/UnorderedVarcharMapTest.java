@@ -37,8 +37,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.std.BitSet;
 import io.questdb.std.Chars;
-import io.questdb.std.DirectLongLongAscQueue;
-import io.questdb.std.DirectLongLongPriorityQueue;
+import io.questdb.std.DirectLongLongAscList;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
@@ -429,7 +429,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
 
             try (
                     UnorderedVarcharMap map = newDefaultMap(valueTypes);
-                    DirectLongLongPriorityQueue heap = new DirectLongLongAscQueue(heapCapacity, MemoryTag.NATIVE_DEFAULT)
+                    DirectLongLongSortedList heap = new DirectLongLongAscList(heapCapacity, MemoryTag.NATIVE_DEFAULT)
             ) {
                 for (int i = 0; i < 100; i++) {
                     MapKey key = map.withKey();
@@ -445,7 +445,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
                 Assert.assertEquals(heapCapacity, heap.size());
 
                 MapRecord mapRecord = mapCursor.getRecord();
-                DirectLongLongPriorityQueue.Cursor heapCursor = heap.getCursor();
+                DirectLongLongSortedList.Cursor heapCursor = heap.getCursor();
                 for (int i = 0; i < heapCapacity; i++) {
                     Assert.assertTrue(heapCursor.hasNext());
                     mapCursor.recordAt(mapRecord, heapCursor.index());

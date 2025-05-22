@@ -29,16 +29,16 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.DirectLongLongAscQueue;
-import io.questdb.std.DirectLongLongDescQueue;
-import io.questdb.std.DirectLongLongPriorityQueue;
+import io.questdb.std.DirectLongLongAscList;
+import io.questdb.std.DirectLongLongDescList;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 
 class LongTopKRecordCursor implements RecordCursor {
     private final int columnIndex;
-    private final DirectLongLongPriorityQueue queue;
-    private final DirectLongLongPriorityQueue.Cursor rowIdCursor;
+    private final DirectLongLongSortedList.Cursor rowIdCursor;
+    private final DirectLongLongSortedList sortedList;
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -48,17 +48,17 @@ class LongTopKRecordCursor implements RecordCursor {
     public LongTopKRecordCursor(int columnIndex, int lo, boolean ascending) {
         this.columnIndex = columnIndex;
         isOpen = true;
-        queue = ascending
-                ? new DirectLongLongAscQueue(lo, MemoryTag.NATIVE_DEFAULT)
-                : new DirectLongLongDescQueue(lo, MemoryTag.NATIVE_DEFAULT);
-        rowIdCursor = queue.getCursor();
+        sortedList = ascending
+                ? new DirectLongLongAscList(lo, MemoryTag.NATIVE_DEFAULT)
+                : new DirectLongLongDescList(lo, MemoryTag.NATIVE_DEFAULT);
+        rowIdCursor = sortedList.getCursor();
     }
 
     @Override
     public void close() {
         if (isOpen) {
             isOpen = false;
-            Misc.free(queue);
+            Misc.free(sortedList);
             baseCursor = Misc.free(baseCursor);
             baseRecord = null;
         }
@@ -102,7 +102,7 @@ class LongTopKRecordCursor implements RecordCursor {
 
         if (!isOpen) {
             isOpen = true;
-            queue.reopen();
+            sortedList.reopen();
         }
 
         circuitBreaker = executionContext.getCircuitBreaker();
@@ -116,14 +116,14 @@ class LongTopKRecordCursor implements RecordCursor {
 
     @Override
     public long size() {
-        return initialized ? queue.size() : -1;
+        return initialized ? sortedList.size() : -1;
     }
 
     @Override
     public void toTop() {
         rowIdCursor.toTop();
         if (!initialized) {
-            queue.clear();
+            sortedList.clear();
             baseCursor.toTop();
         }
     }
@@ -136,7 +136,7 @@ class LongTopKRecordCursor implements RecordCursor {
     }
 
     private void topK() {
-        baseCursor.longTopK(queue, columnIndex);
+        baseCursor.longTopK(sortedList, columnIndex);
         rowIdCursor.toTop();
     }
 }

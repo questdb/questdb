@@ -64,7 +64,7 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
-import io.questdb.std.IntPriorityQueue;
+import io.questdb.std.IntSortedList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
@@ -145,7 +145,7 @@ public class SqlOptimiser implements Mutable {
     private final int maxRecursion;
     private final CharSequenceHashSet missingDependedTokens = new CharSequenceHashSet();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
-    private final IntPriorityQueue orderingStack = new IntPriorityQueue();
+    private final IntSortedList orderingStack = new IntSortedList();
     private final Path path;
     private final IntHashSet postFilterRemoved = new IntHashSet();
     private final ObjList<IntHashSet> postFilterTableRefs = new ObjList<>();

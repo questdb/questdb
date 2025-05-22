@@ -26,7 +26,7 @@ package io.questdb.test.cutlass.line.tcp.load;
 
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.std.IntLongPriorityQueue;
+import io.questdb.std.IntLongSortedList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -37,7 +37,7 @@ import static io.questdb.cairo.ColumnType.DOUBLE;
 import static io.questdb.cairo.ColumnType.FLOAT;
 
 public class TableData {
-    private final IntLongPriorityQueue index = new IntLongPriorityQueue();
+    private final IntLongSortedList index = new IntLongSortedList();
     private final ObjList<LineData> rows = new ObjList<>();
     private final CharSequence tableName;
     private final AtomicLong writePermits = new AtomicLong();

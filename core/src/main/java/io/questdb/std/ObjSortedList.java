@@ -28,14 +28,14 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.Comparator;
 
-public class ObjPriorityQueue<T> implements Mutable {
+public class ObjSortedList<T> implements Mutable {
     private static final int DEFAULT_CAPACITY = 16;
     private final Comparator<T> comparator;
     private T[] buffer;
     private int size;
 
     @SuppressWarnings("unchecked")
-    public ObjPriorityQueue(Comparator<T> comparator) {
+    public ObjSortedList(Comparator<T> comparator) {
         this.comparator = comparator;
         this.buffer = (T[]) new Object[DEFAULT_CAPACITY];
         this.size = 0;
