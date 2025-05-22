@@ -61,24 +61,24 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
     }
 
     public static class Func extends ArrayFunction implements UnaryFunction {
+        private final Function arg;
         private final int dims;
-        private final Function function;
         private final DoubleArrayParser parser = new DoubleArrayParser();
 
-        public Func(Function fun, int type) {
-            super.type = type;
-            this.function = fun;
+        public Func(Function arg, int type) {
+            this.type = type;
             this.dims = ColumnType.decodeArrayDimensionality(type);
+            this.arg = arg;
         }
 
         @Override
         public Function getArg() {
-            return function;
+            return arg;
         }
 
         @Override
         public ArrayView getArray(Record rec) {
-            final CharSequence str = function.getStrA(rec);
+            CharSequence str = arg.getStrA(rec);
             assert str != null; // for now
             assert str.length() > 0; // for now
             try {
