@@ -75,6 +75,16 @@ public class DoubleArrayParserTest extends AbstractTest {
     }
 
     @Test
+    public void testRepeatedParseWithDifferentLengthArrays() {
+        try (DoubleArrayParser parser = new DoubleArrayParser()) {
+            parser.of("[[1, 2], [3, 4]]");
+            Assert.assertEquals(2, parser.getDimLen(0));
+            parser.of("[[1, 2], [3, 4], [5, 6]]");
+            Assert.assertEquals(3, parser.getDimLen(0));
+        }
+    }
+
+    @Test
     public void testSmoke() {
         String input = "{{\"1\",\"2.0\"},{\"3.1\",\"0.4\"}}";
 
