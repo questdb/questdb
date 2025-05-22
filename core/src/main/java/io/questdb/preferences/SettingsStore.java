@@ -15,6 +15,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -82,7 +83,7 @@ public class SettingsStore implements Closeable {
         }
     }
 
-    public void registerListener(PreferencesUpdateListener listener) {
+    public void registerListener(@NotNull PreferencesUpdateListener listener) {
         this.listener = listener;
 
         // call the listener with current state,
@@ -116,7 +117,9 @@ public class SettingsStore implements Closeable {
                 throw CairoException.nonCritical().put("Invalid mode [mode=").put(mode.name()).put(']');
         }
 
-        listener.update(preferencesMap);
+        if (listener != null) {
+            listener.update(preferencesMap);
+        }
     }
 
     private void load(LPSZ preferencesPath, PreferencesMap map) {
