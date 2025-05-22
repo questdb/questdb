@@ -89,6 +89,7 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
         instanceName.clear();
         instanceName.put(preferencesMap.get(INSTANCE_NAME));
         instanceType = preferencesMap.get(INSTANCE_TYPE);
+        instanceType = instanceType == null ? "" : instanceType;
         instanceDesc.clear();
         instanceDesc.put(preferencesMap.get(INSTANCE_DESC));
 
@@ -175,7 +176,7 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
                     if (enabled != _enabled
                             || !Chars.equalsNc(questDBVersion, _questDBVersion)
                             || !Utf8s.equals(instanceName, _instanceName)
-                            || !Chars.equalsNc(instanceType, _instanceType)
+                            || !Chars.equals(instanceType, _instanceType)
                             || !Utf8s.equals(instanceDesc, _instanceDesc)
                     ) {
                         appendConfigRow(engine, configWriter, l256, enabled);

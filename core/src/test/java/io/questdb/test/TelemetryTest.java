@@ -278,13 +278,13 @@ public class TelemetryTest extends AbstractCairoTest {
                 }
 
                 try (TelemetryJob ignore = new TelemetryJob(engine)) {
-                    String expectedSql = "count\n2\n";
+                    String expectedSql = "count\n1\n";
                     TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
                 }
 
                 refVersion.set("1.1");
                 try (TelemetryJob ignore = new TelemetryJob(engine)) {
-                    String expectedSql = "count\n3\n";
+                    String expectedSql = "count\n2\n";
                     TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
                     expectedSql = "version\tos\n" +
                             "1.1\t" + os + "\n";
