@@ -100,17 +100,10 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
         }
         type = ColumnType.encodeArrayType(ColumnType.DOUBLE, shape.size());
         resetToDefaultStrides();
-
-    }
-
-    private static void incLastIndex(IntList currentDimSizes) {
-        int depth = currentDimSizes.size() - 1;
-        currentDimSizes.increment(depth);
     }
 
     private void parse(CharSequence input) {
-        IntList currentDimSizes = strides;
-        assert currentDimSizes.size() == 0;
+        assert strides.size() == 0;
 
         int numberStart = -1;
         int state = STATE_IDLE;
@@ -120,7 +113,7 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
 
             if (c == '"') {
                 if (state == STATE_IN_QUOTE) {
-                    parseAndAddNumber(input, numberStart, position, currentDimSizes);
+                    parseAndAddNumber(input, numberStart, position, strides);
                     state = STATE_IDLE;
                 } else {
                     numberStart = position + 1;
@@ -137,29 +130,29 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
                 case '[':
                     // fallthrough
                 case '{': {
-                    currentDimSizes.add(0);
+                    strides.add(0);
                     break;
                 }
                 case ']':
                     // fallthrough
                 case '}': {
                     if (state == STATE_IN_NUMBER) {
-                        parseAndAddNumber(input, numberStart, position, currentDimSizes);
+                        parseAndAddNumber(input, numberStart, position, strides);
                         state = STATE_IDLE;
                     }
-                    int depth = currentDimSizes.size() - 1;
+                    int depth = strides.size() - 1;
                     if (depth > 0) {
-                        currentDimSizes.increment(depth - 1);
+                        strides.increment(depth - 1);
                     }
 
-                    int currentCount = currentDimSizes.getQuick(depth);
+                    int currentCount = strides.getQuick(depth);
                     updateShapeInfo(depth, currentCount, position);
-                    currentDimSizes.removeIndex(depth);
+                    strides.removeIndex(depth);
                     break;
                 }
                 case ',': {
                     if (state == STATE_IN_NUMBER) {
-                        parseAndAddNumber(input, numberStart, position, currentDimSizes);
+                        parseAndAddNumber(input, numberStart, position, strides);
                         state = STATE_IDLE;
                     }
                     break;
@@ -195,7 +188,7 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
                 throw new IllegalArgumentException("Invalid number format at position " + numberStart, e);
             }
         }
-        incLastIndex(currentDimSizes);
+        strides.increment(strides.size() - 1);
         flatViewLength++;
     }
 
