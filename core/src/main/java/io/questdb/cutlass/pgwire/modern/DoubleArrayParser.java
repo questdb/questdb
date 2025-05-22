@@ -83,16 +83,17 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
         if (expectedDimCount != -1) {
             if (shape.size() < expectedDimCount) {
                 if (isEmpty()) {
-                    // empty arrays can show less dimensions when serialized into string, we can cast them to expected dimensions
+                    // empty arrays can show fewer dimensions when serialized into string,
+                    // we can cast them to expected dimensions
                     shape.extendAndSet(expectedDimCount - 1, 0);
                 } else {
                     // non-empty arrays must have the same number of dimensions as expected
                     throw new IllegalArgumentException("expected " + expectedDimCount + " dimensions, got " + shape.size());
                 }
             } else if (shape.size() > expectedDimCount) {
-                // arrays with more dimensions than expected are not allowed, even if they are empty
-                // think of `{{},{}}' - this is an empty array, but we cannot insert it into a 1-dimensional array since
-                // it most likely means an error in the input
+                // Arrays with more dimensions than expected are not allowed, even if they are empty.
+                // Think of `{{},{}}' - this is an empty array, but we cannot insert it into a 1-dimensional array
+                // since it most likely means an error in the input
                 throw new IllegalArgumentException("expected " + expectedDimCount + " dimensions, got " + shape.size());
             }
         }

@@ -45,8 +45,8 @@ import io.questdb.std.QuietCloseable;
  * Its backing flat array looks like this:
  * <code>[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]</code>.
  * <p>
- * Hierarchical subdivision of the flat array (dots represent elements, bars
- * demarcate array slots):
+ * Hierarchical subdivision of the flat array, this example uses a 2x3x2 array (dots
+ * represent elements, bars demarcate array slots):
  * <pre>
  * dim 0: |. . . . . .|. . . . . .| -- stride = 6, len = 2
  * dim 1: |. .|. .|. .|. .|. .|. .| -- stride = 2, len = 3
