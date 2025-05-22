@@ -69,8 +69,8 @@ public class MatViewTimerJob extends SynchronizedJob {
             final MatViewTimingWheel.Timer newTimer = timingWheel.addTimer(viewDefinition);
             timersByTableDirName.put(viewToken.getDirName(), newTimer);
             LOG.info().$("registered timer for materialized view [view=").$(viewToken)
-                    .$(", start=").$ts(viewDefinition.getIntervalStart())
-                    .$(", interval=").$(viewDefinition.getIntervalStride()).$(viewDefinition.getIntervalUnit())
+                    .$(", start=").$ts(viewDefinition.getTimerStart())
+                    .$(", interval=").$(viewDefinition.getTimerInterval()).$(viewDefinition.getTimerIntervalUnit())
                     .I$();
         } catch (Throwable th) {
             LOG.error()
@@ -113,8 +113,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         while (timingWheel.tick(expired)) {
             for (int i = 0, n = expired.size(); i < n; i++) {
                 final MatViewTimingWheel.Timer timer = expired.getQuick(i);
-                final MatViewDefinition viewDefinition = timer.getViewDefinition();
-                final TableToken viewToken = viewDefinition.getMatViewToken();
+                final TableToken viewToken = timer.getMatViewToken();
                 final MatViewState state = matViewStateStore.getViewState(viewToken);
                 if (state != null) {
                     if (state.isDropped()) {

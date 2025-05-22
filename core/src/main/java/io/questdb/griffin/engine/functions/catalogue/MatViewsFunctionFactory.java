@@ -251,8 +251,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 private long lastRefreshStartTimestamp;
                 private long lastRefreshTxn;
                 private int refreshLimitHoursOrMonths;
+                private int timerInterval;
                 private char timerIntervalUnit;
-                private int timerIntervalValue;
                 private long timerStart;
                 private MatViewDefinition viewDefinition;
 
@@ -262,7 +262,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_REFRESH_LIMIT_VALUE:
                             return TablesFunctionFactory.getTtlValue(refreshLimitHoursOrMonths);
                         case COLUMN_TIMER_INTERVAL_VALUE:
-                            return timerIntervalValue;
+                            return timerInterval;
                         default:
                             return 0;
                     }
@@ -348,9 +348,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.invalidationReason.put(invalidationReason);
                     this.invalid = invalid;
                     this.refreshLimitHoursOrMonths = refreshLimitHoursOrMonths;
-                    this.timerStart = viewDefinition.getIntervalStart();
-                    this.timerIntervalValue = viewDefinition.getIntervalStride();
-                    this.timerIntervalUnit = viewDefinition.getIntervalUnit();
+                    this.timerStart = viewDefinition.getTimerStart();
+                    this.timerInterval = viewDefinition.getTimerInterval();
+                    this.timerIntervalUnit = viewDefinition.getTimerIntervalUnit();
                 }
 
                 private CharSequence getViewStatus() {

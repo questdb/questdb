@@ -46,7 +46,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.DirectLongLongHeap;
+import io.questdb.std.DirectLongLongPriorityQueue;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -218,7 +218,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void longTopK(DirectLongLongHeap heap, int columnIndex) {
+        public void longTopK(DirectLongLongPriorityQueue heap, int columnIndex) {
             buildMapConditionally();
             ((MapRecordCursor) baseCursor).longTopK(heap, recordFunctions.getQuick(columnIndex));
         }

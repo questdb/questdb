@@ -75,11 +75,11 @@ public class TableData {
             sb.append(column).append(i == n - 1 ? "\n" : "\t");
         }
         for (int i = 0, n = rows.size(); i < n; i++) {
-            final LineData line = rows.get(index.popIndex());
+            final LineData line = rows.get(index.peekIndex());
             if (line.isValid()) {
                 sb.append(line.getRow(columns, defaults));
             }
-            index.popValue();
+            index.pollValue();
         }
         return sb.toString();
     }

@@ -1921,9 +1921,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertEquals(samplingIntervalUnit, matViewDefinition.getSamplingIntervalUnit());
         assertEquals(timeZone, timeZone != null ? matViewDefinition.getTimeZone() : null);
         assertEquals(timeZoneOffset != null ? timeZoneOffset : "00:00", matViewDefinition.getTimeZoneOffset());
-        assertEquals(intervalStart, matViewDefinition.getIntervalStart());
-        assertEquals(intervalStride, matViewDefinition.getIntervalStride());
-        assertEquals(intervalUnit, matViewDefinition.getIntervalUnit());
+        assertEquals(intervalStart, matViewDefinition.getTimerStart());
+        assertEquals(intervalStride, matViewDefinition.getTimerInterval());
+        assertEquals(intervalUnit, matViewDefinition.getTimerIntervalUnit());
     }
 
     private static void assertMatViewDefinition(int refreshType, String name, String query, String baseTableName, int samplingInterval, char samplingIntervalUnit, String timeZone, String timeZoneOffset) {
@@ -1978,9 +1978,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertEquals(samplingIntervalUnit, matViewDefinition.getSamplingIntervalUnit());
             assertEquals(timeZone, Chars.toString(matViewDefinition.getTimeZone()));
             assertEquals(timeZoneOffset != null ? timeZoneOffset : "00:00", matViewDefinition.getTimeZoneOffset());
-            assertEquals(intervalStart, matViewDefinition.getIntervalStart());
-            assertEquals(intervalStride, matViewDefinition.getIntervalStride());
-            assertEquals(intervalUnit, matViewDefinition.getIntervalUnit());
+            assertEquals(intervalStart, matViewDefinition.getTimerStart());
+            assertEquals(intervalStride, matViewDefinition.getTimerInterval());
+            assertEquals(intervalUnit, matViewDefinition.getTimerIntervalUnit());
         }
     }
 

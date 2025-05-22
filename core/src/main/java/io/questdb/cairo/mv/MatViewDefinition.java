@@ -56,9 +56,6 @@ public class MatViewDefinition implements Mutable {
     private String baseTableName;
     // Not persisted, parsed from timeZoneOffset.
     private long fixedOffset;
-    private long intervalStart = Numbers.LONG_NULL; // micros
-    private int intervalStride;
-    private char intervalUnit;
     private String matViewSql;
     private TableToken matViewToken;
     private int refreshType = -1;
@@ -68,6 +65,9 @@ public class MatViewDefinition implements Mutable {
     private char samplingIntervalUnit;
     private @Nullable String timeZone;
     private @Nullable String timeZoneOffset;
+    private int timerInterval;
+    private char timerIntervalUnit;
+    private long timerStart = Numbers.LONG_NULL; // micros
     // Not persisted, parsed from samplingInterval and samplingIntervalUnit.
     // Access must be synchronized as this object is not thread-safe.
     private TimestampSampler timestampSampler;
@@ -93,9 +93,9 @@ public class MatViewDefinition implements Mutable {
     }
 
     public static void appendInterval(@NotNull MatViewDefinition matViewDefinition, @NotNull AppendableBlock block) {
-        block.putLong(matViewDefinition.getIntervalStart());
-        block.putInt(matViewDefinition.getIntervalStride());
-        block.putChar(matViewDefinition.getIntervalUnit());
+        block.putLong(matViewDefinition.getTimerStart());
+        block.putInt(matViewDefinition.getTimerInterval());
+        block.putChar(matViewDefinition.getTimerIntervalUnit());
     }
 
     public static void readFrom(
@@ -143,9 +143,9 @@ public class MatViewDefinition implements Mutable {
         refreshType = -1;
         samplingInterval = 0;
         samplingIntervalUnit = 0;
-        intervalStart = 0;
-        intervalStride = 0;
-        intervalUnit = 0;
+        timerStart = 0;
+        timerInterval = 0;
+        timerIntervalUnit = 0;
     }
 
     public String getBaseTableName() {
@@ -154,18 +154,6 @@ public class MatViewDefinition implements Mutable {
 
     public long getFixedOffset() {
         return fixedOffset;
-    }
-
-    public long getIntervalStart() {
-        return intervalStart;
-    }
-
-    public int getIntervalStride() {
-        return intervalStride;
-    }
-
-    public char getIntervalUnit() {
-        return intervalUnit;
     }
 
     public String getMatViewSql() {
@@ -196,6 +184,18 @@ public class MatViewDefinition implements Mutable {
         return timeZoneOffset;
     }
 
+    public int getTimerInterval() {
+        return timerInterval;
+    }
+
+    public char getTimerIntervalUnit() {
+        return timerIntervalUnit;
+    }
+
+    public long getTimerStart() {
+        return timerStart;
+    }
+
     public TimestampSampler getTimestampSampler() {
         return timestampSampler;
     }
@@ -213,9 +213,9 @@ public class MatViewDefinition implements Mutable {
             char samplingIntervalUnit,
             @Nullable String timeZone,
             @Nullable String timeZoneOffset,
-            long intervalStart,
-            int intervalStride,
-            char intervalUnit
+            long timerStart,
+            int timerInterval,
+            char timerIntervalUnit
     ) {
         initDefinition(
                 refreshType,
@@ -228,9 +228,9 @@ public class MatViewDefinition implements Mutable {
                 timeZoneOffset
         );
         initInterval(
-                intervalStart,
-                intervalStride,
-                intervalUnit
+                timerStart,
+                timerInterval,
+                timerIntervalUnit
         );
     }
 
@@ -367,8 +367,8 @@ public class MatViewDefinition implements Mutable {
             int intervalStride,
             char intervalUnit
     ) {
-        this.intervalStart = intervalStart;
-        this.intervalStride = intervalStride;
-        this.intervalUnit = intervalUnit;
+        this.timerStart = intervalStart;
+        this.timerInterval = intervalStride;
+        this.timerIntervalUnit = intervalUnit;
     }
 }

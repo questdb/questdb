@@ -27,9 +27,9 @@ package io.questdb.std;
 import io.questdb.cairo.Reopenable;
 
 /**
- * Off-heap min/max heap for long values accompanied by a long index.
+ * Off-heap bounded priority queue for long values accompanied by a long index.
  */
-public interface DirectLongLongHeap extends QuietCloseable, Mutable, Reopenable {
+public interface DirectLongLongPriorityQueue extends QuietCloseable, Mutable, Reopenable {
 
     void add(long index, long value);
 

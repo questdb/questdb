@@ -915,9 +915,9 @@ public class SqlParser {
                 final char unit = Timestamps.getStrideUnit(tok);
                 validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
                 refreshType = MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE;
-                mvOpBuilder.setIntervalStart(start);
-                mvOpBuilder.setIntervalStride(stride);
-                mvOpBuilder.setIntervalUnit(unit);
+                mvOpBuilder.setTimerStart(start);
+                mvOpBuilder.setTimerInterval(stride);
+                mvOpBuilder.setTimerIntevalUnit(unit);
                 tok = tok(lexer, "'as'");
             } else if (start != Numbers.LONG_NULL) {
                 throw SqlException.position(lexer.lastTokenPosition()).put("'every' expected");

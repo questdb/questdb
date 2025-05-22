@@ -47,12 +47,12 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private String baseTableName;
     private int baseTableNamePosition;
-    private long intervalStart = Numbers.LONG_NULL;
-    private int intervalStride;
-    private char intervalUnit;
     private int refreshType = -1;
     private String timeZone;
     private String timeZoneOffset;
+    private int timerInterval;
+    private char timerIntevalUnit;
+    private long timerStart = Numbers.LONG_NULL;
 
     @Override
     public CreateMatViewOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
@@ -65,9 +65,9 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
                 baseTableNamePosition,
                 timeZone,
                 timeZoneOffset,
-                intervalStart,
-                intervalStride,
-                intervalUnit
+                timerStart,
+                timerInterval,
+                timerIntevalUnit
         );
     }
 
@@ -79,9 +79,9 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         baseTableNamePosition = 0;
         timeZone = null;
         timeZoneOffset = null;
-        intervalStart = Numbers.LONG_NULL;
-        intervalStride = 0;
-        intervalUnit = 0;
+        timerStart = Numbers.LONG_NULL;
+        timerInterval = 0;
+        timerIntevalUnit = 0;
     }
 
     public CreateTableOperationBuilderImpl getCreateTableOperationBuilder() {
@@ -111,18 +111,6 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         this.baseTableNamePosition = baseTableNamePosition;
     }
 
-    public void setIntervalStart(long intervalStart) {
-        this.intervalStart = intervalStart;
-    }
-
-    public void setIntervalStride(int intervalStride) {
-        this.intervalStride = intervalStride;
-    }
-
-    public void setIntervalUnit(char intervalUnit) {
-        this.intervalUnit = intervalUnit;
-    }
-
     public void setRefreshType(int refreshType) {
         this.refreshType = refreshType;
     }
@@ -140,6 +128,18 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         this.timeZoneOffset = timeZoneOffset;
     }
 
+    public void setTimerInterval(int timerInterval) {
+        this.timerInterval = timerInterval;
+    }
+
+    public void setTimerIntevalUnit(char timerIntevalUnit) {
+        this.timerIntevalUnit = timerIntevalUnit;
+    }
+
+    public void setTimerStart(long timerStart) {
+        this.timerStart = timerStart;
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("create materialized view ");
@@ -150,10 +150,10 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         }
         if (refreshType == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
             sink.putAscii(" refresh start '");
-            sink.putISODate(intervalStart);
+            sink.putISODate(timerStart);
             sink.putAscii("' every ");
-            sink.put(intervalStride);
-            sink.putAscii(intervalUnit);
+            sink.put(timerInterval);
+            sink.putAscii(timerIntevalUnit);
         }
         sink.putAscii(" as (");
         if (createTableOperationBuilder.getQueryModel() != null) {

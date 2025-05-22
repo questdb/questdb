@@ -1699,7 +1699,7 @@ public class SqlOptimiser implements Mutable {
             QueryModel q = joinModels.getQuick(i);
             if (q.getJoinType() == QueryModel.JOIN_CROSS || q.getContext() == null || q.getContext().parents.size() == 0) {
                 if (q.getDependencies().size() > 0) {
-                    orderingStack.push(i);
+                    orderingStack.add(i);
                 } else {
                     tempCrossIndexes.add(i);
                 }
@@ -1709,8 +1709,8 @@ public class SqlOptimiser implements Mutable {
         }
 
         while (orderingStack.notEmpty()) {
-            //remove a node n from orderingStack
-            int index = orderingStack.pop();
+            // remove a node n from orderingStack
+            int index = orderingStack.poll();
 
             ordered.add(index);
 
@@ -1729,7 +1729,7 @@ public class SqlOptimiser implements Mutable {
                 int depIndex = dependencies.get(i);
                 JoinContext jc = joinModels.getQuick(depIndex).getContext();
                 if (jc != null && --jc.inCount == 0) {
-                    orderingStack.push(depIndex);
+                    orderingStack.add(depIndex);
                 }
             }
         }

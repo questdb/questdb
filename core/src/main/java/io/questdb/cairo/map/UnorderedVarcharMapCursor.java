@@ -27,7 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.std.DirectLongLongHeap;
+import io.questdb.std.DirectLongLongPriorityQueue;
 
 public final class UnorderedVarcharMapCursor implements MapRecordCursor {
     private final long entrySize;
@@ -82,7 +82,7 @@ public final class UnorderedVarcharMapCursor implements MapRecordCursor {
     }
 
     @Override
-    public void longTopK(DirectLongLongHeap heap, Function recordFunction) {
+    public void longTopK(DirectLongLongPriorityQueue heap, Function recordFunction) {
         for (long addr = memStart; addr < memLimit; addr += entrySize) {
             if (!map.isZeroKey(addr)) {
                 recordA.of(addr);

@@ -88,15 +88,15 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String baseTableName;
     private final int baseTableNamePosition;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
-    private final long intervalStart;
-    private final int intervalStride;
-    private final char intervalUnit;
     private final MatViewDefinition matViewDefinition = new MatViewDefinition();
     private final int refreshType;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final String sqlText;
     private final String timeZone;
     private final String timeZoneOffset;
+    private final int timerInterval;
+    private final char timerIntervalUnit;
+    private final long timerStart;
     private final IntList tmpColumnIndexes = new IntList();
     private final LowerCaseCharSequenceHashSet tmpLiterals = new LowerCaseCharSequenceHashSet();
     private CreateTableOperationImpl createTableOperation;
@@ -111,9 +111,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             int baseTableNamePosition,
             @Nullable String timeZone,
             @Nullable String timeZoneOffset,
-            long intervalStart,
-            int intervalStride,
-            char intervalUnit
+            long timerStart,
+            int timerInterval,
+            char timerIntervalUnit
     ) {
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
@@ -122,9 +122,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         this.baseTableNamePosition = baseTableNamePosition;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
-        this.intervalStart = intervalStart;
-        this.intervalStride = intervalStride;
-        this.intervalUnit = intervalUnit;
+        this.timerStart = timerStart;
+        this.timerInterval = timerInterval;
+        this.timerIntervalUnit = timerIntervalUnit;
     }
 
     @Override
@@ -168,21 +168,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return createTableOperation.getIndexBlockCapacity(columnIndex);
-    }
-
-    @Override
-    public long getIntervalStart() {
-        return intervalStart;
-    }
-
-    @Override
-    public int getIntervalStride() {
-        return intervalStride;
-    }
-
-    @Override
-    public char getIntervalUnit() {
-        return intervalUnit;
     }
 
     @Override
@@ -246,6 +231,21 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public int getTimerInterval() {
+        return timerInterval;
+    }
+
+    @Override
+    public char getTimerIntervalUnit() {
+        return timerIntervalUnit;
+    }
+
+    @Override
+    public long getTimerStart() {
+        return timerStart;
+    }
+
+    @Override
     public int getTimestampIndex() {
         return createTableOperation.getTimestampIndex();
     }
@@ -281,9 +281,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 samplingIntervalUnit,
                 timeZone,
                 timeZoneOffset,
-                intervalStart,
-                intervalStride,
-                intervalUnit
+                timerStart,
+                timerInterval,
+                timerIntervalUnit
         );
     }
 

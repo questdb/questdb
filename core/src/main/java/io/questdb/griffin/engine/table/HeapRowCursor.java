@@ -49,9 +49,9 @@ class HeapRowCursor implements RowCursor {
 
     @Override
     public long next() {
-        int idx = heap.popIndex();
+        int idx = heap.peekIndex();
         RowCursor cursor = cursors.getQuick(idx);
-        return cursor.hasNext() ? heap.popAndReplace(idx, cursor.next()) : heap.popValue();
+        return cursor.hasNext() ? heap.pollAndReplace(idx, cursor.next()) : heap.pollValue();
     }
 
     public void of(ObjList<RowCursor> cursors, int activeCursors) {

@@ -25,12 +25,17 @@
 package io.questdb.cairo.mv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjPriorityQueue;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import org.jetbrains.annotations.NotNull;
+
+import java.util.Comparator;
 
 /**
  * A timer data structure optimized for approximated scheduling, a.k.a.
@@ -40,36 +45,51 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
  * Timing Wheels: data structures to efficiently implement a timer facility".
  */
 public class MatViewTimingWheel {
+    private static final Comparator<Timer> timerComparator = Comparator.comparingLong(t -> t.deadline);
     private final MicrosecondClock clock;
     private final int mask;
     private final ObjList<Timer> pendingTimers = new ObjList<>();
     private final long tickDuration;
-    private final Bucket[] wheel;
+    private final ObjPriorityQueue<Timer>[] wheel;
     private long tickDeadline;
 
+    @SuppressWarnings("unchecked")
     public MatViewTimingWheel(MicrosecondClock clock, long tickDuration, int ticksPerWheel) {
         this.clock = clock;
         this.tickDuration = tickDuration;
-        this.wheel = new Bucket[Numbers.ceilPow2(ticksPerWheel)];
+        this.wheel = (ObjPriorityQueue<Timer>[]) new ObjPriorityQueue[Numbers.ceilPow2(ticksPerWheel)];
         for (int i = 0, n = wheel.length; i < n; i++) {
-            wheel[i] = new Bucket();
+            wheel[i] = new ObjPriorityQueue<>(timerComparator);
         }
         this.mask = wheel.length - 1;
         final long now = clock.getTicks();
         this.tickDeadline = now - now % tickDuration;
     }
 
-    public Timer addTimer(MatViewDefinition viewDefinition) {
+    public Timer addTimer(@NotNull MatViewDefinition viewDefinition) {
         final TimestampSampler sampler;
         try {
-            sampler = TimestampSamplerFactory.getInstance(viewDefinition.getIntervalStride(), viewDefinition.getIntervalUnit(), 0);
+            sampler = TimestampSamplerFactory.getInstance(viewDefinition.getTimerInterval(), viewDefinition.getTimerIntervalUnit(), 0);
         } catch (SqlException e) {
-            throw CairoException.critical(0).put("invalid EVERY interval and/or unit: ").put(viewDefinition.getIntervalStride())
-                    .put(", ").put(viewDefinition.getIntervalUnit());
+            throw CairoException.critical(0).put("invalid EVERY interval and/or unit: ").put(viewDefinition.getTimerInterval())
+                    .put(", ").put(viewDefinition.getTimerIntervalUnit());
         }
-        final Timer timer = new Timer(viewDefinition, sampler);
+        final Timer timer = new Timer(viewDefinition.getMatViewToken(), sampler, viewDefinition.getTimerStart());
         pendingTimers.add(timer);
         return timer;
+    }
+
+    public void expireTimers(ObjPriorityQueue<Timer> bucket, ObjList<Timer> expired, long now) {
+        int expiredCount = 0;
+        for (int i = 0, n = bucket.size(); i < n; i++) {
+            final Timer timer = bucket.get(i);
+            if (timer.deadline <= now) {
+                expiredCount++;
+            } else {
+                break;
+            }
+        }
+        bucket.popMany(expiredCount, expired);
     }
 
     public boolean tick(ObjList<Timer> expired) {
@@ -82,10 +102,9 @@ public class MatViewTimingWheel {
         final long tick = tickDeadline;
         final long tickIdx = tick / tickDuration;
         final int idx = (int) (tickIdx & mask);
-        final Bucket bucket = wheel[idx];
         addTimers(pendingTimers, tickIdx, tick);
         pendingTimers.clear();
-        bucket.expireTimers(expired, tick);
+        expireTimers(wheel[idx], expired, tick);
         // reschedule expired timers
         addTimers(expired, tickIdx, tick);
         tickDeadline += tickDuration;
@@ -99,109 +118,61 @@ public class MatViewTimingWheel {
             final long calculated = deadline / tickDuration;
             final long ticks = Math.max(calculated, tickIdx);
             final int stopIndex = (int) (ticks & mask);
-            final Bucket bucket = wheel[stopIndex];
-            bucket.addTimer(timer);
-        }
-    }
-
-    private static class Bucket {
-        private Timer head;
-        private Timer tail;
-
-        // the list is kept sorted to speed up expiration checks
-        public void addTimer(Timer timer) {
-            assert timer.bucket == null;
-
-            timer.bucket = this;
-            if (head == null) {
-                this.head = this.tail = timer;
-            } else if (head.deadline >= timer.deadline) {
-                head.prev = timer;
-                timer.next = head;
-                this.head = timer;
-            } else if (tail.deadline <= timer.deadline) {
-                tail.next = timer;
-                timer.prev = tail;
-                this.tail = timer;
-            } else {
-                for (Timer t = head.next; t != null; t = t.next) {
-                    if (t.deadline >= timer.deadline) {
-                        timer.next = t;
-                        timer.prev = t.prev;
-                        t.prev.next = timer;
-                        t.prev = timer;
-                        break;
-                    }
-                }
-            }
-        }
-
-        public void expireTimers(ObjList<Timer> expired, long now) {
-            Timer next;
-            for (Timer timer = head; timer != null; timer = next) {
-                if (timer.deadline <= now) {
-                    next = removeTimer(timer);
-                    expired.add(timer);
-                } else {
-                    break;
-                }
-            }
-        }
-
-        public Timer removeTimer(Timer timer) {
-            Timer next = timer.next;
-            if (timer.prev != null) {
-                timer.prev.next = next;
-            }
-
-            if (timer.next != null) {
-                timer.next.prev = timer.prev;
-            }
-
-            if (timer == head) {
-                if (timer == tail) {
-                    this.tail = null;
-                    this.head = null;
-                } else {
-                    this.head = next;
-                }
-            } else if (timer == tail) {
-                this.tail = timer.prev;
-            }
-
-            timer.prev = null;
-            timer.next = null;
-            timer.bucket = null;
-            return next;
+            final ObjPriorityQueue<Timer> bucket = wheel[stopIndex];
+            bucket.add(timer);
+            timer.bucket = bucket;
         }
     }
 
     public static class Timer {
+        private final TableToken matViewToken;
         private final TimestampSampler sampler;
-        private final MatViewDefinition viewDefinition;
-        private Bucket bucket;
+        private final long start;
+        private ObjPriorityQueue<Timer> bucket;
         private long deadline = Long.MIN_VALUE;
         private long knownRefreshBaseTxn = Long.MIN_VALUE;
-        private Timer next;
-        private Timer prev;
 
-        private Timer(MatViewDefinition viewDefinition, TimestampSampler sampler) {
-            this.viewDefinition = viewDefinition;
+        private Timer(@NotNull TableToken matViewToken, @NotNull TimestampSampler sampler, long start) {
+            this.matViewToken = matViewToken;
+            this.start = start;
             this.sampler = sampler;
-            sampler.setStart(viewDefinition.getIntervalStart());
+            sampler.setStart(start);
+        }
+
+        @Override
+        public final boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (!(o instanceof Timer)) {
+                return false;
+            }
+
+            // bucket.remove() does bin search based on deadlines before the equality check,
+            // hence the deadline should be included into equals/hashCode.
+            Timer timer = (Timer) o;
+            return deadline == timer.deadline && matViewToken.equals(timer.matViewToken);
         }
 
         public long getKnownRefreshBaseTxn() {
             return knownRefreshBaseTxn;
         }
 
-        public MatViewDefinition getViewDefinition() {
-            return viewDefinition;
+        public TableToken getMatViewToken() {
+            return matViewToken;
+        }
+
+        @Override
+        public int hashCode() {
+            int result = matViewToken.hashCode();
+            result = 31 * result + Long.hashCode(deadline);
+            return result;
         }
 
         public void remove() {
             if (bucket != null) {
-                bucket.removeTimer(this);
+                bucket.remove(this);
+                bucket = null;
             }
         }
 
@@ -218,9 +189,7 @@ public class MatViewTimingWheel {
                 deadline = sampler.nextTimestamp(deadline);
             } else {
                 // The timer is added for the first time, so it's fine if it triggers immediately.
-                deadline = now > viewDefinition.getIntervalStart()
-                        ? sampler.nextTimestamp(sampler.round(now - 1))
-                        : viewDefinition.getIntervalStart();
+                deadline = now > start ? sampler.nextTimestamp(sampler.round(now - 1)) : start;
             }
             return deadline;
         }

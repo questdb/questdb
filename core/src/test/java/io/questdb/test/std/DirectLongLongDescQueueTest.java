@@ -26,7 +26,7 @@ package io.questdb.test.std;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.DirectLongLongMinHeap;
+import io.questdb.std.DirectLongLongDescQueue;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
@@ -35,23 +35,23 @@ import org.junit.Test;
 
 import java.util.PriorityQueue;
 
-public class DirectLongLongMinHeapTest {
-    private static final Log LOG = LogFactory.getLog(DirectLongLongMinHeapTest.class);
+public class DirectLongLongDescQueueTest {
+    private static final Log LOG = LogFactory.getLog(DirectLongLongDescQueueTest.class);
 
     @Test
     public void testFuzz() {
         final int N = 10000;
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        final PriorityQueue<Long> oracle = new PriorityQueue<>(100);
-        try (DirectLongLongMinHeap minHeap = new DirectLongLongMinHeap(100, MemoryTag.NATIVE_DEFAULT)) {
+        final PriorityQueue<Long> oracle = new PriorityQueue<>(100, (l1, l2) -> Long.compare(l2, l1));
+        try (DirectLongLongDescQueue queue = new DirectLongLongDescQueue(100, MemoryTag.NATIVE_DEFAULT)) {
             for (long i = 0; i < N; i++) {
                 long v = rnd.nextLong();
-                minHeap.add(v, v);
+                queue.add(v, v);
                 oracle.add(v);
             }
 
-            DirectLongLongMinHeap.Cursor cursor = minHeap.getCursor();
-            for (int i = 0, n = minHeap.size(); i < n; i++) {
+            DirectLongLongDescQueue.Cursor cursor = queue.getCursor();
+            for (int i = 0, n = queue.size(); i < n; i++) {
                 Long v = oracle.poll();
                 Assert.assertNotNull(v);
                 Assert.assertTrue(cursor.hasNext());
@@ -64,30 +64,30 @@ public class DirectLongLongMinHeapTest {
 
     @Test
     public void testReopen() {
-        try (DirectLongLongMinHeap minHeap = new DirectLongLongMinHeap(10, MemoryTag.NATIVE_DEFAULT)) {
-            Assert.assertEquals(10, minHeap.getCapacity());
-            Assert.assertEquals(0, minHeap.size());
-            Assert.assertFalse(minHeap.getCursor().hasNext());
+        try (DirectLongLongDescQueue queue = new DirectLongLongDescQueue(10, MemoryTag.NATIVE_DEFAULT)) {
+            Assert.assertEquals(10, queue.getCapacity());
+            Assert.assertEquals(0, queue.size());
+            Assert.assertFalse(queue.getCursor().hasNext());
 
-            minHeap.add(1, 1);
-            Assert.assertEquals(1, minHeap.size());
+            queue.add(1, 1);
+            Assert.assertEquals(1, queue.size());
 
-            minHeap.clear();
-            Assert.assertEquals(0, minHeap.size());
+            queue.clear();
+            Assert.assertEquals(0, queue.size());
 
-            minHeap.add(1, 1);
-            Assert.assertEquals(1, minHeap.size());
+            queue.add(1, 1);
+            Assert.assertEquals(1, queue.size());
 
-            minHeap.close();
-            Assert.assertEquals(0, minHeap.size());
+            queue.close();
+            Assert.assertEquals(0, queue.size());
 
-            minHeap.reopen();
-            Assert.assertEquals(10, minHeap.getCapacity());
-            Assert.assertEquals(0, minHeap.size());
+            queue.reopen();
+            Assert.assertEquals(10, queue.getCapacity());
+            Assert.assertEquals(0, queue.size());
 
-            minHeap.add(1, 1);
+            queue.add(1, 1);
 
-            DirectLongLongMinHeap.Cursor cursor = minHeap.getCursor();
+            DirectLongLongDescQueue.Cursor cursor = queue.getCursor();
             cursor.toTop();
             Assert.assertTrue(cursor.hasNext());
             Assert.assertEquals(1, cursor.index());
@@ -98,20 +98,20 @@ public class DirectLongLongMinHeapTest {
 
     @Test
     public void testSmoke() {
-        try (DirectLongLongMinHeap minHeap = new DirectLongLongMinHeap(10, MemoryTag.NATIVE_DEFAULT)) {
-            Assert.assertEquals(10, minHeap.getCapacity());
-            Assert.assertEquals(0, minHeap.size());
-            Assert.assertFalse(minHeap.getCursor().hasNext());
+        try (DirectLongLongDescQueue queue = new DirectLongLongDescQueue(10, MemoryTag.NATIVE_DEFAULT)) {
+            Assert.assertEquals(10, queue.getCapacity());
+            Assert.assertEquals(0, queue.size());
+            Assert.assertFalse(queue.getCursor().hasNext());
 
             for (long i = 0; i < 100; i++) {
-                minHeap.add(i, i);
+                queue.add(i, i);
             }
-            Assert.assertEquals(10, minHeap.getCapacity());
-            Assert.assertEquals(10, minHeap.size());
+            Assert.assertEquals(10, queue.getCapacity());
+            Assert.assertEquals(10, queue.size());
 
-            DirectLongLongMinHeap.Cursor cursor = minHeap.getCursor();
+            DirectLongLongDescQueue.Cursor cursor = queue.getCursor();
             cursor.toTop();
-            for (long i = 0; i < 10; i++) {
+            for (long i = 99; i > 89; i--) {
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(i, cursor.index());
                 Assert.assertEquals(i, cursor.value());

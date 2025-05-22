@@ -51,7 +51,7 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.std.DirectLongLongHeap;
+import io.questdb.std.DirectLongLongPriorityQueue;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -140,7 +140,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void longTopK(DirectLongLongHeap heap, int columnIndex) {
+    public void longTopK(DirectLongLongPriorityQueue heap, int columnIndex) {
         buildMapConditionally();
         mapCursor.longTopK(heap, recordFunctions.getQuick(columnIndex));
     }
