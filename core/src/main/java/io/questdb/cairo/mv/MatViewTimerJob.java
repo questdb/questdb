@@ -119,8 +119,18 @@ public class MatViewTimerJob extends SynchronizedJob {
             if (state != null) {
                 if (state.isDropped()) {
                     removeTimer(viewToken);
-                } else if (!state.isPendingInvalidation() && !state.isInvalid()) {
-                    matViewStateStore.enqueueIncrementalRefresh(viewToken);
+                } else if (state.isPendingInvalidation() || state.isInvalid()) {
+                    // The view is about to become invalid or already invalid.
+                    // Reset the cached txn, so that we refresh the view as soon as it becomes valid.
+                    timer.resetKnownRefreshBaseTxn();
+                } else {
+                    // Check if the view has refreshed since the last timer expiration.
+                    // If not, don't schedule refresh to avoid unbounded growth of the queue.
+                    final long lastRefreshBaseTxn = state.getLastRefreshBaseTxn();
+                    if (timer.getKnownRefreshBaseTxn() != lastRefreshBaseTxn) {
+                        matViewStateStore.enqueueIncrementalRefresh(viewToken);
+                        timer.setKnownRefreshBaseTxn(lastRefreshBaseTxn);
+                    }
                 }
             } else {
                 LOG.info().$("state for materialized view not found [view=").$(viewToken).I$();

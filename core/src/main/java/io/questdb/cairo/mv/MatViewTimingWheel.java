@@ -181,6 +181,7 @@ public class MatViewTimingWheel {
         private final MatViewDefinition viewDefinition;
         private Bucket bucket;
         private long deadline = Long.MIN_VALUE;
+        private long knownRefreshBaseTxn = Long.MIN_VALUE;
         private Timer next;
         private Timer prev;
 
@@ -188,6 +189,10 @@ public class MatViewTimingWheel {
             this.viewDefinition = viewDefinition;
             this.sampler = sampler;
             sampler.setStart(viewDefinition.getIntervalStart());
+        }
+
+        public long getKnownRefreshBaseTxn() {
+            return knownRefreshBaseTxn;
         }
 
         public MatViewDefinition getViewDefinition() {
@@ -198,6 +203,14 @@ public class MatViewTimingWheel {
             if (bucket != null) {
                 bucket.removeTimer(this);
             }
+        }
+
+        public void resetKnownRefreshBaseTxn() {
+            knownRefreshBaseTxn = Long.MIN_VALUE;
+        }
+
+        public void setKnownRefreshBaseTxn(long knownRefreshBaseTxn) {
+            this.knownRefreshBaseTxn = knownRefreshBaseTxn;
         }
 
         private long nextDeadline(long now) {
