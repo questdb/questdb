@@ -22,16 +22,34 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.cutlass.http.processors;
 
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.ServerDisconnectException;
+import io.questdb.preferences.SettingsStore;
+import io.questdb.std.Mutable;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.StringSink;
 
-public interface HttpMultipartContentListener {
-    void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
+import java.io.Closeable;
 
-    void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
+class SettingsProcessorState implements Mutable, Closeable {
+    final StringSink utf16Sink;
+    final DirectUtf8Sink utf8Sink;
+    SettingsStore.Mode mode;
 
-    void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
+    SettingsProcessorState(int size) {
+        utf8Sink = new DirectUtf8Sink(size);
+        utf16Sink = new StringSink();
+    }
+
+    @Override
+    public void clear() {
+        utf8Sink.clear();
+        utf16Sink.clear();
+        mode = null;
+    }
+
+    @Override
+    public void close() {
+        utf8Sink.close();
+    }
 }

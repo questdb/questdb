@@ -22,22 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.cutlass.http;
 
-import io.questdb.Metrics;
-import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.metrics.AtomicLongGauge;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.ServerDisconnectException;
 
-public interface LineHttpProcessor extends HttpRequestProcessor {
+import static io.questdb.cutlass.http.HttpRequestValidator.*;
 
+public interface HttpMultipartContentProcessor extends HttpPostPutProcessor {
     @Override
-    default AtomicLongGauge connectionCountGauge(Metrics metrics) {
-        return metrics.lineMetrics().httpConnectionCountGauge();
+    default short getSupportedRequestTypes() {
+        return METHOD_POST | METHOD_PUT | MULTIPART_REQUEST;
     }
 
-    @Override
-    default int getConnectionLimit(HttpContextConfiguration configuration) {
-        return configuration.getIlpConnectionLimit();
-    }
+    void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
+
+    void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
 }

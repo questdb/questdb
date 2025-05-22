@@ -77,7 +77,6 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.SelectFacade;
 import io.questdb.network.SelectFacadeImpl;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Files;
@@ -130,6 +129,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
+import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.bool;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
 
 public class PropServerConfiguration implements ServerConfiguration {
@@ -341,6 +341,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final String posthogApiKey;
     private final boolean posthogEnabled;
+    private final int preferencesStringPoolCapacity;
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
@@ -979,9 +980,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             // paths is ok because duplicates are squashed by the HTTP server.
             // 1. import, to support CSV import UI
             // 2. export, to support CSV export UI
-            // 3. settings, that is what the Web Console loads on startup
-            // 4. table status to support CSV import UI
-            // 5. JSON query execution, e.g., exec
+            // 3. settings, a union of selected config properties and preferences,
+            //     the Web Console loads it on startup, the preferences part can be updated via POST/PUT
+            // 4. table status, to support CSV import UI
+            // 5. JSON query execution, e.g. exec
             // 6. warnings, that displays warnings in the table view
 
             // we use defaults, because this is what the Web Console expects
@@ -1343,6 +1345,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.columnPurgeRetryDelay = getMicros(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 10_000);
             this.columnPurgeRetryDelayMultiplier = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, "10.0");
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
+            this.preferencesStringPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_PREFERENCES_STRING_POOL_CAPACITY, 64);
 
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024));
             this.writerDataIndexValueAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 16 * Numbers.SIZE_1MB));
@@ -2181,16 +2184,22 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public static class JsonPropertyValueFormatter {
-        public static String bool(boolean value) {
-            return Boolean.toString(value);
+        public static void bool(CharSequence key, boolean value, StringSink sink) {
+            sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
         }
 
-        public static String integer(int value) {
-            return Integer.toString(value);
+        public static void integer(CharSequence key, long value, StringSink sink) {
+            sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
         }
 
-        public static String str(String value) {
-            return value != null ? '"' + value + '"' : "null";
+        public static void str(CharSequence key, CharSequence value, StringSink sink) {
+            sink.putQuoted(key).putAscii(':');
+            if (value != null) {
+                sink.putQuoted(value);
+            } else {
+                sink.put("null");
+            }
+            sink.putAscii(',');
         }
     }
 
@@ -2536,6 +2545,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean enableTestFactories() {
             return enableTestFactories;
+        }
+
+        @Override
+        public boolean exportConfiguration(StringSink sink) {
+            str(RELEASE_TYPE, getReleaseType(), sink);
+            str(RELEASE_VERSION, getBuildInformation().getSwVersion(), sink);
+            if (!Chars.empty(httpUsername)) {
+                bool(ACL_ENABLED, true, sink);
+            }
+            return true;
         }
 
         @Override
@@ -3094,6 +3113,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPartitionPurgeListCapacity() {
             return o3PartitionPurgeListCapacity;
+        }
+
+        @Override
+        public int getPreferencesStringPoolCapacity() {
+            return preferencesStringPoolCapacity;
         }
 
         @Override
@@ -3772,13 +3796,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean mangleTableDirNames() {
             return false;
-        }
-
-        @Override
-        public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-            settings.put(RELEASE_TYPE, str(getReleaseType()));
-            settings.put(RELEASE_VERSION, str(getBuildInformation().getSwVersion()));
-            settings.put(ACL_ENABLED, Boolean.toString(!Chars.empty(httpUsername)));
         }
 
         @Override
@@ -5209,6 +5226,13 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     class PropPublicPassthroughConfiguration implements PublicPassthroughConfiguration {
         @Override
+        public boolean exportConfiguration(StringSink sink) {
+            bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), isPosthogEnabled(), sink);
+            str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), getPosthogApiKey(), sink);
+            return true;
+        }
+
+        @Override
         public String getPosthogApiKey() {
             return posthogApiKey;
         }
@@ -5216,11 +5240,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isPosthogEnabled() {
             return posthogEnabled;
-        }
-
-        public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-            settings.put(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), JsonPropertyValueFormatter.bool(isPosthogEnabled()));
-            settings.put(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), str(getPosthogApiKey()));
         }
     }
 

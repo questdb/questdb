@@ -138,6 +138,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeSettings() {
+    }
+
+    @Override
     public void authorizeSqlEngineAdmin() {
     }
 
