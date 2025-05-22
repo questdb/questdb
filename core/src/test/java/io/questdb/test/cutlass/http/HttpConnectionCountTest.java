@@ -31,8 +31,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.http.HttpRequestProcessorFactory;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
@@ -177,14 +177,14 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                         public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool workerPool, int sharedWorkerCount) {
                             HttpServer server = super.createHttpServer(configuration, cairoEngine, workerPool, sharedWorkerCount);
                             if (server != null) {
-                                server.bind(new HttpRequestProcessorFactory() {
+                                server.bind(new HttpRequestHandlerFactory() {
                                     @Override
                                     public ObjList<String> getUrls() {
                                         return new ObjList<>(ILP_TEST_PATH);
                                     }
 
                                     @Override
-                                    public HttpRequestProcessor newInstance() {
+                                    public HttpRequestHandler newInstance() {
                                         return new LineHttpProcessorImpl(
                                                 cairoEngine,
                                                 configuration.getHttpServerConfiguration().getRecvBufferSize(),
@@ -321,14 +321,14 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                         public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool workerPool, int sharedWorkerCount) {
                             HttpServer server = super.createHttpServer(configuration, cairoEngine, workerPool, sharedWorkerCount);
                             if (server != null) {
-                                server.bind(new HttpRequestProcessorFactory() {
+                                server.bind(new HttpRequestHandlerFactory() {
                                     @Override
                                     public ObjList<String> getUrls() {
                                         return new ObjList<>(EXEC_TEST_URI);
                                     }
 
                                     @Override
-                                    public HttpRequestProcessor newInstance() {
+                                    public HttpRequestHandler newInstance() {
                                         return new JsonQueryProcessor(
                                                 configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration(),
                                                 cairoEngine,
