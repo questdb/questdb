@@ -25,18 +25,27 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpMultipartContentListener;
+import io.questdb.cutlass.http.HttpMultipartContentProcessor;
 import io.questdb.cutlass.http.HttpRequestHeader;
-import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.str.Utf16Sink;
 
-public interface RejectProcessor extends HttpRequestProcessor, HttpMultipartContentListener {
+import static io.questdb.cutlass.http.HttpRequestValidator.ALL;
+import static io.questdb.cutlass.http.HttpRequestValidator.INVALID;
+
+public interface RejectProcessor extends HttpMultipartContentProcessor {
 
     void clear();
+
+    Utf16Sink getMessageSink();
+
+    @Override
+    default short getSupportedRequestTypes() {
+        return ALL | INVALID;
+    }
 
     boolean isRequestBeingRejected();
 
@@ -53,16 +62,14 @@ public interface RejectProcessor extends HttpRequestProcessor, HttpMultipartCont
 
     RejectProcessor reject(int rejectCode, CharSequence rejectMessage);
 
-    Utf16Sink getMessageSink();
+    default void resumeSend(HttpConnectionContext context)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+        onRequestComplete(context);
+    }
 
     RejectProcessor withAuthenticationType(byte authenticationType);
 
     RejectProcessor withCookie(CharSequence cookieName, CharSequence cookieValue);
 
     RejectProcessor withShutdownWrite();
-
-    default void resumeSend(HttpConnectionContext context)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
-        onRequestComplete(context);
-    }
 }
