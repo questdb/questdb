@@ -94,7 +94,6 @@ public class MatViewTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_INTERVAL_JOB_WHEEL_SIZE, "4");
         if (rowsPerQuery > 0) {
             setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         }
@@ -2013,6 +2012,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testManyTimerMatViews() throws Exception {
+        randomizeWheelSize();
         assertMemoryLeak(() -> {
             final int views = 32;
             final long start = parseFloorPartialTimestamp("2024-12-12T00:00:00.000000Z");
@@ -3349,6 +3349,12 @@ public class MatViewTest extends AbstractCairoTest {
         execute("drop materialized view if exists price_1h_" + n + ";");
     }
 
+    private static void randomizeWheelSize() {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int wheelSize = 1 << rnd.nextInt(6);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_INTERVAL_JOB_WHEEL_SIZE, wheelSize);
+    }
+
     private String copySql(int from, int count) {
         return "select * from tmp where n >= " + from + " and n < " + (from + count);
     }
@@ -3580,6 +3586,7 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     private void testTimerMatViewBigJumps(String start, String initialClock, long clockJump) throws Exception {
+        randomizeWheelSize();
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
@@ -3636,6 +3643,7 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     private void testTimerMatViewSmallJumps(String start, String every, String initialClock, long clockJump, int ticksBeforeRefresh) throws Exception {
+        randomizeWheelSize();
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
