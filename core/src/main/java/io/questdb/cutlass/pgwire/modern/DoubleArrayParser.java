@@ -194,7 +194,10 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
 
     private void updateShapeInfo(int depth, int currentCount, int position) {
         if (shape.size() <= depth) {
-            shape.extendAndSet(depth, currentCount);
+            for (int i = shape.size(); i < depth; i++) {
+                shape.add(0);
+            }
+            shape.add(currentCount);
         } else {
             int alreadyObservedCount = shape.getQuick(depth);
             if (alreadyObservedCount == 0) {
