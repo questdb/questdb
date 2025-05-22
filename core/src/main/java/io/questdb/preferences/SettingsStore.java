@@ -87,7 +87,7 @@ public class SettingsStore implements Closeable {
         this.listener = listener;
 
         // call the listener with current state,
-        // it will also be called on subsequent updates
+        // it will be called on subsequent updates too
         listener.update(preferencesMap);
     }
 
