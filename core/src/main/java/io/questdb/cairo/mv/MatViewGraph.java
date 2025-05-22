@@ -163,7 +163,7 @@ public class MatViewGraph implements Mutable {
                 var matViews = viewList.lockForWrite();
                 try {
                     for (int i = 0, n = matViews.size(); i < n; i++) {
-                        if (matViews.get(i).getDirName().equals(updatedToken.getDirName())) {
+                        if (Chars.equalsIgnoreCase(matViews.get(i).getDirName(), updatedToken.getDirName())) {
                             matViews.set(i, updatedToken);
                             return;
                         }
