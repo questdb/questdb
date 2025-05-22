@@ -110,31 +110,33 @@ public class MatViewTimerJob extends SynchronizedJob {
             ran = true;
         }
         // process ticks
-        ran |= timingWheel.tick(expired);
-        for (int i = 0, n = expired.size(); i < n; i++) {
-            final MatViewTimingWheel.Timer timer = expired.getQuick(i);
-            final MatViewDefinition viewDefinition = timer.getViewDefinition();
-            final TableToken viewToken = viewDefinition.getMatViewToken();
-            final MatViewState state = matViewStateStore.getViewState(viewToken);
-            if (state != null) {
-                if (state.isDropped()) {
-                    removeTimer(viewToken);
-                } else if (state.isPendingInvalidation() || state.isInvalid()) {
-                    // The view is about to become invalid or already invalid.
-                    // Reset the cached txn, so that we refresh the view as soon as it becomes valid.
-                    timer.resetKnownRefreshBaseTxn();
-                } else {
-                    // Check if the view has refreshed since the last timer expiration.
-                    // If not, don't schedule refresh to avoid unbounded growth of the queue.
-                    final long lastRefreshBaseTxn = state.getLastRefreshBaseTxn();
-                    if (timer.getKnownRefreshBaseTxn() != lastRefreshBaseTxn) {
-                        matViewStateStore.enqueueIncrementalRefresh(viewToken);
-                        timer.setKnownRefreshBaseTxn(lastRefreshBaseTxn);
+        while (timingWheel.tick(expired)) {
+            for (int i = 0, n = expired.size(); i < n; i++) {
+                final MatViewTimingWheel.Timer timer = expired.getQuick(i);
+                final MatViewDefinition viewDefinition = timer.getViewDefinition();
+                final TableToken viewToken = viewDefinition.getMatViewToken();
+                final MatViewState state = matViewStateStore.getViewState(viewToken);
+                if (state != null) {
+                    if (state.isDropped()) {
+                        removeTimer(viewToken);
+                    } else if (state.isPendingInvalidation() || state.isInvalid()) {
+                        // The view is about to become invalid or already invalid.
+                        // Reset the cached txn, so that we refresh the view as soon as it becomes valid.
+                        timer.resetKnownRefreshBaseTxn();
+                    } else {
+                        // Check if the view has refreshed since the last timer expiration.
+                        // If not, don't schedule refresh to avoid unbounded growth of the queue.
+                        final long lastRefreshBaseTxn = state.getLastRefreshBaseTxn();
+                        if (timer.getKnownRefreshBaseTxn() != lastRefreshBaseTxn) {
+                            matViewStateStore.enqueueIncrementalRefresh(viewToken);
+                            timer.setKnownRefreshBaseTxn(lastRefreshBaseTxn);
+                        }
                     }
+                } else {
+                    LOG.info().$("state for materialized view not found [view=").$(viewToken).I$();
                 }
-            } else {
-                LOG.info().$("state for materialized view not found [view=").$(viewToken).I$();
             }
+            ran = true;
         }
         return ran;
     }
