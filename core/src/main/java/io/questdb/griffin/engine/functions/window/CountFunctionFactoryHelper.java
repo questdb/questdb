@@ -54,10 +54,10 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 public class CountFunctionFactoryHelper {
-    static final String COUNT_NAME = "count";
     public static final ArrayColumnTypes COUNT_COLUMN_TYPES;
     public static final ArrayColumnTypes COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES;
     public static final ArrayColumnTypes COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES;
+    static final String COUNT_NAME = "count";
 
     static Function newCountWindowFunction(AbstractWindowFunctionFactory factory,
                                            int position,
@@ -73,6 +73,15 @@ public class CountFunctionFactoryHelper {
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
+        if (rowsHi < rowsLo) {
+            return new AbstractWindowFunctionFactory.LongNullFunction(args.get(0),
+                    CountFunctionFactoryHelper.COUNT_NAME,
+                    rowsLo,
+                    rowsHi,
+                    framingMode == WindowColumn.FRAMING_RANGE,
+                    partitionByRecord,
+                    0);
+        }
 
         if (partitionByRecord != null) {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
@@ -276,7 +285,7 @@ public class CountFunctionFactoryHelper {
         boolean isNotNull(Function arg, Record record);
     }
 
-    static class CountOverCurrentRowFunction extends BaseLongWindowFunction {
+    static class CountOverCurrentRowFunction extends BaseWindowFunction implements WindowLongFunction {
 
         private static final long VALUE_ONE = 1L;
         private static final long VALUE_ZERO = 0L;
@@ -304,6 +313,7 @@ public class CountFunctionFactoryHelper {
             return ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
@@ -312,7 +322,7 @@ public class CountFunctionFactoryHelper {
 
     // handles count(arg) over (partition by x)
     // order by is absent so default frame mode includes all rows in partition
-    static class CountOverPartitionFunction extends BasePartitionedLongWindowFunction {
+    static class CountOverPartitionFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
         private final IsRecordNotNull isNotNullFunc;
 
@@ -330,6 +340,7 @@ public class CountFunctionFactoryHelper {
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
         }
+
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -361,20 +372,20 @@ public class CountFunctionFactoryHelper {
     }
 
     // Handles count(arg) over (partition by x order by ts range between [undobuned | y] preceding and [z preceding | current row])
-    public static class CountOverPartitionRangeFrameFunction extends BasePartitionedLongWindowFunction {
+    public static class CountOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
         private static final int RECORD_SIZE = Long.BYTES;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
+        private final IsRecordNotNull isNotNullFunc;
         private final long maxDiff;
         private final MemoryARW memory;
+        private final AbstractWindowFunctionFactory.RingBufferDesc memoryDesc = new AbstractWindowFunctionFactory.RingBufferDesc();
         private final long minDiff;
         private final int timestampIndex;
-        private final IsRecordNotNull isNotNullFunc;
         private long count;
-        private final AbstractWindowFunctionFactory.RingBufferDesc memoryDesc = new AbstractWindowFunctionFactory.RingBufferDesc();
 
         public CountOverPartitionRangeFrameFunction(
                 Map map,
@@ -404,11 +415,6 @@ public class CountFunctionFactoryHelper {
             super.close();
             memory.close();
             freeList.clear();
-        }
-
-        @Override
-        public String getName() {
-            return CountFunctionFactoryHelper.COUNT_NAME;
         }
 
         @Override
@@ -536,9 +542,15 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
+        public String getName() {
+            return CountFunctionFactoryHelper.COUNT_NAME;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
+
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -594,7 +606,7 @@ public class CountFunctionFactoryHelper {
     }
 
     // handles count(arg) over (partition by x [order by o] rows between y and z)
-    public static class CountOverPartitionRowsFrameFunction extends BasePartitionedLongWindowFunction {
+    public static class CountOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
@@ -603,9 +615,9 @@ public class CountFunctionFactoryHelper {
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        private final IsRecordNotNull isRecordNotNull;
         // holds fixed-size ring buffers of boolean values
         private final MemoryARW memory;
-        private final IsRecordNotNull isRecordNotNull;
         protected long count;
 
         public CountOverPartitionRowsFrameFunction(
@@ -706,6 +718,7 @@ public class CountFunctionFactoryHelper {
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -759,19 +772,19 @@ public class CountFunctionFactoryHelper {
     }
 
     // Handles count(arg) over ([order by ts] range between [unbounded | x] preceding and [ x preceding | current row ] ); no partition by key
-    public static class CountOverRangeFrameFunction extends BaseLongWindowFunction implements Reopenable {
+    public static class CountOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowLongFunction {
         private static final int RECORD_SIZE = Long.BYTES;
         private final boolean frameLoBounded;
         private final long initialCapacity;
+        private final IsRecordNotNull isRecordNotNull;
         private final long maxDiff;
         // holds resizable ring buffers
         // actual frame data - [timestamp] - is stored in mem at [ offset + first_idx*8, offset + last_idx*8]
         private final MemoryARW memory;
         private final long minDiff;
         private final int timestampIndex;
-        private final IsRecordNotNull isRecordNotNull;
-        private long count;
         private long capacity;
+        private long count;
         private long firstIdx;
         private long size;
         private long startOffset;
@@ -903,6 +916,7 @@ public class CountFunctionFactoryHelper {
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             throw new UnsupportedOperationException();
@@ -955,13 +969,13 @@ public class CountFunctionFactoryHelper {
     }
 
     // Handles count(arg) over ([order by o] rows between y and z); there's no partition by.
-    public static class CountOverRowsFrameFunction extends BaseLongWindowFunction implements Reopenable {
+    public static class CountOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowLongFunction {
         private final MemoryARW buffer;
         private final int bufferSize;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
-        private final IsRecordNotNull isRecordNotNull;
         private final int frameSize;
+        private final IsRecordNotNull isRecordNotNull;
         private long count = 0;
         private long lastcount = 0;
         private int loIdx = 0;
@@ -1039,6 +1053,7 @@ public class CountFunctionFactoryHelper {
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -1105,9 +1120,9 @@ public class CountFunctionFactoryHelper {
 
     // count(arg) over (partition by x order by ts range between unbounded preceding and current row)
 // Doesn't require ts buffering.
-    static class CountOverUnboundedPartitionRowsFrameFunction extends BasePartitionedLongWindowFunction {
-        private long count;
+    static class CountOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
         private final IsRecordNotNull isRecordNotNull;
+        private long count;
 
         public CountOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, IsRecordNotNull isRecordNotNull) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -1146,6 +1161,7 @@ public class CountFunctionFactoryHelper {
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -1168,7 +1184,7 @@ public class CountFunctionFactoryHelper {
     }
 
     // Handles count(arg) over (rows between unbounded preceding and current row); there's no partition by.
-    static public class CountOverUnboundedRowsFrameFunction extends BaseLongWindowFunction {
+    static public class CountOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowLongFunction {
 
         private final IsRecordNotNull isRecordNotNull;
         private long count = 0;
@@ -1199,6 +1215,7 @@ public class CountFunctionFactoryHelper {
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
+
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -1231,7 +1248,7 @@ public class CountFunctionFactoryHelper {
     }
 
     // count(arg) over () - empty clause, no partition by no order by, no frame == default frame
-    static class CountOverWholeResultSetFunction extends BaseLongWindowFunction {
+    static class CountOverWholeResultSetFunction extends BaseWindowFunction implements WindowLongFunction {
         private final IsRecordNotNull isRecordNotNull;
         private long count;
 
@@ -1249,6 +1266,7 @@ public class CountFunctionFactoryHelper {
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
         }
+
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
