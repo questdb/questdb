@@ -22,8 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.griffin.engine.functions.window;
 
-public interface TextImportProcessorConfiguration {
-    boolean abortBrokenUploads();
+import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.engine.window.WindowFunction;
+
+public interface WindowDoubleFunction extends WindowFunction {
+    @Override
+    default int getType() {
+        return ColumnType.DOUBLE;
+    }
 }

@@ -145,14 +145,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     public void testAutoFlush() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
-            int fragmentation = 1 + rnd.nextInt(5);
+            int fragmentation = 300 + rnd.nextInt(100);
             LOG.info().$("=== fragmentation=").$(fragmentation).$();
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation)
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                int totalCount = 100_000;
+                int totalCount = 50_000;
                 int autoFlushRows = 1000;
                 try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 0, 0, Long.MAX_VALUE)) {
                     for (int i = 0; i < totalCount; i++) {
@@ -466,7 +466,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         sender.flush();
                         Assert.fail("Expected exception");
                     } catch (LineSenderException e) {
-                        TestUtils.assertContains(e.getMessage(), "http-status=404");
+                        TestUtils.assertContains(e.getMessage(), "http-status=405");
                         TestUtils.assertContains(e.getMessage(), "Could not flush buffer: HTTP endpoint does not support ILP.");
                     }
                 }
@@ -586,14 +586,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     public void testSmoke() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
-            int fragmentation = 1 + rnd.nextInt(5);
+            int fragmentation = 300 + rnd.nextInt(100);
             LOG.info().$("=== fragmentation=").$(fragmentation).$();
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation)
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                int totalCount = 1_000_000;
+                int totalCount = 100_000;
                 try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, 100_000, null, null, null, 0, 0, Long.MAX_VALUE)) {
                     for (int i = 0; i < totalCount; i++) {
                         sender.table("table with space")

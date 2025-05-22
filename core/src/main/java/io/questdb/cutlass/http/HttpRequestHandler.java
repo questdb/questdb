@@ -22,22 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.cutlass.http;
 
-import io.questdb.Metrics;
-import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.metrics.AtomicLongGauge;
+public interface HttpRequestHandler {
 
-public interface LineHttpProcessor extends HttpRequestProcessor {
-
-    @Override
-    default AtomicLongGauge connectionCountGauge(Metrics metrics) {
-        return metrics.lineMetrics().httpConnectionCountGauge();
+    default HttpRequestProcessor getDefaultProcessor() {
+        return null;
     }
 
-    @Override
-    default int getConnectionLimit(HttpContextConfiguration configuration) {
-        return configuration.getIlpConnectionLimit();
-    }
+    HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader);
 }

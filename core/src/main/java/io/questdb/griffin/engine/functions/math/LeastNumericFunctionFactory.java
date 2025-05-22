@@ -50,7 +50,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Arrays;
 
 public class LeastNumericFunctionFactory implements FunctionFactory {
-    private static final ThreadLocal<int[]> tlCounters = ThreadLocal.withInitial(() -> new int[ColumnType.NULL]);
+    private static final ThreadLocal<int[]> tlCounters = ThreadLocal.withInitial(() -> new int[ColumnType.NULL + 1]);
 
     @Override
     public String getSignature() {
@@ -68,11 +68,16 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         final int[] counters = tlCounters.get();
         Arrays.fill(counters, 0);
 
-        for (int i = 0; i < args.size(); i++) {
+        final int argCount;
+        if (args == null || (argCount = args.size()) == 0) {
+            throw SqlException.$(position, "at least one argument is required by LEAST(V)");
+        }
+
+        for (int i = 0; i < argCount; i++) {
             final Function arg = args.getQuick(i);
             final int type = arg.getType();
 
-            switch (type) {
+            switch (ColumnType.tagOf(type)) {
                 case ColumnType.FLOAT:
                 case ColumnType.DOUBLE:
                 case ColumnType.LONG:
@@ -81,14 +86,16 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
                 case ColumnType.BYTE:
                 case ColumnType.DATE:
                 case ColumnType.TIMESTAMP:
+                case ColumnType.NULL:
                     counters[type]++;
                     continue;
                 default:
-                    if (arg.isNullConstant()) {
-                        return NullConstant.NULL;
-                    }
                     throw SqlException.position(argPositions.getQuick(i)).put("unsupported type: ").put(ColumnType.nameOf(type));
             }
+        }
+
+        if (counters[ColumnType.NULL] == argCount) {
+            return NullConstant.NULL;
         }
 
         // have to copy, args is mutable
@@ -137,9 +144,11 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
 
     private static class LeastDoubleRecordFunction extends DoubleFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final int n;
 
         public LeastDoubleRecordFunction(ObjList<Function> args) {
             this.args = args;
+            this.n = args.size();
         }
 
         @Override
@@ -149,13 +158,12 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            double value = Double.MAX_VALUE;
-            for (int i = 0, n = args.size(); i < n; i++) {
+            double value = Double.POSITIVE_INFINITY;
+            for (int i = 0; i < n; i++) {
                 final double v = args.getQuick(i).getDouble(rec);
-                if (Numbers.isNull(v)) {
-                    return Double.NaN;
+                if (!Numbers.isNull(v)) {
+                    value = Math.min(value, v);
                 }
-                value = Math.min(value, v);
             }
             return value;
         }
@@ -168,9 +176,11 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
 
     private static class LeastLongRecordFunction extends LongFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final int n;
 
         public LeastLongRecordFunction(ObjList<Function> args) {
             this.args = args;
+            this.n = args.size();
         }
 
         @Override
@@ -181,14 +191,15 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             long value = Long.MAX_VALUE;
-            for (int i = 0, n = args.size(); i < n; i++) {
+            boolean foundValidValue = false;
+            for (int i = 0; i < n; i++) {
                 final long v = args.getQuick(i).getLong(rec);
-                if (v == Long.MIN_VALUE) {
-                    return Long.MIN_VALUE;
+                if (v != Numbers.LONG_NULL) {
+                    foundValidValue = true;
+                    value = Math.min(value, v);
                 }
-                value = Math.min(value, v);
             }
-            return value;
+            return foundValidValue ? value : Numbers.LONG_NULL;
         }
 
         @Override
