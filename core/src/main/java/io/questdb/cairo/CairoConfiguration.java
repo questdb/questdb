@@ -742,4 +742,6 @@ public interface CairoConfiguration {
     boolean mangleTableDirNames();
 
     boolean useFastAsOfJoin();
+
+    boolean useWithinLatestByOptimisation();
 }
