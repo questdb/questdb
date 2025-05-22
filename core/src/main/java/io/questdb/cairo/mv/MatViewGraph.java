@@ -50,7 +50,7 @@ public class MatViewGraph implements Mutable {
     private static final ThreadLocal<LowerCaseCharSequenceHashSet> tlSeen = new ThreadLocal<>(LowerCaseCharSequenceHashSet::new);
     private static final ThreadLocal<ArrayDeque<CharSequence>> tlStack = new ThreadLocal<>(ArrayDeque::new);
     private final Function<CharSequence, MatViewDependencyList> createDependencyList;
-    private final ConcurrentHashMap<MatViewDefinition> definitionByTableDirName = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<MatViewDefinition> definitionsByTableDirName = new ConcurrentHashMap<>();
     // Note: this map is grow-only, i.e. keys are never removed.
     private final ConcurrentHashMap<MatViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
     private final Queue<MatViewRefreshIntervalTask> refreshIntervalQueue;
@@ -62,7 +62,7 @@ public class MatViewGraph implements Mutable {
 
     public boolean addView(MatViewDefinition viewDefinition) {
         final TableToken matViewToken = viewDefinition.getMatViewToken();
-        final MatViewDefinition prevDefinition = definitionByTableDirName.putIfAbsent(matViewToken.getDirName(), viewDefinition);
+        final MatViewDefinition prevDefinition = definitionsByTableDirName.putIfAbsent(matViewToken.getDirName(), viewDefinition);
         // WAL table directories are unique, so we don't expect previous value
         if (prevDefinition != null) {
             return false;
@@ -91,7 +91,7 @@ public class MatViewGraph implements Mutable {
     @TestOnly
     @Override
     public void clear() {
-        definitionByTableDirName.clear();
+        definitionsByTableDirName.clear();
         dependentViewsByTableName.clear();
     }
 
@@ -106,11 +106,11 @@ public class MatViewGraph implements Mutable {
     }
 
     public MatViewDefinition getViewDefinition(TableToken matViewToken) {
-        return definitionByTableDirName.get(matViewToken.getDirName());
+        return definitionsByTableDirName.get(matViewToken.getDirName());
     }
 
     public void getViews(ObjList<TableToken> sink) {
-        for (MatViewDefinition viewDefinition : definitionByTableDirName.values()) {
+        for (MatViewDefinition viewDefinition : definitionsByTableDirName.values()) {
             sink.add(viewDefinition.getMatViewToken());
         }
     }
@@ -139,7 +139,7 @@ public class MatViewGraph implements Mutable {
     }
 
     public void removeView(TableToken matViewToken) {
-        final MatViewDefinition viewDefinition = definitionByTableDirName.remove(matViewToken.getDirName());
+        final MatViewDefinition viewDefinition = definitionsByTableDirName.remove(matViewToken.getDirName());
         if (viewDefinition != null) {
             final CharSequence baseTableName = viewDefinition.getBaseTableName();
             final MatViewDependencyList dependentViews = dependentViewsByTableName.get(baseTableName);

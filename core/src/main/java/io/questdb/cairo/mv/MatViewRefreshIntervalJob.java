@@ -31,8 +31,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Queue;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjObjHashMap;
 
 /**
  * Acts as an incremental refresh scheduler for mat views with interval refresh.
@@ -43,8 +43,8 @@ public class MatViewRefreshIntervalJob extends SynchronizedJob {
     private final MatViewGraph matViewGraph;
     private final MatViewStateStore matViewStateStore;
     private final MatViewRefreshIntervalTask refreshIntervalTask = new MatViewRefreshIntervalTask();
-    private final ObjObjHashMap<TableToken, RefreshIntervalTimingWheel.Timer> refreshIntervalTimers = new ObjObjHashMap<>();
     private final Queue<MatViewRefreshIntervalTask> taskQueue;
+    private final CharSequenceObjHashMap<RefreshIntervalTimingWheel.Timer> timersByTableDirName = new CharSequenceObjHashMap<>();
     private final RefreshIntervalTimingWheel timingWheel;
 
     public MatViewRefreshIntervalJob(CairoEngine engine) {
@@ -67,7 +67,7 @@ public class MatViewRefreshIntervalJob extends SynchronizedJob {
         }
         try {
             final RefreshIntervalTimingWheel.Timer newTimer = timingWheel.addRefreshInterval(viewDefinition);
-            refreshIntervalTimers.put(viewToken, newTimer);
+            timersByTableDirName.put(viewToken.getDirName(), newTimer);
         } catch (Throwable th) {
             LOG.error()
                     .$("could not initialize timer for materialized view [view=").$(viewToken)
@@ -77,10 +77,10 @@ public class MatViewRefreshIntervalJob extends SynchronizedJob {
     }
 
     private void removeTimer(TableToken viewToken) {
-        final RefreshIntervalTimingWheel.Timer existingTimer = refreshIntervalTimers.get(viewToken);
+        final RefreshIntervalTimingWheel.Timer existingTimer = timersByTableDirName.get(viewToken.getDirName());
         if (existingTimer != null) {
             existingTimer.remove();
-            refreshIntervalTimers.remove(viewToken);
+            timersByTableDirName.remove(viewToken.getDirName());
         } else {
             LOG.info().$("refresh interval timer for materialized view not found [view=").$(viewToken).I$();
         }
