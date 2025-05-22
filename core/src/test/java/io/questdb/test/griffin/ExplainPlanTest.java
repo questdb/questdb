@@ -10836,7 +10836,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select '{}'::double[] from long_sequence(1)",
                     "VirtualRecord\n" +
-                            "  functions: ['{}'::double[]]\n" +
+                            "  functions: ['{}'::DOUBLE[]]\n" +
                             "    long_sequence count: 1\n"
             );
 
@@ -10844,7 +10844,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select '{}'::double[][][] from long_sequence(1)",
                     "VirtualRecord\n" +
-                            "  functions: ['{}'::double[][][]]\n" +
+                            "  functions: ['{}'::DOUBLE[][][]]\n" +
                             "    long_sequence count: 1\n"
             );
         });
