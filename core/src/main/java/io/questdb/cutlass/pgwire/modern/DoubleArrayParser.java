@@ -75,6 +75,7 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
         values.clear();
         shape.clear();
         strides.clear();
+        flatViewLength = 0;
         if (input == null) {
             type = ColumnType.NULL;
             return;
