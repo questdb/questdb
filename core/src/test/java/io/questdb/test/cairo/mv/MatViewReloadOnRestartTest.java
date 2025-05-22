@@ -31,9 +31,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewRefreshIntervalJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
@@ -63,7 +63,6 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.test.tools.TestUtils.assertContains;
 
 
-// TODO(puzpuzpuz): cover refresh interval after reload
 public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
     @Before
@@ -565,7 +564,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testRefreshIntervalMatViewsReloadOnServerStart1() throws Exception {
+    public void testTimerMatViewsReloadOnServerStart1() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String startStr = "2024-12-12T00:00:00.000000Z";
             final long start = TimestampFormatUtils.parseUTCTimestamp(startStr);
@@ -600,8 +599,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
 
                 try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
-                    MatViewRefreshIntervalJob refreshIntervalJob = new MatViewRefreshIntervalJob(main1.getEngine());
-                    drainMatViewIntervalQueue(refreshIntervalJob);
+                    MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
+                    drainMatViewTimerQueue(timerJob);
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
 
                     assertSql(
@@ -623,8 +622,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ",('gbpusd', 1.444, '2024-09-10T13:03')"
                 );
 
-                MatViewRefreshIntervalJob refreshIntervalJob = new MatViewRefreshIntervalJob(main2.getEngine());
-                drainMatViewIntervalQueue(refreshIntervalJob);
+                MatViewTimerJob timerJob = new MatViewTimerJob(main2.getEngine());
+                drainMatViewTimerQueue(timerJob);
                 drainWalAndMatViewQueues(main2.getEngine());
 
                 final String secondExpected = "sym\tprice\tts\n" +
@@ -639,14 +638,14 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testRefreshIntervalMatViewsReloadOnServerStart2() throws Exception {
+    public void testTimerMatViewsReloadOnServerStart2() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String startStr = "2024-12-12T00:00:00.000000Z";
             final long start = TimestampFormatUtils.parseUTCTimestamp(startStr);
             // Set the clock to an earlier timestamp.
             final TestMicrosecondClock testClock = new TestMicrosecondClock(start - Timestamps.DAY_MICROS);
 
-            // Interval refresh should not kick in during the first server start.
+            // Timer refresh should not kick in during the first server start.
             final String firstExpected = "sym\tprice\tts\n";
 
             try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
@@ -673,8 +672,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
 
                 try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
-                    MatViewRefreshIntervalJob refreshIntervalJob = new MatViewRefreshIntervalJob(main1.getEngine());
-                    drainMatViewIntervalQueue(refreshIntervalJob);
+                    MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
+                    drainMatViewTimerQueue(timerJob);
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
 
                     assertSql(
@@ -685,13 +684,13 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 }
             }
 
-            // Now the interval refresh should happen.
+            // Now the timer refresh should happen.
             testClock.micros.set(start);
             try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
                 assertSql(main2, firstExpected, "price_1h order by ts, sym");
 
-                MatViewRefreshIntervalJob refreshIntervalJob = new MatViewRefreshIntervalJob(main2.getEngine());
-                drainMatViewIntervalQueue(refreshIntervalJob);
+                MatViewTimerJob timerJob = new MatViewTimerJob(main2.getEngine());
+                drainMatViewTimerQueue(timerJob);
                 drainWalAndMatViewQueues(main2.getEngine());
 
                 final String secondExpected = "sym\tprice\tts\n" +

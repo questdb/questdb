@@ -384,8 +384,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             query +
                             ") PARTITION BY YEAR;"
             );
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_INTERVAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, startEpoch, 5, 'm');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_INTERVAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, startEpoch, 5, 'm');
+            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, startEpoch, 5, 'm');
+            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, startEpoch, 5, 'm');
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
@@ -409,8 +409,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             query +
                             ") PARTITION BY YEAR;"
             );
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_INTERVAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, startEpoch, 5, 'm');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_INTERVAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, startEpoch, 5, 'm');
+            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, startEpoch, 5, 'm');
+            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, startEpoch, 5, 'm');
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());

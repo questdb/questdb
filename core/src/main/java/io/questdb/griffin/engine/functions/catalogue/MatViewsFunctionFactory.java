@@ -81,7 +81,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         };
     }
 
-    private static String getRefreshIntervalUnit(char unit) {
+    private static String getTimerIntervalUnit(char unit) {
         switch (unit) {
             case 'm':
                 return "MINUTE";
@@ -114,9 +114,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_LAST_APPLIED_BASE_TABLE_TXN = COLUMN_LAST_REFRESH_BASE_TABLE_TXN + 1;
         private static final int COLUMN_REFRESH_LIMIT_VALUE = COLUMN_LAST_APPLIED_BASE_TABLE_TXN + 1;
         private static final int COLUMN_REFRESH_LIMIT_UNIT = COLUMN_REFRESH_LIMIT_VALUE + 1;
-        private static final int COLUMN_REFRESH_INTERVAL_START = COLUMN_REFRESH_LIMIT_UNIT + 1;
-        private static final int COLUMN_REFRESH_INTERVAL_VALUE = COLUMN_REFRESH_INTERVAL_START + 1;
-        private static final int COLUMN_REFRESH_INTERVAL_UNIT = COLUMN_REFRESH_INTERVAL_VALUE + 1;
+        private static final int COLUMN_TIMER_START = COLUMN_REFRESH_LIMIT_UNIT + 1;
+        private static final int COLUMN_TIMER_INTERVAL_VALUE = COLUMN_TIMER_START + 1;
+        private static final int COLUMN_TIMER_INTERVAL_UNIT = COLUMN_TIMER_INTERVAL_VALUE + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor = new ViewsListCursor();
 
@@ -250,10 +250,10 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 private long lastRefreshFinishTimestamp;
                 private long lastRefreshStartTimestamp;
                 private long lastRefreshTxn;
-                private long refreshIntervalStart;
-                private char refreshIntervalUnit;
-                private int refreshIntervalValue;
                 private int refreshLimitHoursOrMonths;
+                private char timerIntervalUnit;
+                private int timerIntervalValue;
+                private long timerStart;
                 private MatViewDefinition viewDefinition;
 
                 @Override
@@ -261,8 +261,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     switch (col) {
                         case COLUMN_REFRESH_LIMIT_VALUE:
                             return TablesFunctionFactory.getTtlValue(refreshLimitHoursOrMonths);
-                        case COLUMN_REFRESH_INTERVAL_VALUE:
-                            return refreshIntervalValue;
+                        case COLUMN_TIMER_INTERVAL_VALUE:
+                            return timerIntervalValue;
                         default:
                             return 0;
                     }
@@ -279,8 +279,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             return lastRefreshTxn;
                         case COLUMN_LAST_APPLIED_BASE_TABLE_TXN:
                             return lastAppliedBaseTxn;
-                        case COLUMN_REFRESH_INTERVAL_START:
-                            return refreshIntervalStart;
+                        case COLUMN_TIMER_START:
+                            return timerStart;
                         default:
                             return 0;
                     }
@@ -295,8 +295,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             switch (viewDefinition.getRefreshType()) {
                                 case MatViewDefinition.INCREMENTAL_REFRESH_TYPE:
                                     return "incremental";
-                                case MatViewDefinition.INCREMENTAL_INTERVAL_REFRESH_TYPE:
-                                    return "incremental_interval";
+                                case MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE:
+                                    return "incremental_timer";
                                 default:
                                     return "unknown";
                             }
@@ -312,8 +312,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             return invalidationReason.length() > 0 ? invalidationReason : null;
                         case COLUMN_REFRESH_LIMIT_UNIT:
                             return TablesFunctionFactory.getTtlUnit(refreshLimitHoursOrMonths);
-                        case COLUMN_REFRESH_INTERVAL_UNIT:
-                            return getRefreshIntervalUnit(refreshIntervalUnit);
+                        case COLUMN_TIMER_INTERVAL_UNIT:
+                            return getTimerIntervalUnit(timerIntervalUnit);
                         default:
                             return null;
                     }
@@ -348,9 +348,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.invalidationReason.put(invalidationReason);
                     this.invalid = invalid;
                     this.refreshLimitHoursOrMonths = refreshLimitHoursOrMonths;
-                    this.refreshIntervalStart = viewDefinition.getIntervalStart();
-                    this.refreshIntervalValue = viewDefinition.getIntervalStride();
-                    this.refreshIntervalUnit = viewDefinition.getIntervalUnit();
+                    this.timerStart = viewDefinition.getIntervalStart();
+                    this.timerIntervalValue = viewDefinition.getIntervalStride();
+                    this.timerIntervalUnit = viewDefinition.getIntervalUnit();
                 }
 
                 private CharSequence getViewStatus() {
@@ -379,9 +379,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("base_table_txn", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_limit_value", ColumnType.INT));
             metadata.add(new TableColumnMetadata("refresh_limit_unit", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("refresh_start", ColumnType.TIMESTAMP));
-            metadata.add(new TableColumnMetadata("refresh_interval_value", ColumnType.INT));
-            metadata.add(new TableColumnMetadata("refresh_interval_unit", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("timer_start", ColumnType.TIMESTAMP));
+            metadata.add(new TableColumnMetadata("timer_interval_value", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("timer_interval_unit", ColumnType.STRING));
             METADATA = metadata;
         }
     }

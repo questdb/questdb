@@ -35,24 +35,24 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 
 /**
- * Acts as an incremental refresh scheduler for mat views with interval refresh.
+ * A scheduler for mat views with timer refresh.
  */
-public class MatViewRefreshIntervalJob extends SynchronizedJob {
-    private static final Log LOG = LogFactory.getLog(MatViewRefreshIntervalJob.class);
-    private final ObjList<RefreshIntervalTimingWheel.Timer> expired = new ObjList<>();
+public class MatViewTimerJob extends SynchronizedJob {
+    private static final Log LOG = LogFactory.getLog(MatViewTimerJob.class);
+    private final ObjList<MatViewTimingWheel.Timer> expired = new ObjList<>();
     private final MatViewGraph matViewGraph;
     private final MatViewStateStore matViewStateStore;
-    private final MatViewRefreshIntervalTask refreshIntervalTask = new MatViewRefreshIntervalTask();
-    private final Queue<MatViewRefreshIntervalTask> taskQueue;
-    private final CharSequenceObjHashMap<RefreshIntervalTimingWheel.Timer> timersByTableDirName = new CharSequenceObjHashMap<>();
-    private final RefreshIntervalTimingWheel timingWheel;
+    private final MatViewTimerTask timerTask = new MatViewTimerTask();
+    private final Queue<MatViewTimerTask> timerTaskQueue;
+    private final CharSequenceObjHashMap<MatViewTimingWheel.Timer> timersByTableDirName = new CharSequenceObjHashMap<>();
+    private final MatViewTimingWheel timingWheel;
 
-    public MatViewRefreshIntervalJob(CairoEngine engine) {
-        this.taskQueue = engine.getMatViewRefreshIntervalQueue();
+    public MatViewTimerJob(CairoEngine engine) {
+        this.timerTaskQueue = engine.getMatViewTimerQueue();
         this.matViewGraph = engine.getMatViewGraph();
         this.matViewStateStore = engine.getMatViewStateStore();
         final CairoConfiguration configuration = engine.getConfiguration();
-        this.timingWheel = new RefreshIntervalTimingWheel(
+        this.timingWheel = new MatViewTimingWheel(
                 configuration.getMicrosecondClock(),
                 configuration.getMatViewIntervalJobTick(),
                 configuration.getMatViewIntervalJobWheelSize()
@@ -66,8 +66,12 @@ public class MatViewRefreshIntervalJob extends SynchronizedJob {
             return;
         }
         try {
-            final RefreshIntervalTimingWheel.Timer newTimer = timingWheel.addRefreshInterval(viewDefinition);
+            final MatViewTimingWheel.Timer newTimer = timingWheel.addTimer(viewDefinition);
             timersByTableDirName.put(viewToken.getDirName(), newTimer);
+            LOG.info().$("registered timer for materialized view [view=").$(viewToken)
+                    .$(", start=").$ts(viewDefinition.getIntervalStart())
+                    .$(", interval=").$(viewDefinition.getIntervalStride()).$(viewDefinition.getIntervalUnit())
+                    .I$();
         } catch (Throwable th) {
             LOG.error()
                     .$("could not initialize timer for materialized view [view=").$(viewToken)
@@ -77,12 +81,13 @@ public class MatViewRefreshIntervalJob extends SynchronizedJob {
     }
 
     private void removeTimer(TableToken viewToken) {
-        final RefreshIntervalTimingWheel.Timer existingTimer = timersByTableDirName.get(viewToken.getDirName());
+        final MatViewTimingWheel.Timer existingTimer = timersByTableDirName.get(viewToken.getDirName());
         if (existingTimer != null) {
             existingTimer.remove();
             timersByTableDirName.remove(viewToken.getDirName());
+            LOG.info().$("unregistered timer for materialized view [view=").$(viewToken).I$();
         } else {
-            LOG.info().$("refresh interval timer for materialized view not found [view=").$(viewToken).I$();
+            LOG.info().$("refresh timer for materialized view not found [view=").$(viewToken).I$();
         }
     }
 
@@ -90,24 +95,24 @@ public class MatViewRefreshIntervalJob extends SynchronizedJob {
     protected boolean runSerially() {
         boolean ran = false;
         // check created/dropped event queue
-        while (taskQueue.tryDequeue(refreshIntervalTask)) {
-            final TableToken viewToken = refreshIntervalTask.getMatViewToken();
-            switch (refreshIntervalTask.getOperation()) {
-                case MatViewRefreshIntervalTask.CREATED:
+        while (timerTaskQueue.tryDequeue(timerTask)) {
+            final TableToken viewToken = timerTask.getMatViewToken();
+            switch (timerTask.getOperation()) {
+                case MatViewTimerTask.CREATED:
                     createTimer(viewToken);
                     break;
-                case MatViewRefreshIntervalTask.DROPPED:
+                case MatViewTimerTask.DROPPED:
                     removeTimer(viewToken);
                     break;
                 default:
-                    LOG.error().$("unknown refresh interval operation [op=").$(refreshIntervalTask.getOperation()).I$();
+                    LOG.error().$("unknown refresh timer operation [op=").$(timerTask.getOperation()).I$();
             }
             ran = true;
         }
         // process ticks
         ran |= timingWheel.tick(expired);
         for (int i = 0, n = expired.size(); i < n; i++) {
-            final RefreshIntervalTimingWheel.Timer timer = expired.getQuick(i);
+            final MatViewTimingWheel.Timer timer = expired.getQuick(i);
             final MatViewDefinition viewDefinition = timer.getViewDefinition();
             final TableToken viewToken = viewDefinition.getMatViewToken();
             final MatViewState state = matViewStateStore.getViewState(viewToken);

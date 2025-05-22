@@ -148,7 +148,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
             sink.putAscii(" with base ");
             sink.put(baseTableName);
         }
-        if (refreshType == MatViewDefinition.INCREMENTAL_INTERVAL_REFRESH_TYPE) {
+        if (refreshType == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
             sink.putAscii(" refresh start '");
             sink.putISODate(intervalStart);
             sink.putAscii("' every ");

@@ -28,10 +28,10 @@ import io.questdb.cairo.TableToken;
 import io.questdb.mp.ValueHolder;
 import io.questdb.std.ObjectFactory;
 
-public class MatViewRefreshIntervalTask implements ValueHolder<MatViewRefreshIntervalTask> {
+public class MatViewTimerTask implements ValueHolder<MatViewTimerTask> {
     public static final int CREATED = 0;
     public static final int DROPPED = 1;
-    public static final ObjectFactory<MatViewRefreshIntervalTask> ITEM_FACTORY = MatViewRefreshIntervalTask::new;
+    public static final ObjectFactory<MatViewTimerTask> ITEM_FACTORY = MatViewTimerTask::new;
     private TableToken matViewToken;
     private int operation = -1;
 
@@ -42,7 +42,7 @@ public class MatViewRefreshIntervalTask implements ValueHolder<MatViewRefreshInt
     }
 
     @Override
-    public void copyTo(MatViewRefreshIntervalTask dest) {
+    public void copyTo(MatViewTimerTask dest) {
         dest.matViewToken = matViewToken;
         dest.operation = operation;
     }
@@ -55,13 +55,13 @@ public class MatViewRefreshIntervalTask implements ValueHolder<MatViewRefreshInt
         return operation;
     }
 
-    public MatViewRefreshIntervalTask ofCreated(TableToken matViewToken) {
+    public MatViewTimerTask ofCreated(TableToken matViewToken) {
         this.matViewToken = matViewToken;
         this.operation = CREATED;
         return this;
     }
 
-    public MatViewRefreshIntervalTask ofDropped(TableToken matViewToken) {
+    public MatViewTimerTask ofDropped(TableToken matViewToken) {
         this.matViewToken = matViewToken;
         this.operation = DROPPED;
         return this;

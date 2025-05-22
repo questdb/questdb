@@ -364,7 +364,7 @@ public class SqlParser {
 
     private static void validateMatViewIntervalUnit(char unit, int pos) throws SqlException {
         if (unit != 'M' && unit != 'y' && unit != 'w' && unit != 'd' && unit != 'h' && unit != 'm') {
-            throw SqlException.position(pos).put("unsupported refresh interval unit: ").put(unit);
+            throw SqlException.position(pos).put("unsupported interval unit: ").put(unit);
         }
     }
 
@@ -914,7 +914,7 @@ public class SqlParser {
                 final int stride = Timestamps.getStrideMultiple(tok);
                 final char unit = Timestamps.getStrideUnit(tok);
                 validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
-                refreshType = MatViewDefinition.INCREMENTAL_INTERVAL_REFRESH_TYPE;
+                refreshType = MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE;
                 mvOpBuilder.setIntervalStart(start);
                 mvOpBuilder.setIntervalStride(stride);
                 mvOpBuilder.setIntervalUnit(unit);

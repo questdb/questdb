@@ -25,8 +25,8 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.mv.MatViewRefreshIntervalJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -180,20 +180,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testManyTablesRefreshIntervalView() throws Exception {
-        assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG);
-            setFuzzParams(rnd, 0);
-            setFuzzProperties(rnd);
-            // Refresh interval tests mess with the clock, so set the spin timeout
-            // to a large value to avoid false positive errors.
-            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, SPIN_LOCK_TIMEOUT);
-            spinLockTimeout = 10_000_000;
-            runRefreshIntervalMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4));
-        });
-    }
-
-    @Test
     public void testManyTablesRefreshJobRace() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
@@ -201,6 +187,20 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             setFuzzProperties(rnd);
             // use sleep(1) to make sure that the view is not refreshed too quickly
             runMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4), false, true);
+        });
+    }
+
+    @Test
+    public void testManyTablesTimerView() throws Exception {
+        assertMemoryLeak(() -> {
+            Rnd rnd = fuzzer.generateRandom(LOG);
+            setFuzzParams(rnd, 0);
+            setFuzzProperties(rnd);
+            // Timer refresh tests mess with the clock, so set the spin timeout
+            // to a large value to avoid false positive errors.
+            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, SPIN_LOCK_TIMEOUT);
+            spinLockTimeout = 10_000_000;
+            runTimerMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4));
         });
     }
 
@@ -301,16 +301,16 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testSingleTableRefreshIntervalView() throws Exception {
+    public void testSingleTableTimerView() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0);
             setFuzzProperties(rnd);
-            // Refresh interval tests mess with the clock, so set the spin timeout
+            // Timer refresh tests mess with the clock, so set the spin timeout
             // to a large value to avoid false positive errors.
             node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 10_000_000);
             spinLockTimeout = 10_000_000;
-            runRefreshIntervalMvFuzz(rnd, getTestName(), 1);
+            runTimerMvFuzz(rnd, getTestName(), 1);
         });
     }
 
@@ -343,7 +343,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         execute("create materialized view " + mvName + " as (" + viewSql + ") partition by DAY");
     }
 
-    private static void createRefreshIntervalMatView(String viewSql, String mvName, long start, int intervalStride, char intervalUnit) throws SqlException {
+    private static void createTimerMatView(String viewSql, String mvName, long start, int intervalStride, char intervalUnit) throws SqlException {
         sink.clear();
         TimestampFormatUtils.appendDateTimeUSec(sink, start);
         execute("create materialized view " + mvName + " refresh start '" + sink + "' every " + intervalStride + intervalUnit + " as (" + viewSql + ") partition by DAY");
@@ -360,7 +360,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         return transactions;
     }
 
-    private ObjList<FuzzTransaction> createTransactionsAndRefreshIntervalMv(
+    private ObjList<FuzzTransaction> createTransactionsAndTimerMv(
             Rnd rnd,
             String tableNameBase,
             String matViewName,
@@ -370,7 +370,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             char intervalUnit
     ) throws SqlException {
         fuzzer.createInitialTable(tableNameBase, true);
-        createRefreshIntervalMatView(viewSql, matViewName, start, intervalStride, intervalUnit);
+        createTimerMatView(viewSql, matViewName, start, intervalStride, intervalUnit);
 
         ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd, start);
 
@@ -453,7 +453,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void runRefreshIntervalMvFuzz(Rnd rnd, String testTableName, int tableCount) throws Exception {
+    private void runTimerMvFuzz(Rnd rnd, String testTableName, int tableCount) throws Exception {
         final ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
         final ObjList<String> viewSqls = new ObjList<>();
 
@@ -477,20 +477,20 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final long clockJumpLimit = start + (SPIN_LOCK_TIMEOUT / clockJump);
 
         final AtomicBoolean stop = new AtomicBoolean();
-        // Refresh interval job must be created after currentMicros is set.
-        final MatViewRefreshIntervalJob refreshIntervalJob = new MatViewRefreshIntervalJob(engine);
+        // Timer refresh job must be created after currentMicros is set.
+        final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
         final ObjList<Thread> refreshJobs = new ObjList<>();
         final int refreshJobCount = 1 + rnd.nextInt(4);
 
         for (int i = 0; i < refreshJobCount; i++) {
-            refreshJobs.add(startRefreshIntervalJob(i, stop, rnd, refreshIntervalJob, clockJump, clockJumpLimit));
+            refreshJobs.add(startTimerJob(i, stop, rnd, timerJob, clockJump, clockJumpLimit));
         }
 
         for (int i = 0; i < tableCount; i++) {
             String tableNameBase = testTableName + "_" + i;
             String tableNameMv = tableNameBase + "_mv";
             String viewSql = "select min(c3), max(c3), ts from  " + tableNameBase + " sample by 1h";
-            ObjList<FuzzTransaction> transactions = createTransactionsAndRefreshIntervalMv(rnd, tableNameBase, tableNameMv, viewSql, start, intervalStride, intervalUnit);
+            ObjList<FuzzTransaction> transactions = createTransactionsAndTimerMv(rnd, tableNameBase, tableNameMv, viewSql, start, intervalStride, intervalUnit);
             fuzzTransactions.add(transactions);
             viewSqls.add(viewSql);
         }
@@ -508,7 +508,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         fuzzer.checkNoSuspendedTables();
 
         currentMicros += clockJump;
-        drainMatViewIntervalQueue(refreshIntervalJob);
+        drainMatViewTimerQueue(timerJob);
         drainWalAndMatViewQueues();
         fuzzer.checkNoSuspendedTables();
 
@@ -574,54 +574,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         );
     }
 
-    private Thread startRefreshIntervalJob(
-            int workerId,
-            AtomicBoolean stop,
-            Rnd outsideRnd,
-            MatViewRefreshIntervalJob refreshIntervalJob,
-            long clockJump,
-            long clockJumpLimit
-    ) {
-        final Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
-        final Thread th = new Thread(
-                () -> {
-                    try {
-                        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine)) {
-                            while (!stop.get()) {
-                                drainMatViewIntervalQueue(refreshIntervalJob);
-                                refreshJob.run(workerId);
-                                Os.sleep(rnd.nextInt(50));
-                                if (rnd.nextBoolean()) {
-                                    // Try to move the clock one jump forward.
-                                    long timeBefore = currentMicros;
-                                    synchronized (refreshIntervalJob) {
-                                        long timeNow = currentMicros;
-                                        if (timeBefore == timeNow && timeNow < clockJumpLimit) {
-                                            currentMicros += clockJump;
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Run one final time before stopping
-                            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                                do {
-                                    drainWalQueue(walApplyJob, engine);
-                                } while (refreshJob.run(workerId));
-                            }
-                        }
-                    } catch (Throwable throwable) {
-                        LOG.error().$("Refresh job failed: ").$(throwable).$();
-                    } finally {
-                        Path.clearThreadLocals();
-                        LOG.info().$("Refresh job stopped").$();
-                    }
-                }, "refresh-interval-job" + workerId
-        );
-        th.start();
-        return th;
-    }
-
     private Thread startRefreshJob(int workerId, AtomicBoolean stop, Rnd outsideRnd) {
         final Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
         final Thread th = new Thread(
@@ -647,6 +599,54 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         LOG.info().$("Refresh job stopped").$();
                     }
                 }, "refresh-job" + workerId
+        );
+        th.start();
+        return th;
+    }
+
+    private Thread startTimerJob(
+            int workerId,
+            AtomicBoolean stop,
+            Rnd outsideRnd,
+            MatViewTimerJob timerJob,
+            long clockJump,
+            long clockJumpLimit
+    ) {
+        final Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
+        final Thread th = new Thread(
+                () -> {
+                    try {
+                        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine)) {
+                            while (!stop.get()) {
+                                drainMatViewTimerQueue(timerJob);
+                                refreshJob.run(workerId);
+                                Os.sleep(rnd.nextInt(50));
+                                if (rnd.nextBoolean()) {
+                                    // Try to move the clock one jump forward.
+                                    long timeBefore = currentMicros;
+                                    synchronized (timerJob) {
+                                        long timeNow = currentMicros;
+                                        if (timeBefore == timeNow && timeNow < clockJumpLimit) {
+                                            currentMicros += clockJump;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Run one final time before stopping
+                            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                                do {
+                                    drainWalQueue(walApplyJob, engine);
+                                } while (refreshJob.run(workerId));
+                            }
+                        }
+                    } catch (Throwable throwable) {
+                        LOG.error().$("Refresh job failed: ").$(throwable).$();
+                    } finally {
+                        Path.clearThreadLocals();
+                        LOG.info().$("Refresh job stopped").$();
+                    }
+                }, "refresh-interval-job" + workerId
         );
         th.start();
         return th;

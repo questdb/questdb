@@ -48,8 +48,8 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public class MatViewDefinition implements Mutable {
-    public static final int INCREMENTAL_INTERVAL_REFRESH_TYPE = 1;
     public static final int INCREMENTAL_REFRESH_TYPE = 0;
+    public static final int INCREMENTAL_TIMER_REFRESH_TYPE = 1;
     public static final String MAT_VIEW_DEFINITION_FILE_NAME = "_mv";
     public static final int MAT_VIEW_DEFINITION_FORMAT_EXTRA_INTERVAL_MSG_TYPE = 1;
     public static final int MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
@@ -243,7 +243,7 @@ public class MatViewDefinition implements Mutable {
 
         long offset = 0;
         final int refreshType = block.getInt(offset);
-        if (refreshType != INCREMENTAL_REFRESH_TYPE && refreshType != INCREMENTAL_INTERVAL_REFRESH_TYPE) {
+        if (refreshType != INCREMENTAL_REFRESH_TYPE && refreshType != INCREMENTAL_TIMER_REFRESH_TYPE) {
             throw CairoException.critical(0)
                     .put("unsupported refresh type [view=")
                     .put(matViewToken.getTableName())

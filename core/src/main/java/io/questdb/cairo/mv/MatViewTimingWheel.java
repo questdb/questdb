@@ -33,13 +33,13 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 /**
- * A refresh interval timer optimized for approximated scheduling, a.k.a.
+ * A timer data structure optimized for approximated scheduling, a.k.a.
  * hashed timing wheel.
  * <p>
  * Based on George Varghese and Tony Lauck's paper, "Hashed and Hierarchical
  * Timing Wheels: data structures to efficiently implement a timer facility".
  */
-public class RefreshIntervalTimingWheel {
+public class MatViewTimingWheel {
     private final MicrosecondClock clock;
     private final int mask;
     private final ObjList<Timer> pendingTimers = new ObjList<>();
@@ -47,7 +47,7 @@ public class RefreshIntervalTimingWheel {
     private final Bucket[] wheel;
     private long tickDeadline;
 
-    public RefreshIntervalTimingWheel(MicrosecondClock clock, long tickDuration, int ticksPerWheel) {
+    public MatViewTimingWheel(MicrosecondClock clock, long tickDuration, int ticksPerWheel) {
         this.clock = clock;
         this.tickDuration = tickDuration;
         this.wheel = new Bucket[Numbers.ceilPow2(ticksPerWheel)];
@@ -59,7 +59,7 @@ public class RefreshIntervalTimingWheel {
         this.tickDeadline = now - now % tickDuration;
     }
 
-    public Timer addRefreshInterval(MatViewDefinition viewDefinition) {
+    public Timer addTimer(MatViewDefinition viewDefinition) {
         final TimestampSampler sampler;
         try {
             sampler = TimestampSamplerFactory.getInstance(viewDefinition.getIntervalStride(), viewDefinition.getIntervalUnit(), 0);

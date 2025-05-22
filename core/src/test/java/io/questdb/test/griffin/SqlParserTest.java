@@ -1867,7 +1867,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW myview REFRESH START '2010-01-01' EVERY 42U",
                 65,
-                "unsupported refresh interval unit: U"
+                "unsupported interval unit: U"
         );
     }
 
@@ -1885,7 +1885,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL START '2010-01-01' EVERY 2T;",
                 77,
-                "unsupported refresh interval unit: T"
+                "unsupported interval unit: T"
         );
     }
 
@@ -1894,7 +1894,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL EVERY 2T;",
                 58,
-                "unsupported refresh interval unit: T"
+                "unsupported interval unit: T"
         );
     }
 
@@ -1903,7 +1903,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL START '2010-01-01' EVERY 1s;",
                 77,
-                "unsupported refresh interval unit: s"
+                "unsupported interval unit: s"
         );
     }
 
@@ -1912,7 +1912,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL EVERY 1s;",
                 58,
-                "unsupported refresh interval unit: s"
+                "unsupported interval unit: s"
         );
     }
 
@@ -1921,7 +1921,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW myview REFRESH EVERY 1s;",
                 46,
-                "unsupported refresh interval unit: s"
+                "unsupported interval unit: s"
         );
     }
 

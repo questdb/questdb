@@ -46,18 +46,18 @@ import java.util.function.Function;
  * This object is always in-use, even when mat views are disabled or the node is a read-only replica.
  */
 public class MatViewGraph implements Mutable {
-    private static final ThreadLocal<MatViewRefreshIntervalTask> tlRefreshIntervalTask = new ThreadLocal<>(MatViewRefreshIntervalTask::new);
     private static final ThreadLocal<LowerCaseCharSequenceHashSet> tlSeen = new ThreadLocal<>(LowerCaseCharSequenceHashSet::new);
     private static final ThreadLocal<ArrayDeque<CharSequence>> tlStack = new ThreadLocal<>(ArrayDeque::new);
+    private static final ThreadLocal<MatViewTimerTask> tlTimerTask = new ThreadLocal<>(MatViewTimerTask::new);
     private final Function<CharSequence, MatViewDependencyList> createDependencyList;
     private final ConcurrentHashMap<MatViewDefinition> definitionsByTableDirName = new ConcurrentHashMap<>();
     // Note: this map is grow-only, i.e. keys are never removed.
     private final ConcurrentHashMap<MatViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
-    private final Queue<MatViewRefreshIntervalTask> refreshIntervalQueue;
+    private final Queue<MatViewTimerTask> timerTaskQueue;
 
-    public MatViewGraph(Queue<MatViewRefreshIntervalTask> refreshIntervalQueue) {
+    public MatViewGraph(Queue<MatViewTimerTask> timerTaskQueue) {
         this.createDependencyList = name -> new MatViewDependencyList();
-        this.refreshIntervalQueue = refreshIntervalQueue;
+        this.timerTaskQueue = timerTaskQueue;
     }
 
     public boolean addView(MatViewDefinition viewDefinition) {
@@ -83,8 +83,8 @@ public class MatViewGraph implements Mutable {
                 list.unlockAfterWrite();
             }
         }
-        final MatViewRefreshIntervalTask refreshIntervalTask = tlRefreshIntervalTask.get();
-        refreshIntervalQueue.enqueue(refreshIntervalTask.ofCreated(matViewToken));
+        final MatViewTimerTask timerTask = tlTimerTask.get();
+        timerTaskQueue.enqueue(timerTask.ofCreated(matViewToken));
         return true;
     }
 
@@ -157,8 +157,8 @@ public class MatViewGraph implements Mutable {
                     dependentViews.unlockAfterWrite();
                 }
             }
-            final MatViewRefreshIntervalTask refreshIntervalTask = tlRefreshIntervalTask.get();
-            refreshIntervalQueue.enqueue(refreshIntervalTask.ofDropped(matViewToken));
+            final MatViewTimerTask timerTask = tlTimerTask.get();
+            timerTaskQueue.enqueue(timerTask.ofDropped(matViewToken));
         }
     }
 

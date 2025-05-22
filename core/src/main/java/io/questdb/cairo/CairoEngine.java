@@ -34,12 +34,12 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
-import io.questdb.cairo.mv.MatViewRefreshIntervalTask;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
+import io.questdb.cairo.mv.MatViewTimerTask;
 import io.questdb.cairo.mv.NoOpMatViewStateStore;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
@@ -147,7 +147,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
     private final MatViewGraph matViewGraph;
-    private final Queue<MatViewRefreshIntervalTask> matViewRefreshIntervalQueue;
+    private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
     private final MetadataCache metadataCache;
     private final Metrics metrics;
@@ -202,8 +202,8 @@ public class CairoEngine implements Closeable, WriterSource {
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = createRootExecutionContext();
-            this.matViewRefreshIntervalQueue = createMatViewRefreshIntervalQueue();
-            this.matViewGraph = new MatViewGraph(matViewRefreshIntervalQueue);
+            this.matViewTimerQueue = createMatViewTimerQueue();
+            this.matViewGraph = new MatViewGraph(matViewTimerQueue);
 
             tableIdGenerator.open();
             checkpointRecover();
@@ -470,7 +470,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         matViewGraph.clear();
         matViewStateStore.clear();
-        matViewRefreshIntervalQueue.clear();
+        matViewTimerQueue.clear();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableSequencerAPI.releaseAll();
@@ -705,12 +705,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return matViewGraph;
     }
 
-    public Queue<MatViewRefreshIntervalTask> getMatViewRefreshIntervalQueue() {
-        return matViewRefreshIntervalQueue;
-    }
-
     public @NotNull MatViewStateStore getMatViewStateStore() {
         return matViewStateStore;
+    }
+
+    public Queue<MatViewTimerTask> getMatViewTimerQueue() {
+        return matViewTimerQueue;
     }
 
     public MessageBus getMessageBus() {
@@ -1780,13 +1780,13 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     // used in ent
-    protected Queue<MatViewRefreshIntervalTask> createMatViewRefreshIntervalQueue() {
-        return configuration.isMatViewEnabled() ? new ConcurrentQueue<>(MatViewRefreshIntervalTask.ITEM_FACTORY) : new NoOpQueue<>();
+    protected MatViewStateStore createMatViewStateStore() {
+        return configuration.isMatViewEnabled() ? new MatViewStateStoreImpl(this) : NoOpMatViewStateStore.INSTANCE;
     }
 
     // used in ent
-    protected MatViewStateStore createMatViewStateStore() {
-        return configuration.isMatViewEnabled() ? new MatViewStateStoreImpl(this) : NoOpMatViewStateStore.INSTANCE;
+    protected Queue<MatViewTimerTask> createMatViewTimerQueue() {
+        return configuration.isMatViewEnabled() ? new ConcurrentQueue<>(MatViewTimerTask.ITEM_FACTORY) : new NoOpQueue<>();
     }
 
     protected SqlExecutionContext createRootExecutionContext() {
