@@ -40,25 +40,41 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
+import io.questdb.preferences.PreferencesMap;
+import io.questdb.preferences.PreferencesUpdateListener;
 import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
-public class TelemetryConfigLogger implements Closeable {
+public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeable {
     public static final String OS_NAME = "os.name";
     public static final String TELEMETRY_CONFIG_TABLE_NAME = "telemetry_config";
+    private static final String INSTANCE_DESC = "instance_description";
+    private static final String INSTANCE_NAME = "instance_name";
+    private static final String INSTANCE_TYPE = "instance_type";
     private static final Log LOG = LogFactory.getLog(TelemetryConfigLogger.class);
     private static final String QDB_PACKAGE = "QDB_PACKAGE";
+    private final CairoEngine engine;
+    private final Utf8StringSink instanceDesc = new Utf8StringSink();
+    private final Utf8StringSink instanceName = new Utf8StringSink();
     private final CharSequence questDBVersion;
     private final TelemetryConfiguration telemetryConfiguration;
     private final SCSequence tempSequence = new SCSequence();
+    private TableToken configTableToken;
     private TableWriter configWriter;
+    private CharSequence instanceType;
+
 
     public TelemetryConfigLogger(CairoEngine engine) {
+        this.engine = engine;
+
         questDBVersion = engine.getConfiguration().getBuildInformation().getSwVersion();
         telemetryConfiguration = engine.getConfiguration().getTelemetryConfiguration();
     }
@@ -66,6 +82,30 @@ public class TelemetryConfigLogger implements Closeable {
     @Override
     public void close() {
         configWriter = Misc.free(configWriter);
+    }
+
+    @Override
+    public void update(PreferencesMap preferencesMap) {
+        instanceName.clear();
+        instanceName.put(preferencesMap.get(INSTANCE_NAME));
+        instanceType = preferencesMap.get(INSTANCE_TYPE);
+        instanceDesc.clear();
+        instanceDesc.put(preferencesMap.get(INSTANCE_DESC));
+
+        try (final SqlCompiler compiler = engine.getSqlCompiler()) {
+            final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            sqlExecutionContext.with(
+                    engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                    null,
+                    null
+            );
+            updateTelemetryConfig(engine, compiler, sqlExecutionContext, configTableToken);
+        } catch (Throwable th) {
+            LOG.error()
+                    .$("could not update config telemetry [table=`").utf8(TELEMETRY_CONFIG_TABLE_NAME)
+                    .$("`, msg=").$(th.getMessage())
+                    .I$();
+        }
     }
 
     private void appendConfigRow(CairoEngine engine, TableWriter configWriter, Long256 id, boolean enabled) {
@@ -90,6 +130,10 @@ public class TelemetryConfigLogger implements Closeable {
         if (packageStr != null) {
             row.putSym(4, packageStr);
         }
+        row.putVarchar(5, instanceName);
+        row.putSym(6, instanceType);
+        row.putVarchar(7, instanceDesc);
+
         row.append();
         configWriter.commit();
     }
@@ -104,14 +148,13 @@ public class TelemetryConfigLogger implements Closeable {
         }
     }
 
-    private TableWriter updateTelemetryConfig(
+    private void updateTelemetryConfig(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContextImpl sqlExecutionContext,
             TableToken tableToken
     ) throws SqlException {
-        final TableWriter configWriter = engine.getWriter(tableToken, "telemetryConfig");
-        try {
+        try (TableWriter configWriter = engine.getWriter(tableToken, "telemetryConfig")) {
             final CompiledQuery cc = compiler.query().$(TELEMETRY_CONFIG_TABLE_NAME).$(" LIMIT -1").compile(sqlExecutionContext);
             try (
                     final RecordCursorFactory factory = cc.getRecordCursorFactory();
@@ -120,13 +163,21 @@ public class TelemetryConfigLogger implements Closeable {
                 final boolean enabled = telemetryConfiguration.getEnabled();
                 if (cursor.hasNext()) {
                     final Record record = cursor.getRecord();
-                    final boolean _enabled = record.getBool(1);
                     final Long256 l256 = record.getLong256A(0);
+                    final boolean _enabled = record.getBool(1);
                     final CharSequence _questDBVersion = record.getSymA(2);
+                    final Utf8Sequence _instanceName = record.getVarcharA(5);
+                    final CharSequence _instanceType = record.getSymA(6);
+                    final Utf8Sequence _instanceDesc = record.getVarcharA(7);
 
-                    // if the configuration changed to enable or disable telemetry
+                    // if the configuration or instance information changed (enable or disable telemetry, for example),
                     // we need to update the table to reflect that
-                    if (enabled != _enabled || !Chars.equalsNc(questDBVersion, _questDBVersion)) {
+                    if (enabled != _enabled
+                            || !Chars.equalsNc(questDBVersion, _questDBVersion)
+                            || !Utf8s.equals(instanceName, _instanceName)
+                            || !Chars.equalsNc(instanceType, _instanceType)
+                            || !Utf8s.equals(instanceDesc, _instanceDesc)
+                    ) {
                         appendConfigRow(engine, configWriter, l256, enabled);
                         LOG.advisory()
                                 .$("instance config changes [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
@@ -139,38 +190,33 @@ public class TelemetryConfigLogger implements Closeable {
                                 .I$();
                     }
                 } else {
-                    // if there are no record for telemetry id we need to create one using clocks
+                    // if there are no record for telemetry id, we need to create one using clocks
                     appendConfigRow(engine, configWriter, null, enabled);
                 }
             }
-        } catch (Throwable th) {
-            Misc.free(configWriter);
-            throw th;
+        } catch (CairoException ex) {
+            LOG.error()
+                    .$("could not update config telemetry [table=`").utf8(TELEMETRY_CONFIG_TABLE_NAME)
+                    .$("`, msg=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
         }
-        return configWriter;
     }
 
     void init(CairoEngine engine, SqlCompiler compiler, SqlExecutionContextImpl sqlExecutionContext) throws SqlException {
-        final TableToken configTableToken = compiler.query()
+        configTableToken = compiler.query()
                 .$("CREATE TABLE IF NOT EXISTS ")
                 .$(TELEMETRY_CONFIG_TABLE_NAME)
-                .$(" (id long256, enabled boolean, version symbol, os symbol, package symbol)")
+                .$(" (id long256, enabled boolean, version symbol, os symbol, package symbol, instance_name varchar, instance_type symbol, instance_desc varchar)")
                 .createTable(sqlExecutionContext);
 
         tryAddColumn(compiler, sqlExecutionContext, "version symbol");
         tryAddColumn(compiler, sqlExecutionContext, "os symbol");
         tryAddColumn(compiler, sqlExecutionContext, "package symbol");
+        tryAddColumn(compiler, sqlExecutionContext, "instance_name varchar");
+        tryAddColumn(compiler, sqlExecutionContext, "instance_type symbol");
+        tryAddColumn(compiler, sqlExecutionContext, "instance_desc varchar");
 
-        // TODO: close configWriter, we currently keep it open to prevent users from modifying the table.
-        // Once we have a permission system, we can use that instead.
-        try {
-            configWriter = updateTelemetryConfig(engine, compiler, sqlExecutionContext, configTableToken);
-        } catch (CairoException ex) {
-            LOG.error()
-                    .$("could not open [table=`").utf8(TELEMETRY_CONFIG_TABLE_NAME)
-                    .$("`, msg=").$(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno())
-                    .I$();
-        }
+        engine.getSettingsStore().registerListener(this);
     }
 }

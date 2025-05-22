@@ -33,6 +33,7 @@ public class SettingsStore implements Closeable {
     private final PreferencesMap preferencesMap;
     private final PreferencesParser preferencesParser;
     private final int rootLen;
+    private PreferencesUpdateListener listener;
     private long version = 0L;
 
     public SettingsStore(CairoConfiguration configuration) {
@@ -81,6 +82,14 @@ public class SettingsStore implements Closeable {
         }
     }
 
+    public void registerListener(PreferencesUpdateListener listener) {
+        this.listener = listener;
+
+        // call the listener with current state,
+        // it will also be called on subsequent updates
+        listener.update(preferencesMap);
+    }
+
     public synchronized void save(DirectUtf8Sink sink, Mode mode, long expectedVersion) {
         if (version != expectedVersion) {
             throw CairoException.preferencesOutOfDate(version, expectedVersion);
@@ -106,6 +115,8 @@ public class SettingsStore implements Closeable {
             default:
                 throw CairoException.nonCritical().put("Invalid mode [mode=").put(mode.name()).put(']');
         }
+
+        listener.update(preferencesMap);
     }
 
     private void load(LPSZ preferencesPath, PreferencesMap map) {
