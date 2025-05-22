@@ -176,7 +176,7 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
                     if (enabled != _enabled
                             || !Chars.equalsNc(questDBVersion, _questDBVersion)
                             || !Utf8s.equals(instanceName, _instanceName)
-                            || !Chars.equals(instanceType, _instanceType)
+                            || !Chars.equalsNc(instanceType, _instanceType)
                             || !Utf8s.equals(instanceDesc, _instanceDesc)
                     ) {
                         appendConfigRow(engine, configWriter, l256, enabled);
