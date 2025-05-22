@@ -388,6 +388,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.walEnabled = newMetaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(newMetaMem);
         this.matViewRefreshLimitHoursOrMonths = TableUtils.getMatViewRefreshLimitHoursOrMonths(newMetaMem);
+        this.matViewTimerStart = TableUtils.getMatViewTimerStart(newMetaMem);
+        this.matViewTimerInterval = TableUtils.getMatViewTimerInterval(newMetaMem);
+        this.matViewTimerIntervalUnit = TableUtils.getMatViewTimerIntervalUnit(newMetaMem);
 
         int shiftLeft = 0, existingIndex = 0;
         TableUtils.buildColumnListFromMetadataFile(newMetaMem, columnCount, columnOrderList);

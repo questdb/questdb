@@ -140,9 +140,9 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void longTopK(DirectLongLongSortedList heap, int columnIndex) {
+    public void longTopK(DirectLongLongSortedList list, int columnIndex) {
         buildMapConditionally();
-        mapCursor.longTopK(heap, recordFunctions.getQuick(columnIndex));
+        mapCursor.longTopK(list, recordFunctions.getQuick(columnIndex));
     }
 
     @Override

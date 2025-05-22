@@ -469,16 +469,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getMatViewIntervalJobTick() {
-        return Timestamps.SECOND_MICROS;
-    }
-
-    @Override
-    public int getMatViewIntervalJobWheelSize() {
-        return 256;
-    }
-
-    @Override
     public int getMatViewMaxRefreshRetries() {
         return 10;
     }
@@ -496,6 +486,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMatViewRowsPerQueryEstimate() {
         return 10_000_000;
+    }
+
+    @Override
+    public long getMatViewTimerJobTick() {
+        return Timestamps.SECOND_MICROS;
+    }
+
+    @Override
+    public int getMatViewTimerJobWheelSize() {
+        return 256;
     }
 
     @Override

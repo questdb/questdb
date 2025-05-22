@@ -57,8 +57,8 @@ public class MatViewTimerJob extends SynchronizedJob {
         final CairoConfiguration configuration = engine.getConfiguration();
         this.timingWheel = new MatViewTimingWheel(
                 configuration.getMicrosecondClock(),
-                configuration.getMatViewIntervalJobTick(),
-                configuration.getMatViewIntervalJobWheelSize()
+                configuration.getMatViewTimerJobTick(),
+                configuration.getMatViewTimerJobWheelSize()
         );
     }
 
@@ -72,8 +72,8 @@ public class MatViewTimerJob extends SynchronizedJob {
             final long start = matViewMeta.getMatViewTimerStart();
             final int interval = matViewMeta.getMatViewTimerInterval();
             final char unit = matViewMeta.getMatViewTimerIntervalUnit();
-            final MatViewTimingWheel.Timer newTimer = timingWheel.addTimer(viewToken, start, interval, unit);
-            timersByTableDirName.put(viewToken.getDirName(), newTimer);
+            final MatViewTimingWheel.Timer timer = timingWheel.addTimer(viewToken, start, interval, unit);
+            timersByTableDirName.put(viewToken.getDirName(), timer);
             LOG.info().$("registered timer for materialized view [view=").$(viewToken)
                     .$(", start=").$ts(start)
                     .$(", interval=").$(interval).$(unit)

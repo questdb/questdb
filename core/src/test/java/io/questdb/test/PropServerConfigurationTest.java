@@ -212,8 +212,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(200, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
-        Assert.assertEquals(256, configuration.getCairoConfiguration().getMatViewIntervalJobWheelSize());
-        Assert.assertEquals(Timestamps.SECOND_MICROS, configuration.getCairoConfiguration().getMatViewIntervalJobTick());
+        Assert.assertEquals(256, configuration.getCairoConfiguration().getMatViewTimerJobWheelSize());
+        Assert.assertEquals(Timestamps.SECOND_MICROS, configuration.getCairoConfiguration().getMatViewTimerJobTick());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getDefaultSymbolCapacity());
@@ -1317,8 +1317,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
             Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
             Assert.assertEquals(10000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
-            Assert.assertEquals(64, configuration.getCairoConfiguration().getMatViewIntervalJobWheelSize());
-            Assert.assertEquals(5000, configuration.getCairoConfiguration().getMatViewIntervalJobTick());
+            Assert.assertEquals(64, configuration.getCairoConfiguration().getMatViewTimerJobWheelSize());
+            Assert.assertEquals(5000, configuration.getCairoConfiguration().getMatViewTimerJobTick());
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
 
             // PG wire

@@ -125,11 +125,11 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     /**
      * When supported, runs optimized top K (ORDER BY + LIMIT N) loop.
      *
-     * @param heap        min or max heap to store records
+     * @param list        min or max heap to store records
      * @param columnIndex index of order by column
      * @see RecordCursorFactory#recordCursorSupportsLongTopK()
      */
-    default void longTopK(DirectLongLongSortedList heap, int columnIndex) {
+    default void longTopK(DirectLongLongSortedList list, int columnIndex) {
         throw new UnsupportedOperationException();
     }
 

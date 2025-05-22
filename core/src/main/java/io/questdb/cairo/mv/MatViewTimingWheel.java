@@ -101,23 +101,23 @@ public class MatViewTimingWheel {
         final long tick = tickDeadline;
         final long tickIdx = tick / tickDuration;
         final int idx = (int) (tickIdx & mask);
-        addTimers(pendingTimers, tickIdx, tick);
+        addTimers(pendingTimers, tick);
         pendingTimers.clear();
-        expireTimers(wheel[idx], expired, tick);
+        // bucket may contain timers with deadlines within [tick, tick + tickDuration]
+        expireTimers(wheel[idx], expired, tick + tickDuration);
         // reschedule expired timers
-        addTimers(expired, tickIdx, tick);
+        addTimers(expired, tick);
         tickDeadline += tickDuration;
         return true;
     }
 
-    private void addTimers(ObjList<Timer> timers, long tickIdx, long now) {
+    private void addTimers(ObjList<Timer> timers, long now) {
         for (int i = 0, n = timers.size(); i < n; i++) {
             final Timer timer = timers.get(i);
             final long deadline = timer.nextDeadline(now);
-            final long calculated = deadline / tickDuration;
-            final long ticks = Math.max(calculated, tickIdx);
-            final int stopIndex = (int) (ticks & mask);
-            final PriorityQueue<Timer> bucket = wheel[stopIndex];
+            final long ticks = deadline / tickDuration;
+            final int bucketIdx = (int) (ticks & mask);
+            final PriorityQueue<Timer> bucket = wheel[bucketIdx];
             bucket.add(timer);
             timer.bucket = bucket;
         }

@@ -218,9 +218,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void longTopK(DirectLongLongSortedList heap, int columnIndex) {
+        public void longTopK(DirectLongLongSortedList list, int columnIndex) {
             buildMapConditionally();
-            ((MapRecordCursor) baseCursor).longTopK(heap, recordFunctions.getQuick(columnIndex));
+            ((MapRecordCursor) baseCursor).longTopK(list, recordFunctions.getQuick(columnIndex));
         }
 
         public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) throws SqlException {

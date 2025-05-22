@@ -315,6 +315,69 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterRefreshTimer() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh start '2999-12-12T12:00:00.000000Z' every 1h as (" +
+                            "select sym, last(price) as price, ts from base_price sample by 1h" +
+                            ") partition by day"
+            );
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            // no refresh should happen as the start timestamp is in future
+            final String start = "1999-01-01T01:01:01.842574Z";
+            currentMicros = parseFloorPartialTimestamp(start);
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n",
+                    "price_1h order by sym"
+            );
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\trefresh_limit_value\trefresh_limit_unit\ttimer_start\ttimer_interval_value\ttimer_interval_unit\n" +
+                            "price_1h\tincremental_timer\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t-1\t1\t0\tHOUR\t2999-12-12T12:00:00.000000Z\t1\tHOUR\n",
+                    "materialized_views",
+                    null
+            );
+
+            // the view should refresh after we change the timer schedule
+            execute("alter materialized view price_1h set refresh start '" + start + "' every 1m;");
+            drainQueues();
+            // we need the wheel to tick
+            currentMicros += Timestamps.MINUTE_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\trefresh_limit_value\trefresh_limit_unit\ttimer_start\ttimer_interval_value\ttimer_interval_unit\n" +
+                            "price_1h\tincremental_timer\tbase_price\t1999-01-01T01:02:01.842574Z\t1999-01-01T01:02:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\t0\tHOUR\t1999-01-01T01:01:01.842574Z\t1\tMINUTE\n",
+                    "materialized_views",
+                    null
+            );
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+        });
+    }
+
+    @Test
     public void testAlterRefreshTimerInvalidStatement() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -3426,7 +3489,7 @@ public class MatViewTest extends AbstractCairoTest {
     private static void randomizeWheelSize() {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final int wheelSize = 1 << rnd.nextInt(6);
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_INTERVAL_JOB_WHEEL_SIZE, wheelSize);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_TIMER_JOB_WHEEL_SIZE, wheelSize);
     }
 
     private String copySql(int from, int count) {
