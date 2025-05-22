@@ -84,7 +84,7 @@ public class MatViewGraph implements Mutable {
             }
         }
         final MatViewTimerTask timerTask = tlTimerTask.get();
-        timerTaskQueue.enqueue(timerTask.ofCreated(matViewToken));
+        timerTaskQueue.enqueue(timerTask.ofAdd(matViewToken));
         return true;
     }
 
@@ -113,6 +113,11 @@ public class MatViewGraph implements Mutable {
         for (MatViewDefinition viewDefinition : definitionsByTableDirName.values()) {
             sink.add(viewDefinition.getMatViewToken());
         }
+    }
+
+    public void onAlterRefreshTimer(TableToken matViewToken) {
+        final MatViewTimerTask timerTask = tlTimerTask.get();
+        timerTaskQueue.enqueue(timerTask.ofUpdate(matViewToken));
     }
 
     /**
@@ -158,7 +163,7 @@ public class MatViewGraph implements Mutable {
                 }
             }
             final MatViewTimerTask timerTask = tlTimerTask.get();
-            timerTaskQueue.enqueue(timerTask.ofDropped(matViewToken));
+            timerTaskQueue.enqueue(timerTask.ofDrop(matViewToken));
         }
     }
 

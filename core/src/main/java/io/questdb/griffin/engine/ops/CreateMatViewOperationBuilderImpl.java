@@ -34,7 +34,6 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
@@ -50,9 +49,6 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     private int refreshType = -1;
     private String timeZone;
     private String timeZoneOffset;
-    private int timerInterval;
-    private char timerIntevalUnit;
-    private long timerStart = Numbers.LONG_NULL;
 
     @Override
     public CreateMatViewOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
@@ -64,10 +60,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
                 baseTableName,
                 baseTableNamePosition,
                 timeZone,
-                timeZoneOffset,
-                timerStart,
-                timerInterval,
-                timerIntevalUnit
+                timeZoneOffset
         );
     }
 
@@ -79,9 +72,6 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         baseTableNamePosition = 0;
         timeZone = null;
         timeZoneOffset = null;
-        timerStart = Numbers.LONG_NULL;
-        timerInterval = 0;
-        timerIntevalUnit = 0;
     }
 
     public CreateTableOperationBuilderImpl getCreateTableOperationBuilder() {
@@ -128,18 +118,6 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         this.timeZoneOffset = timeZoneOffset;
     }
 
-    public void setTimerInterval(int timerInterval) {
-        this.timerInterval = timerInterval;
-    }
-
-    public void setTimerIntevalUnit(char timerIntevalUnit) {
-        this.timerIntevalUnit = timerIntevalUnit;
-    }
-
-    public void setTimerStart(long timerStart) {
-        this.timerStart = timerStart;
-    }
-
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("create materialized view ");
@@ -150,10 +128,10 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         }
         if (refreshType == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
             sink.putAscii(" refresh start '");
-            sink.putISODate(timerStart);
+            sink.putISODate(createTableOperationBuilder.getMatViewTimerStart());
             sink.putAscii("' every ");
-            sink.put(timerInterval);
-            sink.putAscii(timerIntevalUnit);
+            sink.put(createTableOperationBuilder.getMatViewTimerInterval());
+            sink.putAscii(createTableOperationBuilder.getMatViewTimerIntervalUnit());
         }
         sink.putAscii(" as (");
         if (createTableOperationBuilder.getQueryModel() != null) {

@@ -51,7 +51,6 @@ public class MatViewDefinition implements Mutable {
     public static final int INCREMENTAL_REFRESH_TYPE = 0;
     public static final int INCREMENTAL_TIMER_REFRESH_TYPE = 1;
     public static final String MAT_VIEW_DEFINITION_FILE_NAME = "_mv";
-    public static final int MAT_VIEW_DEFINITION_FORMAT_EXTRA_INTERVAL_MSG_TYPE = 1;
     public static final int MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
     private String baseTableName;
     // Not persisted, parsed from timeZoneOffset.
@@ -65,9 +64,6 @@ public class MatViewDefinition implements Mutable {
     private char samplingIntervalUnit;
     private @Nullable String timeZone;
     private @Nullable String timeZoneOffset;
-    private int timerInterval;
-    private char timerIntervalUnit;
-    private long timerStart = Numbers.LONG_NULL; // micros
     // Not persisted, parsed from samplingInterval and samplingIntervalUnit.
     // Access must be synchronized as this object is not thread-safe.
     private TimestampSampler timestampSampler;
@@ -86,16 +82,7 @@ public class MatViewDefinition implements Mutable {
         AppendableBlock block = writer.append();
         append(matViewDefinition, block);
         block.commit(MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE);
-        block = writer.append();
-        appendInterval(matViewDefinition, block);
-        block.commit(MAT_VIEW_DEFINITION_FORMAT_EXTRA_INTERVAL_MSG_TYPE);
         writer.commit();
-    }
-
-    public static void appendInterval(@NotNull MatViewDefinition matViewDefinition, @NotNull AppendableBlock block) {
-        block.putLong(matViewDefinition.getTimerStart());
-        block.putInt(matViewDefinition.getTimerInterval());
-        block.putChar(matViewDefinition.getTimerIntervalUnit());
     }
 
     public static void readFrom(
@@ -108,26 +95,16 @@ public class MatViewDefinition implements Mutable {
         path.trimTo(rootLen).concat(matViewToken.getDirName()).concat(MAT_VIEW_DEFINITION_FILE_NAME);
         reader.of(path.$());
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
-        // Iterate through the block until we find the one we recognize.
-        boolean matViewDefBlockFound = false;
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
             if (block.type() == MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE) {
                 readDefinitionBlock(destDefinition, block, matViewToken);
-                matViewDefBlockFound = true;
-                // keep going, because V2 block might follow
-                continue;
-            }
-            if (block.type() == MAT_VIEW_DEFINITION_FORMAT_EXTRA_INTERVAL_MSG_TYPE) {
-                readIntervalBlock(destDefinition, block);
                 return;
             }
         }
-        if (!matViewDefBlockFound) {
-            throw CairoException.critical(0)
-                    .put("cannot read materialized view definition, block not found [path=").put(path)
-                    .put(']');
-        }
+        throw CairoException.critical(0)
+                .put("cannot read materialized view definition, block not found [path=").put(path)
+                .put(']');
     }
 
     @Override
@@ -143,9 +120,6 @@ public class MatViewDefinition implements Mutable {
         refreshType = -1;
         samplingInterval = 0;
         samplingIntervalUnit = 0;
-        timerStart = 0;
-        timerInterval = 0;
-        timerIntervalUnit = 0;
     }
 
     public String getBaseTableName() {
@@ -184,18 +158,6 @@ public class MatViewDefinition implements Mutable {
         return timeZoneOffset;
     }
 
-    public int getTimerInterval() {
-        return timerInterval;
-    }
-
-    public char getTimerIntervalUnit() {
-        return timerIntervalUnit;
-    }
-
-    public long getTimerStart() {
-        return timerStart;
-    }
-
     public TimestampSampler getTimestampSampler() {
         return timestampSampler;
     }
@@ -212,26 +174,47 @@ public class MatViewDefinition implements Mutable {
             long samplingInterval,
             char samplingIntervalUnit,
             @Nullable String timeZone,
-            @Nullable String timeZoneOffset,
-            long timerStart,
-            int timerInterval,
-            char timerIntervalUnit
+            @Nullable String timeZoneOffset
     ) {
-        initDefinition(
-                refreshType,
-                matViewToken,
-                matViewSql,
-                baseTableName,
-                samplingInterval,
-                samplingIntervalUnit,
-                timeZone,
-                timeZoneOffset
-        );
-        initInterval(
-                timerStart,
-                timerInterval,
-                timerIntervalUnit
-        );
+        this.refreshType = refreshType;
+        this.matViewToken = matViewToken;
+        this.matViewSql = matViewSql;
+        this.baseTableName = baseTableName;
+        this.samplingInterval = samplingInterval;
+        this.samplingIntervalUnit = samplingIntervalUnit;
+        this.timeZone = timeZone;
+        this.timeZoneOffset = timeZoneOffset;
+
+        try {
+            this.timestampSampler = TimestampSamplerFactory.getInstance(
+                    samplingInterval,
+                    samplingIntervalUnit,
+                    0
+            );
+        } catch (SqlException e) {
+            throw CairoException.critical(0).put("invalid sampling interval and/or unit: ").put(samplingInterval)
+                    .put(", ").put(samplingIntervalUnit);
+        }
+
+        if (timeZone != null) {
+            try {
+                this.rules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timeZone);
+            } catch (NumericException e) {
+                throw CairoException.critical(0).put("invalid timezone: ").put(timeZone);
+            }
+        } else {
+            this.rules = null;
+        }
+
+        if (timeZoneOffset != null) {
+            final long val = Timestamps.parseOffset(timeZoneOffset);
+            if (val == Numbers.LONG_NULL) {
+                throw CairoException.critical(0).put("invalid offset: ").put(timeZoneOffset);
+            }
+            this.fixedOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
+        } else {
+            this.fixedOffset = 0;
+        }
     }
 
     private static void readDefinitionBlock(
@@ -286,7 +269,7 @@ public class MatViewDefinition implements Mutable {
         }
         final String matViewSqlStr = Chars.toString(matViewSql);
 
-        destDefinition.initDefinition(
+        destDefinition.init(
                 refreshType,
                 matViewToken,
                 matViewSqlStr,
@@ -296,79 +279,5 @@ public class MatViewDefinition implements Mutable {
                 timeZoneStr,
                 timeZoneOffsetStr
         );
-    }
-
-    private static void readIntervalBlock(MatViewDefinition destDefinition, ReadableBlock block) {
-        assert block.type() == MAT_VIEW_DEFINITION_FORMAT_EXTRA_INTERVAL_MSG_TYPE;
-
-        long offset = 0;
-        final long intervalStart = block.getLong(offset);
-        offset += Long.BYTES;
-        final int intervalStride = block.getInt(offset);
-        offset += Integer.BYTES;
-        final char intervalUnit = block.getChar(offset);
-
-        destDefinition.initInterval(intervalStart, intervalStride, intervalUnit);
-    }
-
-    private void initDefinition(
-            int refreshType,
-            @NotNull TableToken matViewToken,
-            @NotNull String matViewSql,
-            @NotNull String baseTableName,
-            long samplingInterval,
-            char samplingIntervalUnit,
-            @Nullable String timeZone,
-            @Nullable String timeZoneOffset
-    ) {
-        this.refreshType = refreshType;
-        this.matViewToken = matViewToken;
-        this.matViewSql = matViewSql;
-        this.baseTableName = baseTableName;
-        this.samplingInterval = samplingInterval;
-        this.samplingIntervalUnit = samplingIntervalUnit;
-        this.timeZone = timeZone;
-        this.timeZoneOffset = timeZoneOffset;
-
-        try {
-            this.timestampSampler = TimestampSamplerFactory.getInstance(
-                    samplingInterval,
-                    samplingIntervalUnit,
-                    0
-            );
-        } catch (SqlException e) {
-            throw CairoException.critical(0).put("invalid sampling interval and/or unit: ").put(samplingInterval)
-                    .put(", ").put(samplingIntervalUnit);
-        }
-
-        if (timeZone != null) {
-            try {
-                this.rules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timeZone);
-            } catch (NumericException e) {
-                throw CairoException.critical(0).put("invalid timezone: ").put(timeZone);
-            }
-        } else {
-            this.rules = null;
-        }
-
-        if (timeZoneOffset != null) {
-            final long val = Timestamps.parseOffset(timeZoneOffset);
-            if (val == Numbers.LONG_NULL) {
-                throw CairoException.critical(0).put("invalid offset: ").put(timeZoneOffset);
-            }
-            this.fixedOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
-        } else {
-            this.fixedOffset = 0;
-        }
-    }
-
-    private void initInterval(
-            long intervalStart,
-            int intervalStride,
-            char intervalUnit
-    ) {
-        this.timerStart = intervalStart;
-        this.timerInterval = intervalStride;
-        this.timerIntervalUnit = intervalUnit;
     }
 }

@@ -45,12 +45,6 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
 
     int getTableNamePosition();
 
-    int getTimerInterval();
-
-    char getTimerIntervalUnit();
-
-    long getTimerStart();
-
     CharSequence getVolumeAlias();
 
     int getVolumePosition();

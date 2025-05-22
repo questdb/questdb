@@ -29,9 +29,10 @@ import io.questdb.mp.ValueHolder;
 import io.questdb.std.ObjectFactory;
 
 public class MatViewTimerTask implements ValueHolder<MatViewTimerTask> {
-    public static final int CREATED = 0;
-    public static final int DROPPED = 1;
+    public static final int ADD = 0;
     public static final ObjectFactory<MatViewTimerTask> ITEM_FACTORY = MatViewTimerTask::new;
+    public static final int REMOVE = 1;
+    public static final int UPDATE = 2;
     private TableToken matViewToken;
     private int operation = -1;
 
@@ -55,15 +56,21 @@ public class MatViewTimerTask implements ValueHolder<MatViewTimerTask> {
         return operation;
     }
 
-    public MatViewTimerTask ofCreated(TableToken matViewToken) {
+    public MatViewTimerTask ofAdd(TableToken matViewToken) {
         this.matViewToken = matViewToken;
-        this.operation = CREATED;
+        this.operation = ADD;
         return this;
     }
 
-    public MatViewTimerTask ofDropped(TableToken matViewToken) {
+    public MatViewTimerTask ofDrop(TableToken matViewToken) {
         this.matViewToken = matViewToken;
-        this.operation = DROPPED;
+        this.operation = REMOVE;
+        return this;
+    }
+
+    public MatViewTimerTask ofUpdate(TableToken matViewToken) {
+        this.matViewToken = matViewToken;
+        this.operation = UPDATE;
         return this;
     }
 }

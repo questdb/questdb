@@ -315,6 +315,80 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterRefreshTimerInvalidStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = 0;
+            execute("create materialized view price_1h as select sym, last(price) as price, ts from base_price sample by 1h");
+            execute("create materialized view price_1h_t refresh every 1h as select sym, last(price) as price, ts from base_price sample by 1h");
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h set refresh every 1h",
+                    45,
+                    "materialized view must be of timer refresh type"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh",
+                    46,
+                    "'start' or 'every' or 'limit' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh start",
+                    52,
+                    "START timestamp"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh start 'foobar'",
+                    53,
+                    "invalid START timestamp value"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh start '2020-09-10T20:00:00.000000Z'",
+                    82,
+                    "'every' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh start '2020-09-10T20:00:00.000000Z' barbaz",
+                    83,
+                    "'every' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW 'price_1h_t' SET REFRESH START '2020-09-10T20:00:00.000000Z' EVERY",
+                    90,
+                    "interval expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW 'price_1h_t' SET REFRESH START '2020-09-10T20:00:00.000000Z' EVERY foobaz",
+                    -1,
+                    "Invalid unit: z"
+            );
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW 'price_1h_t' SET REFRESH EVERY foobaz",
+                    -1,
+                    "Invalid unit: z"
+            );
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW 'price_1h_t' SET REFRESH EVERY 1s;",
+                    55,
+                    "unsupported interval unit: s"
+            );
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\trefresh_limit_value\trefresh_limit_unit\ttimer_start\ttimer_interval_value\ttimer_interval_unit\n" +
+                            "price_1h\tincremental\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t-1\t0\t0\tHOUR\t\t0\t\n" +
+                            "price_1h_t\tincremental_timer\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h_t~3\t\tvalid\t-1\t0\t0\tHOUR\t1970-01-01T00:00:00.000000Z\t1\tHOUR\n",
+                    "materialized_views order by view_name",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testAlterSymbolCapacity() throws Exception {
         assertMemoryLeak(() -> {
             execute(

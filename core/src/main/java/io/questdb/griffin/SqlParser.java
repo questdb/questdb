@@ -244,6 +244,12 @@ public class SqlParser {
         return visitor.visit(node);
     }
 
+    public static void validateMatViewIntervalUnit(char unit, int pos) throws SqlException {
+        if (unit != 'M' && unit != 'y' && unit != 'w' && unit != 'd' && unit != 'h' && unit != 'm') {
+            throw SqlException.position(pos).put("unsupported interval unit: ").put(unit);
+        }
+    }
+
     private static void collectAllTableNames(
             QueryModel model, LowerCaseCharSequenceHashSet outTableNames, IntList outTableNamePositions
     ) {
@@ -360,12 +366,6 @@ public class SqlParser {
     ) throws SqlException {
         CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
         return sqlParserCallback.parseCreateTableExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
-    }
-
-    private static void validateMatViewIntervalUnit(char unit, int pos) throws SqlException {
-        if (unit != 'M' && unit != 'y' && unit != 'w' && unit != 'd' && unit != 'h' && unit != 'm') {
-            throw SqlException.position(pos).put("unsupported interval unit: ").put(unit);
-        }
     }
 
     private static void validateMatViewQuery(QueryModel model, String baseTableName) throws SqlException {
@@ -902,7 +902,7 @@ public class SqlParser {
                 } catch (NumericException e) {
                     throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                 }
-                tok = tok(lexer, "'every' expected");
+                tok = tok(lexer, "'every'");
             }
 
             if (isEveryKeyword(tok)) {
@@ -911,13 +911,11 @@ public class SqlParser {
                     start = configuration.getMicrosecondClock().getTicks();
                 }
                 tok = tok(lexer, "interval");
-                final int stride = Timestamps.getStrideMultiple(tok);
+                final int interval = Timestamps.getStrideMultiple(tok);
                 final char unit = Timestamps.getStrideUnit(tok);
                 validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
                 refreshType = MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE;
-                mvOpBuilder.setTimerStart(start);
-                mvOpBuilder.setTimerInterval(stride);
-                mvOpBuilder.setTimerIntevalUnit(unit);
+                tableOpBuilder.setMatViewTimer(start, interval, unit);
                 tok = tok(lexer, "'as'");
             } else if (start != Numbers.LONG_NULL) {
                 throw SqlException.position(lexer.lastTokenPosition()).put("'every' expected");

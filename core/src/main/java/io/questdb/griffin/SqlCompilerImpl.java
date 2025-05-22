@@ -127,6 +127,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
 import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -1415,6 +1416,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         assertTableNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
         final TableToken matViewToken = tableExistsOrFail(matViewNamePosition, GenericLexer.unquote(tok), executionContext);
         final SecurityContext securityContext = executionContext.getSecurityContext();
+        final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+        if (viewDefinition == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist");
+        }
 
         try (TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(matViewToken)) {
             tok = expectToken(lexer, "'alter' or 'resume' or 'suspend'");
@@ -1457,17 +1462,58 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     );
                     compiledQuery.ofAlter(setTtl.build());
                 } else if (isRefreshKeyword(tok)) {
-                    expectKeyword(lexer, "limit");
-                    final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
-                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetMatViewRefreshLimit(
-                            matViewNamePosition,
-                            matViewToken,
-                            tableMetadata.getTableId(),
-                            limitHoursOrMonths
-                    );
-                    compiledQuery.ofAlter(setTtl.build());
+                    tok = expectToken(lexer, "'start' or 'every' or 'limit'");
+                    if (isStartKeyword(tok) || isEveryKeyword(tok)) {
+                        if (viewDefinition.getRefreshType() != MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "materialized view must be of timer refresh type");
+                        }
+
+                        long start = Numbers.LONG_NULL;
+                        if (isStartKeyword(tok)) {
+                            tok = expectToken(lexer, "START timestamp");
+                            try {
+                                start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                            } catch (NumericException e) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
+                            }
+                            tok = expectToken(lexer, "'every'");
+                        }
+
+                        if (isEveryKeyword(tok)) {
+                            if (start == Numbers.LONG_NULL) {
+                                // Use the current time as the start timestamp if it wasn't specified.
+                                start = configuration.getMicrosecondClock().getTicks();
+                            }
+                            tok = expectToken(lexer, "interval");
+                            final int interval = Timestamps.getStrideMultiple(tok);
+                            final char unit = Timestamps.getStrideUnit(tok);
+                            SqlParser.validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
+                            final AlterOperationBuilder setTimer = alterOperationBuilder.ofSetMatViewRefreshTimer(
+                                    matViewNamePosition,
+                                    matViewToken,
+                                    tableMetadata.getTableId(),
+                                    start,
+                                    interval,
+                                    unit
+                            );
+                            compiledQuery.ofAlter(setTimer.build());
+                        } else if (start != Numbers.LONG_NULL) {
+                            throw SqlException.position(lexer.lastTokenPosition()).put("'every' expected");
+                        }
+                    } else if (isLimitKeyword(tok)) {
+                        final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+                        final AlterOperationBuilder setRefreshLimit = alterOperationBuilder.ofSetMatViewRefreshLimit(
+                                matViewNamePosition,
+                                matViewToken,
+                                tableMetadata.getTableId(),
+                                limitHoursOrMonths
+                        );
+                        compiledQuery.ofAlter(setRefreshLimit.build());
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'start' or 'every' or 'limit' expected");
+                    }
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' or 'start' expected");
                 }
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(matViewToken, matViewNamePosition, executionContext);

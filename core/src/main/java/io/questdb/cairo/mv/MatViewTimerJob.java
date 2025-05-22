@@ -27,6 +27,7 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Queue;
@@ -39,6 +40,7 @@ import io.questdb.std.ObjList;
  */
 public class MatViewTimerJob extends SynchronizedJob {
     private static final Log LOG = LogFactory.getLog(MatViewTimerJob.class);
+    private final CairoEngine engine;
     private final ObjList<MatViewTimingWheel.Timer> expired = new ObjList<>();
     private final MatViewGraph matViewGraph;
     private final MatViewStateStore matViewStateStore;
@@ -48,6 +50,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     private final MatViewTimingWheel timingWheel;
 
     public MatViewTimerJob(CairoEngine engine) {
+        this.engine = engine;
         this.timerTaskQueue = engine.getMatViewTimerQueue();
         this.matViewGraph = engine.getMatViewGraph();
         this.matViewStateStore = engine.getMatViewStateStore();
@@ -59,18 +62,21 @@ public class MatViewTimerJob extends SynchronizedJob {
         );
     }
 
-    private void createTimer(TableToken viewToken) {
+    private void addTimer(TableToken viewToken) {
         final MatViewDefinition viewDefinition = matViewGraph.getViewDefinition(viewToken);
         if (viewDefinition == null) {
             LOG.info().$("materialized view definition not found [view=").$(viewToken).I$();
             return;
         }
-        try {
-            final MatViewTimingWheel.Timer newTimer = timingWheel.addTimer(viewDefinition);
+        try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
+            final long start = matViewMeta.getMatViewTimerStart();
+            final int interval = matViewMeta.getMatViewTimerInterval();
+            final char unit = matViewMeta.getMatViewTimerIntervalUnit();
+            final MatViewTimingWheel.Timer newTimer = timingWheel.addTimer(viewToken, start, interval, unit);
             timersByTableDirName.put(viewToken.getDirName(), newTimer);
             LOG.info().$("registered timer for materialized view [view=").$(viewToken)
-                    .$(", start=").$ts(viewDefinition.getTimerStart())
-                    .$(", interval=").$(viewDefinition.getTimerInterval()).$(viewDefinition.getTimerIntervalUnit())
+                    .$(", start=").$ts(start)
+                    .$(", interval=").$(interval).$(unit)
                     .I$();
         } catch (Throwable th) {
             LOG.error()
@@ -98,11 +104,15 @@ public class MatViewTimerJob extends SynchronizedJob {
         while (timerTaskQueue.tryDequeue(timerTask)) {
             final TableToken viewToken = timerTask.getMatViewToken();
             switch (timerTask.getOperation()) {
-                case MatViewTimerTask.CREATED:
-                    createTimer(viewToken);
+                case MatViewTimerTask.ADD:
+                    addTimer(viewToken);
                     break;
-                case MatViewTimerTask.DROPPED:
+                case MatViewTimerTask.REMOVE:
                     removeTimer(viewToken);
+                    break;
+                case MatViewTimerTask.UPDATE:
+                    removeTimer(viewToken);
+                    addTimer(viewToken);
                     break;
                 default:
                     LOG.error().$("unknown refresh timer operation [op=").$(timerTask.getOperation()).I$();

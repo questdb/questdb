@@ -94,9 +94,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String sqlText;
     private final String timeZone;
     private final String timeZoneOffset;
-    private final int timerInterval;
-    private final char timerIntervalUnit;
-    private final long timerStart;
     private final IntList tmpColumnIndexes = new IntList();
     private final LowerCaseCharSequenceHashSet tmpLiterals = new LowerCaseCharSequenceHashSet();
     private CreateTableOperationImpl createTableOperation;
@@ -110,10 +107,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             @NotNull String baseTableName,
             int baseTableNamePosition,
             @Nullable String timeZone,
-            @Nullable String timeZoneOffset,
-            long timerStart,
-            int timerInterval,
-            char timerIntervalUnit
+            @Nullable String timeZoneOffset
     ) {
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
@@ -122,9 +116,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         this.baseTableNamePosition = baseTableNamePosition;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
-        this.timerStart = timerStart;
-        this.timerInterval = timerInterval;
-        this.timerIntervalUnit = timerIntervalUnit;
     }
 
     @Override
@@ -173,6 +164,21 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public MatViewDefinition getMatViewDefinition() {
         return matViewDefinition;
+    }
+
+    @Override
+    public int getMatViewTimerInterval() {
+        return createTableOperation.getMatViewTimerInterval();
+    }
+
+    @Override
+    public char getMatViewTimerIntervalUnit() {
+        return createTableOperation.getMatViewTimerIntervalUnit();
+    }
+
+    @Override
+    public long getMatViewTimerStart() {
+        return createTableOperation.getMatViewTimerStart();
     }
 
     @Override
@@ -231,21 +237,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
-    public int getTimerInterval() {
-        return timerInterval;
-    }
-
-    @Override
-    public char getTimerIntervalUnit() {
-        return timerIntervalUnit;
-    }
-
-    @Override
-    public long getTimerStart() {
-        return timerStart;
-    }
-
-    @Override
     public int getTimestampIndex() {
         return createTableOperation.getTimestampIndex();
     }
@@ -280,10 +271,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 samplingInterval,
                 samplingIntervalUnit,
                 timeZone,
-                timeZoneOffset,
-                timerStart,
-                timerInterval,
-                timerIntervalUnit
+                timeZoneOffset
         );
     }
 

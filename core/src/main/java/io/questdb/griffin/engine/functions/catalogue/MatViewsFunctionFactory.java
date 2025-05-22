@@ -201,8 +201,16 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                     ? engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn() : -1;
 
                             final int refreshLimitHoursOrMonths;
+                            long timerStart = Numbers.LONG_NULL;
+                            int timerInterval = 0;
+                            char timerIntervalUnit = 0;
                             try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
                                 refreshLimitHoursOrMonths = matViewMeta.getMatViewRefreshLimitHoursOrMonths();
+                                if (matViewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
+                                    timerStart = matViewMeta.getMatViewTimerStart();
+                                    timerInterval = matViewMeta.getMatViewTimerInterval();
+                                    timerIntervalUnit = matViewMeta.getMatViewTimerIntervalUnit();
+                                }
                             }
 
                             final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
@@ -216,7 +224,10 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                     lastAppliedBaseTxn,
                                     viewStateReader.getInvalidationReason(),
                                     viewStateReader.isInvalid(),
-                                    refreshLimitHoursOrMonths
+                                    refreshLimitHoursOrMonths,
+                                    timerStart,
+                                    timerInterval,
+                                    timerIntervalUnit
                             );
                             viewIndex++;
                             return true;
@@ -337,7 +348,10 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         long lastAppliedBaseTxn,
                         CharSequence invalidationReason,
                         boolean invalid,
-                        int refreshLimitHoursOrMonths
+                        int refreshLimitHoursOrMonths,
+                        long timerStart,
+                        int timerInterval,
+                        char timerIntervalUnit
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshStartTimestamp = lastRefreshStartTimestamp;
@@ -348,9 +362,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.invalidationReason.put(invalidationReason);
                     this.invalid = invalid;
                     this.refreshLimitHoursOrMonths = refreshLimitHoursOrMonths;
-                    this.timerStart = viewDefinition.getTimerStart();
-                    this.timerInterval = viewDefinition.getTimerInterval();
-                    this.timerIntervalUnit = viewDefinition.getTimerIntervalUnit();
+                    this.timerStart = timerStart;
+                    this.timerInterval = timerInterval;
+                    this.timerIntervalUnit = timerIntervalUnit;
                 }
 
                 private CharSequence getViewStatus() {

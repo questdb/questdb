@@ -67,15 +67,15 @@ public class MatViewTimingWheel {
         this.tickDeadline = now - now % tickDuration;
     }
 
-    public Timer addTimer(@NotNull MatViewDefinition viewDefinition) {
+    public Timer addTimer(@NotNull TableToken matViewToken, long start, int interval, char unit) {
         final TimestampSampler sampler;
         try {
-            sampler = TimestampSamplerFactory.getInstance(viewDefinition.getTimerInterval(), viewDefinition.getTimerIntervalUnit(), 0);
+            sampler = TimestampSamplerFactory.getInstance(interval, unit, 0);
         } catch (SqlException e) {
-            throw CairoException.critical(0).put("invalid EVERY interval and/or unit: ").put(viewDefinition.getTimerInterval())
-                    .put(", ").put(viewDefinition.getTimerIntervalUnit());
+            throw CairoException.critical(0).put("invalid EVERY interval and/or unit: ").put(interval)
+                    .put(", ").put(unit);
         }
-        final Timer timer = new Timer(viewDefinition.getMatViewToken(), sampler, viewDefinition.getTimerStart());
+        final Timer timer = new Timer(matViewToken, sampler, start);
         pendingTimers.add(timer);
         return timer;
     }
