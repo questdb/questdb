@@ -276,7 +276,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testCannotStartNewRowBeforeClosingTheExistingAfterValidationError() {
-        StringChannel channel = new StringChannel();
+        ByteChannel channel = new ByteChannel();
         try (Sender sender = new LineTcpSenderV2(channel, 1000, 127)) {
             sender.table("mytable");
             try {
@@ -292,7 +292,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 assertContains(e.getMessage(), "duplicated table");
             }
         }
-        assertFalse(Chars.contains(channel.toString(), "\n"));
+        assertFalse(channel.contain(new byte[]{(byte) '\n'}));
     }
 
     @Test
@@ -722,14 +722,14 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testUnfinishedRowDoesNotContainNewLine() {
-        StringChannel channel = new StringChannel();
+        ByteChannel channel = new ByteChannel();
         try (Sender sender = new LineTcpSenderV2(channel, 1000, 127)) {
             sender.table("mytable");
             sender.boolColumn("col\n", true);
         } catch (LineSenderException e) {
             assertContains(e.getMessage(), "name contains an illegal char");
         }
-        assertFalse(Chars.contains(channel.toString(), "\n"));
+        assertFalse(channel.contain(new byte[]{(byte) '\n'}));
     }
 
     @Test
