@@ -130,7 +130,7 @@ public class MatViewTimingWheel {
         private final long start;
         private ObjPriorityQueue<Timer> bucket;
         private long deadline = Long.MIN_VALUE;
-        private long knownRefreshBaseTxn = Long.MIN_VALUE;
+        private long knownRefreshSeq = -1;
 
         private Timer(@NotNull TableToken matViewToken, @NotNull TimestampSampler sampler, long start) {
             this.matViewToken = matViewToken;
@@ -154,8 +154,8 @@ public class MatViewTimingWheel {
             return deadline == timer.deadline && matViewToken.equals(timer.matViewToken);
         }
 
-        public long getKnownRefreshBaseTxn() {
-            return knownRefreshBaseTxn;
+        public long getKnownRefreshSeq() {
+            return knownRefreshSeq;
         }
 
         public TableToken getMatViewToken() {
@@ -176,12 +176,8 @@ public class MatViewTimingWheel {
             }
         }
 
-        public void resetKnownRefreshBaseTxn() {
-            knownRefreshBaseTxn = Long.MIN_VALUE;
-        }
-
-        public void setKnownRefreshBaseTxn(long knownRefreshBaseTxn) {
-            this.knownRefreshBaseTxn = knownRefreshBaseTxn;
+        public void setKnownRefreshSeq(long knownRefreshSeq) {
+            this.knownRefreshSeq = knownRefreshSeq;
         }
 
         private long nextDeadline(long now) {
