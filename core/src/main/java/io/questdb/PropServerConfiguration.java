@@ -129,8 +129,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
-import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.bool;
-import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
+import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String ACL_ENABLED = "acl.enabled";
@@ -2226,6 +2225,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public static class JsonPropertyValueFormatter {
+        public static void arrayStr(CharSequence key, String value, StringSink sink) {
+            sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
+        }
+
         public static void bool(CharSequence key, boolean value, StringSink sink) {
             sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
         }
@@ -2596,6 +2599,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (!Chars.empty(httpUsername)) {
                 bool(ACL_ENABLED, true, sink);
             }
+            arrayStr(ILP_PROTO_SUPPORT_VERSIONS_NAME, ILP_PROTO_SUPPORT_VERSIONS, sink);
+            arrayStr(ILP_PROTO_TRANSPORTS, ilpProtoTransports, sink);
             return true;
         }
 
@@ -5304,6 +5309,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean exportConfiguration(StringSink sink) {
             bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), isPosthogEnabled(), sink);
             str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), getPosthogApiKey(), sink);
+            integer(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.toString(), maxFileNameLength, sink);
             return true;
         }
 
@@ -5315,11 +5321,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isPosthogEnabled() {
             return posthogEnabled;
-        }
-
-        public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-            settings.put(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), JsonPropertyValueFormatter.bool(isPosthogEnabled()));
-            settings.put(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), str(getPosthogApiKey()));
         }
     }
 

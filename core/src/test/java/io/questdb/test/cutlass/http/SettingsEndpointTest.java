@@ -38,12 +38,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.client.Response;
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.cutlass.line.http.AbstractLineHttpSender;
+import io.questdb.preferences.SettingsStore;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
-import org.junit.Assert;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -51,6 +50,13 @@ import org.junit.Test;
 import java.util.HashMap;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
+import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
+import static io.questdb.PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE;
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
+import static io.questdb.preferences.SettingsStore.Mode.MERGE;
+import static io.questdb.preferences.SettingsStore.Mode.OVERWRITE;
+import static io.questdb.test.tools.TestUtils.*;
+import static java.net.HttpURLConnection.*;
 
 public class SettingsEndpointTest extends AbstractBootstrapTest {
     private static final String DEFAULT_PAYLOAD = "{" +
@@ -65,9 +71,11 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "\"config\":{" +
             "\"release.type\":\"OSS\"," +
             "\"release.version\":\"[DEVELOPMENT]\"," +
-            "\"acl.enabled\":false," +
+            "\"line.proto.support.versions\":[1,2]," +
+            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
             "\"posthog.enabled\":false," +
-            "\"posthog.api.key\":null" +
+            "\"posthog.api.key\":null," +
+            "\"cairo.max.file.name.length\":127" +
             "}," +
             "\"preferences.version\":0," +
             "\"preferences\":{" +
@@ -87,11 +95,340 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "}" +
             "}";
 
+    private final StringSink sink = new StringSink();
+
+    public static void assertSettingsRequest(HttpClient httpClient, String expectedHttpResponse) {
+        final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+        request.GET().url("/settings");
+        assertResponse(request, HTTP_OK, expectedHttpResponse);
+    }
+
     @Before
     public void setUp() {
         super.setUp();
         unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testFragmentedPreferences() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "19");
+                put(DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "17");
+            }})
+            ) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    savePreferences(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", OVERWRITE, 0L);
+                    assertPreferencesStore(settingsStore, 1, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}");
+
+                    final StringSink sink = new StringSink();
+                    for (int i = 0; i < 5000; i++) {
+                        sink.put("\"key").put(i).put("\":\"value").put(i).put("\",");
+                    }
+                    sink.clear(sink.length() - 1);
+
+                    savePreferences(httpClient, "{" + sink + ",\"instance_desc\":\"desc222\"}", MERGE, 1L);
+                    assertPreferencesStore(settingsStore, 2, "\"preferences\":{" +
+                            "\"instance_name\":\"instance1\"," +
+                            "\"instance_desc\":\"desc222\"," +
+                            sink +
+                            "}");
+
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
+                            "\"posthog.enabled\":false,\"posthog.api.key\":null," +
+                            "\"cairo.max.file.name.length\":127" +
+                            "}," +
+                            "\"preferences.version\":2," +
+                            "\"preferences\":{" +
+                            "\"instance_name\":\"instance1\"," +
+                            "\"instance_desc\":\"desc222\"," +
+                            sink +
+                            "}" +
+                            "}"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInvalidPreferencesVersion() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    testInvalidPreferencesVersion(httpClient, settingsStore, "v1");
+                    testInvalidPreferencesVersion(httpClient, settingsStore, "");
+                    testInvalidPreferencesVersion(httpClient, settingsStore, "5xyz");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLineProtocolVersionResponse() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                    request.GET().url("/settings");
+                    try (HttpClient.ResponseHeaders responseHeaders = request.send();
+                         AbstractLineHttpSender.JsonSettingsParser parser = new AbstractLineHttpSender.JsonSettingsParser()) {
+                        responseHeaders.await();
+                        assertEquals(String.valueOf(200), responseHeaders.getStatusCode());
+                        parser.parse(responseHeaders.getResponse());
+                        Assert.assertEquals(PROTOCOL_VERSION_V2, parser.getDefaultProtocolVersion());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMergePreferences() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    savePreferences(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", OVERWRITE, 0L);
+                    assertPreferencesStore(settingsStore, 1, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}");
+
+                    savePreferences(httpClient, "{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}", MERGE, 1L);
+                    assertPreferencesStore(settingsStore, 2, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}");
+
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null," +
+                            "\"cairo.max.file.name.length\":127" +
+                            "}," +
+                            "\"preferences.version\":2," +
+                            "\"preferences\":{" +
+                            "\"instance_name\":\"instance1\"," +
+                            "\"instance_desc\":\"desc222\"," +
+                            "\"key1\":\"value1\"" +
+                            "}" +
+                            "}");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOutOfDatePreferences() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    savePreferences(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", MERGE, 0L);
+                    assertPreferencesStore(settingsStore, 1, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}");
+
+                    savePreferences(httpClient, "{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}", MERGE, 1L);
+                    assertPreferencesStore(settingsStore, 2, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}");
+
+                    // out of date version rejected
+                    assertPreferencesRequest(httpClient, "{\"key1\":\"value111\",\"instance_desc\":\"desc222\"}", MERGE, 1L,
+                            HTTP_CONFLICT, "{\"error\":\"preferences view is out of date [currentVersion=2, expectedVersion=1]\"}\r\n");
+                    assertPreferencesStore(settingsStore, 2, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}");
+
+                    // same update based on latest version accepted
+                    savePreferences(httpClient, "{\"key1\":\"value111\",\"instance_desc\":\"desc222\"}", MERGE, 2L);
+                    assertPreferencesStore(settingsStore, 3, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value111\"}");
+
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null," +
+                            "\"cairo.max.file.name.length\":127" +
+                            "}," +
+                            "\"preferences.version\":3," +
+                            "\"preferences\":{" +
+                            "\"instance_name\":\"instance1\"," +
+                            "\"instance_desc\":\"desc222\"," +
+                            "\"key1\":\"value111\"" +
+                            "}" +
+                            "}");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOverwritePreferences() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    savePreferences(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", OVERWRITE, 0L);
+                    assertPreferencesStore(settingsStore, 1, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}");
+
+                    savePreferences(httpClient, "{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}", OVERWRITE, 1L);
+                    assertPreferencesStore(settingsStore, 2, "\"preferences\":{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}");
+
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null," +
+                            "\"cairo.max.file.name.length\":127" +
+                            "}," +
+                            "\"preferences.version\":2," +
+                            "\"preferences\":{" +
+                            "\"key1\":\"value1\"," +
+                            "\"instance_desc\":\"desc222\"" +
+                            "}" +
+                            "}");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPreferencesBadMethod() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT).DELETE()
+                            .url("/settings?version=" + 0L).withContent().put("{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}");
+                    assertResponse(request, HTTP_BAD_METHOD, "Method DELETE not supported\r\n");
+                    assertPreferencesStore(settingsStore, 0, "\"preferences\":{}");
+
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null," +
+                            "\"cairo.max.file.name.length\":127" +
+                            "}," +
+                            "\"preferences.version\":0," +
+                            "\"preferences\":{" +
+                            "}" +
+                            "}");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPreferencesMalformedJson() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    final String missingQuote = "{\"instance_name:\"instance1\",\"instance_desc\":\"desc1\"}";
+                    assertPreferencesRequest(httpClient, missingQuote, MERGE, 0L,
+                            HTTP_BAD_REQUEST, "{\"error\":\"Malformed preferences message [error=Unexpected symbol, preferences={\\\"instance_name:\\\"instance1\\\",\\\"instance_desc\\\":\\\"desc1\\\"}]\"}\r\n");
+                    assertPreferencesStore(settingsStore, 0, "\"preferences\":{}");
+
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null," +
+                            "\"cairo.max.file.name.length\":127" +
+                            "}," +
+                            "\"preferences.version\":0," +
+                            "\"preferences\":{" +
+                            "}" +
+                            "}");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPreferencesPersisted() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    savePreferences(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", OVERWRITE, 0L);
+                    assertPreferencesStore(settingsStore, 1, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}");
+                }
+            }
+
+            // restart
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertPreferencesStore(settingsStore, 1, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}");
+
+                    savePreferences(httpClient, "{\"key1\":\"value1\",\"instance_desc\":\"desc222\"}", MERGE, 1L);
+                    assertPreferencesStore(settingsStore, 2, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}");
+                }
+            }
+
+            // restart again
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertPreferencesStore(settingsStore, 2, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc222\",\"key1\":\"value1\"}");
+
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":" +
+                            "{\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null," +
+                            "\"cairo.max.file.name.length\":127}," +
+                            "\"preferences.version\":2," +
+                            "\"preferences\":{" +
+                            "\"instance_name\":\"instance1\"," +
+                            "\"instance_desc\":\"desc222\"," +
+                            "\"key1\":\"value1\"}" +
+                            "}");
+                }
+            }
+        });
     }
 
     @Test
@@ -246,14 +583,14 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
 
         assertSettingsRequest(httpClient, "{" +
                 "\"config\":{" +
-                "\"release.type\":\"OSS\"," +
-                "\"release.version\":\"[DEVELOPMENT]\"," +
+                "\"release.type\":\"OSS\",\"release.version\":\"[DEVELOPMENT]\"," +
+                "\"line.proto.support.versions\":[1,2]," +
+                "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                 "\"posthog.enabled\":false," +
-                "\"posthog.api.key\":null" +
-                "}," +
+                "\"posthog.api.key\":null," +
+                "\"cairo.max.file.name.length\":127}," +
                 "\"preferences.version\":0," +
-                "\"preferences\":{" +
-                "}" +
+                "\"preferences\":{}" +
                 "}");
     }
 }

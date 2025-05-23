@@ -27,7 +27,8 @@ package io.questdb.test.cutlass.http.line;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpMultipartContentListener;
+import io.questdb.cutlass.http.HttpPostPutProcessor;
+import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
@@ -252,13 +253,17 @@ final class MockHttpProcessor implements HttpPostPutProcessor, HttpRequestHandle
         private String responseContent;
         private int responseStatusCode;
     }
-
 }
 
-class MockSettingsProcessor implements HttpRequestProcessor {
+class MockSettingsProcessor implements HttpRequestHandler, HttpRequestProcessor {
     @Override
-    public byte getRequiredAuthType() {
-        return SecurityContext.AUTH_TYPE_NONE;
+    public HttpRequestProcessor getDefaultProcessor() {
+        return this;
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
     }
 
     @Override
@@ -274,7 +279,12 @@ class MockSettingsProcessor implements HttpRequestProcessor {
     }
 }
 
-class MockSettingsProcessorOldServer implements HttpRequestProcessor {
+class MockSettingsProcessorOldServer implements HttpRequestProcessor, HttpRequestHandler {
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
+    }
+
     @Override
     public byte getRequiredAuthType() {
         return SecurityContext.AUTH_TYPE_NONE;
