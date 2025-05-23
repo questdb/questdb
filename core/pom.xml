@@ -46,7 +46,7 @@
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
     </properties>
 
-    <version>8.3.2</version>
+    <version>8.3.3-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -70,7 +70,7 @@
     <scm>
         <url>scm:git:https://github.com/questdb/questdb.git</url>
         <connection>scm:git:https://github.com/questdb/questdb.git</connection>
-        <tag>8.3.2</tag>
+        <tag>HEAD</tag>
     </scm>
 
     <distributionManagement>
