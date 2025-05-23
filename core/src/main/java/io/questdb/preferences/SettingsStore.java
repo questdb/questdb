@@ -15,6 +15,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -33,6 +34,7 @@ public class SettingsStore implements Closeable {
     private final PreferencesMap preferencesMap;
     private final PreferencesParser preferencesParser;
     private final int rootLen;
+    private PreferencesUpdateListener listener;
     private long version = 0L;
 
     public SettingsStore(CairoConfiguration configuration) {
@@ -81,6 +83,14 @@ public class SettingsStore implements Closeable {
         }
     }
 
+    public void registerListener(@NotNull PreferencesUpdateListener listener) {
+        this.listener = listener;
+
+        // call the listener with current state,
+        // it will be called on subsequent updates too
+        listener.update(preferencesMap);
+    }
+
     public synchronized void save(DirectUtf8Sink sink, Mode mode, long expectedVersion) {
         if (version != expectedVersion) {
             throw CairoException.preferencesOutOfDate(version, expectedVersion);
@@ -105,6 +115,10 @@ public class SettingsStore implements Closeable {
                 break;
             default:
                 throw CairoException.nonCritical().put("Invalid mode [mode=").put(mode.name()).put(']');
+        }
+
+        if (listener != null) {
+            listener.update(preferencesMap);
         }
     }
 
