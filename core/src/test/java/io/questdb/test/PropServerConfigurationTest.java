@@ -505,6 +505,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(7_000, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(1000, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
+        Assert.assertFalse(configuration.getCairoConfiguration().useWithinLatestByOptimisation());
     }
 
     @Test
