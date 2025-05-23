@@ -46,6 +46,9 @@ public class HttpRequestValidator {
     }
 
     void validateRequestHeader(RejectProcessor rejectProcessor) {
+        if (rejectProcessor.isRequestBeingRejected()) {
+            return;
+        }
         if (requestHeader.getUrl() == null) {
             throw HttpException.instance("missing URL");
         }

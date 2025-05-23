@@ -52,7 +52,12 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             telemetryConfigLogger = new TelemetryConfigLogger(engine);
 
             try (final SqlCompiler compiler = engine.getSqlCompiler()) {
-                final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+                final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1) {
+                    @Override
+                    public boolean shouldLogSql() {
+                        return false;
+                    }
+                };
                 sqlExecutionContext.with(
                         engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
                         null,

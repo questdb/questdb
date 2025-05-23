@@ -26,6 +26,8 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.log.LogFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
@@ -33,7 +35,8 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 public class RssMemoryLimitTest extends AbstractCairoTest {
 
@@ -41,6 +44,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
 
     @Override
     public void setUp() {
+        LogFactory.enableGuaranteedLogging(QueryProgress.class);
         super.setUp();
         capture.start();
     }
@@ -49,6 +53,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
     public void tearDown() throws Exception {
         capture.stop();
         super.tearDown();
+        LogFactory.disableGuaranteedLogging(QueryProgress.class);
     }
 
     @Test
