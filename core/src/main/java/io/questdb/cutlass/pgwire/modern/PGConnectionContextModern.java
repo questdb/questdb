@@ -1263,6 +1263,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // Message types in the order they usually come over the wire. All "msg" methods
         // are called only from here and are responsible for handling individual messages.
         // Please do not create other methods that start with "msg".
+
         switch (type) {
             case 'P': // parse
                 msgParse(address, msgLo, msgLimit);

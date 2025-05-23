@@ -100,8 +100,6 @@ public interface CompiledQuery {
     @Transient
     AlterOperation getAlterOperation();
 
-    InsertOperation getInsertOperation();
-
     Operation getOperation();
 
     RecordCursorFactory getRecordCursorFactory();
@@ -118,6 +116,15 @@ public interface CompiledQuery {
     short getType();
 
     UpdateOperation getUpdateOperation();
+
+    /**
+     * Returns and move ownership of the current insertion operation.
+     * After invocation, the lifecycle management becomes the caller's responsibility.
+     * The internal reference will be cleared to prevent double free.
+     *
+     * @return InsertOperation
+     */
+    InsertOperation popInsertOperation();
 
     CompiledQuery withContext(SqlExecutionContext sqlExecutionContext);
 

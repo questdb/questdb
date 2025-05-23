@@ -394,7 +394,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                         } else {
                             new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                     "GET /query?query=insert+into+copy+select+*+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
-                                    IODispatcherTest.JSON_DDL_RESPONSE
+                                    IODispatcherTest.INSERT_QUERY_RESPONSE
                             );
                         }
 

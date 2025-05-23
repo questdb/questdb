@@ -33,6 +33,7 @@ import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -639,7 +640,10 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             tableModel.wal();
         }
         CharSequence insert = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
-        compiler.compile(insert, context);
+        try (InsertOperation op = compiler.compile(insert, context).popInsertOperation()) {
+            op.execute(context);
+        }
+
         return engine.verifyTableName(tableName);
     }
 
