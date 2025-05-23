@@ -114,9 +114,7 @@ public class DoubleList implements Mutable, Sinkable {
         int l = data.length;
         if (capacity > l) {
             int newCap = Math.max(l << 1, capacity);
-            double[] buf = new double[newCap];
-            System.arraycopy(data, 0, buf, 0, l);
-            this.data = buf;
+            this.data = Arrays.copyOf(data, newCap);
         }
     }
 

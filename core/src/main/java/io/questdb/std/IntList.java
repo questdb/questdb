@@ -99,9 +99,7 @@ public class IntList implements Mutable, Sinkable {
         int l = data.length;
         if (capacity > l) {
             int newCap = Math.max(l << 1, capacity);
-            int[] buf = new int[newCap];
-            System.arraycopy(data, 0, buf, 0, l);
-            this.data = buf;
+            this.data = Arrays.copyOf(data, newCap);
         }
     }
 
