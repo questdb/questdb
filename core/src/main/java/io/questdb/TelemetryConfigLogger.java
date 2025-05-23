@@ -102,10 +102,7 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
             );
             updateTelemetryConfig(engine, compiler, sqlExecutionContext, configTableToken);
         } catch (Throwable th) {
-            LOG.error()
-                    .$("could not update config telemetry [table=`").utf8(TELEMETRY_CONFIG_TABLE_NAME)
-                    .$("`, msg=").$(th.getMessage())
-                    .I$();
+            LOG.error().$("could not update config telemetry [table=`").utf8(TELEMETRY_CONFIG_TABLE_NAME).$("]").$(th).$();
         }
     }
 
