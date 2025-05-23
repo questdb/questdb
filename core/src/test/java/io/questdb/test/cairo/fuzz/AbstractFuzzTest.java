@@ -105,7 +105,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         fuzzer.after();
     }
 
-    private static void setZeroWalPurgeInterval() {
+    protected static void setZeroWalPurgeInterval() {
         node1.setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 0L);
     }
 
@@ -123,6 +123,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 0.01,
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
+                rnd.nextDouble(),
                 rnd.nextDouble(),
                 rnd.nextDouble()
         );
@@ -245,11 +246,13 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             double partitionDropProb,
             double truncateProb,
             double tableDropProb,
-            double setTtlProb
+            double setTtlProb,
+            double replaceProb
     ) {
         fuzzer.setFuzzProbabilities(cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
                 colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
-                equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb, setTtlProb
+                equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb, setTtlProb,
+                replaceProb
         );
     }
 

@@ -421,11 +421,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long refreshStartTimestamp = microsecondClock.getTicks();
         state.setLastRefreshStartTimestamp(refreshStartTimestamp);
         final TableToken viewTableToken = viewDef.getMatViewToken();
+        long refreshFinishTimestamp = 0;
+        long commitBaseRefreshTxn = baseTableTxn == -1 ? state.getLastRefreshBaseTxn() : baseTableTxn;
+
         try {
             factory = state.acquireRecordFactory();
             copier = state.getRecordToRowCopier();
+            int commitCount = 0;
 
-            long rowCount = 0;
             for (int i = 0; i <= maxRetries; i++) {
                 try {
                     if (factory == null) {
@@ -459,23 +462,53 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     assert cursorTimestampIndex > -1;
 
                     long commitTarget = batchSize;
-                    rowCount = 0;
+                    long rowCount = 0;
+
 
                     intervalIterator.toTop(intervalStep);
+                    long replacementTimestampLo = Long.MIN_VALUE;
+                    long replacementTimestampHi = Long.MIN_VALUE;
+
                     while (intervalIterator.next()) {
                         refreshExecutionContext.setRange(intervalIterator.getTimestampLo(), intervalIterator.getTimestampHi());
+                        if (replacementTimestampHi != intervalIterator.getTimestampLo()) {
+                            if (replacementTimestampHi > replacementTimestampLo) {
+                                // Gap in the refresh intervals, commit the previous batch
+                                // so that the replacement interval does not span across the gap.
+                                refreshFinishTimestamp = microsecondClock.getTicks();
+                                walWriter.commitMatView(commitBaseRefreshTxn, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
+                                commitCount++;
+                                commitTarget = rowCount + batchSize;
+                            }
+                            replacementTimestampLo = intervalIterator.getTimestampLo();
+                        }
+
+                        // Interval high and replace range high are both exclusive
+                        replacementTimestampHi = intervalIterator.getTimestampHi();
+
                         try (RecordCursor cursor = factory.getCursor(refreshExecutionContext)) {
                             final Record record = cursor.getRecord();
                             while (cursor.hasNext()) {
                                 TableWriter.Row row = walWriter.newRow(record.getTimestamp(cursorTimestampIndex));
                                 copier.copy(record, row);
                                 row.append();
-                                if (++rowCount >= commitTarget) {
-                                    walWriter.commit();
-                                    commitTarget = rowCount + batchSize;
-                                }
+                                rowCount++;
+                            }
+
+                            if (rowCount >= commitTarget) {
+                                refreshFinishTimestamp = microsecondClock.getTicks();
+                                walWriter.commitMatView(commitBaseRefreshTxn, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
+                                commitCount++;
+                                replacementTimestampLo = replacementTimestampHi;
+                                commitTarget = rowCount + batchSize;
                             }
                         }
+                    }
+
+                    if (replacementTimestampHi > replacementTimestampLo) {
+                        refreshFinishTimestamp = microsecondClock.getTicks();
+                        walWriter.commitMatView(commitBaseRefreshTxn, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
+                        commitCount++;
                     }
                     break;
                 } catch (TableReferenceOutOfDateException e) {
@@ -503,15 +536,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             }
 
-            final long refreshFinishTimestamp = microsecondClock.getTicks();
+            if (commitCount == 0) {
+                // No data was committed, but we should mark the view as refreshed anyway.
+                refreshFinishTimestamp = microsecondClock.getTicks();
+                walWriter.commitMatView(commitBaseRefreshTxn, refreshFinishTimestamp);
+            }
+
             if (baseTableTxn == -1) {
                 // It's a range refresh, so we don't bump last refresh base table txn.
                 // Keep the last refresh txn as is and only update the finish timestamp.
-                if (rowCount > 0) {
-                    walWriter.commitMatView(state.getLastRefreshBaseTxn(), refreshFinishTimestamp);
-                } else {
-                    walWriter.resetMatViewState(state.getLastRefreshBaseTxn(), refreshFinishTimestamp, false, null);
-                }
                 state.rangeRefreshSuccess(
                         factory,
                         copier,
@@ -521,11 +554,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 );
             } else {
                 // It's an incremental/full refresh.
-                if (rowCount > 0) {
-                    walWriter.commitMatView(baseTableTxn, refreshFinishTimestamp);
-                } else {
-                    walWriter.resetMatViewState(baseTableTxn, refreshFinishTimestamp, false, null);
-                }
                 state.refreshSuccess(
                         factory,
                         copier,
@@ -760,7 +788,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         childViewSink.clear();
         graph.getDependentViews(baseTableToken, childViewSink);
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
-            final TableToken viewToken = childViewSink.get(v);
+            TableToken viewToken = childViewSink.get(v);
             final MatViewState state = stateStore.getViewState(viewToken);
             if (state != null && !state.isPendingInvalidation() && !state.isInvalid() && !state.isDropped()) {
                 if (!state.tryLock()) {
@@ -768,11 +796,25 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     stateStore.enqueueIncrementalRefresh(viewToken);
                     continue;
                 }
-                try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
-                    try {
-                        refreshed |= refreshIncremental0(state, baseTableToken, walWriter, refreshTriggerTimestamp);
-                    } catch (Throwable th) {
-                        refreshFailState(state, walWriter, th);
+                try {
+                    try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
+                        try {
+                            refreshed |= refreshIncremental0(state, baseTableToken, walWriter, refreshTriggerTimestamp);
+                        } catch (Throwable th) {
+                            refreshFailState(state, walWriter, th);
+                        }
+                    } catch (CairoException ex) {
+                        if (ex.isTableDoesNotExist()) {
+                            // Can be that the mat view underlying table is in the middle of being renamed at this moment,
+                            // do not invalidate the view in this case.
+                            TableToken updatedToken = engine.getUpdatedTableToken(viewToken);
+                            if (updatedToken != null && updatedToken != viewToken) {
+                                // The table was renamed, so we need to update the state
+                                stateStore.enqueueIncrementalRefresh(updatedToken);
+                                continue;
+                            }
+                        }
+                        throw ex;
                     }
                 } catch (Throwable th) {
                     // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write

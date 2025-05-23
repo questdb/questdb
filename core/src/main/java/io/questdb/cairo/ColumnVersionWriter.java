@@ -169,8 +169,6 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         for (int i = 0, n = cachedColumnVersionList.size(); i < n; i += BLOCK_SIZE) {
             long partitionTimestamp = cachedColumnVersionList.getQuick(i);
             long defaultPartitionTimestamp = cachedColumnVersionList.get(i + TIMESTAMP_ADDED_PARTITION_OFFSET);
-            int columnIndex = (int) cachedColumnVersionList.get(i + COLUMN_INDEX_OFFSET);
-            long columnNameTxn = cachedColumnVersionList.getQuick(i + COLUMN_NAME_TXN_OFFSET);
 
             if (partitionTimestamp == COL_TOP_DEFAULT_PARTITION) {
                 if (defaultPartitionTimestamp == sourcePartitionTimestamp) {

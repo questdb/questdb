@@ -63,6 +63,7 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.std.AtomicIntList;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BoolList;
@@ -95,7 +96,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.validateDesignatedTimestampBounds;
-import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
 public class WalWriter implements TableWriterAPI {
@@ -142,6 +143,11 @@ public class WalWriter implements TableWriterAPI {
     private long currentTxnStartRowNum = -1;
     private boolean distressed;
     private boolean isCommittingData;
+    private byte lastDedupMode = WAL_DEDUP_MODE_DEFAULT;
+    private long lastRefreshBaseTxn;
+    private long lastRefreshTimestamp;
+    private long lastReplaceRangeHiTs = 0;
+    private long lastReplaceRangeLowTs = 0;
     private int lastSegmentTxn = -1;
     private long lastSeqTxn = NO_TXN;
     private boolean open;
@@ -305,13 +311,46 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public void commit() {
         // plain old commit
-        commit0(Long.MIN_VALUE, Long.MIN_VALUE);
+        commit0(Long.MIN_VALUE, Long.MIN_VALUE, 0, 0, WAL_DEDUP_MODE_DEFAULT);
     }
 
-    // Called as the last transaction of a materialized view refresh.
+    /**
+     * Commit the materialized view to update last refresh timestamp.
+     * Called as the last transaction of a materialized view refresh.
+     *
+     * @param lastRefreshBaseTxn   the base table seqTxn the mat view is refreshed at
+     * @param lastRefreshTimestamp the wall clock timestamp when the refresh is done
+     */
     public void commitMatView(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
         assert lastRefreshBaseTxn != Numbers.LONG_NULL;
-        commit0(lastRefreshBaseTxn, lastRefreshTimestamp);
+        if (!(lastReplaceRangeLowTs == 0 && lastReplaceRangeHiTs == 0)) {
+            assert lastReplaceRangeLowTs < lastReplaceRangeHiTs;
+            assert txnMinTimestamp >= lastReplaceRangeLowTs;
+            assert txnMaxTimestamp <= lastReplaceRangeHiTs;
+        }
+        commit0(lastRefreshBaseTxn, lastRefreshTimestamp, 0, 0, WAL_DEDUP_MODE_DEFAULT);
+    }
+
+    /**
+     * Commit the materialized view to update last refresh timestamp and refresh ranges.
+     *
+     * @param lastRefreshBaseTxn    the base table seqTxn the mat view is refreshed at
+     * @param lastRefreshTimestamp  the wall clock timestamp when the refresh is done
+     * @param lastReplaceRangeLowTs the low timestamp of the range to be replaced, inclusive
+     * @param lastReplaceRangeHiTs  the high timestamp of the range to be replaced, exclusive
+     */
+    public void commitMatView(long lastRefreshBaseTxn, long lastRefreshTimestamp, long lastReplaceRangeLowTs, long lastReplaceRangeHiTs) {
+        assert lastRefreshBaseTxn != Numbers.LONG_NULL;
+        if (!(lastReplaceRangeLowTs == 0 && lastReplaceRangeHiTs == 0)) {
+            assert lastReplaceRangeLowTs < lastReplaceRangeHiTs;
+            assert txnMinTimestamp >= lastReplaceRangeLowTs;
+            assert txnMaxTimestamp <= lastReplaceRangeHiTs;
+        }
+        commit0(lastRefreshBaseTxn, lastRefreshTimestamp, lastReplaceRangeLowTs, lastReplaceRangeHiTs, WAL_DEDUP_MODE_REPLACE_RANGE);
+    }
+
+    public void commitWithParams(long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
+        commit0(Long.MIN_VALUE, Long.MIN_VALUE, replaceRangeLowTs, replaceRangeHiTs, dedupMode);
     }
 
     public void doClose(boolean truncate) {
@@ -934,12 +973,18 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private void commit0(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
+    private void commit0(long lastRefreshBaseTxn, long lastRefreshTimestamp, long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
         checkDistressed();
         try {
-            if (inTransaction()) {
+            if (inTransaction() || dedupMode == WAL_DEDUP_MODE_REPLACE_RANGE) {
                 isCommittingData = true;
                 final long rowsToCommit = getUncommittedRowCount();
+                lastReplaceRangeLowTs = replaceRangeLowTs;
+                lastReplaceRangeHiTs = replaceRangeHiTs;
+                lastDedupMode = dedupMode;
+                this.lastRefreshBaseTxn = lastRefreshBaseTxn;
+                this.lastRefreshTimestamp = lastRefreshTimestamp;
+
                 lastSegmentTxn = events.appendData(
                         currentTxnStartRowNum,
                         segmentRowCount,
@@ -947,16 +992,27 @@ public class WalWriter implements TableWriterAPI {
                         txnMaxTimestamp,
                         txnOutOfOrder,
                         lastRefreshBaseTxn,
-                        lastRefreshTimestamp
+                        lastRefreshTimestamp,
+                        replaceRangeLowTs,
+                        replaceRangeHiTs,
+                        dedupMode
                 );
                 // flush disk before getting next txn
                 syncIfRequired();
                 final long seqTxn = getSequencerTxn();
-                LOG.info().$("commit [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
-                        .$(", segTxn=").$(lastSegmentTxn)
-                        .$(", seqTxn=").$(seqTxn)
-                        .$(", rowLo=").$(currentTxnStartRowNum).$(", rowHi=").$(segmentRowCount)
-                        .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp).I$();
+                LogRecord logLine = LOG.info();
+                try {
+                    logLine.$("commit [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
+                            .$(", segTxn=").$(lastSegmentTxn)
+                            .$(", seqTxn=").$(seqTxn)
+                            .$(", rowLo=").$(currentTxnStartRowNum).$(", rowHi=").$(segmentRowCount)
+                            .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp);
+                    if (replaceRangeHiTs > replaceRangeLowTs) {
+                        logLine.$(", replaceRangeLo=").$ts(replaceRangeLowTs).$(", replaceRangeHi=").$ts(replaceRangeHiTs);
+                    }
+                } finally {
+                    logLine.I$();
+                }
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
                 metrics.walMetrics().addRowsWritten(rowsToCommit);
@@ -1332,7 +1388,7 @@ public class WalWriter implements TableWriterAPI {
                     dFile(path.trimTo(pathTrimToLen), columnName),
                     getDataAppendPageSize(),
                     -1,
-                    MemoryTag.MMAP_TABLE_WRITER,
+                    MemoryTag.MMAP_TABLE_WAL_WRITER,
                     configuration.getWriterFileOpenOpts(),
                     Files.POSIX_MADV_RANDOM
             );
@@ -1347,7 +1403,7 @@ public class WalWriter implements TableWriterAPI {
                         auxMem,
                         iFile(path.trimTo(pathTrimToLen), columnName),
                         getDataAppendPageSize(),
-                        MemoryTag.MMAP_TABLE_WRITER,
+                        MemoryTag.MMAP_TABLE_WAL_WRITER,
                         configuration.getWriterFileOpenOpts(),
                         Files.POSIX_MADV_RANDOM
                 );
@@ -1557,7 +1613,18 @@ public class WalWriter implements TableWriterAPI {
         if (isCommittingData) {
             // When current transaction is not a data transaction but a column add transaction
             // there is no need to add a record about it to the new segment event file.
-            lastSegmentTxn = events.appendData(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+            lastSegmentTxn = events.appendData(
+                    0,
+                    uncommittedRows,
+                    txnMinTimestamp,
+                    txnMaxTimestamp,
+                    txnOutOfOrder,
+                    lastRefreshBaseTxn,
+                    lastRefreshTimestamp,
+                    lastReplaceRangeLowTs,
+                    lastReplaceRangeHiTs,
+                    lastDedupMode
+            );
         }
         events.sync();
     }

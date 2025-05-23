@@ -26,11 +26,12 @@ package io.questdb.test.fuzz;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 
 public class FuzzTruncateTableOperation implements FuzzTransactionOperation {
     @Override
-    public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex) {
+    public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex, LongList excludedTsIntervals) {
         tableWriter.truncateSoft();
         return true;
     }

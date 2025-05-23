@@ -216,6 +216,10 @@ public class MatViewDefinition implements Mutable {
         }
     }
 
+    public void updateToken(TableToken updatedToken) {
+        matViewToken = updatedToken;
+    }
+
     private static boolean loadMatViewDefinition(
             MatViewDefinition destDefinition,
             ReadableBlock block,
