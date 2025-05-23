@@ -371,6 +371,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             refreshFailState(state, null, th);
             return false;
         } finally {
+            state.incrementRefreshSeq();
             state.unlock();
             state.tryCloseIfDropped();
         }
@@ -788,6 +789,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             .I$();
                     refreshFailState(state, null, th);
                 } finally {
+                    state.incrementRefreshSeq();
                     state.unlock();
                     state.tryCloseIfDropped();
                 }
@@ -877,6 +879,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             refreshFailState(state, null, th);
             return false;
         } finally {
+            state.incrementRefreshSeq();
             state.unlock();
             state.tryCloseIfDropped();
         }
@@ -895,8 +898,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         final long fromBaseTxn = state.getLastRefreshBaseTxn();
         if (fromBaseTxn >= 0 && fromBaseTxn >= toBaseTxn) {
-            // Already refreshed
-            state.incrementRefreshSeq();
+            // Already refreshed.
             return false;
         }
 

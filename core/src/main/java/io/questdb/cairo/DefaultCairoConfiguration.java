@@ -489,16 +489,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getMatViewTimerJobTick() {
-        return Timestamps.SECOND_MICROS;
-    }
-
-    @Override
-    public int getMatViewTimerJobWheelSize() {
-        return 256;
-    }
-
-    @Override
     public int getMaxCrashFiles() {
         return 1;
     }

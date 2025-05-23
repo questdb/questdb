@@ -356,7 +356,7 @@ public class MatViewTest extends AbstractCairoTest {
             // the view should refresh after we change the timer schedule
             execute("alter materialized view price_1h set refresh start '" + start + "' every 1m;");
             drainQueues();
-            // we need the wheel to tick
+            // we need timers to tick
             currentMicros += Timestamps.MINUTE_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
@@ -2149,7 +2149,6 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testManyTimerMatViews() throws Exception {
-        randomizeWheelSize();
         assertMemoryLeak(() -> {
             final int views = 32;
             final long start = parseFloorPartialTimestamp("2024-12-12T00:00:00.000000Z");
@@ -3375,7 +3374,6 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testTimerMatViewSmoke() throws Exception {
-        randomizeWheelSize();
         assertMemoryLeak(() -> {
             final long start = parseFloorPartialTimestamp("2024-12-12T00:00:00.000000Z");
 
@@ -3546,12 +3544,6 @@ public class MatViewTest extends AbstractCairoTest {
 
     private static void dropNthTimerMatView(int n) throws SqlException {
         execute("drop materialized view if exists price_1h_" + n + ";");
-    }
-
-    private static void randomizeWheelSize() {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        final int wheelSize = 1 << rnd.nextInt(6);
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_TIMER_JOB_WHEEL_SIZE, wheelSize);
     }
 
     private String copySql(int from, int count) {
@@ -3785,7 +3777,6 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     private void testTimerMatViewBigJumps(String start, String initialClock, long clockJump) throws Exception {
-        randomizeWheelSize();
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
@@ -3842,7 +3833,6 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     private void testTimerMatViewSmallJumps(String start, String every, String initialClock, long clockJump, int ticksBeforeRefresh) throws Exception {
-        randomizeWheelSize();
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +

@@ -457,16 +457,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getMatViewTimerJobTick() {
-        return getDelegate().getMatViewTimerJobTick();
-    }
-
-    @Override
-    public int getMatViewTimerJobWheelSize() {
-        return getDelegate().getMatViewTimerJobWheelSize();
-    }
-
-    @Override
     public int getMaxCrashFiles() {
         return getDelegate().getMaxCrashFiles();
     }

@@ -281,10 +281,6 @@ public interface CairoConfiguration {
 
     int getMatViewRowsPerQueryEstimate();
 
-    long getMatViewTimerJobTick();
-
-    int getMatViewTimerJobWheelSize();
-
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();

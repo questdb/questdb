@@ -24,45 +24,51 @@
 
 package io.questdb.cairo.mv;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Queue;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import org.jetbrains.annotations.NotNull;
+
+import java.util.Comparator;
+import java.util.PriorityQueue;
 
 /**
  * A scheduler for mat views with timer refresh.
  */
 public class MatViewTimerJob extends SynchronizedJob {
+    private static final int INITIAL_QUEUE_CAPACITY = 16;
     private static final Log LOG = LogFactory.getLog(MatViewTimerJob.class);
+    private static final Comparator<Timer> timerComparator = Comparator.comparingLong(t -> t.deadline);
+    private final MicrosecondClock clock;
     private final CairoEngine engine;
-    private final ObjList<MatViewTimingWheel.Timer> expired = new ObjList<>();
+    private final ObjList<Timer> expired = new ObjList<>();
     private final MatViewGraph matViewGraph;
     private final MatViewStateStore matViewStateStore;
+    private final PriorityQueue<Timer> timerQueue = new PriorityQueue<>(INITIAL_QUEUE_CAPACITY, timerComparator);
     private final MatViewTimerTask timerTask = new MatViewTimerTask();
     private final Queue<MatViewTimerTask> timerTaskQueue;
-    private final CharSequenceObjHashMap<MatViewTimingWheel.Timer> timersByTableDirName = new CharSequenceObjHashMap<>();
-    private final MatViewTimingWheel timingWheel;
+    private final CharSequenceObjHashMap<Timer> timersByTableDirName = new CharSequenceObjHashMap<>();
 
     public MatViewTimerJob(CairoEngine engine) {
         this.engine = engine;
+        this.clock = engine.getConfiguration().getMicrosecondClock();
         this.timerTaskQueue = engine.getMatViewTimerQueue();
         this.matViewGraph = engine.getMatViewGraph();
         this.matViewStateStore = engine.getMatViewStateStore();
-        final CairoConfiguration configuration = engine.getConfiguration();
-        this.timingWheel = new MatViewTimingWheel(
-                configuration.getMicrosecondClock(),
-                configuration.getMatViewTimerJobTick(),
-                configuration.getMatViewTimerJobWheelSize()
-        );
     }
 
-    private void addTimer(TableToken viewToken) {
+    private void addTimer(TableToken viewToken, long now) {
         final MatViewDefinition viewDefinition = matViewGraph.getViewDefinition(viewToken);
         if (viewDefinition == null) {
             LOG.info().$("materialized view definition not found [view=").$(viewToken).I$();
@@ -72,7 +78,15 @@ public class MatViewTimerJob extends SynchronizedJob {
             final long start = matViewMeta.getMatViewTimerStart();
             final int interval = matViewMeta.getMatViewTimerInterval();
             final char unit = matViewMeta.getMatViewTimerIntervalUnit();
-            final MatViewTimingWheel.Timer timer = timingWheel.addTimer(viewToken, start, interval, unit);
+            final TimestampSampler sampler;
+            try {
+                sampler = TimestampSamplerFactory.getInstance(interval, unit, 0);
+            } catch (SqlException e) {
+                throw CairoException.critical(0).put("invalid EVERY interval and/or unit: ").put(interval)
+                        .put(", ").put(unit);
+            }
+            final Timer timer = new Timer(viewToken, sampler, start, now);
+            timerQueue.add(timer);
             timersByTableDirName.put(viewToken.getDirName(), timer);
             LOG.info().$("registered timer for materialized view [view=").$(viewToken)
                     .$(", start=").$ts(start)
@@ -86,33 +100,35 @@ public class MatViewTimerJob extends SynchronizedJob {
         }
     }
 
-    private void removeTimer(TableToken viewToken) {
-        final MatViewTimingWheel.Timer existingTimer = timersByTableDirName.get(viewToken.getDirName());
-        if (existingTimer != null) {
-            existingTimer.remove();
+    private boolean removeTimer(TableToken viewToken) {
+        final Timer timer = timersByTableDirName.get(viewToken.getDirName());
+        if (timer != null && timerQueue.remove(timer)) {
             timersByTableDirName.remove(viewToken.getDirName());
             LOG.info().$("unregistered timer for materialized view [view=").$(viewToken).I$();
-        } else {
-            LOG.info().$("refresh timer for materialized view not found [view=").$(viewToken).I$();
+            return true;
         }
+        LOG.info().$("refresh timer for materialized view not found [view=").$(viewToken).I$();
+        return false;
     }
 
     @Override
     protected boolean runSerially() {
         boolean ran = false;
+        final long now = clock.getTicks();
         // check created/dropped event queue
         while (timerTaskQueue.tryDequeue(timerTask)) {
             final TableToken viewToken = timerTask.getMatViewToken();
             switch (timerTask.getOperation()) {
                 case MatViewTimerTask.ADD:
-                    addTimer(viewToken);
+                    addTimer(viewToken, now);
                     break;
                 case MatViewTimerTask.REMOVE:
                     removeTimer(viewToken);
                     break;
                 case MatViewTimerTask.UPDATE:
-                    removeTimer(viewToken);
-                    addTimer(viewToken);
+                    if (removeTimer(viewToken)) {
+                        addTimer(viewToken, now);
+                    }
                     break;
                 default:
                     LOG.error().$("unknown refresh timer operation [op=").$(timerTask.getOperation()).I$();
@@ -120,29 +136,87 @@ public class MatViewTimerJob extends SynchronizedJob {
             ran = true;
         }
         // process ticks
-        while (timingWheel.tick(expired)) {
-            for (int i = 0, n = expired.size(); i < n; i++) {
-                final MatViewTimingWheel.Timer timer = expired.getQuick(i);
-                final TableToken viewToken = timer.getMatViewToken();
-                final MatViewState state = matViewStateStore.getViewState(viewToken);
-                if (state != null) {
-                    if (state.isDropped()) {
-                        removeTimer(viewToken);
-                    } else if (!state.isPendingInvalidation() && !state.isInvalid()) {
-                        // Check if the view has refreshed since the last timer expiration.
-                        // If not, don't schedule refresh to avoid unbounded growth of the queue.
-                        final long refreshSeq = state.getRefreshSeq();
-                        if (timer.getKnownRefreshSeq() != refreshSeq) {
-                            matViewStateStore.enqueueIncrementalRefresh(viewToken);
-                            timer.setKnownRefreshSeq(refreshSeq);
-                        }
+        expired.clear();
+        Timer timer;
+        while ((timer = timerQueue.peek()) != null && timer.deadline <= now) {
+            timer = timerQueue.poll();
+            expired.add(timer);
+            final TableToken viewToken = timer.getMatViewToken();
+            final MatViewState state = matViewStateStore.getViewState(viewToken);
+            if (state != null) {
+                if (state.isDropped()) {
+                    timersByTableDirName.remove(viewToken.getDirName());
+                    expired.remove(expired.size() - 1);
+                    LOG.info().$("unregistered timer for dropped materialized view [view=").$(viewToken).I$();
+                } else if (!state.isPendingInvalidation() && !state.isInvalid()) {
+                    // Check if the view has refreshed since the last timer expiration.
+                    // If not, don't schedule refresh to avoid unbounded growth of the queue.
+                    final long refreshSeq = state.getRefreshSeq();
+                    if (timer.getKnownRefreshSeq() != refreshSeq) {
+                        matViewStateStore.enqueueIncrementalRefresh(viewToken);
+                        timer.setKnownRefreshSeq(refreshSeq);
                     }
-                } else {
-                    LOG.info().$("state for materialized view not found [view=").$(viewToken).I$();
                 }
+            } else {
+                LOG.info().$("state for materialized view not found [view=").$(viewToken).I$();
             }
             ran = true;
         }
+        // Re-schedule expired timers.
+        for (int i = 0, n = expired.size(); i < n; i++) {
+            timer = expired.getQuick(i);
+            timer.nextDeadline();
+            timerQueue.add(timer);
+        }
         return ran;
+    }
+
+    private static class Timer {
+        private final TableToken matViewToken;
+        private final TimestampSampler sampler;
+        private long deadline;
+        private long knownRefreshSeq = -1;
+
+        private Timer(@NotNull TableToken matViewToken, @NotNull TimestampSampler sampler, long start, long now) {
+            this.matViewToken = matViewToken;
+            this.sampler = sampler;
+            sampler.setStart(start);
+            // It's fine if the timer triggers immediately.
+            deadline = now > start ? sampler.nextTimestamp(sampler.round(now - 1)) : start;
+        }
+
+        @Override
+        public final boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (!(o instanceof Timer)) {
+                return false;
+            }
+
+            Timer timer = (Timer) o;
+            return matViewToken.getDirName().equals(timer.matViewToken.getDirName());
+        }
+
+        public long getKnownRefreshSeq() {
+            return knownRefreshSeq;
+        }
+
+        public TableToken getMatViewToken() {
+            return matViewToken;
+        }
+
+        @Override
+        public int hashCode() {
+            return matViewToken.getDirName().hashCode();
+        }
+
+        public void setKnownRefreshSeq(long knownRefreshSeq) {
+            this.knownRefreshSeq = knownRefreshSeq;
+        }
+
+        private void nextDeadline() {
+            deadline = sampler.nextTimestamp(deadline);
+        }
     }
 }

@@ -262,7 +262,6 @@ public class MatViewState implements QuietCloseable {
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
         this.lastRefreshFinishTimestamp = refreshFinishedTimestamp;
         this.lastRefreshBaseTxn = baseTableTxn;
-        refreshSeq.incrementAndGet();
         telemetryFacade.store(
                 MAT_VIEW_REFRESH_SUCCESS,
                 viewDefinition.getMatViewToken(),
