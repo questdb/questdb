@@ -169,6 +169,10 @@ public class MatViewState implements QuietCloseable {
         return viewDefinition;
     }
 
+    public void incrementRefreshSeq() {
+        refreshSeq.incrementAndGet();
+    }
+
     public void init() {
         telemetryFacade.store(MAT_VIEW_CREATE, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, null, 0);
     }
@@ -257,6 +261,7 @@ public class MatViewState implements QuietCloseable {
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
         this.lastRefreshFinishTimestamp = refreshFinishedTimestamp;
+        this.lastRefreshBaseTxn = baseTableTxn;
         refreshSeq.incrementAndGet();
         telemetryFacade.store(
                 MAT_VIEW_REFRESH_SUCCESS,

@@ -536,7 +536,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         refreshTriggerTimestamp,
                         baseTableTxn
                 );
-                state.setLastRefreshBaseTableTxn(baseTableTxn);
             }
         } catch (Throwable th) {
             Misc.free(factory);
@@ -897,6 +896,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long fromBaseTxn = state.getLastRefreshBaseTxn();
         if (fromBaseTxn >= 0 && fromBaseTxn >= toBaseTxn) {
             // Already refreshed
+            state.incrementRefreshSeq();
             return false;
         }
 
