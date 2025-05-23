@@ -42,6 +42,21 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
     public long rangeTo = Numbers.LONG_NULL;
     public long refreshTriggerTimestamp = Numbers.LONG_NULL;
 
+    public static String getRefreshOperationName(int operation) {
+        switch (operation) {
+            case INCREMENTAL_REFRESH:
+                return "incremental_refresh";
+            case FULL_REFRESH:
+                return "full_refresh";
+            case RANGE_REFRESH:
+                return "range_refresh";
+            case INVALIDATE:
+                return "invalidate";
+            default:
+                return "unknown";
+        }
+    }
+
     public static boolean isRefreshOperation(int operation) {
         return operation == INCREMENTAL_REFRESH || operation == RANGE_REFRESH || operation == FULL_REFRESH;
     }
