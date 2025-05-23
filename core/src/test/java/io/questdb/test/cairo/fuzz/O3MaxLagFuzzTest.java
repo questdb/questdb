@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -128,6 +129,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                 TableWriter w2 = TestUtils.getWriter(engine, "y")
         ) {
             ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(
+                    engine.getConfiguration(),
                     nTotalRows,
                     sequencerMetadata,
                     w.getMetadata(),
@@ -158,15 +160,19 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                     0
             );
 
-            Rnd rnd1 = new Rnd();
-            replayTransactions(rnd1, engine, w, transactions, -1);
-            w.commit();
+            try {
+                Rnd rnd1 = new Rnd();
+                replayTransactions(rnd1, engine, w, transactions, -1);
+                w.commit();
 
-            Rnd rnd2 = new Rnd();
-            replayTransactions(rnd2, engine, w2, transactions, w.getMetadata().getTimestampIndex());
-            w2.commit();
+                Rnd rnd2 = new Rnd();
+                replayTransactions(rnd2, engine, w2, transactions, w.getMetadata().getTimestampIndex());
+                w2.commit();
 
-            TestUtils.assertEquals(compiler, sqlExecutionContext, "y order by ts", "x");
+                TestUtils.assertEquals(compiler, sqlExecutionContext, "y order by ts", "x");
+            } finally {
+                Misc.freeObjListAndClear(transactions);
+            }
         }
     }
 

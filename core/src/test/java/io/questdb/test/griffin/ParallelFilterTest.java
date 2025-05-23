@@ -185,6 +185,37 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayFilter() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+        WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE x (" +
+                                    "  ts TIMESTAMP," +
+                                    "  a double[][], " +
+                                    "  b double[][] " +
+                                    ") timestamp (ts) PARTITION BY DAY;",
+                            sqlExecutionContext
+                    );
+                    engine.execute("insert into x select x::timestamp, rnd_double_array(2), rnd_double_array(2) from long_sequence(50000)", sqlExecutionContext);
+                    engine.execute("insert into x values (50001, ARRAY[[1,1],[2,2]], ARRAY[[1,1],[2,2]])", sqlExecutionContext);
+
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count() from x where a = b",
+                            sink,
+                            "count\n1\n"
+                    );
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
     public void testAsyncOffloadNegativeLimitTimeoutWithJitEnabled() throws Exception {
         Assume.assumeTrue(JitUtil.isJitSupported());
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_ENABLED));

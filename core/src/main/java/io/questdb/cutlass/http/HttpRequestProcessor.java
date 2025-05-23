@@ -39,8 +39,8 @@ public interface HttpRequestProcessor {
         return metrics.jsonQueryMetrics().connectionCountGauge();
     }
 
-    // after this callback is invoked the server will disconnect the client
-    // if processor desires to write a goodbye letter to the client
+    // after this callback is invoked, the server will disconnect the client.
+    // if a processor desires to write a goodbye letter to the client,
     // it must also send TCP FIN by invoking socket.shutdownWrite()
     default void failRequest(
             HttpConnectionContext context,
@@ -54,6 +54,10 @@ public interface HttpRequestProcessor {
 
     default byte getRequiredAuthType() {
         return SecurityContext.AUTH_TYPE_CREDENTIALS;
+    }
+
+    default boolean ignoreConnectionLimitCheck() {
+        return false;
     }
 
     default short getSupportedRequestTypes() {

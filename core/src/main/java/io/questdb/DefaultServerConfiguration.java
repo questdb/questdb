@@ -43,8 +43,8 @@ import io.questdb.mp.WorkerPoolConfiguration;
 
 public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultCairoConfiguration cairoConfiguration;
-    private final DefaultHttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
-    private final DefaultLineTcpReceiverConfiguration lineTcpReceiverConfiguration = new DefaultLineTcpReceiverConfiguration();
+    private final DefaultHttpServerConfiguration httpServerConfiguration;
+    private final DefaultLineTcpReceiverConfiguration lineTcpReceiverConfiguration;
     private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
     private final DefaultMemoryConfiguration memoryConfiguration = new DefaultMemoryConfiguration();
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
@@ -55,10 +55,12 @@ public class DefaultServerConfiguration implements ServerConfiguration {
 
     public DefaultServerConfiguration(CharSequence dbRoot, CharSequence installRoot) {
         this.cairoConfiguration = new DefaultCairoConfiguration(dbRoot, installRoot);
+        this.lineTcpReceiverConfiguration = new DefaultLineTcpReceiverConfiguration(cairoConfiguration);
+        this.httpServerConfiguration = new DefaultHttpServerConfiguration(cairoConfiguration);
     }
 
     public DefaultServerConfiguration(CharSequence dbRoot) {
-        this.cairoConfiguration = new DefaultCairoConfiguration(dbRoot);
+        this(dbRoot, null);
     }
 
     @Override

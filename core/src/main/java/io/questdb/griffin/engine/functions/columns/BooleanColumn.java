@@ -24,19 +24,19 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class BooleanColumn extends BooleanFunction implements ScalarFunction {
+public class BooleanColumn extends BooleanFunction implements Function {
     private static final ObjList<BooleanColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public BooleanColumn(int columnIndex) {
+    private BooleanColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

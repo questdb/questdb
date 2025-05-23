@@ -37,7 +37,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import static io.questdb.test.cutlass.http.SettingsEndpointTest.*;
+import static io.questdb.test.cutlass.http.SettingsEndpointTest.assertSettingsRequest;
 
 public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
     private static final String PASSWORD = "quest";
@@ -191,8 +191,11 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"acl.enabled\":true," +
+                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
-                            "\"posthog.api.key\":null" +
+                            "\"posthog.api.key\":null," +
+                            "\"cairo.max.file.name.length\":127" +
                             "}," +
                             "\"preferences.version\":0," +
                             "\"preferences\":{" +

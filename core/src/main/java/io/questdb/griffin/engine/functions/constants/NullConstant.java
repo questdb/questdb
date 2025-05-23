@@ -27,9 +27,10 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
@@ -39,14 +40,25 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
-public final class NullConstant implements ConstantFunction, ScalarFunction {
+public final class NullConstant implements ConstantFunction, FunctionExtension {
 
     public static final NullConstant NULL = new NullConstant();
+
 
     private final int type;
 
     private NullConstant() {
         this.type = ColumnType.NULL;
+    }
+
+    @Override
+    public FunctionExtension extendedOps() {
+        return this;
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        return ArrayConstant.NULL;
     }
 
     @Override

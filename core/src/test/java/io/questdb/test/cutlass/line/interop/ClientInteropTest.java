@@ -30,12 +30,18 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
+import io.questdb.std.histogram.org.HdrHistogram.Base64Helper;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.cutlass.line.tcp.StringChannel;
+import io.questdb.test.cutlass.line.tcp.ByteChannel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -50,10 +56,10 @@ public class ClientInteropTest {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         String pp = TestUtils.getTestResourcePath("/io/questdb/test/cutlass/line/interop/ilp-client-interop-test.json");
 
-        StringChannel channel = new StringChannel();
+        ByteChannel channel = new ByteChannel();
         try (JsonLexer lexer = new JsonLexer(1024, 1024);
              Path path = new Path().of(pp);
-             Sender sender = new LineTcpSender(channel, 1024)) {
+             Sender sender = new LineTcpSenderV2(channel, 1024, 127)) {
             JsonTestSuiteParser parser = new JsonTestSuiteParser(sender, channel);
             long fd = ff.openRO(path.$());
             assert fd > 0;
@@ -87,8 +93,8 @@ public class ClientInteropTest {
         public static final int TAG_SYMBOL_VALUE = 3;
         public static final int TAG_TABLE_NAME = 1;
         public static final int TAG_TEST_NAME = 0;
+        private final ByteChannel byteChannel;
         private final Sender sender;
-        private final StringChannel stringChannel;
         private final StringSink stringSink = new StringSink();
         private int columnType = -1;
         private boolean encounteredError;
@@ -96,9 +102,9 @@ public class ClientInteropTest {
         private int tag1Type = -1;
         private int tag2Type = -1;
 
-        public JsonTestSuiteParser(Sender sender, StringChannel channel) {
+        public JsonTestSuiteParser(Sender sender, ByteChannel channel) {
             this.sender = sender;
-            this.stringChannel = channel;
+            this.byteChannel = channel;
         }
 
         @Override
@@ -130,7 +136,7 @@ public class ClientInteropTest {
                         tag1Type = TAG_COLUMN_TYPE;
                     } else if (Chars.equalsIgnoreCase(tag, "status")) {
                         tag1Type = TAG_EXPECTED_RESULT;
-                    } else if (Chars.equalsIgnoreCase(tag, "line")) {
+                    } else if (Chars.equalsIgnoreCase(tag, "base64Line")) {
                         tag1Type = TAG_LINE;
                     } else {
                         tag1Type = -1;
@@ -244,7 +250,7 @@ public class ClientInteropTest {
                             Assert.assertFalse(encounteredError);
                             sender.atNow();
                             sender.flush();
-                            assertSuccessfulLine(tag);
+                            assertSuccessfulLine(Base64Helper.parseBase64Binary(tag.toString()));
                             resetForNextTestCase();
                             break;
                     }
@@ -316,16 +322,14 @@ public class ClientInteropTest {
             return stringSink.toString();
         }
 
-        private void assertSuccessfulLine(CharSequence tag) {
-            String s = stringChannel.toString();
-            Assert.assertTrue("Produced line does not end with a new line char", s.endsWith("\n"));
-            s = s.substring(0, s.length() - 1);
-            Assert.assertTrue(Chars.equals(tag, s));
+        private void assertSuccessfulLine(byte[] tag) {
+            Assert.assertTrue("Produced line does not end with a new line char", byteChannel.endWith((byte) '\n'));
+            Assert.assertTrue("buffer base64[" + byteChannel.encodeBase64String() + "]", byteChannel.equals(tag, 0, tag.length - 1));
         }
 
         private void resetForNextTestCase() {
             encounteredError = false;
-            stringChannel.reset();
+            byteChannel.reset();
         }
     }
 }

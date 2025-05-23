@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -87,7 +88,8 @@ public class ConcatFunctionFactory implements FunctionFactory {
         final int functionCount = functions.size();
         for (int i = 0; i < functionCount; i++) {
             final int type = functions.getQuick(i).getType();
-            final TypeAdapter adapter = adapterReferences.getQuick(type);
+            int tag = ColumnType.tagOf(type);
+            final TypeAdapter adapter = adapterReferences.getQuick(tag);
             if (adapter == null) {
                 throw SqlException.position(argPositions.getQuick(i)).put("unsupported type: ").put(nameOf(type));
             }

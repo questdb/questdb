@@ -1336,6 +1336,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int maxArrayElementCount() {
+        return 1_000_000;
+    }
+
+    @Override
     public boolean useFastAsOfJoin() {
         return true;
     }

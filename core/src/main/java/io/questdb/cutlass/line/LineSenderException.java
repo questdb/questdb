@@ -26,6 +26,7 @@ package io.questdb.cutlass.line;
 
 import io.questdb.network.Net;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 
 public class LineSenderException extends RuntimeException {
 
@@ -78,6 +79,11 @@ public class LineSenderException extends RuntimeException {
     }
 
     public LineSenderException put(CharSequence cs) {
+        message.put(cs);
+        return this;
+    }
+
+    public LineSenderException put(Utf8Sequence cs) {
         message.put(cs);
         return this;
     }

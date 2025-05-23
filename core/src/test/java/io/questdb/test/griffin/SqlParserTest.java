@@ -1213,7 +1213,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertIdentifierError("select 'a' } ");
         assertIdentifierError("select 'a' { ");
         assertIdentifierError("select 'a' ] ");
-        assertIdentifierError("select 'a' : ");
         assertIdentifierError("select 'a' ? ");
         assertIdentifierError("select 'a' @ ");
         assertSyntaxError("select 'a' ) ", 11, "unexpected token [)]");
@@ -1925,7 +1924,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " t TIMESTAMP," +
                         " x SYMBOL capacity 128 cache," +
                         " z STRING," +
-                        " y BOOLEAN) timestamp(t) partition by MONTH",
+                        " y BOOLEAN," +
+                        " da DOUBLE[]," +
+                        " dpa DOUBLE[]) timestamp(t) partition by MONTH",
                 "create table x (" +
                         "a INT, " +
                         "b BYTE, " +
@@ -1938,7 +1939,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "t TIMESTAMP, " +
                         "x SYMBOL, " +
                         "z STRING, " +
-                        "y BOOLEAN) " +
+                        "y BOOLEAN, " +
+                        "da DOUBLE[], " +
+                        "dpa DOUBLE PRECISION[]) " +
                         "timestamp(t) " +
                         "partition by MONTH"
         );
@@ -7746,7 +7749,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPGCastToFloat4() throws SqlException {
         assertQuery(
-                "select-virtual cast(123,float) x from (long_sequence(1))",
+                "select-virtual cast(123,FLOAT) x from (long_sequence(1))",
                 "select 123::float4 x"
         );
     }
@@ -7754,7 +7757,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPGCastToFloat8() throws SqlException {
         assertQuery(
-                "select-virtual cast(123,double) x from (long_sequence(1))",
+                "select-virtual cast(123,DOUBLE) x from (long_sequence(1))",
                 "select 123::float8 x"
         );
     }

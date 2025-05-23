@@ -1147,7 +1147,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
             java.util.function.BiFunction<Long, Long, Long> cou,
             CountFunctionFactoryHelper.IsRecordNotNull isRecordNotNull
     ) throws Exception {
-        Function arg = new LongColumn(2);
+        Function arg = LongColumn.newInstance(2);
         final int count = rnd.nextInt(1024) + 1;
         Record[] records = generateTestRecords(rnd, count, 1 + rnd.nextInt(32), 1 + rnd.nextLong(65536));
         Arrays.sort(records, Comparator.comparingLong(a -> a.getLong(0)));

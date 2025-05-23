@@ -24,12 +24,18 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.Interval;
+import io.questdb.std.Numbers;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
@@ -163,6 +169,11 @@ public class CursorPrinter {
                     interval.toSink(sink);
                 }
                 break;
+            case ColumnType.ARRAY:
+                ArrayTypeDriver.arrayToJson(record.getArray(columnIndex, columnType), sink, NoopArrayWriteState.INSTANCE);
+                break;
+            case ColumnType.ARRAY_STRING:
+                sink.put(record.getStrA(columnIndex));
             default:
                 break;
         }

@@ -741,6 +741,8 @@ public interface CairoConfiguration {
      */
     boolean mangleTableDirNames();
 
+    int maxArrayElementCount();
+
     boolean useFastAsOfJoin();
 
     boolean useWithinLatestByOptimisation();

@@ -540,7 +540,7 @@ public class SqlParser {
     private ExpressionNode expectLiteral(GenericLexer lexer, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
         CharSequence tok = tok(lexer, "literal");
         int pos = lexer.lastTokenPosition();
-        assertTableNameIsQuotedOrNotAKeyword(tok, pos);
+        assertNameIsQuotedOrNotAKeyword(tok, pos);
         validateLiteral(pos, tok);
         return rewriteDeclaredVariables(nextLiteral(GenericLexer.immutableOf(GenericLexer.unquote(tok)), pos), decls, null);
     }
@@ -860,7 +860,7 @@ public class SqlParser {
             }
         }
         tok = sansPublicSchema(tok, lexer);
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
         tableOpBuilder.setTableNameExpr(nextLiteral(
                 assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()
         ));
@@ -872,7 +872,7 @@ public class SqlParser {
             expectTok(lexer, "base");
             tok = tok(lexer, "base table expected");
             baseTableName = sansPublicSchema(tok, lexer);
-            assertTableNameIsQuotedOrNotAKeyword(baseTableName, lexer.lastTokenPosition());
+            assertNameIsQuotedOrNotAKeyword(baseTableName, lexer.lastTokenPosition());
             baseTableName = unquote(baseTableName);
             baseTableNamePos = lexer.lastTokenPosition();
             tok = tok(lexer, "'as' or 'refresh'");
@@ -1074,7 +1074,7 @@ public class SqlParser {
             tableName = tok;
         }
         tableName = sansPublicSchema(tableName, lexer);
-        assertTableNameIsQuotedOrNotAKeyword(tableName, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tableName, lexer.lastTokenPosition());
 
         builder.setTableNameExpr(nextLiteral(
                 assertNoDotsAndSlashes(unquote(tableName), lexer.lastTokenPosition()), lexer.lastTokenPosition()
@@ -1271,6 +1271,11 @@ public class SqlParser {
                     } else if (model.isDedupKey() && isDirectCreate) {
                         throw SqlException.position(lexer.lastTokenPosition())
                                 .put("duplicate dedup column [column=").put(columnName).put(']');
+                    } else if (ColumnType.isArray(model.getColumnType())) {
+                        throw SqlException.position(lexer.lastTokenPosition())
+                                .put("dedup key columns cannot include ARRAY [column=")
+                                .put(columnName).put(", type=")
+                                .put(ColumnType.nameOf(model.getColumnType())).put(']');
                     }
                     model.setIsDedupKey();
                     int colIndex = builder.getColumnIndex(columnName);
@@ -1362,7 +1367,7 @@ public class SqlParser {
     private void parseCreateTableColumns(GenericLexer lexer) throws SqlException {
         while (true) {
             CharSequence tok = notTermTok(lexer);
-            assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+            assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             final CharSequence columnName = GenericLexer.immutableOf(unquote(tok));
             final int columnPosition = lexer.lastTokenPosition();
             final int columnType = toColumnType(lexer, notTermTok(lexer));
@@ -1403,6 +1408,14 @@ public class SqlParser {
                 tok = parseCreateTableInlineIndexDef(lexer, model);
             } else {
                 tok = null;
+            }
+
+            // check for dodgy array syntax
+            CharSequence tempTok = optTok(lexer);
+            if (tempTok != null && Chars.equals(tempTok, ']')) {
+                throw SqlException.position(columnPosition).put(columnName).put(" has an unmatched `]` - were you trying to define an array?");
+            } else {
+                lexer.unparseLast();
             }
 
             if (tok == null) {
@@ -2360,7 +2373,7 @@ public class SqlParser {
 
         tok = tok(lexer, "table name");
         tok = sansPublicSchema(tok, lexer);
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
         model.setTableName(nextLiteral(assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
 
         tok = tok(lexer, "'(' or 'select'");
@@ -2372,7 +2385,7 @@ public class SqlParser {
                     throw err(lexer, tok, "missing column name");
                 }
 
-                assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                 model.addColumn(unquote(tok), lexer.lastTokenPosition());
             } while (Chars.equals((tok = tok(lexer, "','")), ','));
 
@@ -2588,7 +2601,7 @@ public class SqlParser {
 
         CharSequence tok = tok(lexer, "from table name");
         tok = sansPublicSchema(tok, lexer);
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
         model.setFrom(nextLiteral(unquote(tok), lexer.lastTokenPosition()));
 
@@ -2602,7 +2615,7 @@ public class SqlParser {
 
         tok = tok(lexer, "to table name");
         tok = sansPublicSchema(tok, lexer);
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
         model.setTo(nextLiteral(unquote(tok), lexer.lastTokenPosition()));
 
         tok = optTok(lexer);
@@ -2994,13 +3007,13 @@ public class SqlParser {
 
                     if (isAsKeyword(tok)) {
                         tok = tok(lexer, "alias");
-                        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                         CharSequence aliasTok = GenericLexer.immutableOf(tok);
                         validateIdentifier(lexer, aliasTok);
                         alias = unquote(aliasTok);
                     } else {
                         validateIdentifier(lexer, tok);
-                        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                         alias = GenericLexer.immutableOf(unquote(tok));
                     }
 
@@ -3215,7 +3228,7 @@ public class SqlParser {
     ) throws SqlException {
         CharSequence tok = tok(lexer, "table name or alias");
         tok = sansPublicSchema(tok, lexer);
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
         CharSequence tableName = GenericLexer.immutableOf(unquote(tok));
         ExpressionNode tableNameExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableName, 0, 0);
         updateQueryModel.setTableNameExpr(tableNameExpr);
@@ -3232,7 +3245,7 @@ public class SqlParser {
         if (!isAsKeyword(tok) && !isSetKeyword(tok)) {
             // This is table alias
             CharSequence tableAlias = GenericLexer.immutableOf(tok);
-            assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+            assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             ExpressionNode tableAliasExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableAlias, 0, 0);
             updateQueryModel.setAlias(tableAliasExpr);
             tok = tok(lexer, "SET expected");
@@ -3589,18 +3602,59 @@ public class SqlParser {
             node.type = ExpressionNode.FUNCTION;
             node.rhs.type = ExpressionNode.CONSTANT;
             // In PG x::float casts x to "double precision" type
-            if (isFloatKeyword(node.rhs.token) || isFloat8Keyword(node.rhs.token)) {
-                node.rhs.token = "double";
-            } else if (isFloat4Keyword(node.rhs.token)) {
-                node.rhs.token = "float";
-            } else if (isInt4Keyword(node.rhs.token)) {
-                node.rhs.token = "int";
-            } else if (isInt8Keyword(node.rhs.token)) {
-                node.rhs.token = "long";
-            } else if (isInt2Keyword(node.rhs.token)) {
-                node.rhs.token = "short";
+            // also, we have to rewrite postgres types such as "float8" to our native "double" type
+            // All of the above also applies to array types: "float8[]" -> "double[]"
+            // or "double precision[][]" -> "double[][]"
+
+            if (rewritePgCast0(node.rhs, "float", ColumnType.DOUBLE)) {
+                return;
+            }
+            if (rewritePgCast0(node.rhs, "float8", ColumnType.DOUBLE)) {
+                return;
+            }
+            if (rewritePgCast0(node.rhs, "float4", ColumnType.FLOAT)) {
+                return;
+            }
+            if (rewritePgCast0(node.rhs, "int4", ColumnType.INT)) {
+                return;
+            }
+            if (rewritePgCast0(node.rhs, "int8", ColumnType.LONG)) {
+                return;
+            }
+            if (rewritePgCast0(node.rhs, "int2", ColumnType.SHORT)) {
+                return;
+            }
+            rewritePgCast0(node.rhs, "double precision", ColumnType.DOUBLE);
+        }
+    }
+
+    private boolean rewritePgCast0(ExpressionNode typeNode, String srcTypePrefix, short type) {
+        CharSequence token = typeNode.token;
+        if (!Chars.startsWithLowerCase(token, srcTypePrefix)) {
+            return false;
+        }
+
+        int len = token.length();
+        int prefixLen = srcTypePrefix.length();
+        int rem = len - prefixLen;
+
+        if (rem == 0) {
+            // full match. e.g. replacing 'float8' with 'double'
+            typeNode.token = ColumnType.nameOf(type);
+            return true;
+        }
+
+        // src has a suffix. it could be an array suffix. consider 'float8[][]' -> 'double[][]'
+        if (rem % 2 == 0) {
+            // suffix must be even, since square brackets come in pairs
+            int dims = rem / 2;
+            String suffix = ColumnType.ARRAY_DIM_SUFFIX[dims];
+            if (Chars.endsWith(token, suffix)) {
+                typeNode.token = ColumnType.nameOf(ColumnType.encodeArrayType(type, dims));
+                return true;
             }
         }
+        return false;
     }
 
     @NotNull
@@ -3639,7 +3693,7 @@ public class SqlParser {
             if (tok.length() == 0 || isEmptyAlias(tok)) {
                 throw SqlException.position(lexer.lastTokenPosition()).put("Empty table alias");
             }
-            assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+            assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             joinModel.setAlias(literal(lexer, tok));
             tok = optTok(lexer);
         }
@@ -3660,9 +3714,34 @@ public class SqlParser {
         return tok;
     }
 
-    private int toColumnType(GenericLexer lexer, CharSequence tok) throws SqlException {
-        final short typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
-        if (ColumnType.GEOHASH == typeTag) {
+    private int toColumnType(GenericLexer lexer, @NotNull CharSequence tok) throws SqlException {
+        int typePosition = lexer.lastTokenPosition();
+        final short typeTag = SqlUtil.toPersistedTypeTag(tok, typePosition);
+
+        // ignore precision keyword for DOUBLE column: 'double precision' is the same type as 'double'
+        if (typeTag == ColumnType.DOUBLE) {
+            CharSequence next = optTok(lexer);
+            if (next != null && !isPrecisionKeyword(next)) {
+                lexer.unparseLast();
+            }
+        }
+
+        int nDims = SqlUtil.parseArrayDimensionality(lexer);
+        if (nDims > 0) {
+            if (!ColumnType.isSupportedArrayElementType(typeTag)) {
+                throw SqlException.position(typePosition)
+                        .put("unsupported array element type [type=")
+                        .put(ColumnType.nameOf(typeTag))
+                        .put(']');
+            }
+            if (nDims > ColumnType.ARRAY_NDIMS_LIMIT) {
+                throw SqlException.position(typePosition)
+                        .put("too many array dimensions [nDims=").put(nDims)
+                        .put(", maxNDims=").put(ColumnType.ARRAY_NDIMS_LIMIT)
+                        .put(']');
+            }
+            return ColumnType.encodeArrayType(typeTag, nDims);
+        } else if (typeTag == ColumnType.GEOHASH) {
             expectTok(lexer, '(');
             final int bits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
             expectTok(lexer, ')');

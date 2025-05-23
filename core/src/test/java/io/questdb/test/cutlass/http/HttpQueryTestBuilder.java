@@ -111,7 +111,7 @@ public class HttpQueryTestBuilder {
                     .withStaticContentAuthRequired(httpStaticContentAuthType)
                     .withHealthCheckAuthRequired(httpHealthCheckAuthType)
                     .withNanosClock(nanosecondClock)
-                    .build();
+                    .build(configuration);
             final WorkerPool workerPool = new TestWorkerPool(workerCount, httpConfiguration.getMetrics());
 
             CairoConfiguration cairoConfiguration = configuration;

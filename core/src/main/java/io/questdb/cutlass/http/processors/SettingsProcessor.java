@@ -82,6 +82,11 @@ public class SettingsProcessor implements HttpRequestHandler {
         }
 
         @Override
+        public boolean ignoreConnectionLimitCheck() {
+            return true;
+        }
+
+        @Override
         public void onHeadersReady(HttpConnectionContext context) {
             final StringSink settings = LV_GET.get(context);
             if (settings == null) {

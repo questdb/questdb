@@ -25,22 +25,25 @@
 package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
-public interface WindowFunction extends ScalarFunction {
+public interface WindowFunction extends Function {
     int ONE_PASS = 1;
     int TWO_PASS = 2;
     int ZERO_PASS = 0;
@@ -48,10 +51,17 @@ public interface WindowFunction extends ScalarFunction {
     default void computeNext(Record record) {
     }
 
+    @Override
+    default ArrayView getArray(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     default BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
     }
 
+    @Override
     default long getBinLen(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -114,6 +124,11 @@ public interface WindowFunction extends ScalarFunction {
 
     @Override
     default int getInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default @NotNull Interval getInterval(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -218,12 +233,14 @@ public interface WindowFunction extends ScalarFunction {
         throw new UnsupportedOperationException();
     }
 
-    default void initRecordComparator(SqlCodeGenerator sqlGenerator,
-                                      RecordMetadata metadata,
-                                      ArrayColumnTypes chainTypes,
-                                      IntList orderIndices,
-                                      ObjList<ExpressionNode> orderBy,
-                                      IntList orderByDirections) throws SqlException {
+    default void initRecordComparator(
+            SqlCodeGenerator sqlGenerator,
+            RecordMetadata metadata,
+            ArrayColumnTypes chainTypes,
+            IntList orderIndices,
+            ObjList<ExpressionNode> orderBy,
+            IntList orderByDirections
+    ) throws SqlException {
     }
 
     default boolean isIgnoreNulls() {

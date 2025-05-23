@@ -27,7 +27,22 @@ package io.questdb.test.griffin.engine.functions.constants;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
-import io.questdb.griffin.engine.functions.constants.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.FloatConstant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.NullBinConstant;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
@@ -36,7 +51,7 @@ public class NullConstantTest {
 
     @Test
     public void testConstant() {
-        NullConstant constant = NullConstant.NULL;
+        Function constant = NullConstant.NULL;
 
         Assert.assertEquals(ColumnType.NULL, constant.getType());
         Assert.assertTrue(constant.isConstant());
@@ -44,7 +59,7 @@ public class NullConstantTest {
         Assert.assertTrue(constant.supportsRandomAccess());
         Assert.assertFalse(constant.isUndefined());
 
-        Assert.assertEquals(TableUtils.NULL_LEN, constant.getArrayLength());
+        Assert.assertEquals(TableUtils.NULL_LEN, constant.extendedOps().getArrayLength());
         Assert.assertEquals(StrConstant.NULL.getStrLen(null), constant.getStrLen(null));
 
         Assert.assertEquals(IntConstant.NULL.getInt(null), constant.getInt(null));
@@ -70,7 +85,7 @@ public class NullConstantTest {
         Assert.assertEquals(GeoHashes.BYTE_NULL, constant.getGeoByte(null));
         Assert.assertEquals(GeoHashes.INT_NULL, constant.getGeoInt(null));
         Assert.assertEquals(GeoHashes.SHORT_NULL, constant.getGeoShort(null));
-        Assert.assertNull(constant.getRecord(null));
+        Assert.assertNull(constant.extendedOps().getRecord(null));
 
         StringSink sink = new StringSink();
         constant.getLong256(null, sink);

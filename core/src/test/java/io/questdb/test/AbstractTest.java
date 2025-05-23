@@ -35,6 +35,8 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Zip;
+import io.questdb.test.cutlass.http.HttpQueryTestBuilder;
+import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
@@ -63,8 +65,8 @@ public class AbstractTest {
     public static void setUpStatic() throws Exception {
         TestOs.init();
         Zip.init();
-        // it is necessary to initialise logger before tests start
-        // logger doesn't relinquish memory until JVM stops
+        // it is necessary to initialize logger before tests start
+        // logger doesn't relinquish memory until JVM stops,
         // which causes memory leak detector to fail should logger be
         // created mid-test
         LOG.info().$("setup logger").$();
@@ -144,5 +146,13 @@ public class AbstractTest {
 
     protected static TableReader newOffPoolReader(CairoConfiguration configuration, CharSequence tableName, CairoEngine engine) {
         return new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, engine.verifyTableName(tableName), engine.getTxnScoreboardPool());
+    }
+
+    protected static HttpQueryTestBuilder getSimpleTester() {
+        return new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false);
     }
 }

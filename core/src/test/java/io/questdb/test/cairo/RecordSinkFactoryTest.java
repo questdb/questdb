@@ -24,11 +24,25 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.RecordSinkSPI;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.BitSet;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
+import io.questdb.std.Interval;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -285,12 +299,22 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         Assert.assertEquals(expectedPutTypes, testRecordSink.recordedTypes);
     }
 
-    private static class TestFunction implements Function {
+    private static class TestFunction implements Function, FunctionExtension {
         final int type;
         int callCount;
 
         private TestFunction(int type) {
             this.type = type;
+        }
+
+        @Override
+        public FunctionExtension extendedOps() {
+            return this;
+        }
+
+        @Override
+        public ArrayView getArray(Record rec) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -708,6 +732,11 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
 
     private static class TestRecordSink implements RecordSinkSPI {
         final IntList recordedTypes = new IntList();
+
+        @Override
+        public void putArray(ArrayView view) {
+            recordedTypes.add(view.getType());
+        }
 
         @Override
         public void putBin(BinarySequence value) {
