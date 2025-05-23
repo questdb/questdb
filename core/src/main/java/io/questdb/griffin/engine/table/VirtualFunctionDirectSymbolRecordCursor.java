@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
 import io.questdb.std.ObjList;
 
 public class VirtualFunctionDirectSymbolRecordCursor extends AbstractVirtualFunctionRecordCursor {
+
     public VirtualFunctionDirectSymbolRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
         super(functions, supportsRandomAccess);
     }

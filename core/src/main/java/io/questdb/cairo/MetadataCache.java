@@ -200,6 +200,9 @@ public class MetadataCache implements QuietCloseable {
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
             table.setMatViewRefreshLimitHoursOrMonths(TableUtils.getMatViewRefreshLimitHoursOrMonths(metaMem));
+            table.setMatViewTimerStart(TableUtils.getMatViewTimerStart(metaMem));
+            table.setMatViewTimerInterval(TableUtils.getMatViewTimerInterval(metaMem));
+            table.setMatViewTimerIntervalUnit(TableUtils.getMatViewTimerIntervalUnit(metaMem));
             table.setSoftLinkFlag(isSoftLink);
 
             TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
@@ -540,6 +543,9 @@ public class MetadataCache implements QuietCloseable {
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(tableMetadata.getTtlHoursOrMonths());
             table.setMatViewRefreshLimitHoursOrMonths(tableMetadata.getMatViewRefreshLimitHoursOrMonths());
+            table.setMatViewTimerStart(tableMetadata.getMatViewTimerStart());
+            table.setMatViewTimerInterval(tableMetadata.getMatViewTimerInterval());
+            table.setMatViewTimerIntervalUnit(tableMetadata.getMatViewTimerIntervalUnit());
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
             table.setSoftLinkFlag(Files.isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 
