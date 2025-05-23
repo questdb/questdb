@@ -24,12 +24,12 @@
 
 package io.questdb.std;
 
-public class IntLongSortedList implements Mutable {
+public class IntLongPriorityQueue {
     private final LongList buf;
     private final IntList src;
     private int size;
 
-    public IntLongSortedList() {
+    public IntLongPriorityQueue() {
         this.buf = new LongList(8);
         this.src = new IntList(8);
         this.size = 0;
@@ -48,10 +48,7 @@ public class IntLongSortedList implements Mutable {
         size++;
     }
 
-    @Override
     public void clear() {
-        buf.zero(0);
-        src.zero(0);
         size = 0;
     }
 
@@ -63,11 +60,7 @@ public class IntLongSortedList implements Mutable {
         return src.getQuick(size - 1);
     }
 
-    public int peekIndex() {
-        return src.getQuick(0);
-    }
-
-    public long pollAndReplace(int index, long value) {
+    public long popAndReplace(int index, long value) {
         long v = buf.getQuick(0);
         int p = binSearch(value);
         if (p > 1) {
@@ -84,17 +77,17 @@ public class IntLongSortedList implements Mutable {
         return v;
     }
 
-    public long pollValue() {
+    public int popIndex() {
+        return src.getQuick(0);
+    }
+
+    public long popValue() {
         long v = buf.getQuick(0);
-        if (size > 0) {
-            buf.arrayCopy(1, 0, --size);
+        if (--size > 0) {
+            buf.arrayCopy(1, 0, size);
             src.arrayCopy(1, 0, size);
         }
         return v;
-    }
-
-    public int size() {
-        return size;
     }
 
     @SuppressWarnings("StatementWithEmptyBody")

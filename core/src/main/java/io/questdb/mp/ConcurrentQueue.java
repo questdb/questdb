@@ -99,14 +99,6 @@ public class ConcurrentQueue<T extends ValueHolder<T>> implements Queue<T> {
         return tail.getCapacity();
     }
 
-    @Override
-    public void clear() {
-        final T tmp = factory.newInstance();
-        //noinspection StatementWithEmptyBody
-        while (tryDequeue(tmp)) {
-        }
-    }
-
     /**
      * Gets the number of items in the queue.
      *
@@ -119,6 +111,10 @@ public class ConcurrentQueue<T extends ValueHolder<T>> implements Queue<T> {
             // try to add a new tail segment.
             enqueueSlow(item);
         }
+    }
+
+    public ObjectFactory<T> itemFactory() {
+        return factory;
     }
 
     /**

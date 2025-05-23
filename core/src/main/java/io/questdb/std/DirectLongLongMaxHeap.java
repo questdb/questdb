@@ -24,14 +24,14 @@
 
 package io.questdb.std;
 
-public class DirectLongLongDescList implements DirectLongLongSortedList {
+public class DirectLongLongMaxHeap implements DirectLongLongHeap {
     private final int capacity;
     private final Cursor cursor = new Cursor();
     private final int memoryTag;
     private long ptr;
     private int size;
 
-    public DirectLongLongDescList(int capacity, int memoryTag) {
+    public DirectLongLongMaxHeap(int capacity, int memoryTag) {
         this.capacity = capacity;
         this.memoryTag = memoryTag;
         this.ptr = Unsafe.malloc(16L * capacity, memoryTag);
@@ -122,7 +122,7 @@ public class DirectLongLongDescList implements DirectLongLongSortedList {
         return size;
     }
 
-    public class Cursor implements DirectLongLongSortedList.Cursor {
+    public class Cursor implements DirectLongLongHeap.Cursor {
         private int pos = -1;
 
         @Override

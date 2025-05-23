@@ -37,9 +37,6 @@ public class CairoTable implements Sinkable {
     public final ObjList<CairoColumn> columns;
     private boolean dedup;
     private int matViewRefreshLimitHoursOrMonths;
-    private int matViewTimerInterval;
-    private char matViewTimerIntervalUnit;
-    private long matViewTimerStart;
     private int maxUncommittedRows;
     private long metadataVersion = -1;
     private long o3MaxLag;
@@ -73,9 +70,6 @@ public class CairoTable implements Sinkable {
         softLink = fromTab.isSoftLink();
         dedup = fromTab.hasDedup();
         matViewRefreshLimitHoursOrMonths = fromTab.getMatViewRefreshLimitHoursOrMonths();
-        matViewTimerStart = fromTab.getMatViewTimerStart();
-        matViewTimerInterval = fromTab.getMatViewTimerInterval();
-        matViewTimerIntervalUnit = fromTab.getMatViewTimerIntervalUnit();
     }
 
     public int getColumnCount() {
@@ -109,18 +103,6 @@ public class CairoTable implements Sinkable {
 
     public int getMatViewRefreshLimitHoursOrMonths() {
         return matViewRefreshLimitHoursOrMonths;
-    }
-
-    public int getMatViewTimerInterval() {
-        return matViewTimerInterval;
-    }
-
-    public char getMatViewTimerIntervalUnit() {
-        return matViewTimerIntervalUnit;
-    }
-
-    public long getMatViewTimerStart() {
-        return matViewTimerStart;
     }
 
     public int getMaxUncommittedRows() {
@@ -191,18 +173,6 @@ public class CairoTable implements Sinkable {
 
     public void setMatViewRefreshLimitHoursOrMonths(int matViewRefreshLimitHoursOrMonths) {
         this.matViewRefreshLimitHoursOrMonths = matViewRefreshLimitHoursOrMonths;
-    }
-
-    public void setMatViewTimerInterval(int matViewTimerInterval) {
-        this.matViewTimerInterval = matViewTimerInterval;
-    }
-
-    public void setMatViewTimerIntervalUnit(char matViewTimerIntervalUnit) {
-        this.matViewTimerIntervalUnit = matViewTimerIntervalUnit;
-    }
-
-    public void setMatViewTimerStart(long matViewTimerStart) {
-        this.matViewTimerStart = matViewTimerStart;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {

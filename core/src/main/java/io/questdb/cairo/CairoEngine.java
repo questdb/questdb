@@ -39,7 +39,6 @@ import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
-import io.questdb.cairo.mv.MatViewTimerTask;
 import io.questdb.cairo.mv.NoOpMatViewStateStore;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
@@ -93,10 +92,7 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Job;
-import io.questdb.mp.NoOpQueue;
-import io.questdb.mp.Queue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SimpleWaitingLock;
@@ -147,8 +143,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
-    private final MatViewGraph matViewGraph;
-    private final Queue<MatViewTimerTask> matViewTimerQueue;
+    private final MatViewGraph matViewGraph = new MatViewGraph();
     private final MessageBusImpl messageBus;
     private final MetadataCache metadataCache;
     private final Metrics metrics;
@@ -181,7 +176,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public CairoEngine(CairoConfiguration configuration) {
         try {
-            this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
+            ffCache = new FunctionFactoryCache(
+                    configuration,
+                    getFunctionFactories()
+            );
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
             this.copyContext = new CopyContext(configuration);
@@ -204,8 +202,6 @@ public class CairoEngine implements Closeable, WriterSource {
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = createRootExecutionContext();
-            this.matViewTimerQueue = createMatViewTimerQueue();
-            this.matViewGraph = new MatViewGraph(matViewTimerQueue);
 
             settingsStore = new SettingsStore(configuration);
             settingsStore.init();
@@ -369,31 +365,31 @@ public class CairoEngine implements Closeable, WriterSource {
                 final TableToken tableToken = tableTokenBucket.get(i);
                 if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
                     try {
-                        MatViewDefinition viewDefinition = matViewGraph.getViewDefinition(tableToken);
-                        if (viewDefinition == null) {
-                            viewDefinition = new MatViewDefinition();
+                        MatViewDefinition matViewDefinition = matViewGraph.getViewDefinition(tableToken);
+                        if (matViewDefinition == null) {
+                            matViewDefinition = new MatViewDefinition();
                             MatViewDefinition.readFrom(
-                                    viewDefinition,
+                                    matViewDefinition,
                                     reader,
                                     path,
                                     pathLen,
                                     tableToken
                             );
-                            if (matViewGraph.addView(viewDefinition)) {
-                                matViewStateStore.createViewState(viewDefinition);
+                            if (matViewGraph.addView(matViewDefinition)) {
+                                matViewStateStore.createViewState(matViewDefinition);
                             }
                         }
 
-                        final MatViewState state = matViewStateStore.getViewState(tableToken);
+                        MatViewState state = matViewStateStore.getViewState(tableToken);
                         // Can be null if the graph implementation is no-op.
                         // The no-op graph does nothing on view creation and other operations
                         // and is used when mat views are disabled.
                         if (state != null) {
-                            final TableToken baseTableToken = tableNameRegistry.getTableToken(viewDefinition.getBaseTableName());
+                            final TableToken baseTableToken = tableNameRegistry.getTableToken(matViewDefinition.getBaseTableName());
                             final boolean baseTableExists = baseTableToken != null && !tableNameRegistry.isTableDropped(baseTableToken);
                             if (!baseTableExists) {
                                 // Print a warning, but let the mat view load in invalid state.
-                                LOG.info().$("base table for materialized view does not exist [table=").utf8(viewDefinition.getBaseTableName())
+                                LOG.info().$("base table for materialized view does not exist [table=").utf8(matViewDefinition.getBaseTableName())
                                         .$(", view=").utf8(tableToken.getTableName())
                                         .I$();
                                 matViewStateStore.enqueueInvalidate(tableToken, "base table does not exist");
@@ -402,7 +398,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
                             if (!baseTableToken.isWal()) {
                                 // Print a warning, but let the mat view load in invalid state.
-                                LOG.info().$("base table for materialized view is not WAL table [table=").utf8(viewDefinition.getBaseTableName())
+                                LOG.info().$("base table for materialized view is not WAL table [table=").utf8(matViewDefinition.getBaseTableName())
                                         .$(", view=").utf8(tableToken.getTableName())
                                         .I$();
                                 matViewStateStore.enqueueInvalidate(tableToken, "base table is not WAL table");
@@ -411,7 +407,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
                             path.trimTo(pathLen).concat(tableToken);
                             if (!WalUtils.readMatViewState(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader)) {
-                                LOG.info().$("could not find materialized view state, view will be fully refreshed on next base table insert [table=").utf8(viewDefinition.getBaseTableName())
+                                LOG.info().$("could not find materialized view state, view will be fully refreshed on next base table insert [table=").utf8(matViewDefinition.getBaseTableName())
                                         .$(", view=").utf8(tableToken.getTableName())
                                         .I$();
                                 continue;
@@ -424,14 +420,13 @@ public class CairoEngine implements Closeable, WriterSource {
                             long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
                             if (state.getLastRefreshBaseTxn() > baseTableLastTxn) {
                                 LOG.info().$("materialized view is ahead of base table and cannot be synchronized [table=")
-                                        .utf8(viewDefinition.getBaseTableName())
+                                        .utf8(matViewDefinition.getBaseTableName())
                                         .$(", view=").utf8(tableToken.getTableName())
                                         .$(", matViewBaseTxn=").$(state.getLastRefreshBaseTxn())
                                         .$(", baseTableTxn=").$(baseTableLastTxn)
                                         .I$();
                                 matViewStateStore.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
-                            } else if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
-                                // Kickstart incremental refresh.
+                            } else {
                                 matViewStateStore.enqueueIncrementalRefresh(tableToken);
                             }
                         }
@@ -474,8 +469,7 @@ public class CairoEngine implements Closeable, WriterSource {
             w.clearCache();
         }
         matViewGraph.clear();
-        matViewStateStore.clear();
-        matViewTimerQueue.clear();
+        matViewStateStore.close();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableSequencerAPI.releaseAll();
@@ -503,7 +497,6 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(checkpointAgent);
         Misc.free(metadataCache);
         Misc.free(scoreboardPool);
-        Misc.free(matViewStateStore);
         Misc.free(settingsStore);
     }
 
@@ -713,10 +706,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public @NotNull MatViewStateStore getMatViewStateStore() {
         return matViewStateStore;
-    }
-
-    public Queue<MatViewTimerTask> getMatViewTimerQueue() {
-        return matViewTimerQueue;
     }
 
     public MessageBus getMessageBus() {
@@ -1792,11 +1781,6 @@ public class CairoEngine implements Closeable, WriterSource {
     // used in ent
     protected MatViewStateStore createMatViewStateStore() {
         return configuration.isMatViewEnabled() ? new MatViewStateStoreImpl(this) : NoOpMatViewStateStore.INSTANCE;
-    }
-
-    // used in ent
-    protected Queue<MatViewTimerTask> createMatViewTimerQueue() {
-        return configuration.isMatViewEnabled() ? new ConcurrentQueue<>(MatViewTimerTask.ITEM_FACTORY) : new NoOpQueue<>();
     }
 
     protected SqlExecutionContext createRootExecutionContext() {

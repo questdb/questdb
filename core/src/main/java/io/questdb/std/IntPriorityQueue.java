@@ -24,59 +24,51 @@
 
 package io.questdb.std;
 
-public class IntSortedList implements Mutable {
+public class IntPriorityQueue {
     private int[] buffer;
-    private int size;
+    private int limit;
 
-    public IntSortedList() {
+    public IntPriorityQueue() {
         this(8);
     }
 
-    private IntSortedList(int size) {
+    private IntPriorityQueue(int size) {
         this.buffer = new int[size];
-        this.size = 0;
+        this.limit = 0;
     }
 
-    public void add(int value) {
-        int p = binSearch(value);
-        if (size == buffer.length) {
-            resize();
-        }
-        if (p < size) {
-            System.arraycopy(buffer, p, buffer, p + 1, size - p);
-        }
-        buffer[p] = value;
-        size++;
-    }
-
-    @Override
     public void clear() {
-        for (int i = 0; i < size; i++) {
-            buffer[i] = 0;
-        }
-        size = 0;
+        limit = 0;
     }
 
     public boolean notEmpty() {
-        return size > 0;
+        return limit > 0;
     }
 
-    public int poll() {
+    public int pop() {
         int v = buffer[0];
-        if (size > 0) {
-            System.arraycopy(buffer, 1, buffer, 0, --size);
+        if (--limit > 0) {
+            System.arraycopy(buffer, 1, buffer, 0, limit);
         }
         return v;
     }
 
-    public int size() {
-        return size;
+    public void push(int value) {
+        int p = binSearch(value);
+        if (p < limit) {
+            System.arraycopy(buffer, p, buffer, p + 1, limit - p);
+        }
+        if (p >= buffer.length) {
+            resize();
+        }
+        buffer[p] = value;
+        limit++;
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
     private int binSearch(int v) {
         int low = 0;
-        int high = size;
+        int high = limit;
 
         while (high - low > 65) {
             int mid = (low + high - 1) >>> 1;
@@ -102,11 +94,11 @@ public class IntSortedList implements Mutable {
     }
 
     private int scanSearch(int v, int low) {
-        for (int i = low; i < size; i++) {
+        for (int i = low; i < limit; i++) {
             if (buffer[i] > v) {
                 return i;
             }
         }
-        return size;
+        return limit;
     }
 }
