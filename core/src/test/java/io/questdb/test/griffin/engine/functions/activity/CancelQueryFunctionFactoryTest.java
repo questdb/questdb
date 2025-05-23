@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Os;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -100,7 +101,7 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                         context.with(new AtomicBooleanCircuitBreaker());
 
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                            TestUtils.assertSql(compiler, context, query, sink, "t\n1\n");
+                            TestUtils.assertSql(compiler, context, query, new StringSink(), "t\n1\n");
                             Assert.fail("Query should have been cancelled");
                         } catch (Exception e) {
                             if (!e.getMessage().contains("cancelled by user")) {
