@@ -1786,7 +1786,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW 'myview' REFRESH INCREMENTAL refresh",
                 54,
-                "'as' expected"
+                "'refresh' or 'as' expected"
         );
     }
 
@@ -1795,7 +1795,79 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' with base 'mytable2'",
                 55,
+                "'refresh' or 'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView12() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh incremental",
+                74,
                 "'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView13() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh incremental foobar",
+                75,
+                "'refresh' or 'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView14() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh incremental start",
+                80,
+                "START timestamp expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView15() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh incremental start foobar",
+                81,
+                "invalid START timestamp value"
+        );
+    }
+
+    @Test
+    public void testCreateMatView16() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh start '2010-01-01'",
+                81,
+                "'every' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView17() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh start '2010-01-01' every",
+                87,
+                "interval expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView18() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview WITH BASE mytable1 REFRESH INCREMENTAL START '2010-01-01' EVERY foobar",
+                -1,
+                "Invalid unit: r"
+        );
+    }
+
+    @Test
+    public void testCreateMatView19() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH START '2010-01-01' EVERY 42U",
+                65,
+                "unsupported interval unit: U"
         );
     }
 
@@ -1805,6 +1877,51 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create materialized",
                 19,
                 "'view' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView20() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL START '2010-01-01' EVERY 2T;",
+                77,
+                "unsupported interval unit: T"
+        );
+    }
+
+    @Test
+    public void testCreateMatView21() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL EVERY 2T;",
+                58,
+                "unsupported interval unit: T"
+        );
+    }
+
+    @Test
+    public void testCreateMatView22() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL START '2010-01-01' EVERY 1s;",
+                77,
+                "unsupported interval unit: s"
+        );
+    }
+
+    @Test
+    public void testCreateMatView23() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL EVERY 1s;",
+                58,
+                "unsupported interval unit: s"
+        );
+    }
+
+    @Test
+    public void testCreateMatView24() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH EVERY 1s;",
+                46,
+                "unsupported interval unit: s"
         );
     }
 
@@ -1822,7 +1939,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create materialized view 'myview' foobar",
                 34,
-                "'as' expected"
+                "'refresh' or 'as' expected"
         );
     }
 
@@ -1831,7 +1948,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create materialized view 'myview' refresh with",
                 42,
-                "'incremental' or 'manual' or 'interval' expected"
+                "'incremental' or 'start' or 'every' or 'as' expected"
         );
     }
 
@@ -1849,16 +1966,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create materialized view 'myview' refresh manual",
                 42,
-                "manual refresh is not yet supported"
+                "'incremental' or 'start' or 'every' or 'as' expected"
         );
     }
 
     @Test
     public void testCreateMatView8() throws Exception {
         assertSyntaxError(
-                "create materialized view 'myview' refresh interval",
-                42,
-                "interval refresh is not yet supported"
+                "create materialized view 'myview' refresh incremental",
+                53,
+                "'start' or 'every' or 'as' expected"
         );
     }
 

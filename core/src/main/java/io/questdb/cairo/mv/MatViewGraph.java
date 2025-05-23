@@ -26,6 +26,7 @@ package io.questdb.cairo.mv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.mp.Queue;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -47,18 +48,21 @@ import java.util.function.Function;
 public class MatViewGraph implements Mutable {
     private static final ThreadLocal<LowerCaseCharSequenceHashSet> tlSeen = new ThreadLocal<>(LowerCaseCharSequenceHashSet::new);
     private static final ThreadLocal<ArrayDeque<CharSequence>> tlStack = new ThreadLocal<>(ArrayDeque::new);
+    private static final ThreadLocal<MatViewTimerTask> tlTimerTask = new ThreadLocal<>(MatViewTimerTask::new);
     private final Function<CharSequence, MatViewDependencyList> createDependencyList;
-    private final ConcurrentHashMap<MatViewDefinition> definitionByTableDirName = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<MatViewDefinition> definitionsByTableDirName = new ConcurrentHashMap<>();
     // Note: this map is grow-only, i.e. keys are never removed.
     private final ConcurrentHashMap<MatViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
+    private final Queue<MatViewTimerTask> timerTaskQueue;
 
-    public MatViewGraph() {
+    public MatViewGraph(Queue<MatViewTimerTask> timerTaskQueue) {
         this.createDependencyList = name -> new MatViewDependencyList();
+        this.timerTaskQueue = timerTaskQueue;
     }
 
     public boolean addView(MatViewDefinition viewDefinition) {
         final TableToken matViewToken = viewDefinition.getMatViewToken();
-        final MatViewDefinition prevDefinition = definitionByTableDirName.putIfAbsent(matViewToken.getDirName(), viewDefinition);
+        final MatViewDefinition prevDefinition = definitionsByTableDirName.putIfAbsent(matViewToken.getDirName(), viewDefinition);
         // WAL table directories are unique, so we don't expect previous value
         if (prevDefinition != null) {
             return false;
@@ -79,13 +83,15 @@ public class MatViewGraph implements Mutable {
                 list.unlockAfterWrite();
             }
         }
+        final MatViewTimerTask timerTask = tlTimerTask.get();
+        timerTaskQueue.enqueue(timerTask.ofAdd(matViewToken));
         return true;
     }
 
     @TestOnly
     @Override
     public void clear() {
-        definitionByTableDirName.clear();
+        definitionsByTableDirName.clear();
         dependentViewsByTableName.clear();
     }
 
@@ -100,13 +106,18 @@ public class MatViewGraph implements Mutable {
     }
 
     public MatViewDefinition getViewDefinition(TableToken matViewToken) {
-        return definitionByTableDirName.get(matViewToken.getDirName());
+        return definitionsByTableDirName.get(matViewToken.getDirName());
     }
 
     public void getViews(ObjList<TableToken> sink) {
-        for (MatViewDefinition viewDefinition : definitionByTableDirName.values()) {
+        for (MatViewDefinition viewDefinition : definitionsByTableDirName.values()) {
             sink.add(viewDefinition.getMatViewToken());
         }
+    }
+
+    public void onAlterRefreshTimer(TableToken matViewToken) {
+        final MatViewTimerTask timerTask = tlTimerTask.get();
+        timerTaskQueue.enqueue(timerTask.ofUpdate(matViewToken));
     }
 
     /**
@@ -133,7 +144,7 @@ public class MatViewGraph implements Mutable {
     }
 
     public void removeView(TableToken matViewToken) {
-        final MatViewDefinition viewDefinition = definitionByTableDirName.remove(matViewToken.getDirName());
+        final MatViewDefinition viewDefinition = definitionsByTableDirName.remove(matViewToken.getDirName());
         if (viewDefinition != null) {
             final CharSequence baseTableName = viewDefinition.getBaseTableName();
             final MatViewDependencyList dependentViews = dependentViewsByTableName.get(baseTableName);
@@ -144,13 +155,15 @@ public class MatViewGraph implements Mutable {
                         final TableToken matView = matViews.get(i);
                         if (matView.equals(matViewToken)) {
                             matViews.remove(i);
-                            return;
+                            break;
                         }
                     }
                 } finally {
                     dependentViews.unlockAfterWrite();
                 }
             }
+            final MatViewTimerTask timerTask = tlTimerTask.get();
+            timerTaskQueue.enqueue(timerTask.ofDrop(matViewToken));
         }
     }
 
