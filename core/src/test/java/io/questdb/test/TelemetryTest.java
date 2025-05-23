@@ -81,9 +81,9 @@ public class TelemetryTest extends AbstractCairoTest {
                         "version\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n" +
                         "os\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n" +
                         "package\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n" +
-                        "instance_name\tVARCHAR\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "instance_name\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n" +
                         "instance_type\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n" +
-                        "instance_desc\tVARCHAR\tfalse\t256\tfalse\t0\tfalse\tfalse\n";
+                        "instance_desc\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n";
                 assertSql(expected, "SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
                 expected = "id\tversion\n" +
                         "0x01\t\n" +

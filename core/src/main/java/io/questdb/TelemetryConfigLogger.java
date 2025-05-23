@@ -47,9 +47,6 @@ import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
@@ -62,13 +59,13 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
     private static final Log LOG = LogFactory.getLog(TelemetryConfigLogger.class);
     private static final String QDB_PACKAGE = "QDB_PACKAGE";
     private final CairoEngine engine;
-    private final Utf8StringSink instanceDesc = new Utf8StringSink();
-    private final Utf8StringSink instanceName = new Utf8StringSink();
     private final CharSequence questDBVersion;
     private final TelemetryConfiguration telemetryConfiguration;
     private final SCSequence tempSequence = new SCSequence();
     private TableToken configTableToken;
     private TableWriter configWriter;
+    private CharSequence instanceDesc;
+    private CharSequence instanceName;
     private CharSequence instanceType;
 
 
@@ -86,12 +83,12 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
 
     @Override
     public void update(PreferencesMap preferencesMap) {
-        instanceName.clear();
-        instanceName.put(preferencesMap.get(INSTANCE_NAME));
+        instanceName = preferencesMap.get(INSTANCE_NAME);
+        instanceName = instanceName == null ? "" : instanceName;
         instanceType = preferencesMap.get(INSTANCE_TYPE);
         instanceType = instanceType == null ? "" : instanceType;
-        instanceDesc.clear();
-        instanceDesc.put(preferencesMap.get(INSTANCE_DESC));
+        instanceDesc = preferencesMap.get(INSTANCE_DESC);
+        instanceDesc = instanceDesc == null ? "" : instanceDesc;
 
         try (final SqlCompiler compiler = engine.getSqlCompiler()) {
             final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
@@ -128,9 +125,9 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
         if (packageStr != null) {
             row.putSym(4, packageStr);
         }
-        row.putVarchar(5, instanceName);
+        row.putSym(5, instanceName);
         row.putSym(6, instanceType);
-        row.putVarchar(7, instanceDesc);
+        row.putSym(7, instanceDesc);
 
         row.append();
         configWriter.commit();
@@ -164,17 +161,17 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
                     final Long256 l256 = record.getLong256A(0);
                     final boolean _enabled = record.getBool(1);
                     final CharSequence _questDBVersion = record.getSymA(2);
-                    final Utf8Sequence _instanceName = record.getVarcharA(5);
+                    final CharSequence _instanceName = record.getSymA(5);
                     final CharSequence _instanceType = record.getSymA(6);
-                    final Utf8Sequence _instanceDesc = record.getVarcharA(7);
+                    final CharSequence _instanceDesc = record.getSymA(7);
 
                     // if the configuration or instance information changed (enable or disable telemetry, for example),
                     // we need to update the table to reflect that
                     if (enabled != _enabled
                             || !Chars.equalsNc(questDBVersion, _questDBVersion)
-                            || !Utf8s.equals(instanceName, _instanceName)
+                            || !Chars.equalsNc(instanceName, _instanceName)
                             || !Chars.equalsNc(instanceType, _instanceType)
-                            || !Utf8s.equals(instanceDesc, _instanceDesc)
+                            || !Chars.equalsNc(instanceDesc, _instanceDesc)
                     ) {
                         appendConfigRow(engine, configWriter, l256, enabled);
                         LOG.advisory()
@@ -205,15 +202,15 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
         configTableToken = compiler.query()
                 .$("CREATE TABLE IF NOT EXISTS ")
                 .$(TELEMETRY_CONFIG_TABLE_NAME)
-                .$(" (id long256, enabled boolean, version symbol, os symbol, package symbol, instance_name varchar, instance_type symbol, instance_desc varchar)")
+                .$(" (id long256, enabled boolean, version symbol, os symbol, package symbol, instance_name symbol, instance_type symbol, instance_desc symbol)")
                 .createTable(sqlExecutionContext);
 
         tryAddColumn(compiler, sqlExecutionContext, "version symbol");
         tryAddColumn(compiler, sqlExecutionContext, "os symbol");
         tryAddColumn(compiler, sqlExecutionContext, "package symbol");
-        tryAddColumn(compiler, sqlExecutionContext, "instance_name varchar");
+        tryAddColumn(compiler, sqlExecutionContext, "instance_name symbol");
         tryAddColumn(compiler, sqlExecutionContext, "instance_type symbol");
-        tryAddColumn(compiler, sqlExecutionContext, "instance_desc varchar");
+        tryAddColumn(compiler, sqlExecutionContext, "instance_desc symbol");
 
         engine.getSettingsStore().registerListener(this);
     }
