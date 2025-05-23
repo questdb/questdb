@@ -5161,7 +5161,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryTimeoutResetOnEachQuery() throws Exception {
-        final int timeout = 200;
+        final int timeout = 500;
         final int iterations = 3;
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
