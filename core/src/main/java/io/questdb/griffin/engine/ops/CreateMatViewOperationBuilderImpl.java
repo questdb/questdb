@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -45,7 +44,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     public static final ObjectFactory<CreateMatViewOperationBuilderImpl> FACTORY = CreateMatViewOperationBuilderImpl::new;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private String baseTableName;
-    private int baseTableNamePosition;
+    private int baseTableNamePosition = 0;
     private int refreshType = -1;
     private String timeZone;
     private String timeZoneOffset;
@@ -69,7 +68,6 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         createTableOperationBuilder.clear();
         refreshType = -1;
         baseTableName = null;
-        baseTableNamePosition = 0;
         timeZone = null;
         timeZoneOffset = null;
     }
@@ -125,13 +123,6 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         if (baseTableName != null) {
             sink.putAscii(" with base ");
             sink.put(baseTableName);
-        }
-        if (refreshType == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
-            sink.putAscii(" refresh start '");
-            sink.putISODate(createTableOperationBuilder.getMatViewTimerStart());
-            sink.putAscii("' every ");
-            sink.put(createTableOperationBuilder.getMatViewTimerInterval());
-            sink.putAscii(createTableOperationBuilder.getMatViewTimerIntervalUnit());
         }
         sink.putAscii(" as (");
         if (createTableOperationBuilder.getQueryModel() != null) {
