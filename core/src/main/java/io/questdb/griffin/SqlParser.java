@@ -246,7 +246,8 @@ public class SqlParser {
 
     public static void validateMatViewIntervalUnit(char unit, int pos) throws SqlException {
         if (unit != 'M' && unit != 'y' && unit != 'w' && unit != 'd' && unit != 'h' && unit != 'm') {
-            throw SqlException.position(pos).put("unsupported interval unit: ").put(unit);
+            throw SqlException.position(pos).put("unsupported interval unit: ").put(unit)
+                    .put(", supported units are 'm', 'h', 'd', 'w', 'y', 'M'");
         }
     }
 
