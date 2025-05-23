@@ -120,6 +120,12 @@ public class DoubleList implements Mutable, Sinkable {
         }
     }
 
+    /**
+     * Resets the size of this list to zero.
+     * <p>
+     * <strong>Does not overwrite the underlying array with empty values.</strong>
+     * Use <code>clear(0)</code> to overwrite it.
+     */
     public void clear() {
         pos = 0;
     }
@@ -134,6 +140,13 @@ public class DoubleList implements Mutable, Sinkable {
         Arrays.fill(data, noEntryValue);
     }
 
+    /**
+     * Sets the value at index, extending the backing array if needed.
+     * <p>
+     * <strong>WARNING:</strong> does not initialize the newly revealed portion of
+     * the backing array! This may reveal values that were never set, or were set
+     * before calling <code>clear()</code>.
+     */
     public void extendAndSet(int index, double value) {
         checkCapacity(index + 1);
         if (index >= pos) {
