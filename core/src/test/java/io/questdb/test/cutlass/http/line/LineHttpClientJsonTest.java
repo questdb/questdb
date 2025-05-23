@@ -80,7 +80,7 @@ public class LineHttpClientJsonTest extends AbstractBootstrapTest {
     @Test
     public void testIngestion() throws Exception {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-        String pp = TestUtils.getTestResourcePath("/io/questdb/test/cutlass/line/interop/client-binary-protocol-test.json");
+        String pp = TestUtils.getTestResourcePath("/io/questdb/test/cutlass/line/interop/client-protocol-version-2-test.json");
 
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -183,6 +183,7 @@ public class LineHttpClientJsonTest extends AbstractBootstrapTest {
                 case JsonLexer.EVT_NAME:
                     if (Chars.equalsIgnoreCase(tag, "testname")) {
                         tag1Type = TAG_TEST_NAME;
+                        resetForNextTestCase();
                     } else if (Chars.equalsIgnoreCase(tag, "table")) {
                         tag1Type = TAG_TABLE_NAME;
                     } else if (Chars.equalsIgnoreCase(tag, "symbols")) {
@@ -541,8 +542,6 @@ public class LineHttpClientJsonTest extends AbstractBootstrapTest {
                 array.close();
                 array = null;
             }
-            shapes.clear();
-            strides.clear();
             arrayElementType = -1;
             columnType = -1;
             tag1Type = -1;
