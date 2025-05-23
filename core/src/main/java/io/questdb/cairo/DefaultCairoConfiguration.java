@@ -655,6 +655,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPreferencesStringPoolCapacity() {
+        return 64;
+    }
+
+    @Override
     public int getQueryCacheEventQueueCapacity() {
         return 4;
     }
@@ -1338,5 +1343,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean useFastAsOfJoin() {
         return true;
+    }
+
+    @Override
+    public boolean useWithinLatestByOptimisation() {
+        return false;
     }
 }

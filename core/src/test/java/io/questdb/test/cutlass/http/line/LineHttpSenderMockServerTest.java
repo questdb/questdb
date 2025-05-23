@@ -30,8 +30,8 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConstants;
-import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.http.HttpRequestProcessorFactory;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.line.LineSenderException;
@@ -324,9 +324,9 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testOldServerWithoutIlpHttpSupport() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
-                .replyWithContent(404, "Not Found", "test/plain");
+                .replyWithContent(405, "Method not allowed", "test/plain");
 
-        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint does not support ILP. [http-status=404]"));
+        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint does not support ILP. [http-status=405]"));
     }
 
     @Test
@@ -552,14 +552,14 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(new DefaultCairoConfiguration(root));
             try (WorkerPool workerPool = new TestWorkerPool(1);
                  HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjList<String> getUrls() {
                         return new ObjList<>("/write");
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return mockHttpProcessor;
                     }
                 });

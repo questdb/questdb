@@ -24,7 +24,6 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -140,31 +139,6 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
             }
         }
         return this;
-    }
-
-    default void escapeJsonStrChar(char c) {
-        switch (c) {
-            case '\b':
-                putAscii("\\b");
-                break;
-            case '\f':
-                putAscii("\\f");
-                break;
-            case '\n':
-                putAscii("\\n");
-                break;
-            case '\r':
-                putAscii("\\r");
-                break;
-            case '\t':
-                putAscii("\\t");
-                break;
-            default:
-                putAscii("\\u00");
-                put(c >> 4);
-                putAscii(Numbers.hexDigits[c & 15]);
-                break;
-        }
     }
 
     @Override

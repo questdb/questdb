@@ -32,6 +32,8 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 
+import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_GET;
+
 public interface HttpRequestProcessor {
     default AtomicLongGauge connectionCountGauge(Metrics metrics) {
         return metrics.jsonQueryMetrics().connectionCountGauge();
@@ -58,8 +60,8 @@ public interface HttpRequestProcessor {
         return false;
     }
 
-    default boolean isErrorProcessor() {
-        return false;
+    default short getSupportedRequestTypes() {
+        return METHOD_GET;
     }
 
     default void onConnectionClosed(HttpConnectionContext context) {

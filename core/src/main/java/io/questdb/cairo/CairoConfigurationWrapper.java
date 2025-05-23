@@ -33,7 +33,6 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.datetime.DateFormat;
@@ -41,6 +40,7 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -69,6 +69,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean enableTestFactories() {
         return getDelegate().enableTestFactories();
+    }
+
+    @Override
+    public boolean exportConfiguration(StringSink sink) {
+        return getDelegate().exportConfiguration(sink);
     }
 
     @Override
@@ -624,6 +629,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getPartitionPurgeListCapacity() {
         return getDelegate().getPartitionPurgeListCapacity();
+    }
+
+    @Override
+    public int getPreferencesStringPoolCapacity() {
+        return getDelegate().getPreferencesStringPoolCapacity();
     }
 
     @Override
@@ -1310,11 +1320,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
         return getDelegate().maxArrayElementCount();
     }
 
-    @Override
-    public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-        getDelegate().populateSettings(settings);
-    }
-
     public void setDelegate(CairoConfiguration delegate) {
         this.delegate.set(delegate);
     }
@@ -1322,6 +1327,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean useFastAsOfJoin() {
         return getDelegate().useFastAsOfJoin();
+    }
+
+    @Override
+    public boolean useWithinLatestByOptimisation() {
+        return getDelegate().useWithinLatestByOptimisation();
     }
 
     protected CairoConfiguration getDelegate() {
