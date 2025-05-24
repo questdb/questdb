@@ -322,8 +322,6 @@ public class ColumnVersionReader implements Closeable, Mutable {
             boolean isDefaultPartition = timestamp == COL_TOP_DEFAULT_PARTITION;
             if (isDefaultPartition) {
                 sink.put("defaultNameTxn: ").put(columnNameTxn).put(", ");
-                sink.put("addedPartition: '");
-                TimestampFormatUtils.appendDateTime(sink, columnTop);
                 sink.put("'}");
             } else {
                 sink.put("nameTxn: ").put(columnNameTxn).put(", ");
