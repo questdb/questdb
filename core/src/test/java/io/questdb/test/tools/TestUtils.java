@@ -53,6 +53,9 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cutlass.http.client.Fragment;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.Response;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -750,6 +753,25 @@ public final class TestUtils {
     public static void assertReader(CharSequence expected, TableReader reader, MutableUtf16Sink sink) {
         try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
             assertCursor(expected, cursor, reader.getMetadata(), true, sink);
+        }
+    }
+
+    public static void assertResponse(HttpClient.Request request, int expectedStatusCode, String expectedHttpResponse) {
+        try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
+            responseHeaders.await();
+
+            assertEquals(String.valueOf(expectedStatusCode), responseHeaders.getStatusCode());
+
+            final Utf8StringSink sink = new Utf8StringSink();
+
+            Fragment fragment;
+            final Response response = responseHeaders.getResponse();
+            while ((fragment = response.recv()) != null) {
+                Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
+            }
+
+            assertEquals(expectedHttpResponse, sink);
+            sink.clear();
         }
     }
 

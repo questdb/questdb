@@ -64,7 +64,7 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
-import io.questdb.std.IntPriorityQueue;
+import io.questdb.std.IntSortedList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
@@ -145,7 +145,7 @@ public class SqlOptimiser implements Mutable {
     private final int maxRecursion;
     private final CharSequenceHashSet missingDependedTokens = new CharSequenceHashSet();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
-    private final IntPriorityQueue orderingStack = new IntPriorityQueue();
+    private final IntSortedList orderingStack = new IntSortedList();
     private final Path path;
     private final IntHashSet postFilterRemoved = new IntHashSet();
     private final ObjList<IntHashSet> postFilterTableRefs = new ObjList<>();
@@ -1699,7 +1699,7 @@ public class SqlOptimiser implements Mutable {
             QueryModel q = joinModels.getQuick(i);
             if (q.getJoinType() == QueryModel.JOIN_CROSS || q.getContext() == null || q.getContext().parents.size() == 0) {
                 if (q.getDependencies().size() > 0) {
-                    orderingStack.push(i);
+                    orderingStack.add(i);
                 } else {
                     tempCrossIndexes.add(i);
                 }
@@ -1709,8 +1709,8 @@ public class SqlOptimiser implements Mutable {
         }
 
         while (orderingStack.notEmpty()) {
-            //remove a node n from orderingStack
-            int index = orderingStack.pop();
+            // remove a node n from orderingStack
+            int index = orderingStack.poll();
 
             ordered.add(index);
 
@@ -1729,7 +1729,7 @@ public class SqlOptimiser implements Mutable {
                 int depIndex = dependencies.get(i);
                 JoinContext jc = joinModels.getQuick(depIndex).getContext();
                 if (jc != null && --jc.inCount == 0) {
-                    orderingStack.push(depIndex);
+                    orderingStack.add(depIndex);
                 }
             }
         }
@@ -6596,10 +6596,6 @@ public class SqlOptimiser implements Mutable {
 
                     ac.setRowsLo(rowsLo * ac.getRowsLoExprTimeUnit());
                     ac.setRowsHi(rowsHi * ac.getRowsHiExprTimeUnit());
-
-                    if (ac.getRowsLo() > ac.getRowsHi()) {
-                        throw SqlException.$(ac.getRowsLoExpr().position, "start of window must be lower than end of window");
-                    }
                 }
             }
         }

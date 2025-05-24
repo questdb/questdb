@@ -415,23 +415,6 @@ public class WalWriter implements TableWriterAPI {
         return segmentRowCount > currentTxnStartRowNum;
     }
 
-    // Marks the materialized view as invalid or resets its invalidation status,
-    // depending on the input values.
-    public void invalidateMatView(
-            long lastRefreshBaseTxn,
-            long lastRefreshTimestamp,
-            boolean invalid,
-            @Nullable CharSequence invalidationReason
-    ) {
-        try {
-            lastSegmentTxn = events.appendMatViewInvalidate(lastRefreshBaseTxn, lastRefreshTimestamp, invalid, invalidationReason);
-            getSequencerTxn();
-        } catch (Throwable th) {
-            rollback();
-            throw th;
-        }
-    }
-
     public boolean isDistressed() {
         return distressed;
     }
@@ -488,6 +471,23 @@ public class WalWriter implements TableWriterAPI {
         long txn = apply(alterOp, true);
         assert Chars.equals(newTableName, tableToken.getTableName());
         return txn;
+    }
+
+    // Marks the materialized view as invalid or resets its invalidation status,
+    // depending on the input values.
+    public void resetMatViewState(
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            boolean invalid,
+            @Nullable CharSequence invalidationReason
+    ) {
+        try {
+            lastSegmentTxn = events.appendMatViewInvalidate(lastRefreshBaseTxn, lastRefreshTimestamp, invalid, invalidationReason);
+            getSequencerTxn();
+        } catch (Throwable th) {
+            rollback();
+            throw th;
+        }
     }
 
     public void rollSegment() {

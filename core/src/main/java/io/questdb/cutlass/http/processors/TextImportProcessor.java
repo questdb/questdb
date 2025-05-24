@@ -34,7 +34,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
-import io.questdb.cutlass.http.HttpMultipartContentListener;
+import io.questdb.cutlass.http.HttpMultipartContentProcessor;
+import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
@@ -55,12 +56,10 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
 
-import java.io.Closeable;
-
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.cutlass.text.TextLoadWarning.*;
 
-public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartContentListener, Closeable {
+public class TextImportProcessor implements HttpMultipartContentProcessor, HttpRequestHandler {
     static final int MESSAGE_UNKNOWN = 3;
     static final int RESPONSE_PREFIX = 1;
     private static final Log LOG = LogFactory.getLog(TextImportProcessor.class);
@@ -94,12 +93,13 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void close() {
+    public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        sendErrorAndThrowDisconnect(e.getFlyweightMessage());
     }
 
     @Override
-    public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        sendErrorAndThrowDisconnect(e.getFlyweightMessage());
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
     }
 
     @Override

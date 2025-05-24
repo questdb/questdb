@@ -119,6 +119,9 @@ public final class TableUtils {
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
     public static final long META_OFFSET_MAT_VIEW_REFRESH_LIMIT_HOURS_OR_MONTHS = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
+    public static final long META_OFFSET_MAT_VIEW_TIMER_START = META_OFFSET_MAT_VIEW_REFRESH_LIMIT_HOURS_OR_MONTHS + 4; // LONG
+    public static final long META_OFFSET_MAT_VIEW_TIMER_INTERVAL = META_OFFSET_MAT_VIEW_TIMER_START + 8; // INT
+    public static final long META_OFFSET_MAT_VIEW_TIMER_INTERVAL_UNIT = META_OFFSET_MAT_VIEW_TIMER_INTERVAL + 4; // CHAR
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     /**
      * TXN file structure
@@ -1868,6 +1871,9 @@ public final class TableUtils {
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.putInt(tableStruct.getMatViewRefreshLimitHoursOrMonths());
+        mem.putLong(tableStruct.getMatViewTimerStart());
+        mem.putInt(tableStruct.getMatViewTimerInterval());
+        mem.putChar(tableStruct.getMatViewTimerIntervalUnit());
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
@@ -2015,6 +2021,18 @@ public final class TableUtils {
 
     static int getMatViewRefreshLimitHoursOrMonths(MemoryR metaMem) {
         return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_MAT_VIEW_REFRESH_LIMIT_HOURS_OR_MONTHS) : 0;
+    }
+
+    static int getMatViewTimerInterval(MemoryR metaMem) {
+        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_MAT_VIEW_TIMER_INTERVAL) : 0;
+    }
+
+    static char getMatViewTimerIntervalUnit(MemoryR metaMem) {
+        return isMetaFormatUpToDate(metaMem) ? metaMem.getChar(TableUtils.META_OFFSET_MAT_VIEW_TIMER_INTERVAL_UNIT) : 0;
+    }
+
+    static long getMatViewTimerStart(MemoryR metaMem) {
+        return isMetaFormatUpToDate(metaMem) ? metaMem.getLong(TableUtils.META_OFFSET_MAT_VIEW_TIMER_START) : 0;
     }
 
     static int getTtlHoursOrMonths(MemoryR metaMem) {

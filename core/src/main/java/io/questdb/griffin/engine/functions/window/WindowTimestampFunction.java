@@ -22,11 +22,39 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.griffin.engine.functions.window;
 
-public class DefaultTextImportProcessorConfiguration implements TextImportProcessorConfiguration {
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.Numbers;
+
+public interface WindowTimestampFunction extends WindowFunction {
     @Override
-    public boolean abortBrokenUploads() {
-        return true;
+    default long getDate(Record rec) {
+        final long value = getTimestamp(rec);
+        return value == Numbers.LONG_NULL ? value : value / 1000L;
+    }
+
+    @Override
+    default double getDouble(Record rec) {
+        final long val = getTimestamp(rec);
+        return val != Numbers.LONG_NULL ? val : Double.NaN;
+    }
+
+    @Override
+    default float getFloat(Record rec) {
+        final long val = getTimestamp(rec);
+        return val != Numbers.LONG_NULL ? val : Float.NaN;
+    }
+
+    @Override
+    default long getLong(Record rec) {
+        return getTimestamp(rec);
+    }
+
+    @Override
+    default int getType() {
+        return ColumnType.TIMESTAMP;
     }
 }

@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.std.IntLongPriorityQueue;
+import io.questdb.std.IntLongSortedList;
 import io.questdb.std.ObjList;
 
 /**
@@ -35,32 +35,32 @@ import io.questdb.std.ObjList;
  * from related cursor into queue until all cursors are exhausted.
  */
 class HeapRowCursor implements RowCursor {
-    private final IntLongPriorityQueue heap;
+    private final IntLongSortedList list;
     private ObjList<RowCursor> cursors;
 
     public HeapRowCursor() {
-        this.heap = new IntLongPriorityQueue();
+        this.list = new IntLongSortedList();
     }
 
     @Override
     public boolean hasNext() {
-        return heap.hasNext();
+        return list.hasNext();
     }
 
     @Override
     public long next() {
-        int idx = heap.popIndex();
+        int idx = list.peekIndex();
         RowCursor cursor = cursors.getQuick(idx);
-        return cursor.hasNext() ? heap.popAndReplace(idx, cursor.next()) : heap.popValue();
+        return cursor.hasNext() ? list.pollAndReplace(idx, cursor.next()) : list.pollValue();
     }
 
     public void of(ObjList<RowCursor> cursors, int activeCursors) {
         this.cursors = cursors;
-        this.heap.clear();
+        this.list.clear();
         for (int i = 0; i < activeCursors; i++) {
             final RowCursor cursor = cursors.getQuick(i);
             if (cursor.hasNext()) {
-                heap.add(i, cursor.next());
+                list.add(i, cursor.next());
             }
         }
     }

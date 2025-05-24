@@ -245,6 +245,17 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
+    public AlterOperationBuilder ofSetMatViewRefreshTimer(int matViewNamePosition, TableToken matViewToken, int tableId, long start, int interval, char unit) {
+        this.command = SET_MAT_VIEW_REFRESH_TIMER;
+        this.tableNamePosition = matViewNamePosition;
+        this.tableToken = matViewToken;
+        this.extraInfo.add(start);
+        this.extraInfo.add(interval);
+        this.extraInfo.add(unit);
+        this.tableId = tableId;
+        return this;
+    }
+
     public AlterOperationBuilder ofSetO3MaxLag(int tableNamePosition, TableToken tableToken, int tableId, long o3MaxLag) {
         this.command = SET_PARAM_COMMIT_LAG;
         this.tableNamePosition = tableNamePosition;

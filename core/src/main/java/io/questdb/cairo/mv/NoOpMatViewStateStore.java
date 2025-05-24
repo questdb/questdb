@@ -61,6 +61,10 @@ public class NoOpMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public void enqueueRangeRefresh(TableToken matViewToken, long rangeFrom, long rangeTo) {
+    }
+
+    @Override
     public MatViewState getViewState(TableToken matViewToken) {
         return null;
     }
