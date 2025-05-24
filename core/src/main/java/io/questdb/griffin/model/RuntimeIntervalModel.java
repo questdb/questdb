@@ -61,8 +61,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     @Override
-    public boolean allIntervalsHitOnePartition(int partitionBy) {
-        return !PartitionBy.isPartitioned(partitionBy) || allIntervalsHitOnePartition(PartitionBy.getPartitionFloorMethod(partitionBy));
+    public boolean allIntervalsHitOnePartition(int timestampType, int partitionBy) {
+        return !PartitionBy.isPartitioned(partitionBy) || allIntervalsHitOnePartition(PartitionBy.getPartitionFloorMethod(timestampType, partitionBy));
     }
 
     @Override

@@ -5524,7 +5524,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             dfcFactoryMeta
                     );
                 }
-                intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
+                intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(
+                        reader.getMetadata().getTimestampType(),
+                        reader.getPartitionedBy()
+                );
             } else {
                 if (model.isForceBackwardScan()) {
                     dfcFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);

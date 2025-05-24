@@ -1171,7 +1171,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 if (timestamps.hasNext()) {
                                     long partitionTimestamp = timestamps.next();
                                     try (TableWriter writer = getWriter(tableName)) {
-                                        renameDetachedToAttachable(tableName, partitionTimestamp);
+                                        renameDetachedToAttachable(tableName, TableUtils.getTimestampType(tab), partitionTimestamp);
                                         writer.attachPartition(partitionTimestamp);
                                         timestamps.remove();
                                         attachedCount.incrementAndGet();
@@ -2467,11 +2467,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other.$(), path.$()));
     }
 
-    private void renameDetachedToAttachable(String tableName, long... partitions) {
+    private void renameDetachedToAttachable(String tableName, int timestampType, long... partitions) {
         TableToken tableToken = engine.verifyTableName(tableName);
         for (long partition : partitions) {
             TableUtils.setSinkForNativePartition(
                     path.of(configuration.getDbRoot()).concat(tableToken),
+                    timestampType,
                     PartitionBy.DAY,
                     partition,
                     -1
@@ -2479,6 +2480,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             path.put(DETACHED_DIR_MARKER).$();
             TableUtils.setSinkForNativePartition(
                     other.of(configuration.getDbRoot()).concat(tableToken),
+                    timestampType,
                     PartitionBy.DAY,
                     partition,
                     -1

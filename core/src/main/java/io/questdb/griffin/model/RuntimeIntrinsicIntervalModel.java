@@ -32,7 +32,7 @@ import io.questdb.std.QuietCloseable;
 
 public interface RuntimeIntrinsicIntervalModel extends QuietCloseable, Plannable {
 
-    boolean allIntervalsHitOnePartition(int partitionBy);
+    boolean allIntervalsHitOnePartition(int timestampType, int partitionBy);
 
     LongList calculateIntervals(SqlExecutionContext sqlExecutionContext) throws SqlException;
 }

@@ -637,7 +637,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         writer.attachPartition(timestamp);
                     }
                     path.of(configuration.getDbRoot()).concat(dstTableToken);
-                    TableUtils.setPathForNativePartition(path, PartitionBy.DAY, IntervalUtils.parseFloorPartialTimestamp("2022-08-01"), txn);
+                    TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, IntervalUtils.parseFloorPartialTimestamp("2022-08-01"), txn);
                     int pathLen = path.size();
 
                     // Extra columns not deleted

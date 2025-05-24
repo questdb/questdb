@@ -39,9 +39,10 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonFormatUtils;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
@@ -84,13 +85,13 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         final CharSequence tz = timezoneFunc.getStrA(null);
         if (tz != null) {
             final int hi = tz.length();
-            final long l = Timestamps.parseOffset(tz, 0, hi);
+            final long l = Dates.parseOffset(tz, 0, hi);
             if (l == Long.MIN_VALUE) {
                 try {
                     return new ConstRulesFunc(
                             timestampFunc,
-                            TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                                    Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                            CommonFormatUtils.EN_LOCALE.getZoneRules(
+                                    Numbers.decodeLowInt(CommonFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
                             )
                     );
                 } catch (NumericException e) {
@@ -163,7 +164,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
             final long timestampValue = timestampFunc.getTimestamp(rec);
             try {
                 final CharSequence tz = timezoneFunc.getStrA(rec);
-                return tz != null ? Timestamps.toUTC(timestampValue, TimestampFormatUtils.EN_LOCALE, tz) : timestampValue;
+                return tz != null ? Timestamps.toUTC(timestampValue, CommonFormatUtils.EN_LOCALE, tz) : timestampValue;
             } catch (NumericException e) {
                 return timestampValue;
             }
@@ -218,11 +219,11 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
             }
 
             final int hi = tz.length();
-            final long l = Timestamps.parseOffset(tz, 0, hi);
+            final long l = Dates.parseOffset(tz, 0, hi);
             if (l == Long.MIN_VALUE) {
                 try {
-                    tzRules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                            Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                    tzRules = CommonFormatUtils.EN_LOCALE.getZoneRules(
+                            Numbers.decodeLowInt(CommonFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
                     );
                     tzOffset = 0;
                 } catch (NumericException e) {

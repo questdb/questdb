@@ -241,6 +241,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     purgingOperator.purge(
                             path.trimTo(rootLen),
                             tableWriter.getTableToken(),
+                            tableWriter.getMetadata().getTimestampType(),
                             tableWriter.getPartitionBy(),
                             tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(),
                             tableWriter.getTruncateVersion(),
@@ -628,7 +629,13 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         RecordMetadata metadata = tableWriter.getMetadata();
         try {
             path.trimTo(rootLen);
-            TableUtils.setPathForNativePartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+            TableUtils.setPathForNativePartition(
+                    path,
+                    tableWriter.getMetadata().getTimestampType(),
+                    tableWriter.getPartitionBy(),
+                    partitionTimestamp,
+                    partitionNameTxn
+            );
             int pathTrimToLen = path.size();
             for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
                 int columnIndex = updateColumnIndexes.get(i);

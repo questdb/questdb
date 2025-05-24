@@ -131,6 +131,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 try (Path path = new Path();
                      TxReader txReader = new TxReader(configuration.getFilesFacade()).ofRO(
                              path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                             ColumnType.TIMESTAMP,
                              PartitionBy.DAY
                      );
                      TableReader rdr = getReader(tableName)
@@ -220,6 +221,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                         TableWriter writer = newOffPoolWriter(configuration, tableName);
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                                TableUtils.getTimestampType(model),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -287,6 +289,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     Path path = new Path();
                     TxReader txReader = new TxReader(ff).ofRO(
                             path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                            ColumnType.TIMESTAMP,
                             PartitionBy.DAY
                     )
             ) {
@@ -401,6 +404,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                         TableWriter writer = TestUtils.newOffPoolWriter(configuration, tableToken, engine);
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                                TableUtils.getTimestampType(model),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -466,6 +470,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                         MemoryMR txMem = Vm.getCMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                                TableUtils.getTimestampType(model),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -625,6 +630,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                         MemoryMR txMem = Vm.getCMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                                TableUtils.getTimestampType(model),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -708,6 +714,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                         MemoryMR txMem = Vm.getCMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                                TableUtils.getTimestampType(model),
                                 PartitionBy.DAY
                         )
                 ) {

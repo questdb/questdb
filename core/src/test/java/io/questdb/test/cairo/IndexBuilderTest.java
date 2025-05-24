@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -715,7 +716,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             path.concat(tablePath);
             path.put(Files.SEPARATOR);
-            TableUtils.setPathForNativePartition(path, partitionBy, partitionTs, partitionNameTxn);
+            TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, partitionBy, partitionTs, partitionNameTxn);
             path.concat(fileName);
             LOG.info().$("removing ").$(path).$();
             Assert.assertTrue(Files.remove(path.$()));

@@ -471,7 +471,11 @@ public class UpdateTest extends AbstractCairoTest {
 
                 try (TxReader txReader = new TxReader(ff)) {
                     TableToken tableToken = engine.verifyTableName("up");
-                    txReader.ofRO(Path.getThreadLocal(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
+                    txReader.ofRO(
+                            Path.getThreadLocal(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                            writer.getMetadata().getTimestampType(),
+                            PartitionBy.DAY
+                    );
                     txReader.unsafeLoadAll();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(0));
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(1));

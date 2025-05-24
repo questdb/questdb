@@ -157,6 +157,10 @@ public final class ColumnType {
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
     }
 
+    public static TimestampDriver getTimestampDriver(int columnType) {
+        return MicrosTimestampDriver.INSTANCE;
+    }
+
     public static int getWalDataColumnShl(int columnType, boolean designatedTimestamp) {
         if (columnType == ColumnType.TIMESTAMP && designatedTimestamp) {
             return 4; // 128 bit column

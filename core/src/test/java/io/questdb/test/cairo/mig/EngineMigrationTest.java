@@ -219,7 +219,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             // Check txn file is upgraded
             try (TxReader txReader = new TxReader(config.getFilesFacade())) {
                 Path p = Path.getThreadLocal(config.getDbRoot());
-                txReader.ofRO(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+                txReader.ofRO(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
                 txReader.unsafeLoadAll();
 
                 Assert.assertNotEquals(0, txReader.getLagRowCount());
@@ -241,7 +241,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             CairoConfiguration config = engine.getConfiguration();
             try (TxWriter txWriter = new TxWriter(config.getFilesFacade(), config)) {
                 Path p = Path.getThreadLocal(config.getDbRoot());
-                txWriter.ofRW(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+                txWriter.ofRW(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
 
                 txWriter.setLagRowCount(100);
                 txWriter.setLagTxnCount(1);
@@ -396,11 +396,19 @@ public class EngineMigrationTest extends AbstractCairoTest {
         }
     }
 
-    private static void checkTxnFile(FilesFacade ff, CairoConfiguration config, TableToken tokenDef, int rowCount, int lagTxnCount, long maxValue, long minValue) {
+    private static void checkTxnFile(
+            FilesFacade ff,
+            CairoConfiguration config,
+            TableToken tokenDef,
+            int rowCount,
+            int lagTxnCount,
+            long maxValue,
+            long minValue
+    ) {
         // Check txn file is upgraded
         try (TxReader txReader = new TxReader(ff)) {
             Path p = Path.getThreadLocal(config.getDbRoot());
-            txReader.ofRO(p.concat(tokenDef).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+            txReader.ofRO(p.concat(tokenDef).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
             txReader.unsafeLoadAll();
 
             Assert.assertEquals(rowCount, txReader.getLagRowCount());

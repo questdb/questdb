@@ -1073,7 +1073,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             long partitionNameTxn
     ) throws NumericException {
         ColumnPurgeTask tsk = new ColumnPurgeTask();
-        tsk.of(tblName, colName, tableId, 0, columnType, PartitionBy.NONE, updateTxn, new LongList());
+        tsk.of(tblName, colName, tableId, 0, columnType, ColumnType.TIMESTAMP, PartitionBy.NONE, updateTxn, new LongList());
         tsk.appendColumnInfo(columnVersion, IntervalUtils.parseFloorPartialTimestamp(partitionTs), partitionNameTxn);
         return tsk;
     }
