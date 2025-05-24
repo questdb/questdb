@@ -779,18 +779,19 @@ public final class Timestamps {
         return Math.abs(a - b) / SECOND_MICROS;
     }
 
-    public static int getStrideMultiple(CharSequence str) {
+    public static int getStrideMultiple(CharSequence str, int position) throws SqlException {
         if (str != null && str.length() > 1) {
             try {
                 final int multiple = Numbers.parseInt(str, 0, str.length() - 1);
                 return multiple <= 0 ? 1 : multiple;
-            } catch (NumericException ignored) {
+            } catch (NumericException exception) {
+                throw SqlException.position(position).put("Invalid stride: ").put(str, 0, str.length() - 1);
             }
         }
         return 1;
     }
 
-    public static char getStrideUnit(CharSequence str) throws SqlException {
+    public static char getStrideUnit(CharSequence str, int position) throws SqlException {
         assert str.length() > 0;
         final char unit = str.charAt(str.length() - 1);
         switch (unit) {
@@ -805,7 +806,7 @@ public final class Timestamps {
             case 'U':
                 return unit;
             default:
-                throw SqlException.position(-1).put("Invalid unit: ").put(unit);
+                throw SqlException.position(position + str.length() - 1).put("Invalid unit: ").put(unit);
         }
     }
 
