@@ -1787,13 +1787,23 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outColTxtDate(PGResponseSink utf8Sink, Record record, int columnIndex) {
-        final long longValue = record.getDate(columnIndex);
-        if (longValue != Numbers.LONG_NULL) {
-            final long a = utf8Sink.skipInt();
-            PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, utf8Sink);
-            utf8Sink.putLenEx(a);
-        } else {
+//        final long longValue = record.getDate(columnIndex);
+//        if (longValue != Numbers.LONG_NULL) {
+//            final long a = utf8Sink.skipInt();
+//            PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, utf8Sink);
+//            utf8Sink.putLenEx(a);
+//        } else {
+//            utf8Sink.setNullValue();
+//        }
+
+        long a;
+        long longValue = record.getDate(columnIndex);
+        if (longValue == Numbers.LONG_NULL) {
             utf8Sink.setNullValue();
+        } else {
+            a = utf8Sink.skipInt();
+            TimestampFormatUtils.PG_TIMESTAMPZ_FORMAT.format(longValue * 1000, DateFormatUtils.EN_LOCALE, "+00", utf8Sink);
+            utf8Sink.putLenEx(a);
         }
     }
 
@@ -1909,7 +1919,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.setNullValue();
         } else {
             a = utf8Sink.skipInt();
-            TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, utf8Sink);
+            TimestampFormatUtils.PG_TIMESTAMPZ_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, "+00", utf8Sink);
             utf8Sink.putLenEx(a);
         }
     }
