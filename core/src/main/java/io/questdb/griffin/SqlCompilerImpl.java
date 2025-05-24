@@ -731,7 +731,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int columnNamePosition = lexer.lastTokenPosition();
 
             if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
-                throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
+                throw SqlException.invalidColumnName(lexer.lastTokenPosition(), columnName);
             }
 
             addColumnWithType(addColumn, columnName, columnNamePosition);
@@ -1248,7 +1248,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             if (!TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
-                throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
+                throw SqlException.invalidColumnName(lexer.lastTokenPosition(), tok);
             }
 
             CharSequence newName = GenericLexer.immutableOf(tok);

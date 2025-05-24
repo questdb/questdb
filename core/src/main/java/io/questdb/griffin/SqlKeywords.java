@@ -2108,6 +2108,16 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'e';
     }
 
+    public static boolean is_eventKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0)) == '_'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'v'
+                && (tok.charAt(3) | 32) == 'e'
+                && (tok.charAt(4) | 32) == 'n'
+                && (tok.charAt(5) | 32) == 't';
+    }
+
     public static boolean startsWithGeoHashKeyword(CharSequence tok) {
         return (tok.length() >= 7)
                 && isGeoHashKeywordInternal(tok);

@@ -52,6 +52,7 @@ import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -958,6 +959,10 @@ public final class TableUtils {
         final int length = columnName.length();
         if (length > fsFileNameLimit) {
             // Most file systems do not support file names longer than 255 bytes
+            return false;
+        }
+
+        if (SqlKeywords.is_eventKeyword(columnName)) {
             return false;
         }
 
