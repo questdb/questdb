@@ -25,6 +25,7 @@
 package io.questdb.metrics;
 
 import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels {
@@ -35,6 +36,11 @@ public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwo
 
     @Override
     public void add(long value) {
+    }
+
+    @Override
+    public CharSequence getName() {
+        return "null";
     }
 
     @Override
@@ -51,7 +57,7 @@ public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwo
     }
 
     @Override
-    public void inc(short label0, short label1) {
+    public void inc(int label0, int label1) {
     }
 
     @Override
