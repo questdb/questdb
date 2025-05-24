@@ -104,7 +104,7 @@ questdb stop  // To stop questdb
 ### 📚 Читайте документацію
 
 - [Документація QuestDB:](https://questdb.io/docs/introduction/) знайдіть як запускати та налаштовувати QuestDB.
-- [Підручники:](https://questdb.io/tutorial/) вивчайте що можливо робити з QuestDB крок за кроком.
+- [Підручники:](https://questdb.com/blog/?tag=tutorial) вивчайте що можливо робити з QuestDB крок за кроком.
 - [Дорожня карта продукту:](https://github.com/questdb/questdb/projects) наш план майбутніх релізів.
 
 ### ❓ Отримайте підтримку
@@ -118,10 +118,10 @@ questdb stop  // To stop questdb
 
 ### 🚢 Розгорніть QuestDB
 
-- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
-- [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
-- [Official Docker image](https://questdb.io/docs/get-started/docker)
-- [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
+- [AWS AMI](https://questdb.com/docs/deployment/aws/)
+- [Google Cloud Platform](https://questdb.com/docs/deployment/gcp/)
+- [Official Docker image](https://questdb.com/docs/quick-start/#docker)
+- [DigitalOcean droplets](https://questdb.com/docs/deployment/digital-ocean/)
 - [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
 
 ## Зробіть свій внесок у розробку
