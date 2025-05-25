@@ -157,7 +157,7 @@ public final class ColumnType {
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
     }
 
-    public static TimestampDriver getTimestampDriver(int columnType) {
+    public static TimestampDriver getTimestampDriver(int timestampType) {
         return MicrosTimestampDriver.INSTANCE;
     }
 

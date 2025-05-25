@@ -2061,8 +2061,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (ttl == 0) {
             return;
         }
-        PartitionBy.PartitionFloorMethod floorFn = PartitionBy.getPartitionFloorMethod(metadata.getTimestampType(), metadata.getPartitionBy());
-        PartitionBy.PartitionCeilMethod ceilFn = PartitionBy.getPartitionCeilMethod(metadata.getTimestampType(), metadata.getPartitionBy());
+        TimestampDriver.PartitionFloorMethod floorFn = PartitionBy.getPartitionFloorMethod(metadata.getTimestampType(), metadata.getPartitionBy());
+        TimestampDriver.PartitionCeilMethod ceilFn = PartitionBy.getPartitionCeilMethod(metadata.getTimestampType(), metadata.getPartitionBy());
         if (floorFn == null || ceilFn == null) {
             LOG.error().$("TTL set on a non-partitioned table. Ignoring");
             return;

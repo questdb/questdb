@@ -24,5 +24,33 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.datetime.DateFormat;
+import org.jetbrains.annotations.NotNull;
+
 public interface TimestampDriver {
+    PartitionAddMethod getPartitionAddMethod(int partitionBy);
+
+    PartitionCeilMethod getPartitionCeilMethod(int partitionBy);
+
+    DateFormat getPartitionDirFormatMethod(int partitionBy);
+
+    PartitionFloorMethod getPartitionFloorMethod(int partitionBy);
+
+    long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi);
+
+    @FunctionalInterface
+    interface PartitionAddMethod {
+        long calculate(long timestamp, int increment);
+    }
+
+    @FunctionalInterface
+    interface PartitionCeilMethod {
+        // returns exclusive ceiling for the give timestamp
+        long ceil(long timestamp);
+    }
+
+    @FunctionalInterface
+    interface PartitionFloorMethod {
+        long floor(long timestamp);
+    }
 }

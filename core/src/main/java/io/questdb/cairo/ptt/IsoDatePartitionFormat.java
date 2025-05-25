@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.ptt;
 
-import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -38,9 +38,9 @@ import static io.questdb.std.datetime.microtime.TimestampFormatUtils.DAY_FORMAT;
 
 public class IsoDatePartitionFormat implements DateFormat {
     private final DateFormat baseFormat;
-    private final PartitionBy.PartitionFloorMethod floorMethod;
+    private final TimestampDriver.PartitionFloorMethod floorMethod;
 
-    public IsoDatePartitionFormat(PartitionBy.PartitionFloorMethod floorMethod, DateFormat baseFormat) {
+    public IsoDatePartitionFormat(TimestampDriver.PartitionFloorMethod floorMethod, DateFormat baseFormat) {
         this.floorMethod = floorMethod;
         this.baseFormat = baseFormat;
     }

@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.vm.MemoryPMARImpl;
 import io.questdb.cairo.vm.Vm;
@@ -128,7 +129,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private long offset;
     private DateFormat partitionDirFormatMethod;
     // used to map timestamp to output file
-    private PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    private TimestampDriver.PartitionFloorMethod partitionFloorMethod;
     // work dir path
     private Path path;
     private boolean rollBufferUnusable = false;

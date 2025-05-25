@@ -1177,12 +1177,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             // reader == null means it's compilation for WAL table
             // before applying to WAL writer
+            final int timestampType;
             final int partitionBy;
             if (reader != null) {
                 partitionBy = reader.getPartitionedBy();
+                timestampType = reader.getMetadata().getTimestampType();
             } else {
                 try (TableMetadata meta = engine.getTableMetadata(tableToken)) {
                     partitionBy = meta.getPartitionBy();
+                    timestampType = meta.getTimestampType();
                 }
             }
             try {
@@ -1190,7 +1193,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // like 2022-02-26T155900-000001
                 // Otherwise ignore the split time part.
                 int hi = action == PartitionAction.FORCE_DROP ? partitionName.length() : -1;
-                long timestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy, 0, hi);
+                long timestamp = PartitionBy.parsePartitionDirName(partitionName, timestampType, partitionBy, 0, hi);
                 alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
             } catch (CairoException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());

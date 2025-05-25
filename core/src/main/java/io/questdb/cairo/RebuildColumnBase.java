@@ -218,7 +218,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 if (PartitionBy.isPartitioned(partitionBy)) {
                     // Resolve partition timestamp if partition name specified
                     if (partitionName != null) {
-                        final long partitionTimestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy);
+                        final long partitionTimestamp = PartitionBy.parsePartitionDirName(partitionName, metadata.getTimestampType(), partitionBy);
                         int partitionIndex = txReader.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
                         if (partitionIndex > -1L) {
                             reindexPartition(

@@ -293,7 +293,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                                     if (length < 0) {
                                         length = partitionName.length();
                                     }
-                                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy, 0, length);
+                                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, timestampType, partitionBy, 0, length);
                                     int pIndex = detachedTxReader.getPartitionIndex(timestamp);
                                     // could set dynamicPartitionIndex to -pIndex
                                     numRows = detachedTxReader.getPartitionSize(pIndex);

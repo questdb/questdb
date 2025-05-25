@@ -866,6 +866,14 @@ public final class TableUtils {
         return timestampIndex;
     }
 
+    public static int getTimestampType(TableStructure structure) {
+        int timestampIndex = structure.getTimestampIndex();
+        if (timestampIndex < 0) {
+            return ColumnType.NULL;
+        }
+        return structure.getColumnType(timestampIndex);
+    }
+
     public static void handleMetadataLoadException(
             CharSequence tableName,
             long deadline,
@@ -1677,11 +1685,11 @@ public final class TableUtils {
      * Sets the path to the file of a Parquet partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
      *
-     * @param path        Set to the root directory for a table, this will be updated to the file of the partition
+     * @param path          Set to the root directory for a table, this will be updated to the file of the partition
      * @param timestampType type (resolution) of the timestamp column
-     * @param partitionBy Partitioning scheme
-     * @param timestamp   A timestamp in the partition
-     * @param nameTxn     Partition txn suffix
+     * @param partitionBy   Partitioning scheme
+     * @param timestamp     A timestamp in the partition
+     * @param nameTxn       Partition txn suffix
      */
     public static void setPathForParquetPartition(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn) {
         setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn);
@@ -1707,14 +1715,6 @@ public final class TableUtils {
 
     public static void setTxReaderPath(@NotNull TxReader reader, @NotNull Path path, int timestampType, int partitionBy) {
         reader.ofRO(path.concat(TXN_FILE_NAME).$(), timestampType, partitionBy);
-    }
-
-    public static int getTimestampType(TableStructure structure) {
-        int timestampIndex = structure.getTimestampIndex();
-        if (timestampIndex < 0) {
-            return ColumnType.NULL;
-        }
-        return structure.getColumnType(timestampIndex);
     }
 
     public static int toIndexKey(int symbolKey) {
