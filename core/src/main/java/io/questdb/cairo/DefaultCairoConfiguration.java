@@ -1089,8 +1089,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getWalApplyTableTimeQuota() {
-        // micros
-        return 1_000_000L;
+        return 1000L;
     }
 
     @Override

@@ -27,7 +27,6 @@ package io.questdb.test.cairo;
 import io.questdb.Metrics;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
 
@@ -95,11 +94,17 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
 
     @Override
     public long getWalApplyTableTimeQuota() {
-        return Timestamps.DAY_MICROS;
+        // Unrestricted.
+        return -1L;
     }
 
     @Override
     public boolean isDevModeEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isMatViewEnabled() {
         return true;
     }
 
