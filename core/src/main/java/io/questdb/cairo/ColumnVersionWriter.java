@@ -37,10 +37,11 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     private final CairoConfiguration configuration;
     private final MemoryCMARW mem;
     private final boolean partitioned;
+    private final int timestampType;
     private boolean hasChanges;
     private long size;
     private long version;
-    private final int timestampType;
+
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
     // data branch
