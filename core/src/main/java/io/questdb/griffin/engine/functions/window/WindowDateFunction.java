@@ -22,16 +22,39 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.ServerDisconnectException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.Numbers;
 
-public interface HttpMultipartContentListener {
-    void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
+public interface WindowDateFunction extends WindowFunction {
+    @Override
+    default double getDouble(Record rec) {
+        final long val = getDate(rec);
+        return val != Numbers.LONG_NULL ? val : Double.NaN;
+    }
 
-    void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
+    @Override
+    default float getFloat(Record rec) {
+        final long val = getDate(rec);
+        return val != Numbers.LONG_NULL ? val : Float.NaN;
+    }
 
-    void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
+    @Override
+    default long getLong(Record rec) {
+        return getDate(rec);
+    }
+
+    @Override
+    default long getTimestamp(Record rec) {
+        final long value = getDate(rec);
+        return value == Numbers.LONG_NULL ? value : value * 1000L;
+    }
+
+    @Override
+    default int getType() {
+        return ColumnType.DATE;
+    }
 }

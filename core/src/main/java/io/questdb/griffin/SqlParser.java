@@ -41,6 +41,7 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
@@ -241,6 +242,13 @@ public class SqlParser {
         }
 
         return visitor.visit(node);
+    }
+
+    public static void validateMatViewIntervalUnit(char unit, int pos) throws SqlException {
+        if (unit != 'M' && unit != 'y' && unit != 'w' && unit != 'd' && unit != 'h' && unit != 'm') {
+            throw SqlException.position(pos).put("unsupported interval unit: ").put(unit)
+                    .put(", supported units are 'm', 'h', 'd', 'w', 'y', 'M'");
+        }
     }
 
     private static void collectAllTableNames(
@@ -878,18 +886,41 @@ public class SqlParser {
             tok = tok(lexer, "'as' or 'refresh'");
         }
 
-        // For now, incremental refresh is the only supported refresh type.
         int refreshType = MatViewDefinition.INCREMENTAL_REFRESH_TYPE;
         if (isRefreshKeyword(tok)) {
-            tok = tok(lexer, "'incremental' or 'manual' or 'interval' expected");
-            if (isManualKeyword(tok)) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("manual refresh is not yet supported");
-            } else if (isIntervalKeyword(tok)) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("interval refresh is not yet supported");
-            } else if (!isIncrementalKeyword(tok)) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("'incremental' or 'manual' or 'interval' expected");
+            tok = tok(lexer, "'incremental' or 'start' or 'every' or 'as' expected");
+            if (isIncrementalKeyword(tok)) {
+                tok = tok(lexer, "'start' or 'every' or 'as'");
+            } else if (!isStartKeyword(tok) && !isEveryKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'incremental' or 'start' or 'every' or 'as' expected");
             }
-            tok = tok(lexer, "'as'");
+
+            long start = Numbers.LONG_NULL;
+            if (isStartKeyword(tok)) {
+                tok = tok(lexer, "START timestamp");
+                try {
+                    start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
+                }
+                tok = tok(lexer, "'every'");
+            }
+
+            if (isEveryKeyword(tok)) {
+                if (start == Numbers.LONG_NULL) {
+                    // Use the current time as the start timestamp if it wasn't specified.
+                    start = configuration.getMicrosecondClock().getTicks();
+                }
+                tok = tok(lexer, "interval");
+                final int interval = Timestamps.getStrideMultiple(tok);
+                final char unit = Timestamps.getStrideUnit(tok);
+                validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
+                refreshType = MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE;
+                tableOpBuilder.setMatViewTimer(start, interval, unit);
+                tok = tok(lexer, "'as'");
+            } else if (start != Numbers.LONG_NULL) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("'every' expected");
+            }
         }
         mvOpBuilder.setRefreshType(refreshType);
 
@@ -965,7 +996,7 @@ public class SqlParser {
                 return mvOpBuilder;
             }
         } else {
-            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
+            throw SqlException.position(lexer.lastTokenPosition()).put("'refresh' or 'as' expected");
         }
 
         // Optional clauses that go after the parentheses.
@@ -2896,6 +2927,9 @@ public class SqlParser {
                                                 // As a start point, CURRENT ROW specifies that the window begins at the current row.
                                                 // In this case the end point cannot be value_expr PRECEDING.
                                                 throw SqlException.$(lexer.lastTokenPosition(), "start row is CURRENT, end row not must be PRECEDING");
+                                            }
+                                            if (winCol.getRowsLoKind() == WindowColumn.FOLLOWING) {
+                                                throw SqlException.$(lexer.lastTokenPosition(), "start row is FOLLOWING, end row not must be PRECEDING");
                                             }
                                             winCol.setRowsHiKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
                                         } else if (isFollowingKeyword(tok)) {

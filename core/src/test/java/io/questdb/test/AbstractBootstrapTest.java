@@ -107,22 +107,6 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         AbstractTest.tearDownStatic();
     }
 
-    @NotNull
-    protected static Bootstrap newBootstrapWithEnvVariables(Map<String, String> envs) {
-        Map<String, String> env = new HashMap<>(System.getenv());
-
-        env.putAll(envs);
-        return new Bootstrap(
-                new PropBootstrapConfiguration() {
-                    @Override
-                    public Map<String, String> getEnv() {
-                        return env;
-                    }
-                },
-                getServerMainArgs()
-        );
-    }
-
     protected static void assertQueryFails(
             String username,
             String password,
@@ -277,6 +261,21 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
 
     protected static String getPgConnectionUri(int pgPort) {
         return "jdbc:postgresql://127.0.0.1:" + pgPort + "/qdb";
+    }
+
+    @NotNull
+    protected static Bootstrap newBootstrapWithEnvVariables(Map<String, String> envs) {
+        Map<String, String> env = new HashMap<>(System.getenv());
+        env.putAll(envs);
+        return new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public Map<String, String> getEnv() {
+                        return env;
+                    }
+                },
+                getServerMainArgs()
+        );
     }
 
     void assertFail(String message, String... args) {

@@ -1317,6 +1317,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setRostiAllocFacade(rostiAllocFacade);
     }
 
+    protected static void configOverrideUseWithinLatestByOptimisation() {
+        Overrides overrides = node1.getConfigurationOverrides();
+        overrides.setProperty(PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, true);
+    }
+
     protected static void configOverrideWalMaxLagTxnCount() {
         Overrides overrides = node1.getConfigurationOverrides();
         overrides.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, 1);
@@ -1645,7 +1650,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    void assertFactoryCursor(
+    protected void assertFactoryCursor(
             String expected,
             String expectedTimestamp,
             RecordCursorFactory factory,
@@ -1732,6 +1737,24 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     false
             );
         }
+    }
+
+    protected void assertQueryAndPlan(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp,
+            @Nullable CharSequence ddl2,
+            @Nullable CharSequence expected2,
+            boolean supportsRandomAccess,
+            boolean expectSize,
+            boolean sizeCanBeVariable,
+            @Nullable CharSequence expectedPlan
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable);
+            assertPlanNoLeakCheck(query, expectedPlan);
+        });
     }
 
     protected void assertQueryFullFatNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean fullFatJoin) throws SqlException {

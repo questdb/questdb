@@ -36,6 +36,9 @@ int64_t find_latest_for_key(int64_t k,
                             uint32_t vblock_capacity_mask
 ) {
     const auto values_memory = reinterpret_cast<const uint8_t *>(values_memory_addr);
+    if (values_memory == nullptr) {
+        return -1;
+    }
     const auto vblock_capacity = vblock_capacity_mask + 1;
     const auto key_count = static_cast<int64_t>(keys.key_count()); // assert(key_count <= Long.MAX_VALUE)
 
