@@ -2853,6 +2853,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     final InsertModel insertModel = (InsertModel) executionModel;
                     // we use SQL Compiler state (reusing objects) to generate InsertOperation
                     if (insertModel.getQueryModel() != null) {
+                        // InsertSelect progress will be recorded during the execute phase, to accurately reflect its real select progress.
                         compiledQuery.ofInsert(compileInsertAsSelect(insertModel, executionContext), true);
                     } else {
                         QueryProgress.logStart(sqlId, sqlText, executionContext, false);

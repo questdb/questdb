@@ -2067,6 +2067,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             isEmptyQuery = false;
             Misc.clear(bindVariableService);
             currentCursor = Misc.free(currentCursor);
+            // Cache Insert plan only when typesAndInsert has bind variables for legacy PG server. See line#2341
             if (typesAndInsert != null && !typesAndInsert.hasBindVariables()) { // not cached, need close
                 typesAndInsert = Misc.free(typesAndInsert);
             } else {
