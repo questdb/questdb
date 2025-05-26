@@ -744,6 +744,17 @@ public class SqlUtil {
         return implicitCastStrVarcharAsTimestamp0(value, ColumnType.SYMBOL);
     }
 
+    public static long implicitCastTimestampAsDate(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        if (timestamp % 1000 == 0) {
+            // timestamp is in microseconds, date is in milliseconds
+            return timestamp / 1000L;
+        }
+        throw ImplicitCastException.inconvertibleValue(timestamp, ColumnType.TIMESTAMP, ColumnType.DATE);
+    }
+
     public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink<?> sink) {
         if (Uuid.isNull(lo, hi)) {
             return false;

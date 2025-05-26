@@ -418,7 +418,8 @@ public final class ColumnType {
                 || ((fromType == STRING || fromType == VARCHAR) && toType == FLOAT)
                 || ((fromType == STRING || fromType == VARCHAR) && toType == DOUBLE)
                 || ((fromType == STRING || fromType == VARCHAR) && toType == CHAR)
-                || ((fromType == STRING || fromType == VARCHAR) && toType == UUID);
+                || ((fromType == STRING || fromType == VARCHAR) && toType == UUID)
+                || (fromType == TIMESTAMP && toType == DATE); // todo: explore possible side-effects!
     }
 
     private static boolean isStringCast(int fromType, int toType) {
