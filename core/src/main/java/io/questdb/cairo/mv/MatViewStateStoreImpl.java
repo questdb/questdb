@@ -107,6 +107,9 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     @TestOnly
     public void clear() {
         close();
+        taskQueue.clear();
+        stateByTableDirName.clear();
+        lastNotifiedTxnByTableName.clear();
     }
 
     @Override
@@ -114,20 +117,20 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         for (MatViewState state : stateByTableDirName.values()) {
             Misc.free(state);
         }
-        stateByTableDirName.clear();
-        lastNotifiedTxnByTableName.clear();
     }
 
     @Override
     public void createViewState(MatViewDefinition viewDefinition) {
         addViewState(viewDefinition).init();
-        enqueueMatViewTask(
-                viewDefinition.getMatViewToken(),
-                MatViewRefreshTask.INCREMENTAL_REFRESH,
-                null,
-                Numbers.LONG_NULL,
-                Numbers.LONG_NULL
-        );
+        if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
+            enqueueMatViewTask(
+                    viewDefinition.getMatViewToken(),
+                    MatViewRefreshTask.INCREMENTAL_REFRESH,
+                    null,
+                    Numbers.LONG_NULL,
+                    Numbers.LONG_NULL
+            );
+        }
     }
 
     @Override
@@ -202,22 +205,20 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     public void notifyBaseTableCommit(MatViewRefreshTask task, long seqTxn) {
         final TableToken baseTableToken = task.baseTableToken;
         final AtomicLong lastNotifiedBaseTableTxn = lastNotifiedTxnByTableName.get(baseTableToken.getTableName());
-        if (lastNotifiedBaseTableTxn != null) {
-            // Always notify refresh job in case of mat view invalidation or full refresh.
+        task.refreshTriggerTimestamp = microsecondClock.getTicks();
+        // Always notify refresh job in case of mat view invalidation or full refresh.
+        if (task.operation != MatViewRefreshTask.INCREMENTAL_REFRESH) {
+            taskQueue.enqueue(task);
+            LOG.debug().$("notified [baseTable=").$(baseTableToken)
+                    .$(", op=").$(MatViewRefreshTask.getRefreshOperationName(task.operation))
+                    .I$();
+        } else if (lastNotifiedBaseTableTxn != null) {
             // For incremental refresh we check if we haven't already notified on the given txn.
-            if (task.operation != MatViewRefreshTask.INCREMENTAL_REFRESH || notifyBaseTableCommit(lastNotifiedBaseTableTxn, seqTxn)) {
-                task.refreshTriggerTimestamp = microsecondClock.getTicks();
+            if (notifyBaseTableCommit(lastNotifiedBaseTableTxn, seqTxn)) {
                 taskQueue.enqueue(task);
-                if (task.operation == MatViewRefreshTask.INVALIDATE) {
-                    LOG.error()
-                            .$("will invalidate all views for [baseTable=").$(baseTableToken)
-                            .$(", reason=").$(task.invalidationReason)
-                            .I$();
-                } else {
-                    LOG.debug().$("refresh job notified [baseTable=").$(baseTableToken)
-                            .$(", op=").$(task.operation)
-                            .I$();
-                }
+                LOG.debug().$("notified [baseTable=").$(baseTableToken)
+                        .$(", op=incremental_refresh")
+                        .I$();
             } else {
                 LOG.debug().$("no need to notify to refresh job [baseTable=").$(baseTableToken).I$();
             }

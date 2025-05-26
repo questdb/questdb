@@ -37,8 +37,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.std.Chars;
-import io.questdb.std.DirectLongLongHeap;
-import io.questdb.std.DirectLongLongMinHeap;
+import io.questdb.std.DirectLongLongAscList;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -319,7 +319,7 @@ public class Unordered4MapTest extends AbstractCairoTest {
 
             try (
                     Unordered4Map map = new Unordered4Map(keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE);
-                    DirectLongLongHeap heap = new DirectLongLongMinHeap(heapCapacity, MemoryTag.NATIVE_DEFAULT)
+                    DirectLongLongSortedList list = new DirectLongLongAscList(heapCapacity, MemoryTag.NATIVE_DEFAULT)
             ) {
                 for (int i = 0; i < 100; i++) {
                     MapKey key = map.withKey();
@@ -330,12 +330,12 @@ public class Unordered4MapTest extends AbstractCairoTest {
                 }
 
                 MapRecordCursor mapCursor = map.getCursor();
-                mapCursor.longTopK(heap, LongColumn.newInstance(0));
+                mapCursor.longTopK(list, LongColumn.newInstance(0));
 
-                Assert.assertEquals(heapCapacity, heap.size());
+                Assert.assertEquals(heapCapacity, list.size());
 
                 MapRecord mapRecord = mapCursor.getRecord();
-                DirectLongLongHeap.Cursor heapCursor = heap.getCursor();
+                DirectLongLongSortedList.Cursor heapCursor = list.getCursor();
                 for (int i = 0; i < heapCapacity; i++) {
                     Assert.assertTrue(heapCursor.hasNext());
                     mapCursor.recordAt(mapRecord, heapCursor.index());

@@ -10,7 +10,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.StringSink;
 
-class PreferencesMap {
+public class PreferencesMap {
     private static final int PREFERENCES_FORMAT_MSG_TYPE = 0;
     private final ObjectPool<StringSink> csPool;
     private final CharSequenceObjHashMap<StringSink> map = new CharSequenceObjHashMap<>();
@@ -19,13 +19,13 @@ class PreferencesMap {
         csPool = new ObjectPool<>(StringSink::new, configuration.getPreferencesStringPoolCapacity());
     }
 
+    public CharSequence get(CharSequence key) {
+        return map.get(key);
+    }
+
     void clear() {
         map.clear();
         csPool.clear();
-    }
-
-    CharSequence get(CharSequence key) {
-        return map.get(key);
     }
 
     ObjList<CharSequence> keys() {

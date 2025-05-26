@@ -54,8 +54,8 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
-import io.questdb.std.DirectLongLongHeap;
-import io.questdb.std.DirectLongLongMinHeap;
+import io.questdb.std.DirectLongLongAscList;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -519,45 +519,6 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testArrayKeyFollowedByLongKey() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            Rnd rnd = new Rnd();
-            int N = 1000;
-            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
-            keyTypes.add(ColumnType.LONG);
-
-            try (OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, new SingleColumnType(ColumnType.LONG), N / 2, 0.5f, 1);
-                 DirectArray array = new DirectArray(configuration)) {
-                for (int i = 0; i < N; i++) {
-                    array.clear();
-                    rnd.nextDoubleArray(2, array, 0, 8, -1);
-                    MapKey key = map.withKey();
-                    key.putArray(array);
-                    key.putLong(rnd.nextLong());
-                    MapValue value = key.createValue();
-                    Assert.assertTrue(value.isNew());
-                    value.putLong(0, i + 1);
-                }
-
-                rnd.reset();
-
-                for (int i = 0; i < N; i++) {
-                    array.clear();
-                    rnd.nextDoubleArray(2, array, 0, 8, -1);
-                    MapKey key = map.withKey();
-                    key.putArray(array);
-                    key.putLong(rnd.nextLong());
-                    MapValue value = key.createValue();
-                    Assert.assertFalse(value.isNew());
-                    Assert.assertEquals(i + 1, value.getLong(0));
-                }
-
-            }
-        });
-    }
-
-    @Test
     public void testAppendUnique() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
@@ -594,6 +555,45 @@ public class OrderedMapTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(N, map.size());
                 Assert.assertEquals(expectedAppendOffset, map.getAppendOffset());
+            }
+        });
+    }
+
+    @Test
+    public void testArrayKeyFollowedByLongKey() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd();
+            int N = 1000;
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
+            keyTypes.add(ColumnType.LONG);
+
+            try (OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, new SingleColumnType(ColumnType.LONG), N / 2, 0.5f, 1);
+                 DirectArray array = new DirectArray(configuration)) {
+                for (int i = 0; i < N; i++) {
+                    array.clear();
+                    rnd.nextDoubleArray(2, array, 0, 8, -1);
+                    MapKey key = map.withKey();
+                    key.putArray(array);
+                    key.putLong(rnd.nextLong());
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putLong(0, i + 1);
+                }
+
+                rnd.reset();
+
+                for (int i = 0; i < N; i++) {
+                    array.clear();
+                    rnd.nextDoubleArray(2, array, 0, 8, -1);
+                    MapKey key = map.withKey();
+                    key.putArray(array);
+                    key.putLong(rnd.nextLong());
+                    MapValue value = key.createValue();
+                    Assert.assertFalse(value.isNew());
+                    Assert.assertEquals(i + 1, value.getLong(0));
+                }
+
             }
         });
     }
@@ -1755,7 +1755,7 @@ public class OrderedMapTest extends AbstractCairoTest {
 
             try (
                     OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE);
-                    DirectLongLongHeap heap = new DirectLongLongMinHeap(heapCapacity, MemoryTag.NATIVE_DEFAULT)
+                    DirectLongLongSortedList list = new DirectLongLongAscList(heapCapacity, MemoryTag.NATIVE_DEFAULT)
             ) {
                 for (int i = 0; i < 100; i++) {
                     MapKey key = map.withKey();
@@ -1766,12 +1766,12 @@ public class OrderedMapTest extends AbstractCairoTest {
                 }
 
                 MapRecordCursor mapCursor = map.getCursor();
-                mapCursor.longTopK(heap, LongColumn.newInstance(0));
+                mapCursor.longTopK(list, LongColumn.newInstance(0));
 
-                Assert.assertEquals(heapCapacity, heap.size());
+                Assert.assertEquals(heapCapacity, list.size());
 
                 MapRecord mapRecord = mapCursor.getRecord();
-                DirectLongLongHeap.Cursor heapCursor = heap.getCursor();
+                DirectLongLongSortedList.Cursor heapCursor = list.getCursor();
                 for (int i = 0; i < heapCapacity; i++) {
                     Assert.assertTrue(heapCursor.hasNext());
                     mapCursor.recordAt(mapRecord, heapCursor.index());
@@ -1790,7 +1790,7 @@ public class OrderedMapTest extends AbstractCairoTest {
 
             try (
                     OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE);
-                    DirectLongLongHeap heap = new DirectLongLongMinHeap(heapCapacity, MemoryTag.NATIVE_DEFAULT)
+                    DirectLongLongSortedList list = new DirectLongLongAscList(heapCapacity, MemoryTag.NATIVE_DEFAULT)
             ) {
                 for (int i = 0; i < 100; i++) {
                     MapKey key = map.withKey();
@@ -1801,12 +1801,12 @@ public class OrderedMapTest extends AbstractCairoTest {
                 }
 
                 MapRecordCursor mapCursor = map.getCursor();
-                mapCursor.longTopK(heap, LongColumn.newInstance(0));
+                mapCursor.longTopK(list, LongColumn.newInstance(0));
 
-                Assert.assertEquals(heapCapacity, heap.size());
+                Assert.assertEquals(heapCapacity, list.size());
 
                 MapRecord mapRecord = mapCursor.getRecord();
-                DirectLongLongHeap.Cursor heapCursor = heap.getCursor();
+                DirectLongLongSortedList.Cursor heapCursor = list.getCursor();
                 for (int i = 0; i < heapCapacity; i++) {
                     Assert.assertTrue(heapCursor.hasNext());
                     mapCursor.recordAt(mapRecord, heapCursor.index());

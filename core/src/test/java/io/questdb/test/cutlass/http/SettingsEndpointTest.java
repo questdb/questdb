@@ -39,6 +39,8 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.line.http.AbstractLineHttpSender;
+import io.questdb.preferences.PreferencesMap;
+import io.questdb.preferences.PreferencesUpdateListener;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.StringSink;
@@ -426,6 +428,34 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"instance_desc\":\"desc222\"," +
                             "\"key1\":\"value1\"}" +
                             "}");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPreferencesUpdateListener() throws Exception {
+        final PreferencesUpdateListener listener = new PreferencesUpdateListener() {
+            private boolean firstCall = true;
+
+            @Override
+            public void update(PreferencesMap preferencesMap) {
+                // the first call originates from registerListener(),
+                // and at that time the map is empty
+                assertEquals(firstCall ? null : "instance1", preferencesMap.get("instance_name"));
+                assertEquals(firstCall ? null : "desc1", preferencesMap.get("instance_desc"));
+                firstCall = false;
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                settingsStore.registerListener(listener);
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    savePreferences(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", OVERWRITE, 0L);
                 }
             }
         });
