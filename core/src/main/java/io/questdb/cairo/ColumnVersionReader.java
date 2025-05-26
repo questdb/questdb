@@ -38,7 +38,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
@@ -65,6 +64,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
     protected final LongList cachedColumnVersionList = new LongList();
     private MemoryCMR mem;
     private boolean ownMem;
+    private int timestampType;
     private long version;
 
     @Override
@@ -222,22 +222,24 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return version;
     }
 
-    public ColumnVersionReader ofRO(FilesFacade ff, LPSZ fileName) {
+    public ColumnVersionReader ofRO(FilesFacade ff, LPSZ fileName, int timestampType) {
         version = -1;
         if (this.mem == null || !ownMem) {
             this.mem = Vm.getCMRInstance();
         }
         this.mem.of(ff, fileName, 0, HEADER_SIZE, MemoryTag.MMAP_TABLE_READER);
         ownMem = true;
+        this.timestampType = timestampType;
         return this;
     }
 
-    public void ofRO(MemoryCMR mem) {
+    public void ofRO(MemoryCMR mem, int timestampType) {
         if (this.mem != null && ownMem) {
             this.mem.close();
         }
         this.mem = mem;
         ownMem = false;
+        this.timestampType = timestampType;
         version = -1;
     }
 
@@ -308,6 +310,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
     public String toString() {
         // Used for debugging, don't use Misc.getThreadLocalSink() to not mess with other debugging values
         StringSink sink = new StringSink();
+        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         sink.put("{[");
         for (int i = 0; i < cachedColumnVersionList.size(); i += BLOCK_SIZE) {
             long timestamp = cachedColumnVersionList.getQuick(i);
@@ -323,12 +326,12 @@ public class ColumnVersionReader implements Closeable, Mutable {
             if (isDefaultPartition) {
                 sink.put("defaultNameTxn: ").put(columnNameTxn).put(", ");
                 sink.put("addedPartition: '");
-                TimestampFormatUtils.appendDateTime(sink, columnTop);
+                timestampDriver.append(sink, columnTop);
                 sink.put("'}");
             } else {
                 sink.put("nameTxn: ").put(columnNameTxn).put(", ");
                 sink.put("partition: '");
-                TimestampFormatUtils.appendDateTime(sink, timestamp);
+                timestampDriver.append(sink, timestamp);
                 sink.put("', ");
                 sink.put("columnTop: ").put(columnTop).put("}");
             }

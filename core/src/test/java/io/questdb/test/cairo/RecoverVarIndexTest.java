@@ -73,7 +73,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                 createTableSql,
                 (tablePath) -> {
                 },
-                RecoverVarIndex::rebuildAll
+                val -> val.rebuildAll(ColumnType.TIMESTAMP)
         );
     }
 
@@ -100,7 +100,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
 
             checkRecoverVarIndex(createAlterInsertSql,
                     tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.NONE, tablePath, 0, -1L),
-                    rebuildIndex -> rebuildIndex.reindexColumn("str2"));
+                    rebuildIndex -> rebuildIndex.reindexColumn("str2", ColumnType.TIMESTAMP));
         });
     }
 
@@ -116,10 +116,12 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                     "alter table xxx add column str1 string;" +
                     "alter table xxx add column str2 string";
 
-            checkRecoverVarIndex(createAlterInsertSql,
+            checkRecoverVarIndex(
+                    createAlterInsertSql,
                     tablePath -> {
                     },
-                    RecoverVarIndex::rebuildAll);
+                    val -> val.rebuildAll(ColumnType.TIMESTAMP)
+            );
 
             engine.releaseAllWriters();
             execute("insert into xxx values(500100000000L, 50001, 'D', 'I2')");
@@ -142,7 +144,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
 
             checkRecoverVarIndex(createTableSql,
                     tablePath -> removeFileAtPartition("str1.i", PartitionBy.NONE, tablePath, 0, -1L),
-                    rebuildIndex -> rebuildIndex.reindexColumn("str1"));
+                    rebuildIndex -> rebuildIndex.reindexColumn("str1", ColumnType.TIMESTAMP));
         });
     }
 
@@ -164,7 +166,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                         removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L);
                         removeFileAtPartition("str2.i", PartitionBy.DAY, tablePath, 0, -1L);
                     },
-                    RecoverVarIndex::rebuildAll
+                    val -> val.rebuildAll(ColumnType.TIMESTAMP)
             );
         });
     }
@@ -187,7 +189,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                         removeFileAtPartition("str1.i", PartitionBy.NONE, tablePath, 0, -1L);
                         removeFileAtPartition("str2.i", PartitionBy.NONE, tablePath, 0, -1L);
                     },
-                    RecoverVarIndex::rebuildAll
+                    val -> val.rebuildAll(ColumnType.TIMESTAMP)
             );
         });
     }
@@ -206,7 +208,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
 
             checkRecoverVarIndex(createTableSql,
                     tablePath -> removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L),
-                    rebuildIndex -> rebuildIndex.reindexColumn("str1"));
+                    rebuildIndex -> rebuildIndex.reindexColumn("str1", ColumnType.TIMESTAMP));
         });
     }
 
@@ -224,7 +226,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
 
             checkRecoverVarIndex(createTableSql,
                     tablePath -> removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L),
-                    rebuildIndex -> rebuildIndex.reindex("1970-01-01", "str1"));
+                    rebuildIndex -> rebuildIndex.reindex("1970-01-01", "str1", ColumnType.TIMESTAMP));
         });
     }
 
@@ -251,7 +253,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
 
             checkRecoverVarIndex(createAlterInsertSql,
                     tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.DAY, tablePath, Timestamps.DAY_MICROS * 11, 1L),
-                    rebuildIndex -> rebuildIndex.reindexColumn("str2"));
+                    rebuildIndex -> rebuildIndex.reindexColumn("str2", ColumnType.TIMESTAMP));
         });
     }
 
@@ -273,7 +275,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                         tablePath -> tempWriter = getWriter(engine, "xxx"),
                         rebuildIndex -> {
                             try {
-                                rebuildIndex.reindexColumn("str1");
+                                rebuildIndex.reindexColumn("str1", ColumnType.TIMESTAMP);
                             } finally {
                                 tempWriter.close();
                             }
@@ -312,7 +314,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                 checkRecoverVarIndex(createTableSql,
                         tablePath -> {
                         },
-                        rebuildIndex -> rebuildIndex.reindexColumn(ff, "str2"));
+                        rebuildIndex -> rebuildIndex.reindexColumn(ff, "str2", ColumnType.TIMESTAMP));
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write");
@@ -335,7 +337,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             checkRecoverVarIndex(createTableSql,
                     tablePath -> {
                     },
-                    rebuildIndex -> rebuildIndex.reindexColumn("x"));
+                    rebuildIndex -> rebuildIndex.reindexColumn("x", ColumnType.TIMESTAMP));
             Assert.fail();
         } catch (CairoException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), "Wrong column type");

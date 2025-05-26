@@ -40,18 +40,18 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     private boolean hasChanges;
     private long size;
     private long version;
-
-
+    private final int timestampType;
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
     // data branch
-    public ColumnVersionWriter(CairoConfiguration configuration, LPSZ fileName, boolean partitioned) {
+    public ColumnVersionWriter(CairoConfiguration configuration, LPSZ fileName, int timestampType, boolean partitioned) {
         final FilesFacade ff = configuration.getFilesFacade();
         this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), 0, MemoryTag.MMAP_TABLE_READER, CairoConfiguration.O_NONE);
         this.configuration = configuration;
         this.partitioned = partitioned;
+        this.timestampType = timestampType;
         this.size = this.mem.size();
-        super.ofRO(mem);
+        super.ofRO(mem, timestampType);
         if (this.size > 0) {
             this.version = super.readUnsafe();
         }
@@ -169,9 +169,6 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         for (int i = 0, n = cachedColumnVersionList.size(); i < n; i += BLOCK_SIZE) {
             long partitionTimestamp = cachedColumnVersionList.getQuick(i);
             long defaultPartitionTimestamp = cachedColumnVersionList.get(i + TIMESTAMP_ADDED_PARTITION_OFFSET);
-            int columnIndex = (int) cachedColumnVersionList.get(i + COLUMN_INDEX_OFFSET);
-            long columnNameTxn = cachedColumnVersionList.getQuick(i + COLUMN_NAME_TXN_OFFSET);
-
             if (partitionTimestamp == COL_TOP_DEFAULT_PARTITION) {
                 if (defaultPartitionTimestamp == sourcePartitionTimestamp) {
                     // replace with target block
@@ -345,7 +342,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         } else {
             throw CairoException.critical(0)
                     .put("invalid Column Version state ")
-                    .ts(dstTimestamp)
+                    .ts(timestampType, dstTimestamp)
                     .put(" column version state, cannot update partition information");
         }
         hasChanges = true;

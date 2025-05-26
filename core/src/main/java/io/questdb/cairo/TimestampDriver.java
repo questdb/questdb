@@ -25,9 +25,17 @@
 package io.questdb.cairo;
 
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public interface TimestampDriver {
+    void append(CharSink<?> sink, long timestamp);
+
+    void append2(CharSink<?> sink, long timestamp);
+
+    // todo: explore static ref
+    boolean convertToVar(long fixedAddr, CharSink<?> stringSink);
+
     PartitionAddMethod getPartitionAddMethod(int partitionBy);
 
     PartitionCeilMethod getPartitionCeilMethod(int partitionBy);

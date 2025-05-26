@@ -501,6 +501,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         (int) extraInfo.getQuick(i * 2 + 1),
                         attachDetachStatus,
                         tableToken,
+                        svc.getTimestampType(),
                         svc.getPartitionBy(),
                         partitionTimestamp
                 );
@@ -524,7 +525,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         .put(toParquet ? "parquet" : "native")
                         .put("[table=")
                         .put(getTableToken().getTableName())
-                        .put(", partitionTimestamp=").ts(partitionTimestamp)
+                        .put(", partitionTimestamp=").ts(svc.getMetadata().getTimestampType(), partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
                         .put(']')
                         .position((int) extraInfo.getQuick(i * 2 + 1));
@@ -541,6 +542,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         (int) extraInfo.getQuick(i * 2 + 1),
                         attachDetachStatus,
                         tableToken,
+                        svc.getTimestampType(),
                         svc.getPartitionBy(),
                         partitionTimestamp
                 );
@@ -572,7 +574,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             if (!svc.removePartition(partitionTimestamp)) {
                 throw CairoException.partitionManipulationRecoverable()
                         .put("could not remove partition [table=").put(getTableToken().getTableName())
-                        .put(", partitionTimestamp=").ts(partitionTimestamp)
+                        .put(", partitionTimestamp=").ts(svc.getMetadata().getTimestampType(), partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
                         .put(']')
                         .position((int) extraInfo.getQuick(i * 2 + 1));

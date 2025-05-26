@@ -2401,7 +2401,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             tok = GenericLexer.unquote(tok);
         }
         final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+
         checkMatViewModification(tableToken);
+
         try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
             indexBuilder.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()));
 
@@ -2449,7 +2451,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 columnNames.add(columnName);
             }
             executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
-            indexBuilder.reindex(partition, columnName);
+
+            // read table's timestamp type
+            int timestampType;
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                timestampType = metadata.getTimestampType();
+            }
+
+            indexBuilder.reindex(partition, columnName, timestampType);
         }
         compiledQuery.ofRepair();
     }

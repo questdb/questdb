@@ -25,6 +25,7 @@
 package io.questdb.cliutil;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RebuildColumnBase;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -35,7 +36,7 @@ public class CmdUtils {
         final Log log = LogFactory.getLog("recover-var-index");
         ri.of(new Utf8String(params.tablePath));
         try {
-            ri.reindex(params.partition, params.column);
+            ri.reindex(params.partition, params.column, ColumnType.TIMESTAMP);
         } catch (CairoException ex) {
             log.error().$(ex.getFlyweightMessage()).$();
         }

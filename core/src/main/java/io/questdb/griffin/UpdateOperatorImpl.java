@@ -157,7 +157,9 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                             if (tableWriter.isPartitionReadOnly(rowPartitionIndex)) {
                                 throw CairoException.critical(0)
                                         .put("cannot update read-only partition [table=").put(tableToken.getTableName())
-                                        .put(", partitionTimestamp=").ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                                        .put(", partitionTimestamp=").ts(
+                                                tableWriter.getTimestampType(),
+                                                tableWriter.getPartitionTimestamp(rowPartitionIndex))
                                         .put(']');
                             }
                             if (partitionIndex > -1) {

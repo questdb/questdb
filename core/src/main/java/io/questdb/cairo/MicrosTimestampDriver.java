@@ -24,12 +24,14 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.ptt.IsoDatePartitionFormat;
-import io.questdb.cairo.ptt.IsoWeekPartitionFormat;
+import io.questdb.cairo.ptt.PartitionDateParseUtil;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.CommonFormatUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -101,6 +103,26 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
         ee.put("' expected, found [ts=").put(partitionName.subSequence(lo, hi)).put(']');
         return ee;
+    }
+
+    @Override
+    public void append(CharSink<?> sink, long timestamp) {
+        TimestampFormatUtils.appendDateTime(sink, timestamp);
+    }
+
+    @Override
+    public void append2(CharSink<?> sink, long timestamp) {
+        TimestampFormatUtils.appendDateTimeUSec(sink, timestamp);
+    }
+
+    @Override
+    public boolean convertToVar(long fixedAddr, CharSink<?> sink) {
+        long value = Unsafe.getUnsafe().getLong(fixedAddr);
+        if (value != Numbers.LONG_NULL) {
+            TimestampFormatUtils.appendDateTimeUSec(sink, value);
+            return true;
+        }
+        return false;
     }
 
     @Override
@@ -232,6 +254,108 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 }
             }
             throw expectedPartitionDirNameFormatCairoException(partitionName, lo, hi, partitionBy);
+        }
+    }
+
+    public static class IsoDatePartitionFormat implements DateFormat {
+        private final DateFormat baseFormat;
+        private final PartitionFloorMethod floorMethod;
+
+        public IsoDatePartitionFormat(PartitionFloorMethod floorMethod, DateFormat baseFormat) {
+            this.floorMethod = floorMethod;
+            this.baseFormat = baseFormat;
+        }
+
+        @Override
+        public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
+            long overspill = timestamp - floorMethod.floor(timestamp);
+
+            if (overspill > 0) {
+                DAY_FORMAT.format(timestamp, locale, timeZoneName, sink);
+                long time = timestamp - (timestamp / Timestamps.DAY_MICROS) * Timestamps.DAY_MICROS;
+
+                if (time > 0) {
+                    int hour = (int) (time / Timestamps.HOUR_MICROS);
+                    int minute = (int) ((time % Timestamps.HOUR_MICROS) / Timestamps.MINUTE_MICROS);
+                    int second = (int) ((time % Timestamps.MINUTE_MICROS) / Timestamps.SECOND_MICROS);
+                    int milliMicros = (int) (time % Timestamps.SECOND_MICROS);
+
+                    sink.putAscii('T');
+                    append0(sink, hour);
+
+                    if (minute > 0 || second > 0 || milliMicros > 0) {
+                        append0(sink, minute);
+                        append0(sink, second);
+
+                        if (milliMicros > 0) {
+                            sink.putAscii('-');
+                            append00000(sink, milliMicros);
+                        }
+                    }
+                }
+            } else {
+                baseFormat.format(timestamp, locale, timeZoneName, sink);
+            }
+        }
+
+        @Override
+        public long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException {
+            return PartitionDateParseUtil.parseFloorPartialTimestamp(in, 0, in.length());
+        }
+
+        @Override
+        public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
+            return PartitionDateParseUtil.parseFloorPartialTimestamp(in, lo, hi);
+        }
+    }
+
+    public static class IsoWeekPartitionFormat implements DateFormat {
+
+        @Override
+        public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
+            long weekTime = timestamp - Timestamps.floorWW(timestamp);
+            WEEK_FORMAT.format(timestamp, locale, timeZoneName, sink);
+
+            if (weekTime > 0) {
+                int dayOfWeek = (int) (weekTime / Timestamps.DAY_MICROS) + 1;
+                int hour = (int) ((weekTime % Timestamps.DAY_MICROS) / Timestamps.HOUR_MICROS);
+                int minute = (int) ((weekTime % Timestamps.HOUR_MICROS) / Timestamps.MINUTE_MICROS);
+                int second = (int) ((weekTime % Timestamps.MINUTE_MICROS) / Timestamps.SECOND_MICROS);
+                int milliMicros = (int) (weekTime % Timestamps.SECOND_MICROS);
+
+                sink.putAscii('-');
+                sink.put(dayOfWeek);
+
+                if (hour > 0 || minute > 0 || second > 0 || milliMicros > 0) {
+                    sink.putAscii('T');
+                    append0(sink, hour);
+
+                    if (minute > 0 || second > 0 || milliMicros > 0) {
+                        append0(sink, minute);
+                        append0(sink, second);
+
+                        if (milliMicros > 0) {
+                            sink.putAscii('-');
+                            append00000(sink, milliMicros);
+                        }
+                    }
+                }
+            }
+        }
+
+        @Override
+        public long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException {
+            return parse(in, 0, in.length(), locale);
+        }
+
+        @Override
+        public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
+            long baseTs = WEEK_FORMAT.parse(in, lo, lo + 8, locale);
+            lo += 8;
+            if (lo < hi) {
+                return PartitionDateParseUtil.parseDayTime(in, hi, lo, baseTs, 7, 1);
+            }
+            return baseTs;
         }
     }
 }

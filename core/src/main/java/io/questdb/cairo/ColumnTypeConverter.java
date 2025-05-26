@@ -43,7 +43,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -62,7 +61,6 @@ public class ColumnTypeConverter {
     private static final Fixed2VarConverter converterFromInt2String = ColumnTypeConverter::stringFromInt;
     private static final Fixed2VarConverter converterFromLong2String = ColumnTypeConverter::stringFromLong;
     private static final Fixed2VarConverter converterFromShort2String = ColumnTypeConverter::stringFromShort;
-    private static final Fixed2VarConverter converterFromTimestamp2String = ColumnTypeConverter::stringFromTimestamp;
     private static final Fixed2VarConverter converterFromUuid2String = ColumnTypeConverter::stringFromUuid;
     private static final Var2FixedConverter<CharSequence> converterStr2Boolean = ColumnTypeConverter::str2Boolean;
     private static final Var2FixedConverter<CharSequence> converterStr2Byte = ColumnTypeConverter::str2Byte;
@@ -863,29 +861,29 @@ public class ColumnTypeConverter {
     private static Fixed2VarConverter getFixedToVarConverter(int srcColumnType, int dstColumnType) {
         switch (srcColumnType) {
             case ColumnType.INT:
-                return (converterFromInt2String);
+                return converterFromInt2String;
             case ColumnType.UUID:
-                return (converterFromUuid2String);
+                return converterFromUuid2String;
             case ColumnType.IPv4:
-                return (converterFromIPv42String);
+                return converterFromIPv42String;
             case ColumnType.SHORT:
-                return (converterFromShort2String);
+                return converterFromShort2String;
             case ColumnType.BYTE:
-                return (converterFromByte2String);
+                return converterFromByte2String;
             case ColumnType.CHAR:
-                return (converterFromChar2String);
+                return converterFromChar2String;
             case ColumnType.LONG:
-                return (converterFromLong2String);
+                return converterFromLong2String;
             case ColumnType.DOUBLE:
-                return (converterFromDouble2String);
+                return converterFromDouble2String;
             case ColumnType.FLOAT:
-                return (converterFromFloat2String);
+                return converterFromFloat2String;
             case ColumnType.DATE:
-                return (converterFromDate2String);
+                return converterFromDate2String;
             case ColumnType.TIMESTAMP:
-                return (converterFromTimestamp2String);
+                return ColumnType.getTimestampDriver(srcColumnType)::convertToVar;
             case ColumnType.BOOLEAN:
-                return (converterFromBoolean2String);
+                return converterFromBoolean2String;
             default:
                 throw unsupportedConversion(srcColumnType, dstColumnType);
         }
@@ -1096,15 +1094,6 @@ public class ColumnTypeConverter {
         short value = Unsafe.getUnsafe().getShort(srcAddr);
         sink.put(value);
         return true;
-    }
-
-    private static boolean stringFromTimestamp(long srcAddr, CharSink<?> sink) {
-        long value = Unsafe.getUnsafe().getLong(srcAddr);
-        if (value != Numbers.LONG_NULL) {
-            TimestampFormatUtils.appendDateTimeUSec(sink, value);
-            return true;
-        }
-        return false;
     }
 
     private static boolean stringFromUuid(long srcAddr, CharSink<?> sink) {

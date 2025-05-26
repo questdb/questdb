@@ -437,7 +437,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 columnVersionReader = new ColumnVersionReader();
             }
             tablePath.trimTo(pathTableLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
-            columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath.$());
+            columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath.$(), tableMetadata.getTimestampType());
             columnVersionReader.readUnsafe();
 
             // Symbols are not append-only data structures, they can be corrupt

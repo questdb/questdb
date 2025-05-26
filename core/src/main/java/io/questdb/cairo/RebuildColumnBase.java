@@ -73,26 +73,28 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         return this;
     }
 
-    public void rebuildAll() {
-        reindex(configuration.getFilesFacade(), null, null);
+    public void rebuildAll(int timestampType) {
+        reindex(configuration.getFilesFacade(), null, null, timestampType);
     }
 
     public void reindex(
             @Nullable CharSequence partitionName,
-            @Nullable CharSequence columnName
+            @Nullable CharSequence columnName,
+            int timestampType
     ) {
-        reindex(configuration.getFilesFacade(), partitionName, columnName);
+        reindex(configuration.getFilesFacade(), partitionName, columnName, timestampType);
     }
 
     public void reindex(
             FilesFacade ff,
             @Nullable CharSequence partitionName,
-            @Nullable CharSequence columnName
+            @Nullable CharSequence columnName,
+            int timestampType
     ) {
         try {
             lock(ff);
             path.concat(TableUtils.COLUMN_VERSION_FILE_NAME);
-            try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path.$())) {
+            try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path.$(), timestampType)) {
                 final long deadline = clock.getTicks() + configuration.getSpinLockTimeout();
                 columnVersionReader.readSafe(clock, deadline);
                 path.trimTo(rootLen);
@@ -141,16 +143,16 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         );
     }
 
-    public void reindexAllInPartition(CharSequence partitionName) {
-        reindex(partitionName, null);
+    public void reindexAllInPartition(CharSequence partitionName, int timestampType) {
+        reindex(partitionName, null, timestampType);
     }
 
-    public void reindexColumn(CharSequence columnName) {
-        reindex(null, columnName);
+    public void reindexColumn(CharSequence columnName, int timestampType) {
+        reindex(null, columnName, timestampType);
     }
 
-    public void reindexColumn(FilesFacade ff, CharSequence columnName) {
-        reindex(ff, null, columnName);
+    public void reindexColumn(FilesFacade ff, CharSequence columnName, int timestampType) {
+        reindex(ff, null, columnName, timestampType);
     }
 
     public void reindexColumn(

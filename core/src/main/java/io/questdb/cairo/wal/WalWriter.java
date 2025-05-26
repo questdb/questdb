@@ -1131,7 +1131,7 @@ public class WalWriter implements TableWriterAPI {
                         // WAL tables must be partitioned
                         txReader.ofRO(path.$(), metadata.getTimestampType(), PartitionBy.DAY);
                         path.of(configuration.getDbRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
-                        columnVersionReader.ofRO(ff, path.$());
+                        columnVersionReader.ofRO(ff, path.$(), metadata.getTimestampType());
 
                         initialized = true;
                         long structureVersion = getMetadataVersion();
@@ -1879,6 +1879,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public int getTimestampType() {
+            return metadata.getTimestampType();
+        }
+
+        @Override
         public void removeColumn(@NotNull CharSequence columnName) {
             validateExistingColumnName(columnName, "cannot remove");
             structureVersion++;
@@ -2111,6 +2116,11 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public TableToken getTableToken() {
             return tableToken;
+        }
+
+        @Override
+        public int getTimestampType() {
+            return metadata.getTimestampType();
         }
 
         @Override
