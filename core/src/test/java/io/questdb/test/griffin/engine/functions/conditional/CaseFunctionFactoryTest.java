@@ -1440,6 +1440,18 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoArgs() throws Exception {
+        assertException(
+                "select " +
+                        "    x " +
+                        "    case end c " +
+                        "from long_sequence(1);",
+                17,
+                "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"case\""
+        );
+    }
+
+    @Test
     public void testNonBooleanWhen() throws Exception {
         assertException(
                 "select \n" +

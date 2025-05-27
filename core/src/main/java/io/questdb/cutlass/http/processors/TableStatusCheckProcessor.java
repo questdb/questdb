@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -43,7 +45,7 @@ import java.io.Closeable;
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_STATUS_FORMAT;
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_STATUS_TABLE_NAME;
 
-public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeable {
+public class TableStatusCheckProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
 
     private final CairoEngine cairoEngine;
     private final String keepAliveHeader;
@@ -60,6 +62,11 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
     @Override
     public void close() {
         Misc.free(path);
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
     }
 
     @Override

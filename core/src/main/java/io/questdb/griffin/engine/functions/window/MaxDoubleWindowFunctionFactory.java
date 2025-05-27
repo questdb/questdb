@@ -56,15 +56,14 @@ import io.questdb.std.Vect;
 
 public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
+    public static final DoubleComparator GREATER_THAN = (a, b) -> Double.compare(a, b) > 0;
     public static final ArrayColumnTypes MAX_COLUMN_TYPES;
-    public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES;
-    public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_COLUMN_TYPES;
+    public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES;
-
+    public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_COLUMN_TYPES;
     public static final String NAME = "max";
     private static final String SIGNATURE = NAME + "(D)";
-    public static final DoubleComparator GREATER_THAN = (a, b) -> Double.compare(a, b) > 0;
 
     @Override
     public String getSignature() {
@@ -84,6 +83,14 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
+        if (rowsHi < rowsLo) {
+            return new DoubleNullFunction(args.get(0),
+                    NAME,
+                    rowsLo,
+                    rowsHi,
+                    framingMode == WindowColumn.FRAMING_RANGE,
+                    partitionByRecord);
+        }
 
         if (partitionByRecord != null) {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
@@ -350,10 +357,10 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     }
 
     // (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
-    static class MaxMinOverCurrentRowFunction extends BaseDoubleWindowFunction {
+    static class MaxMinOverCurrentRowFunction extends BaseWindowFunction implements WindowDoubleFunction {
 
-        private double value;
         private final String name;
+        private double value;
 
         MaxMinOverCurrentRowFunction(Function arg, String name) {
             super(arg);
@@ -380,6 +387,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -389,10 +397,10 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     // handles max() over (partition by x)
     // order by is absent so default frame mode includes all rows in partition
-    static class MaxMinOverPartitionFunction extends BasePartitionedDoubleWindowFunction {
+    static class MaxMinOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
-        private final String name;
         private final DoubleComparator comparator;
+        private final String name;
 
         public MaxMinOverPartitionFunction(Map map,
                                            VirtualRecord partitionByRecord,
@@ -414,6 +422,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
         }
+
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -451,32 +460,29 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     // When the lower bound is unbounded, we only need to keep one maximum value in history.
     // However, when the lower bound is not unbounded, we need a monotonically deque to maintain the history of records.
-    public static class MaxMinOverPartitionRangeFrameFunction extends BasePartitionedDoubleWindowFunction {
+    public static class MaxMinOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
+        private static final int DEQUE_RECORD_SIZE = Double.BYTES;
         private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
-        private final String name;
         private final DoubleComparator comparator;
+        private final LongList dequeFreeList = new LongList();
+        private final int dequeInitialBufferSize;
+        // holds another resizable ring buffers as monotonically decreasing deque
+        private final MemoryARW dequeMemory;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         // list of [size, startOffset] pairs marking free space within mem
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
         private final long maxDiff;
-
         // holds resizable ring buffers
         private final MemoryARW memory;
+        private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
+        private final String name;
         private final int timestampIndex;
-
         // current max value
         private double maxMin;
-
-        // holds another resizable ring buffers as monotonically decreasing deque
-        private final MemoryARW dequeMemory;
-        private final LongList dequeFreeList = new LongList();
-        private final int dequeInitialBufferSize;
-        private final RingBufferDesc memoryDesc = new RingBufferDesc();
-        private static final int DEQUE_RECORD_SIZE = Double.BYTES;
 
         public MaxMinOverPartitionRangeFrameFunction(
                 Map map,
@@ -712,6 +718,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             throw new UnsupportedOperationException();
@@ -771,23 +778,22 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     // handles max() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
-    public static class MaxMinOverPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
+    public static class MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
-        private final String name;
-        private final DoubleComparator comparator;
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
         private final int bufferSize;
+        private final DoubleComparator comparator;
+        private final int dequeBufferSize;
+        // holds another resizable ring buffers as monotonically decreasing deque
+        private final MemoryARW dequeMemory;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
         // holds fixed-size ring buffers of double values
         private final MemoryARW memory;
+        private final String name;
         private double maxMin;
-
-        // holds another resizable ring buffers as monotonically decreasing deque
-        private final MemoryARW dequeMemory;
-        private final int dequeBufferSize;
 
         public MaxMinOverPartitionRowsFrameFunction(
                 Map map,
@@ -943,6 +949,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -1001,10 +1008,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // between upper bound and current row's value.
     // When the lower bound is unbounded, we only need to keep one maximum value(max) in history.
     // However, when the lower bound is not unbounded, we need a monotonically deque to maintain the history of records.
-    public static class MaxMinOverRangeFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
+    public static class MaxMinOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
-        private final String name;
         private final DoubleComparator comparator;
         private final boolean frameLoBounded;
         private final long initialCapacity;
@@ -1014,20 +1020,20 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         // note: we ignore nulls to reduce memory usage
         private final MemoryARW memory;
         private final long minDiff;
+        private final String name;
         private final int timestampIndex;
-        private double maxMin;
         private long capacity;
-        private long firstIdx;
-        private long frameSize;
-        private long size;
-        private long startOffset;
-
+        private long dequeCapacity;
+        private long dequeEndIndex = 0;
         // holds another resizable ring buffers as monotonically decreasing deque
         private MemoryARW dequeMemory;
-        private long dequeCapacity;
-        private long dequeStartOffset;
         private long dequeStartIndex = 0;
-        private long dequeEndIndex = 0;
+        private long dequeStartOffset;
+        private long firstIdx;
+        private long frameSize;
+        private double maxMin;
+        private long size;
+        private long startOffset;
 
         public MaxMinOverRangeFrameFunction(
                 long rangeLo,
@@ -1214,6 +1220,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             throw new UnsupportedOperationException();
@@ -1286,23 +1293,22 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     // Handles max() over ([order by o] rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
-    public static class MaxMinOverRowsFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
+    public static class MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
 
-        private final String name;
-        private final DoubleComparator comparator;
         private final MemoryARW buffer;
         private final int bufferSize;
+        private final DoubleComparator comparator;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
-        private double maxMin = Double.NaN;
-        private int loIdx = 0;
-
+        private final String name;
+        private long dequeBufferSize;
+        private long dequeEndIndex = 0;
         // holds another resizable ring buffers as monotonically decreasing deque
         private MemoryARW dequeMemory;
-        private long dequeBufferSize;
         private long dequeStartIndex = 0;
-        private long dequeEndIndex = 0;
+        private int loIdx = 0;
+        private double maxMin = Double.NaN;
 
         public MaxMinOverRowsFrameFunction(Function arg,
                                            long rowsLo,
@@ -1406,6 +1412,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -1479,10 +1486,10 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // - max(a) over (partition by x rows between unbounded preceding and current row)
     // - max(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
-    static class MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
+    static class MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
-        private final String name;
         private final DoubleComparator comparator;
+        private final String name;
         private double maxMin;
 
         public MaxMinOverUnboundedPartitionRowsFrameFunction(Map map,
@@ -1537,6 +1544,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -1555,10 +1563,10 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     }
 
     // Handles max() over (rows between unbounded preceding and current row); there's no partition by.
-    public static class MaxMinOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
+    public static class MaxMinOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDoubleFunction {
 
-        private final String name;
         private final DoubleComparator comparator;
+        private final String name;
         private double maxMin = Double.NaN;
 
         public MaxMinOverUnboundedRowsFrameFunction(Function arg, DoubleComparator comparator, String name) {
@@ -1590,6 +1598,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -1617,10 +1626,10 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     }
 
     // max() over () - empty clause, no partition by no order by, no frame == default frame
-    static class MaxMinOverWholeResultSetFunction extends BaseDoubleWindowFunction {
+    static class MaxMinOverWholeResultSetFunction extends BaseWindowFunction implements WindowDoubleFunction {
 
-        private final String name;
         private final DoubleComparator comparator;
+        private final String name;
         private double maxMin = Double.NaN;
 
         public MaxMinOverWholeResultSetFunction(Function arg, DoubleComparator comparator, String name) {
@@ -1638,6 +1647,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
         }
+
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {

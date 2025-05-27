@@ -84,6 +84,15 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
 
+        if (rowsHi < rowsLo) {
+            return new DoubleNullFunction(args.get(0),
+                    NAME,
+                    rowsLo,
+                    rowsHi,
+                    framingMode == WindowColumn.FRAMING_RANGE,
+                    partitionByRecord);
+        }
+
         if (partitionByRecord != null) {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // moving average over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
@@ -284,7 +293,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     }
 
     // (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
-    static class AvgOverCurrentRowFunction extends BaseDoubleWindowFunction {
+    static class AvgOverCurrentRowFunction extends BaseWindowFunction implements WindowDoubleFunction {
 
         private double value;
 
@@ -321,7 +330,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     // handles avg() over (partition by x)
     // order by is absent so default frame mode includes all rows in partition
-    static class AvgOverPartitionFunction extends BasePartitionedDoubleWindowFunction {
+    static class AvgOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         public AvgOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -336,6 +345,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
         }
+
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -392,7 +402,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
     // between upper bound and current row's value.
-    public static class AvgOverPartitionRangeFrameFunction extends BasePartitionedDoubleWindowFunction {
+    public static class AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
         private final boolean frameIncludesCurrentValue;
@@ -610,6 +620,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             throw new UnsupportedOperationException();
@@ -662,7 +673,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     // handles avg() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
-    static class AvgOverPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
+    static class AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
@@ -800,6 +811,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -851,7 +863,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // Handles avg() over ([order by ts] range between [unbounded | x] preceding and [ x preceding | current row ] ); no partition by key
     // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
     // between upper bound and current row's value .
-    static class AvgOverRangeFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
+    static class AvgOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
         private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
         private final boolean frameLoBounded;
         private final long initialCapacity;
@@ -1034,6 +1046,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             throw new UnsupportedOperationException();
@@ -1094,7 +1107,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     // Handles avg() over ([order by o] rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
-    static class AvgOverRowsFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
+    static class AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
         private final MemoryARW buffer;
         private final int bufferSize;
         private final boolean frameIncludesCurrentValue;
@@ -1189,6 +1202,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -1255,7 +1269,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // - avg(a) over (partition by x rows between unbounded preceding and current row)
     // - avg(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
-    static class AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
+    static class AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
         private double avg;
 
         public AvgOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
@@ -1306,6 +1320,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -1324,7 +1339,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     }
 
     // Handles avg() over (rows between unbounded preceding and current row); there's no partition by.
-    static class AvgOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
+    static class AvgOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDoubleFunction {
 
         private double avg;
         private long count = 0;
@@ -1360,6 +1375,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -1393,7 +1409,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     }
 
     // avg() over () - empty clause, no partition by no order by, no frame == default frame
-    static class AvgOverWholeResultSetFunction extends BaseDoubleWindowFunction {
+    static class AvgOverWholeResultSetFunction extends BaseWindowFunction implements WindowDoubleFunction {
         private double avg;
         private long count;
         private double sum;
@@ -1411,6 +1427,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
         }
+
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {

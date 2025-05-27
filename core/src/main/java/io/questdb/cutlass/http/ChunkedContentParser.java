@@ -38,7 +38,7 @@ public class ChunkedContentParser implements Mutable {
         chunkSize = -1;
     }
 
-    public long handleRecv(long lo, long hi, HttpMultipartContentListener listener)
+    public long handleRecv(long lo, long hi, HttpPostPutProcessor processor)
             throws PeerIsSlowToReadException, ServerDisconnectException, PeerDisconnectedException {
 
         while (lo < hi) {
@@ -59,7 +59,7 @@ public class ChunkedContentParser implements Mutable {
             }
 
             long n = Math.min(hi - lo, chunkSize);
-            listener.onChunk(lo, lo + n);
+            processor.onChunk(lo, lo + n);
             chunkSize -= n;
             lo += n;
         }
