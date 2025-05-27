@@ -98,6 +98,10 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             @Nullable ObjList<TableReader> leakedReaders,
             @Nullable QueryTrace queryTrace
     ) {
+        if (!executionContext.shouldLogSql()) {
+            return;
+        }
+
         CairoEngine engine = executionContext.getCairoEngine();
         CairoConfiguration config = engine.getConfiguration();
         long durationNanos = config.getNanosecondClock().getTicks() - beginNanos;
@@ -219,7 +223,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             @NotNull SqlExecutionContext executionContext,
             boolean jit
     ) {
-        if (executionContext.getCairoEngine().getConfiguration().getLogSqlQueryProgressExe()) {
+        if (executionContext.shouldLogSql() && executionContext.getCairoEngine().getConfiguration().getLogSqlQueryProgressExe()) {
             LogRecord logRecord = LOG.info();
             try {
                 logRecord.$("exe")

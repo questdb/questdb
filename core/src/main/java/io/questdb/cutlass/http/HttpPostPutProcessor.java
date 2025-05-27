@@ -22,31 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cutlass.http;
 
-import io.questdb.cairo.Reopenable;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.ServerDisconnectException;
 
-/**
- * Off-heap min/max heap for long values accompanied by a long index.
- */
-public interface DirectLongLongHeap extends QuietCloseable, Mutable, Reopenable {
+import static io.questdb.cutlass.http.HttpRequestValidator.*;
 
-    void add(long index, long value);
-
-    int getCapacity();
-
-    Cursor getCursor();
-
-    int size();
-
-    interface Cursor {
-
-        boolean hasNext();
-
-        long index();
-
-        void toTop();
-
-        long value();
+public interface HttpPostPutProcessor extends HttpRequestProcessor {
+    @Override
+    default short getSupportedRequestTypes() {
+        return METHOD_POST | METHOD_PUT | NON_MULTIPART_REQUEST;
     }
+
+    void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
 }

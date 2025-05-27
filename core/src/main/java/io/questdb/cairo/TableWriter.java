@@ -2838,6 +2838,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
+    public void setMetaMatViewRefreshTimer(long start, int interval, char unit) {
+        commit();
+        metadata.setMatViewTimerStart(start);
+        metadata.setMatViewTimerInterval(interval);
+        metadata.setMatViewTimerIntervalUnit(unit);
+        writeMetadataToDisk();
+        engine.getMatViewGraph().onAlterRefreshTimer(tableToken);
+    }
+
+    @Override
     public void setMetaMaxUncommittedRows(int maxUncommittedRows) {
         commit();
         metadata.setMaxUncommittedRows(maxUncommittedRows);
@@ -9039,6 +9049,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
             ddlMem.putInt(metadata.getMatViewRefreshLimitHoursOrMonths());
+            ddlMem.putLong(metadata.getMatViewTimerStart());
+            ddlMem.putInt(metadata.getMatViewTimerInterval());
+            ddlMem.putChar(metadata.getMatViewTimerIntervalUnit());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {

@@ -61,6 +61,11 @@ public class DenyAllSecurityContext extends ReadOnlySecurityContext {
     }
 
     @Override
+    public void authorizeSettings() {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
     public void authorizeSqlEngineAdmin() {
         throw CairoException.nonCritical().put("permission denied");
     }

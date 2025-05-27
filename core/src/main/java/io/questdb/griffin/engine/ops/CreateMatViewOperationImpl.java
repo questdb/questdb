@@ -163,6 +163,21 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public int getMatViewTimerInterval() {
+        return createTableOperation.getMatViewTimerInterval();
+    }
+
+    @Override
+    public char getMatViewTimerIntervalUnit() {
+        return createTableOperation.getMatViewTimerIntervalUnit();
+    }
+
+    @Override
+    public long getMatViewTimerStart() {
+        return createTableOperation.getMatViewTimerStart();
+    }
+
+    @Override
     public int getMaxUncommittedRows() {
         return createTableOperation.getMaxUncommittedRows();
     }
@@ -436,7 +451,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public void validateAndUpdateMetadataFromSelect(
-            RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata
+            RecordMetadata selectMetadata,
+            TableReaderMetadata baseTableMetadata
     ) throws SqlException {
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
         // SELECT validation

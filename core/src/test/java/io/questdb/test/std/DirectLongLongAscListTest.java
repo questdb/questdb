@@ -26,7 +26,7 @@ package io.questdb.test.std;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.DirectLongLongMaxHeap;
+import io.questdb.std.DirectLongLongAscList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
@@ -35,23 +35,23 @@ import org.junit.Test;
 
 import java.util.PriorityQueue;
 
-public class DirectLongLongMaxHeapTest {
-    private static final Log LOG = LogFactory.getLog(DirectLongLongMaxHeapTest.class);
+public class DirectLongLongAscListTest {
+    private static final Log LOG = LogFactory.getLog(DirectLongLongAscListTest.class);
 
     @Test
     public void testFuzz() {
         final int N = 10000;
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        final PriorityQueue<Long> oracle = new PriorityQueue<>(100, (l1, l2) -> Long.compare(l2, l1));
-        try (DirectLongLongMaxHeap maxHeap = new DirectLongLongMaxHeap(100, MemoryTag.NATIVE_DEFAULT)) {
+        final PriorityQueue<Long> oracle = new PriorityQueue<>(100);
+        try (DirectLongLongAscList queue = new DirectLongLongAscList(100, MemoryTag.NATIVE_DEFAULT)) {
             for (long i = 0; i < N; i++) {
                 long v = rnd.nextLong();
-                maxHeap.add(v, v);
+                queue.add(v, v);
                 oracle.add(v);
             }
 
-            DirectLongLongMaxHeap.Cursor cursor = maxHeap.getCursor();
-            for (int i = 0, n = maxHeap.size(); i < n; i++) {
+            DirectLongLongAscList.Cursor cursor = queue.getCursor();
+            for (int i = 0, n = queue.size(); i < n; i++) {
                 Long v = oracle.poll();
                 Assert.assertNotNull(v);
                 Assert.assertTrue(cursor.hasNext());
@@ -64,30 +64,30 @@ public class DirectLongLongMaxHeapTest {
 
     @Test
     public void testReopen() {
-        try (DirectLongLongMaxHeap maxHeap = new DirectLongLongMaxHeap(10, MemoryTag.NATIVE_DEFAULT)) {
-            Assert.assertEquals(10, maxHeap.getCapacity());
-            Assert.assertEquals(0, maxHeap.size());
-            Assert.assertFalse(maxHeap.getCursor().hasNext());
+        try (DirectLongLongAscList queue = new DirectLongLongAscList(10, MemoryTag.NATIVE_DEFAULT)) {
+            Assert.assertEquals(10, queue.getCapacity());
+            Assert.assertEquals(0, queue.size());
+            Assert.assertFalse(queue.getCursor().hasNext());
 
-            maxHeap.add(1, 1);
-            Assert.assertEquals(1, maxHeap.size());
+            queue.add(1, 1);
+            Assert.assertEquals(1, queue.size());
 
-            maxHeap.clear();
-            Assert.assertEquals(0, maxHeap.size());
+            queue.clear();
+            Assert.assertEquals(0, queue.size());
 
-            maxHeap.add(1, 1);
-            Assert.assertEquals(1, maxHeap.size());
+            queue.add(1, 1);
+            Assert.assertEquals(1, queue.size());
 
-            maxHeap.close();
-            Assert.assertEquals(0, maxHeap.size());
+            queue.close();
+            Assert.assertEquals(0, queue.size());
 
-            maxHeap.reopen();
-            Assert.assertEquals(10, maxHeap.getCapacity());
-            Assert.assertEquals(0, maxHeap.size());
+            queue.reopen();
+            Assert.assertEquals(10, queue.getCapacity());
+            Assert.assertEquals(0, queue.size());
 
-            maxHeap.add(1, 1);
+            queue.add(1, 1);
 
-            DirectLongLongMaxHeap.Cursor cursor = maxHeap.getCursor();
+            DirectLongLongAscList.Cursor cursor = queue.getCursor();
             cursor.toTop();
             Assert.assertTrue(cursor.hasNext());
             Assert.assertEquals(1, cursor.index());
@@ -98,20 +98,20 @@ public class DirectLongLongMaxHeapTest {
 
     @Test
     public void testSmoke() {
-        try (DirectLongLongMaxHeap maxHeap = new DirectLongLongMaxHeap(10, MemoryTag.NATIVE_DEFAULT)) {
-            Assert.assertEquals(10, maxHeap.getCapacity());
-            Assert.assertEquals(0, maxHeap.size());
-            Assert.assertFalse(maxHeap.getCursor().hasNext());
+        try (DirectLongLongAscList queue = new DirectLongLongAscList(10, MemoryTag.NATIVE_DEFAULT)) {
+            Assert.assertEquals(10, queue.getCapacity());
+            Assert.assertEquals(0, queue.size());
+            Assert.assertFalse(queue.getCursor().hasNext());
 
             for (long i = 0; i < 100; i++) {
-                maxHeap.add(i, i);
+                queue.add(i, i);
             }
-            Assert.assertEquals(10, maxHeap.getCapacity());
-            Assert.assertEquals(10, maxHeap.size());
+            Assert.assertEquals(10, queue.getCapacity());
+            Assert.assertEquals(10, queue.size());
 
-            DirectLongLongMaxHeap.Cursor cursor = maxHeap.getCursor();
+            DirectLongLongAscList.Cursor cursor = queue.getCursor();
             cursor.toTop();
-            for (long i = 99; i > 89; i--) {
+            for (long i = 0; i < 10; i++) {
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(i, cursor.index());
                 Assert.assertEquals(i, cursor.value());

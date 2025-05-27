@@ -305,6 +305,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
+        final MatViewDefinition viewDefinition = state.getViewDefinition();
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             final TableToken baseTableToken;
             final String baseTableName = state.getViewDefinition().getBaseTableName();
@@ -342,11 +343,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     resetInvalidState(state, walWriter);
 
                     final long toBaseTxn = baseTableReader.getSeqTxn();
-                    final MatViewDefinition viewDef = state.getViewDefinition();
                     // Specify -1 as the last refresh txn, so that we scan all partitions.
-                    final SampleByIntervalIterator intervalIterator = findSampleByIntervals(baseTableReader, viewDef, -1);
+                    final SampleByIntervalIterator intervalIterator = findSampleByIntervals(baseTableReader, viewDefinition, -1);
                     if (intervalIterator != null) {
-                        insertAsSelect(state, viewDef, walWriter, intervalIterator, toBaseTxn, refreshTriggerTimestamp);
+                        insertAsSelect(state, viewDefinition, walWriter, intervalIterator, toBaseTxn, refreshTriggerTimestamp);
                     }
                 } finally {
                     refreshExecutionContext.clearReader();
@@ -371,12 +371,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             refreshFailState(state, null, th);
             return false;
         } finally {
+            state.incrementRefreshSeq();
             state.unlock();
             state.tryCloseIfDropped();
         }
 
-        // Kickstart incremental refresh.
-        stateStore.enqueueIncrementalRefresh(viewToken);
+        if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
+            // Kickstart incremental refresh.
+            stateStore.enqueueIncrementalRefresh(viewToken);
+        }
         return true;
     }
 
@@ -562,7 +565,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         refreshTriggerTimestamp,
                         baseTableTxn
                 );
-                state.setLastRefreshBaseTableTxn(baseTableTxn);
             }
         } catch (Throwable th) {
             Misc.free(factory);
@@ -791,6 +793,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             TableToken viewToken = childViewSink.get(v);
             final MatViewState state = stateStore.getViewState(viewToken);
             if (state != null && !state.isPendingInvalidation() && !state.isInvalid() && !state.isDropped()) {
+                if (state.getViewDefinition().getRefreshType() != MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
+                    continue;
+                }
+
                 if (!state.tryLock()) {
                     LOG.debug().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
                     stateStore.enqueueIncrementalRefresh(viewToken);
@@ -825,6 +831,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             .I$();
                     refreshFailState(state, null, th);
                 } finally {
+                    state.incrementRefreshSeq();
                     state.unlock();
                     state.tryCloseIfDropped();
                 }
@@ -914,6 +921,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             refreshFailState(state, null, th);
             return false;
         } finally {
+            state.incrementRefreshSeq();
             state.unlock();
             state.tryCloseIfDropped();
         }
@@ -932,7 +940,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         final long fromBaseTxn = state.getLastRefreshBaseTxn();
         if (fromBaseTxn >= 0 && fromBaseTxn >= toBaseTxn) {
-            // Already refreshed
+            // Already refreshed.
             return false;
         }
 

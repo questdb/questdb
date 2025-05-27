@@ -22,12 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.std;
 
-import io.questdb.std.ObjList;
+import io.questdb.cairo.Reopenable;
 
-public interface HttpRequestProcessorFactory {
-    ObjList<String> getUrls();
+/**
+ * Off-heap bounded sorted list for long values accompanied by a long index.
+ */
+public interface DirectLongLongSortedList extends QuietCloseable, Mutable, Reopenable {
 
-    HttpRequestProcessor newInstance();
+    void add(long index, long value);
+
+    int getCapacity();
+
+    Cursor getCursor();
+
+    int size();
+
+    interface Cursor {
+
+        boolean hasNext();
+
+        long index();
+
+        void toTop();
+
+        long value();
+    }
 }

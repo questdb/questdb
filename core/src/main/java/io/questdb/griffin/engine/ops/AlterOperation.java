@@ -72,6 +72,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_TTL = FORCE_DROP_PARTITION + 1; // 21
     public final static short CHANGE_SYMBOL_CAPACITY = SET_TTL + 1; // 22
     public final static short SET_MAT_VIEW_REFRESH_LIMIT = CHANGE_SYMBOL_CAPACITY + 1; // 23
+    public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -219,6 +220,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 case SET_MAT_VIEW_REFRESH_LIMIT:
                     applyMatViewRefreshLimit(svc);
+                    break;
+                case SET_MAT_VIEW_REFRESH_TIMER:
+                    applyMatViewRefreshTimer(svc);
                     break;
                 default:
                     LOG.error()
@@ -580,6 +584,18 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         final int limitHoursOrMonths = (int) extraInfo.get(0);
         try {
             svc.setMetaMatViewRefreshLimit(limitHoursOrMonths);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
+    }
+
+    private void applyMatViewRefreshTimer(MetadataService svc) {
+        final long start = extraInfo.get(0);
+        final int interval = (int) extraInfo.get(1);
+        final char unit = (char) extraInfo.get(2);
+        try {
+            svc.setMetaMatViewRefreshTimer(start, interval, unit);
         } catch (CairoException e) {
             e.position(tableNamePosition);
             throw e;

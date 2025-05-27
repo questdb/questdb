@@ -22,8 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.cutlass.http;
 
-public interface TextImportProcessorConfiguration {
-    boolean abortBrokenUploads();
+public interface HttpRequestHandler {
+
+    default HttpRequestProcessor getDefaultProcessor() {
+        return null;
+    }
+
+    HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader);
 }
