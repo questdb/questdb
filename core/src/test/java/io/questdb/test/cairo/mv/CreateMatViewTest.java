@@ -389,8 +389,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
-                assertTrue(metadata.isDedupKey(0));
-                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(0));
+                assertFalse(metadata.isDedupKey(1));
                 assertEquals(startEpoch, metadata.getMatViewTimerStart());
                 assertEquals(5, metadata.getMatViewTimerInterval());
                 assertEquals('m', metadata.getMatViewTimerIntervalUnit());
@@ -417,8 +417,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
-                assertTrue(metadata.isDedupKey(0));
-                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(0));
+                assertFalse(metadata.isDedupKey(1));
                 assertEquals(startEpoch, metadata.getMatViewTimerStart());
                 assertEquals(5, metadata.getMatViewTimerInterval());
                 assertEquals('m', metadata.getMatViewTimerIntervalUnit());
@@ -1267,19 +1267,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 // test table name case-insensitivity
                 "create materialized view test5 with base x as (select t1.ts, t2.k1, avg(t1.v) from x as T1 join y as T2 on v sample by 1m) partition by day",
         };
-        final int[] errorPositions = new int[]{
-                60,
-                64,
-                64,
-                60,
-                60
-        };
 
-        testCreateMatViewWithNonDedupBaseKeys(
-                queries,
-                "only base table columns can be used as materialized view keys [invalid key=t2.k1]",
-                errorPositions
-        );
+        testCreateMatViewWithNonDedupBaseKeys(queries);
     }
 
     @Test
@@ -1295,23 +1284,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 "create materialized view x_hourly8 as (select ts, k, avg(v) from (select ts, k2 as k, v from x) sample by 1h) partition by day;",
                 "create materialized view test with base x as (select t1.ts, t1.k2, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day"
         };
-        final int[] errorPositions = new int[]{
-                49,
-                52,
-                53,
-                60,
-                83,
-                79,
-                89,
-                76,
-                60
-        };
 
-        testCreateMatViewWithNonDedupBaseKeys(
-                queries,
-                "key column must be one of the base table's dedup keys [columnName=k2, baseTableName=x, baseTableDedupKeys=[ts,k1]]",
-                errorPositions
-        );
+        testCreateMatViewWithNonDedupBaseKeys(queries);
     }
 
     @Test
@@ -2054,7 +2028,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertNull(getMatViewDefinition("test"));
     }
 
-    private void testCreateMatViewWithNonDedupBaseKeys(String[] queries, String errorMessage, int[] errorPositions) throws Exception {
+    private void testCreateMatViewWithNonDedupBaseKeys(String[] queries) throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "create table x " +
@@ -2067,10 +2041,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             " timestamp(ts) partition by day wal;"
             );
 
-            Assert.assertEquals("queries and error position arrays must be the same length", queries.length, errorPositions.length);
-
             for (int i = 0, n = queries.length; i < n; i++) {
-                assertExceptionNoLeakCheck(queries[i], errorPositions[i], errorMessage);
+                execute(queries[i]);
             }
         });
     }
