@@ -46,35 +46,34 @@ class TestRunner {
                 // Normalize data formats to match Python version
                 foreach ($result as &$row) {
                     foreach ($row as &$value) {
-                        // Handle timestamps
-                        if (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/', $value)) {
-                            // Ensure 6 decimal places for microseconds
-                            if (strpos($value, '.') === false) {
-                                $value .= '.000000';
-                            } else {
-                                // Pad existing microseconds to 6 digits
-                                $parts = explode('.', $value);
-                                $parts[1] = str_pad(rtrim($parts[1], '0'), 6, '0');
-                                $value = implode('.', $parts);
+                        if (is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2}/', $value)) {
+                            try {
+                                // Create a DateTime object. This correctly parses various formats,
+                                // including those with 'T' separators and timezones like '+00' or '+00:00'.
+                                $date = new DateTime($value);
+
+                                // Format to the precise ISO 8601 standard with 6-digit microseconds and the 'Z' (Zulu/UTC) designator.
+                                $value = $date->format('Y-m-d\TH:i:s.u\Z');
+                                continue; // Value is now correctly formatted, so we can skip to the next one.
+                            } catch (Exception $e) {
+                                // If parsing fails, it's not a standard date/timestamp string,
+                                // so we let it fall through to other handlers.
                             }
-                            // Convert space to T and add Z
-                            $value = str_replace(' ', 'T', $value) . 'Z';
                         }
-                        // Handle dates
-                        elseif (preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
-                            $value .= 'T00:00:00.000000Z';
-                        }
+
                         // Handle numeric strings that should be numbers
-                        elseif (is_string($value) && preg_match('/^-?\d+\.?\d*$/', $value)) {
+                        if (is_string($value) && preg_match('/^-?\d+\.?\d*$/', $value)) {
                             if (strpos($value, '.') !== false) {
                                 $value = (float)$value;
                             } else {
                                 $value = (int)$value;
                             }
                         }
-                        // Handle booleans (PDO returns them as strings)
-                        elseif ($value === '0' || $value === '1') {
-                            $value = (bool)$value;
+                        // Handle booleans (PDO can return integers 0/1 or strings 't'/'f' or '0'/'1')
+                        elseif ($value === 't' || $value === 1 || $value === '1') {
+                            $value = true;
+                        } elseif ($value === 'f' || $value === 0 || $value === '0') {
+                            $value = false;
                         }
                     }
                 }
