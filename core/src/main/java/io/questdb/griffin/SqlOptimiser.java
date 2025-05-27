@@ -225,6 +225,22 @@ public class SqlOptimiser implements Mutable {
         return appearsInArgs;
     }
 
+    public static @Nullable ExpressionNode rewritePivotGetAppropriateArgFromInExpr(ExpressionNode forInExpr, int slot) {
+        if (forInExpr.paramCount == 2) {
+            assert slot == 0;
+            return forInExpr.rhs;
+        }
+        assert slot < forInExpr.paramCount - 1;
+        return forInExpr.args.getQuick(slot);
+    }
+
+    public static @Nullable ExpressionNode rewritePivotGetAppropriateNameFromInExpr(ExpressionNode forInExpr) {
+        if (forInExpr.paramCount == 2) {
+            return forInExpr.lhs;
+        }
+        return forInExpr.args.getLast();
+    }
+
     public void clear() {
         clearForUnionModelInJoin();
         contextPool.clear();
@@ -294,11 +310,12 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-    public @Nullable ExpressionNode rewritePivotGetAppropriateNameFromInExpr(ExpressionNode forInExpr) {
-        if (forInExpr.paramCount == 2) {
-            return forInExpr.lhs;
-        }
-        return forInExpr.args.getLast();
+    public ExpressionNode rewritePivotMakeBinaryExpression(ExpressionNode lhs, ExpressionNode rhs, CharSequence token, OperatorExpression operator) {
+        ExpressionNode op = expressionNodePool.next().of(OPERATION, token, operator.precedence, 0);
+        op.paramCount = 2;
+        op.lhs = lhs;
+        op.rhs = rhs;
+        return op;
     }
 
     private static boolean isOrderedByDesignatedTimestamp(QueryModel model) {
@@ -4991,23 +5008,6 @@ public class SqlOptimiser implements Mutable {
             csHashSetPool.release(aliasDedupe);
             stringSinkPool.release(sink);
         }
-    }
-
-    private @Nullable ExpressionNode rewritePivotGetAppropriateArgFromInExpr(ExpressionNode forInExpr, int slot) {
-        if (forInExpr.paramCount == 2) {
-            assert slot == 0;
-            return forInExpr.rhs;
-        }
-        assert slot < forInExpr.paramCount - 1;
-        return forInExpr.args.getQuick(slot);
-    }
-
-    private ExpressionNode rewritePivotMakeBinaryExpression(ExpressionNode lhs, ExpressionNode rhs, CharSequence token, OperatorExpression operator) {
-        ExpressionNode op = expressionNodePool.next().of(OPERATION, token, operator.precedence, 0);
-        op.paramCount = 2;
-        op.lhs = lhs;
-        op.rhs = rhs;
-        return op;
     }
 
     /**

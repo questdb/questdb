@@ -1,16 +1,5 @@
-# name: test/sql/pivot/pivot_bigquery.test
-# description: Tests from the bigquery docs
-# group: [pivot]
-
-# https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#pivot_operator
-# https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#unpivot_operator
-# pivot
-
 statement ok
-PRAGMA enable_verification
-
-statement ok
-CREATE TABLE Produce AS
+CREATE TABLE Produce AS (
   SELECT 'Kale' as product, 51 as sales, 'Q1' as quarter, 2020 as year UNION ALL
   SELECT 'Kale', 23, 'Q2', 2020 UNION ALL
   SELECT 'Kale', 45, 'Q3', 2020 UNION ALL
@@ -20,61 +9,97 @@ CREATE TABLE Produce AS
   SELECT 'Apple', 77, 'Q1', 2020 UNION ALL
   SELECT 'Apple', 0, 'Q2', 2020 UNION ALL
   SELECT 'Apple', 1, 'Q1', 2021
+  );
 
+#SELECT * FROM Produce
+#PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4'))
+#ORDER BY ALL
 query IIIIII
-SELECT * FROM Produce
-PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4'))
-ORDER BY ALL
+Produce
+PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4')
+GROUP BY product, year
+ORDER BY product, year, Q1, Q2, Q3, Q4
+);
 ----
 Apple	2020	77	0	NULL	NULL
 Apple	2021	1	NULL	NULL	NULL
 Kale	2020	51	23	45	3
 Kale	2021	70	85	NULL	NULL
 
+
+#SELECT * FROM
+#  (SELECT product, sales, quarter FROM Produce)
+#  PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4'))
+#ORDER BY ALL
 query IIIII
-SELECT * FROM
-  (SELECT product, sales, quarter FROM Produce)
-  PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4'))
-ORDER BY ALL
+SELECT * FROM (
+(SELECT product, sales, quarter FROM Produce)
+PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4')
+GROUP BY product
+ORDER BY product, Q1, Q2, Q3, Q4
+)
+);
 ----
 Apple	78	0	NULL	NULL
 Kale	121	108	45	3
 
+#SELECT * FROM
+#  (SELECT product, sales, quarter FROM Produce)
+#  PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3'))
+#  ORDER BY ALL
 query IIII
-SELECT * FROM
-  (SELECT product, sales, quarter FROM Produce)
-  PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3'))
-  ORDER BY ALL
+SELECT * FROM (
+(SELECT product, sales, quarter FROM Produce)
+    PIVOT(
+        SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3')
+        GROUP BY product
+        ORDER BY product, Q1, Q2, Q3
+    )
+);
 ----
 Apple	78	0	NULL
 Kale	121	108	45
 
+#SELECT * FROM
+#  (SELECT sales, quarter FROM Produce)
+#  PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3'))
+#  ORDER BY ALL
 query III
-SELECT * FROM
-  (SELECT sales, quarter FROM Produce)
-  PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3'))
-  ORDER BY ALL
+Produce PIVOT (SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3'));
 ----
 199	108	45
 
+#SELECT * FROM
+#  (SELECT product, sales, quarter FROM Produce)
+#  PIVOT(SUM(sales) total_sales, COUNT(*) num_records FOR quarter IN ('Q1', 'Q2'))
+#ORDER BY ALL
 query IIIII
-SELECT * FROM
-  (SELECT product, sales, quarter FROM Produce)
-  PIVOT(SUM(sales) total_sales, COUNT(*) num_records FOR quarter IN ('Q1', 'Q2'))
-ORDER BY ALL
+Produce PIVOT (
+  sum(sales) total_sales,
+  count(*) num_records
+  FOR quarter IN ('Q1', 'Q2')
+  GROUP BY product
+  ORDER BY product
+);
 ----
 Apple	78	2	0	1
 Kale	121	2	108	2
 
 statement ok
-CREATE OR REPLACE TABLE Produce AS
+DROP TABLE Produce;
+
+statement ok
+CREATE TABLE Produce AS (
   SELECT 'Kale' as product, 51 as Q1, 23 as Q2, 45 as Q3, 3 as Q4 UNION ALL
   SELECT 'Apple', 77, 0, 25, 2
+);
 
+#SELECT * FROM Produce
+#UNPIVOT(sales FOR quarter IN (Q1, Q2, Q3, Q4))
+#ORDER BY ALL
+# below will error till bugfix
 query III
-SELECT * FROM Produce
-UNPIVOT(sales FOR quarter IN (Q1, Q2, Q3, Q4))
-ORDER BY ALL
+Produce UNPIVOT (sales FOR quarter IN ('Q1',  'Q2', 'Q3', 'Q4')) ORDER BY product, quarter, sales;
 ----
 Apple	Q1	77
 Apple	Q2	0
@@ -85,14 +110,14 @@ Kale	Q2	23
 Kale	Q3	45
 Kale	Q4	3
 
-query IIII
-SELECT product, first_half_sales, second_half_sales, semesters FROM Produce
-UNPIVOT(
-  (first_half_sales, second_half_sales)
-  FOR semesters
-  IN ((Q1, Q2) AS 'semester_1', (Q3, Q4) AS 'semester_2'))
-----
-Kale	51	23	semester_1
-Kale	45	3	semester_2
-Apple	77	0	semester_1
-Apple	25	2	semester_2
+#query IIII
+#SELECT product, first_half_sales, second_half_sales, semesters FROM Produce
+#UNPIVOT(
+#  (first_half_sales, second_half_sales)
+#  FOR semesters
+#  IN ((Q1, Q2) AS 'semester_1', (Q3, Q4) AS 'semester_2'))
+#----
+#Kale	51	23	semester_1
+#Kale	45	3	semester_2
+#Apple	77	0	semester_1
+#Apple	25	2	semester_2

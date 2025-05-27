@@ -6054,11 +6054,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // build a set of the for expr names
             for (int i = 0, n = forExpr.paramCount - 1; i < n; i++) {
-                CharSequence arg = forExpr.args.getQuick(i).token; // todo: review string here
-                if (Chars.isQuoted(arg)) {
-                    arg = arg.subSequence(1, arg.length() - 1);
+                ExpressionNode arg = SqlOptimiser.rewritePivotGetAppropriateArgFromInExpr(forExpr, i);
+                CharSequence argToken = arg.token;
+                if (Chars.isQuoted(argToken)) {
+                    argToken = argToken.subSequence(1, argToken.length() - 1);
                 }
-                forNamesSet.add(arg.toString().toLowerCase());
+                forNamesSet.add(argToken.toString().toLowerCase()); // todo: review string here
             }
 
             // for every column in base metadata, check what we need to pull up
@@ -6094,12 +6095,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // add the 'in' column i.e the column that will contain the column names
-            ExpressionNode inExpr = forExpr.args.getLast(); // todo - handle with fewer args, like in pivot
-            TableColumnMetadata inColumnMetadata = new TableColumnMetadata(inExpr.token.toString(), ColumnType.STRING);
-            unpivotMetadata.add(inColumnMetadata);
 
-            int inColumnIndex = unpivotMetadata.getColumnCount() - 1;
+            // add the 'in' column i.e the column that will contain the column names
+            ExpressionNode inExpr = SqlOptimiser.rewritePivotGetAppropriateNameFromInExpr(forExpr);// todo - handle with fewer args, like in pivot
+            int inColumnIndex = unpivotMetadata.getColumnIndexQuiet(inExpr.token);
+            if (inColumnIndex < 0) {
+                TableColumnMetadata inColumnMetadata = new TableColumnMetadata(inExpr.token.toString(), ColumnType.STRING);
+                unpivotMetadata.add(inColumnMetadata);
+                inColumnIndex = unpivotMetadata.getColumnCount() - 1;
+            }
+
 
             // add the value column which will contain the unpivoted values
             assert model.getUnpivotColumns() != null;
