@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryCMORImpl;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.ColumnConversionOffsetSink;
 import io.questdb.griffin.ConvertersNative;
@@ -72,7 +73,6 @@ public class ColumnTypeConverter {
     private static final Var2FixedConverter<CharSequence> converterStr2Int = ColumnTypeConverter::str2Int;
     private static final Var2FixedConverter<CharSequence> converterStr2Long = ColumnTypeConverter::str2Long;
     private static final Var2FixedConverter<CharSequence> converterStr2Short = ColumnTypeConverter::str2Short;
-    private static final Var2FixedConverter<CharSequence> converterStr2Timestamp = ColumnTypeConverter::str2Timestamp;
     private static final Var2FixedConverter<CharSequence> converterStr2Uuid = ColumnTypeConverter::str2Uuid;
     private static final ThreadLocal<MemoryCMARW> dstFixMemTL = new ThreadLocal<>(io.questdb.cairo.vm.MemoryCMARWImpl::new);
     private static final ThreadLocal<MemoryCMARW> dstVarMemTL = new ThreadLocal<>(io.questdb.cairo.vm.MemoryCMARWImpl::new);
@@ -153,7 +153,7 @@ public class ColumnTypeConverter {
             case ColumnType.DATE:
                 return converterStr2Date;
             case ColumnType.TIMESTAMP:
-                return converterStr2Timestamp;
+                return ColumnType.getTimestampDriver(dstColumnType)::appendMem;
             case ColumnType.BOOLEAN:
                 return converterStr2Boolean;
             default:
@@ -889,130 +889,114 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static void str2Boolean(CharSequence str, MemoryCMARW memoryCMARW) {
-        memoryCMARW.putBool(str != null && SqlKeywords.isTrueKeyword(str));
+    private static void str2Boolean(CharSequence str, MemoryA mem) {
+        mem.putBool(str != null && SqlKeywords.isTrueKeyword(str));
     }
 
-    private static void str2Byte(CharSequence str, MemoryCMARW memoryCMARW) {
+    private static void str2Byte(CharSequence str, MemoryA memoryCMARW) {
         // Same as CAST(str as BYTE), same null, overflow problems
         byte num = (byte) Numbers.parseIntQuiet(str);
         memoryCMARW.putByte(num);
     }
 
-    private static void str2Char(CharSequence str, MemoryCMARW memoryCMARW) {
-        memoryCMARW.putChar(str == null || str.length() == 0 ? 0 : str.charAt(0));
+    private static void str2Char(CharSequence str, MemoryA mem) {
+        mem.putChar(str == null || str.length() == 0 ? 0 : str.charAt(0));
     }
 
-    private static void str2Date(CharSequence str, MemoryCMARW memoryCMARW) {
+    private static void str2Date(CharSequence str, MemoryA mem) {
         if (str != null) {
             try {
-                long timestamp = IntervalUtils.parseFloorPartialTimestamp(str);
-                memoryCMARW.putLong(timestamp / 1000);
+                mem.putLong(IntervalUtils.parseFloorPartialTimestamp(str) / 1000);
                 return;
             } catch (NumericException e) {
                 // Fall through
             }
         }
-        memoryCMARW.putLong(Numbers.LONG_NULL);
+        mem.putLong(Numbers.LONG_NULL);
     }
 
-    private static void str2Double(CharSequence str, MemoryCMARW memoryCMARW) {
+    private static void str2Double(CharSequence str, MemoryA mem) {
         try {
             if (str != null) {
-                memoryCMARW.putDouble(Numbers.parseDouble(str));
+                mem.putDouble(Numbers.parseDouble(str));
                 return;
             }
         } catch (NumericException e) {
             // Fall through
         }
-        memoryCMARW.putDouble(Double.NaN);
+        mem.putDouble(Double.NaN);
     }
 
-    private static void str2Float(CharSequence str, MemoryCMARW memoryCMARW) {
+    private static void str2Float(CharSequence str, MemoryA mem) {
         try {
             if (str != null) {
-                memoryCMARW.putFloat(Numbers.parseFloat(str));
+                mem.putFloat(Numbers.parseFloat(str));
                 return;
             }
         } catch (NumericException e) {
             // Fall through
         }
-        memoryCMARW.putFloat(Float.NaN);
+        mem.putFloat(Float.NaN);
     }
 
-    private static void str2Int(CharSequence str, MemoryCMARW memoryCMARW) {
+    private static void str2Int(CharSequence str, MemoryA mem) {
         if (str != null) {
             try {
-                int num = Numbers.parseInt(str);
-                memoryCMARW.putInt(num);
+                mem.putInt(Numbers.parseInt(str));
                 return;
             } catch (NumericException e) {
                 // Fall through
             }
         }
-        memoryCMARW.putInt(Numbers.INT_NULL);
+        mem.putInt(Numbers.INT_NULL);
     }
 
-    private static void str2IpV4(CharSequence str, MemoryCMARW dstFixMem) {
-        int ipv4 = Numbers.parseIPv4Quiet(str);
-        dstFixMem.putInt(ipv4);
+    private static void str2IpV4(CharSequence str, MemoryA mem) {
+        mem.putInt(Numbers.parseIPv4Quiet(str));
     }
 
-    private static void str2Long(CharSequence str, MemoryCMARW memoryCMARW) {
+    private static void str2Long(CharSequence str, MemoryA mem) {
         if (str != null) {
             try {
                 long num = Numbers.parseLong(str);
-                memoryCMARW.putLong(num);
+                mem.putLong(num);
                 return;
             } catch (NumericException e) {
                 // Fall through
             }
         }
-        memoryCMARW.putLong(Numbers.LONG_NULL);
+        mem.putLong(Numbers.LONG_NULL);
     }
 
-    private static void str2Short(CharSequence value, MemoryCMARW memoryCMARW) {
+    private static void str2Short(CharSequence value, MemoryA mem) {
         // Same as CAST(str as SHORT), same null, overflow problems
         try {
             if (value != null) {
-                memoryCMARW.putShort((short) Numbers.parseInt(value));
+                mem.putShort((short) Numbers.parseInt(value));
                 return;
             }
         } catch (NumericException e) {
             // Fall through
         }
-        memoryCMARW.putShort((short) 0);
+        mem.putShort((short) 0);
     }
 
-    private static void str2Timestamp(CharSequence str, MemoryCMARW memoryCMARW) {
-        if (str != null) {
-            try {
-                long timestamp = IntervalUtils.parseFloorPartialTimestamp(str);
-                memoryCMARW.putLong(timestamp);
-                return;
-            } catch (NumericException e) {
-                // Fall through
-            }
-        }
-        memoryCMARW.putLong(Numbers.LONG_NULL);
-    }
-
-    private static void str2Uuid(CharSequence str, MemoryCMARW dstFixMem) {
+    private static void str2Uuid(CharSequence str, MemoryA mem) {
         if (str != null) {
             try {
                 Uuid.checkDashesAndLength(str);
                 long uuidHi = Uuid.parseHi(str);
                 long uuidLo = Uuid.parseLo(str);
-                dstFixMem.putLong(uuidLo);
-                dstFixMem.putLong(uuidHi);
+                mem.putLong(uuidLo);
+                mem.putLong(uuidHi);
                 return;
             } catch (NumericException e) {
                 // Fall through
             }
         }
 
-        dstFixMem.putLong(Numbers.LONG_NULL);
-        dstFixMem.putLong(Numbers.LONG_NULL);
+        mem.putLong(Numbers.LONG_NULL);
+        mem.putLong(Numbers.LONG_NULL);
     }
 
     private static boolean stringFromBoolean(long srcAddr, CharSink<?> sink) {
@@ -1117,7 +1101,7 @@ public class ColumnTypeConverter {
 
     @FunctionalInterface
     public interface Var2FixedConverter<T> {
-        void convert(T srcVar, MemoryCMARW dstFixMem);
+        void convert(T srcVar, MemoryA dstFixMem);
     }
 }
 

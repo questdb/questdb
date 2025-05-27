@@ -25,6 +25,9 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.ptt.PartitionDateParseUtil;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
@@ -116,6 +119,29 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public void appendMem(CharSequence value, MemoryA mem) {
+        if (value != null) {
+            try {
+                mem.putLong(IntervalUtils.parseFloorPartialTimestamp(value));
+                return;
+            } catch (NumericException e) {
+                // Fall through
+            }
+        }
+        mem.putLong(Numbers.LONG_NULL);
+    }
+
+    @Override
+    public void appendPGWireText(CharSink<?> sink, long timestamp) {
+        TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(timestamp, EN_LOCALE, null, sink);
+    }
+
+    @Override
+    public long castStr(CharSequence value, int tupleIndex, short fromType, short toType) {
+        return SqlUtil.parseFloorPartialTimestamp(value, tupleIndex, fromType, toType);
+    }
+
+    @Override
     public boolean convertToVar(long fixedAddr, CharSink<?> sink) {
         long value = Unsafe.getUnsafe().getLong(fixedAddr);
         if (value != Numbers.LONG_NULL) {
@@ -197,6 +223,16 @@ public class MicrosTimestampDriver implements TimestampDriver {
             default:
                 return null;
         }
+    }
+
+    @Override
+    public long parseAnyFormat(CharSequence token, int start, int len) throws NumericException {
+        return TimestampFormatUtils.tryParse(token, start, len);
+    }
+
+    @Override
+    public long parseFloorPartialTimestamp(CharSequence token, int start, int len) throws NumericException {
+        return IntervalUtils.parseFloorPartialTimestamp(token, start, len);
     }
 
     @Override

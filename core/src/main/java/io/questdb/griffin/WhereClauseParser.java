@@ -47,7 +47,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.FlyweightCharSequence;
 
 import java.util.ArrayDeque;
@@ -98,7 +97,6 @@ public final class WhereClauseParser implements Mutable {
     private boolean isConstFunction;
     private CharSequence preferredKeyColumn;
     private CharSequence timestamp;
-    private int withinPosition;
 
     @Override
     public void clear() {
@@ -120,7 +118,6 @@ public final class WhereClauseParser implements Mutable {
         this.preferredKeyColumn = null;
         this.allKeyValuesAreKnown = true;
         this.allKeyExcludedValuesAreKnown = true;
-        withinPosition = -1;
     }
 
     public IntrinsicModel extract(
@@ -200,10 +197,6 @@ public final class WhereClauseParser implements Mutable {
 
     public IntrinsicModel getEmpty() {
         return models.next();
-    }
-
-    public int getWithinPosition() {
-        return withinPosition;
     }
 
     private static short adjustComparison(boolean equalsTo, boolean isLo) {
@@ -569,6 +562,7 @@ public final class WhereClauseParser implements Mutable {
 
     private boolean analyzeGreater(
             IntrinsicModel model,
+            int timestampType,
             ExpressionNode node,
             boolean equalsTo,
             FunctionParser functionParser,
@@ -587,9 +581,9 @@ public final class WhereClauseParser implements Mutable {
         }
 
         if (node.lhs.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(node.lhs.token, timestamp)) {
-            return analyzeTimestampGreater(model, node, equalsTo, functionParser, metadata, executionContext, node.rhs);
+            return analyzeTimestampGreater(model, timestampType, node, equalsTo, functionParser, metadata, executionContext, node.rhs);
         } else if (node.rhs.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(node.rhs.token, timestamp)) {
-            return analyzeTimestampLess(model, node, equalsTo, functionParser, metadata, executionContext, node.lhs);
+            return analyzeTimestampLess(model, timestampType, node, equalsTo, functionParser, metadata, executionContext, node.lhs);
         }
 
         return false;
@@ -820,6 +814,7 @@ public final class WhereClauseParser implements Mutable {
 
     private boolean analyzeLess(
             IntrinsicModel model,
+            int timestampType,
             ExpressionNode node,
             boolean equalsTo,
             FunctionParser functionParser,
@@ -839,9 +834,9 @@ public final class WhereClauseParser implements Mutable {
         }
 
         if (node.lhs.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(node.lhs.token, timestamp)) {
-            return analyzeTimestampLess(model, node, equalsTo, functionParser, metadata, executionContext, node.rhs);
+            return analyzeTimestampLess(model, timestampType, node, equalsTo, functionParser, metadata, executionContext, node.rhs);
         } else if (node.rhs.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(node.rhs.token, timestamp)) {
-            return analyzeTimestampGreater(model, node, equalsTo, functionParser, metadata, executionContext, node.lhs);
+            return analyzeTimestampGreater(model, timestampType, node, equalsTo, functionParser, metadata, executionContext, node.lhs);
         }
 
         return false;
@@ -1365,6 +1360,7 @@ public final class WhereClauseParser implements Mutable {
 
     private boolean analyzeTimestampGreater(
             IntrinsicModel model,
+            int timestampType,
             ExpressionNode node,
             boolean equalsTo,
             FunctionParser functionParser,
@@ -1379,7 +1375,7 @@ public final class WhereClauseParser implements Mutable {
                 return false;
             }
             try {
-                lo = parseFullOrPartialDate(equalsTo, compareWithNode, true);
+                lo = parseFullOrPartialDate(timestampType, equalsTo, compareWithNode, true);
             } catch (NumericException e) {
                 throw SqlException.invalidDate(compareWithNode.token, compareWithNode.position);
             }
@@ -1431,6 +1427,7 @@ public final class WhereClauseParser implements Mutable {
 
     private boolean analyzeTimestampLess(
             IntrinsicModel model,
+            int timestampType,
             ExpressionNode node,
             boolean equalsTo,
             FunctionParser functionParser,
@@ -1444,7 +1441,7 @@ public final class WhereClauseParser implements Mutable {
                 return false;
             }
             try {
-                long hi = parseFullOrPartialDate(equalsTo, compareWithNode, false);
+                long hi = parseFullOrPartialDate(timestampType, equalsTo, compareWithNode, false);
                 model.intersectIntervals(Long.MIN_VALUE, hi);
                 node.intrinsicValue = IntrinsicModel.TRUE;
             } catch (NumericException e) {
@@ -1895,19 +1892,24 @@ public final class WhereClauseParser implements Mutable {
         return true;
     }
 
-    private long parseFullOrPartialDate(boolean equalsTo, ExpressionNode node, boolean isLo) throws NumericException {
+    private long parseFullOrPartialDate(
+            int timestampType,
+            boolean equalsTo,
+            ExpressionNode node,
+            boolean isLo
+    ) throws NumericException {
         long ts;
         final int len = node.token.length();
         try {
             // Timestamp string
-            ts = IntervalUtils.parseFloorPartialTimestamp(node.token, 1, len - 1);
+            ts = ColumnType.getTimestampDriver(timestampType).parseFloorPartialTimestamp(node.token, 1, len - 1);
         } catch (NumericException e) {
             try {
                 // Timestamp epoch (long)
                 ts = Numbers.parseLong(node.token);
             } catch (NumericException e2) {
                 // Timestamp format
-                ts = TimestampFormatUtils.tryParse(node.token, 1, node.token.length() - 1);
+                ts = ColumnType.getTimestampDriver(timestampType).parseAnyFormat(node.token, 1, node.token.length() - 1);
             }
         }
         if (!equalsTo) {
@@ -1996,13 +1998,13 @@ public final class WhereClauseParser implements Mutable {
             case INTRINSIC_OP_IN:
                 return analyzeIn(translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
             case INTRINSIC_OP_GREATER_EQ:
-                return analyzeGreater(model, node, true, functionParser, metadata, executionContext);
+                return analyzeGreater(model, m.getTimestampType(), node, true, functionParser, metadata, executionContext);
             case INTRINSIC_OP_GREATER:
-                return analyzeGreater(model, node, false, functionParser, metadata, executionContext);
+                return analyzeGreater(model, m.getTimestampType(), node, false, functionParser, metadata, executionContext);
             case INTRINSIC_OP_LESS_EQ:
-                return analyzeLess(model, node, true, functionParser, metadata, executionContext);
+                return analyzeLess(model, m.getTimestampType(), node, true, functionParser, metadata, executionContext);
             case INTRINSIC_OP_LESS:
-                return analyzeLess(model, node, false, functionParser, metadata, executionContext);
+                return analyzeLess(model, m.getTimestampType(), node, false, functionParser, metadata, executionContext);
             case INTRINSIC_OP_EQUAL:
                 return analyzeEquals(translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
             case INTRINSIC_OP_NOT_EQ:
@@ -2085,7 +2087,6 @@ public final class WhereClauseParser implements Mutable {
                     processArgument(inArg, metadata, functionParser, executionContext, hashColumnType, prefixes);
                 }
             }
-            withinPosition = node.position;
             return true;
         } else {
             return false;
@@ -2156,7 +2157,6 @@ public final class WhereClauseParser implements Mutable {
     ) throws SqlException {
 
         prefixes.clear();
-        withinPosition = -1;
         if (node == null) return null;
 
         // pre-order iterative tree traversal

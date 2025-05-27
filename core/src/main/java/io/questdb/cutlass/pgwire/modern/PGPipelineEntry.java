@@ -87,7 +87,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
 import io.questdb.std.WeakSelfReturningObjectPool;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
@@ -1712,8 +1711,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColBinary(PGResponseSink utf8Sink, Record record, int i) throws BadProtocolException {
-        BinarySequence sequence = record.getBin(i);
+    private void outColBinary(PGResponseSink utf8Sink, Record record, int columnIndex) throws BadProtocolException {
+        BinarySequence sequence = record.getBin(columnIndex);
         if (sequence == null) {
             utf8Sink.setNullValue();
         } else {
@@ -1725,7 +1724,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 throw kaput()
                         .put("blob is too large [blobSize=").put(blobSize)
                         .put(", maxBlobSize=").put(utf8Sink.getMaxBlobSize())
-                        .put(", columnIndex=").put(i)
+                        .put(", columnIndex=").put(columnIndex)
                         .put(']');
             }
         }
@@ -1742,8 +1741,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColInterval(PGResponseSink utf8Sink, Record record, int col) {
-        final Interval interval = record.getInterval(col);
+    private void outColInterval(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final Interval interval = record.getInterval(columnIndex);
         if (Interval.NULL.equals(interval)) {
             utf8Sink.setNullValue();
         } else {
@@ -1819,8 +1818,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtGeoByte(PGResponseSink utf8Sink, Record rec, int col, int bitFlags) {
-        outColTxtGeoHash(utf8Sink, rec.getGeoByte(col), bitFlags);
+    private void outColTxtGeoByte(PGResponseSink utf8Sink, Record rec, int columnIndex, int bitFlags) {
+        outColTxtGeoHash(utf8Sink, rec.getGeoByte(columnIndex), bitFlags);
     }
 
     private void outColTxtGeoHash(PGResponseSink utf8Sink, long value, int bitFlags) {
@@ -1837,16 +1836,16 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtGeoInt(PGResponseSink utf8Sink, Record rec, int col, int bitFlags) {
-        outColTxtGeoHash(utf8Sink, rec.getGeoInt(col), bitFlags);
+    private void outColTxtGeoInt(PGResponseSink utf8Sink, Record rec, int columnIndex, int bitFlags) {
+        outColTxtGeoHash(utf8Sink, rec.getGeoInt(columnIndex), bitFlags);
     }
 
-    private void outColTxtGeoLong(PGResponseSink utf8Sink, Record rec, int col, int bitFlags) {
-        outColTxtGeoHash(utf8Sink, rec.getGeoLong(col), bitFlags);
+    private void outColTxtGeoLong(PGResponseSink utf8Sink, Record rec, int columnIndex, int bitFlags) {
+        outColTxtGeoHash(utf8Sink, rec.getGeoLong(columnIndex), bitFlags);
     }
 
-    private void outColTxtGeoShort(PGResponseSink utf8Sink, Record rec, int col, int bitFlags) {
-        outColTxtGeoHash(utf8Sink, rec.getGeoShort(col), bitFlags);
+    private void outColTxtGeoShort(PGResponseSink utf8Sink, Record rec, int columnIndex, int bitFlags) {
+        outColTxtGeoHash(utf8Sink, rec.getGeoShort(columnIndex), bitFlags);
     }
 
     private void outColTxtIPv4(PGResponseSink utf8Sink, Record record, int columnIndex) {
@@ -1860,8 +1859,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtInt(PGResponseSink utf8Sink, Record record, int i) {
-        final int intValue = record.getInt(i);
+    private void outColTxtInt(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final int intValue = record.getInt(columnIndex);
         if (intValue != Numbers.INT_NULL) {
             final long a = utf8Sink.skipInt();
             utf8Sink.put(intValue);
@@ -1902,15 +1901,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.putLenEx(a);
     }
 
-    private void outColTxtTimestamp(PGResponseSink utf8Sink, Record record, int i) {
-        long a;
-        long longValue = record.getTimestamp(i);
-        if (longValue == Numbers.LONG_NULL) {
+    private void outColTxtTimestamp(PGResponseSink utf8Sink, Record record, int columnIndex, int timestampType) {
+        long offset;
+        long timestamp = record.getTimestamp(columnIndex);
+        if (timestamp == Numbers.LONG_NULL) {
             utf8Sink.setNullValue();
         } else {
-            a = utf8Sink.skipInt();
-            TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, EN_LOCALE, null, utf8Sink);
-            utf8Sink.putLenEx(a);
+            offset = utf8Sink.skipInt();
+            ColumnType.getTimestampDriver(timestampType).appendPGWireText(utf8Sink, timestamp);
+            utf8Sink.putLenEx(offset);
         }
     }
 
@@ -2107,11 +2106,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         try {
             while (outResendColumnIndex < columnCount) {
                 final int i = outResendColumnIndex;
-                final int type = pgResultSetColumnTypes.getQuick(2 * i);
-                final int typeTag = ColumnType.tagOf(type);
-                final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, type);
+                final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
+                final int columnTag = ColumnType.tagOf(columnType);
+                final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, columnType);
 
-                final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, typeTag);
+                final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, columnTag);
                 switch (tagWithFlag) {
                     case BINARY_TYPE_INT:
                         outColBinInt(utf8Sink, record, i);
@@ -2175,7 +2174,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         outColTxtFloat(utf8Sink, record, i);
                         break;
                     case ColumnType.TIMESTAMP:
-                        outColTxtTimestamp(utf8Sink, record, i);
+                        outColTxtTimestamp(utf8Sink, record, i, columnType);
                         break;
                     case ColumnType.DATE:
                         outColTxtDate(utf8Sink, record, i);

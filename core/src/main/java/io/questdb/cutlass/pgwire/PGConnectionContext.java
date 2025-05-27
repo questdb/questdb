@@ -104,7 +104,6 @@ import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
 import io.questdb.std.WeakMutableObjectPool;
 import io.questdb.std.WeakSelfReturningObjectPool;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StdoutSink;
@@ -951,9 +950,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final long offset = responseUtf8Sink.skip();
         responseUtf8Sink.putNetworkShort((short) columnCount);
         for (int i = 0; i < columnCount; i++) {
-            final int type = activeSelectColumnTypes.getQuick(2 * i);
-            final short columnBinaryFlag = getColumnBinaryFlag(type);
-            final int typeTag = ColumnType.tagOf(type);
+            final int columnType = activeSelectColumnTypes.getQuick(2 * i);
+            final short columnBinaryFlag = getColumnBinaryFlag(columnType);
+            final int typeTag = ColumnType.tagOf(columnType);
 
             final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, typeTag);
             switch (tagWithFlag) {
@@ -1015,7 +1014,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     appendFloatColumn(record, i);
                     break;
                 case ColumnType.TIMESTAMP:
-                    appendTimestampColumn(record, i);
+                    appendTimestampColumn(record, i, columnType);
                     break;
                 case ColumnType.DATE:
                     appendDateColumn(record, i);
@@ -1119,15 +1118,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void appendTimestampColumn(Record record, int i) {
-        long a;
-        long longValue = record.getTimestamp(i);
-        if (longValue == Numbers.LONG_NULL) {
+    private void appendTimestampColumn(Record record, int columnIndex, int timestampType) {
+        long offset;
+        long timestamp = record.getTimestamp(columnIndex);
+        if (timestamp == Numbers.LONG_NULL) {
             responseUtf8Sink.setNullValue();
         } else {
-            a = responseUtf8Sink.skip();
-            TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, EN_LOCALE, null, responseUtf8Sink);
-            responseUtf8Sink.putLenEx(a);
+            offset = responseUtf8Sink.skip();
+            ColumnType.getTimestampDriver(timestampType).appendPGWireText(responseUtf8Sink, timestamp);
+            responseUtf8Sink.putLenEx(offset);
         }
     }
 

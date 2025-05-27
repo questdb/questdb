@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -32,6 +34,12 @@ public interface TimestampDriver {
     void append(CharSink<?> sink, long timestamp);
 
     void append2(CharSink<?> sink, long timestamp);
+
+    void appendMem(CharSequence value, MemoryA mem);
+
+    void appendPGWireText(CharSink<?> sink, long timestamp);
+
+    long castStr(CharSequence value, int tupleIndex, short fromType, short toType);
 
     // todo: explore static ref
     boolean convertToVar(long fixedAddr, CharSink<?> stringSink);
@@ -43,6 +51,10 @@ public interface TimestampDriver {
     DateFormat getPartitionDirFormatMethod(int partitionBy);
 
     PartitionFloorMethod getPartitionFloorMethod(int partitionBy);
+
+    long parseAnyFormat(CharSequence token, int start, int len) throws NumericException;
+
+    long parseFloorPartialTimestamp(CharSequence token, int start, int len) throws NumericException;
 
     long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi);
 
