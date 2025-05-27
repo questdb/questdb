@@ -577,7 +577,7 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
         assertMemoryLeak(() -> {
             assertExceptionNoLeakCheck(
                     "select timestamp_floor('z', '2018-02-10T21:00:00.000000Z', null, '00:00', null)",
-                    -1,
+                    23,
                     "Invalid unit: z"
             );
         });

@@ -229,6 +229,13 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return this;
     }
 
+    public SqlException put(@Nullable CharSequence cs, int low, int high) {
+        if (cs != null) {
+            message.put(cs, low, high);
+        }
+        return this;
+    }
+
     public void setPosition(int position) {
         this.position = position;
     }
