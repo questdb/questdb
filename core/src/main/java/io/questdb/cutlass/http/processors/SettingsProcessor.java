@@ -145,6 +145,9 @@ public class SettingsProcessor implements HttpRequestHandler {
         public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
             try {
                 context.getSecurityContext().authorizeSettings();
+                if (serverConfiguration.getHttpServerConfiguration().isSettingsReadOnly()) {
+                    throw CairoException.nonCritical().put("settings is read-only");
+                }
                 settingsStore.save(transientState.utf8Sink, transientState.mode, parseVersion(transientState.utf16Sink));
                 sendOk();
             } catch (CairoException e) {
