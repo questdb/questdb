@@ -3991,7 +3991,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
             TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
-            int dot = Chars.indexOf(colMetadata.getColumnName(), '.');
+            int dot = Chars.indexOfLastUnquoted(colMetadata.getColumnName(), '.');
             if (dot > -1) { // remove inner table alias
                 selectMetadata.add(
                         new TableColumnMetadata(
@@ -6218,7 +6218,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (columnIndex > -1) {
                 filter.add(columnIndex + 1);
             } else {
-                int dot = Chars.indexOf(columnName, '.');
+                int dot = Chars.indexOfLastUnquoted(columnName, '.');
                 if (dot > -1) {
                     columnIndex = metadata.getColumnIndexQuiet(columnName, dot + 1, columnName.length());
                     if (columnIndex > -1) {

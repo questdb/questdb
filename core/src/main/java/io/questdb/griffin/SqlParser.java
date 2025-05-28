@@ -452,7 +452,7 @@ public class SqlParser {
     }
 
     private void assertNotDot(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (Chars.indexOfUnquoted(tok, '.') != -1) {
+        if (Chars.indexOfLastUnquoted(tok, '.') != -1) {
             throw SqlException.$(lexer.lastTokenPosition(), "'.' is not allowed here");
         }
     }
@@ -472,7 +472,7 @@ public class SqlParser {
         return SqlUtil.createColumnAlias(
                 characterStore,
                 unquote(token),
-                Chars.indexOfUnquoted(token, '.'),
+                Chars.indexOfLastUnquoted(token, '.'),
                 aliasToColumnMap,
                 type != ExpressionNode.LITERAL
         );
@@ -2283,7 +2283,7 @@ public class SqlParser {
     }
 
     private void parseHints(GenericLexer lexer, QueryModel model) {
-        CharSequence hintToken = null;
+        CharSequence hintToken;
         boolean parsingParams = false;
         CharSequence hintKey = null;
         CharacterStoreEntry hintValuesEntry = null;
@@ -3107,7 +3107,7 @@ public class SqlParser {
                     }
                     CharSequence alias;
 
-                    if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOfUnquoted(token, '.') != -1) {
+                    if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOfLastUnquoted(token, '.') != -1) {
                         alias = createConstColumnAlias(aliasMap);
                     } else {
                         CharSequence tokenAlias = qc.getAst().token;
@@ -3163,7 +3163,7 @@ public class SqlParser {
                     model.setNestedModel(parseWith(lexer, withClause, sqlParserCallback, model.getDecls()));
                     model.setAlias(literal(tableName, expr.position));
                 } else {
-                    int dot = Chars.indexOfUnquoted(tableName, '.');
+                    int dot = Chars.indexOfLastUnquoted(tableName, '.');
                     if (dot == -1) {
                         model.setTableNameExpr(literal(tableName, expr.position));
                     } else {

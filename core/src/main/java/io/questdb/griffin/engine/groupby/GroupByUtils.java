@@ -479,7 +479,7 @@ public class GroupByUtils {
             final ExpressionNode key = groupByColumns.getQuick(i);
             switch (key.type) {
                 case ExpressionNode.LITERAL:
-                    final int dotIndex = Chars.indexOf(key.token, '.');
+                    final int dotIndex = Chars.indexOfLastUnquoted(key.token, '.');
 
                     if (dotIndex > -1) {
                         int aliasIndex = model.getModelAliasIndex(key.token, 0, dotIndex);
