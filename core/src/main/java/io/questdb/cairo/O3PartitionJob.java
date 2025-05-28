@@ -794,7 +794,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
 
-                // Save inital overlap state, mergeType can be re-written in commit replace mode
+                // Save initial overlap state, mergeType can be re-written in commit replace mode
                 boolean overlaps = mergeType == O3_BLOCK_MERGE;
                 if (tableWriter.isCommitReplaceMode()) {
                     if (prefixHi < prefixLo) {

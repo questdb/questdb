@@ -5979,7 +5979,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (isCommitReplaceMode() && srcDataOldPartitionSize > 0 && srcDataNewPartitionSize < srcDataOldPartitionSize) {
                     if (!partitionMutates) {
                         // Replace resulted in trimming the partition.
-                        // Now trim the column tops so that don't exceed the partition size
+                        // Now trim the column tops so that they don't exceed the partition size
                         o3ConsumePartitionUpdateSink_trimPartitionColumnTops(partitionTimestamp, srcDataNewPartitionSize);
                     }
 
@@ -6087,7 +6087,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 columnVersionWriter.replaceInitialPartitionRecords(newLastPartitionTimestamp, newLastPartitionSize);
 
                                 // If a split partition is removed, it may leave the previous partition
-                                // with column top stiking out of the partition size.
+                                // with column top sticking out of the partition size.
                                 // This "sticking out" is not handled if it is the last partition.
                                 o3ConsumePartitionUpdateSink_trimPartitionColumnTops(newLastPartitionTimestamp, newLastPartitionSize);
                             } else {
@@ -8109,7 +8109,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         txWriter.setLagMaxTimestamp(replaceRangeTsHi);
                         this.dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
-                        // Wal column can are lazily mapped to improve performance. It works ok, except in this case
+                        // WAL columns are lazily mapped to improve performance. It works ok, except in this case
                         // where access getAddress() calls are concurrent. Map them eagerly now.
                         segmentFileCache.mmapWalColsEager();
 
