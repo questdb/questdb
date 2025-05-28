@@ -242,10 +242,10 @@ class TestRunner {
                                 return value => parseInt(value, 10);
                             }
 
-                            // Special handling for timestamps (oid=1114)
+                            // Special handling for timestamps (oid=1184)
                             // since the default parser returns them as Date objects
                             // and Date in Javascript has millisecond precision while our tests assert microsecond precision
-                            if (oid === 1114) {
+                            if (oid === 1184) {
                                 return value => {
                                     // Split on the decimal point if it exists
                                     const [dateTimePart, fractionPart = '000000'] = value.split('.');
