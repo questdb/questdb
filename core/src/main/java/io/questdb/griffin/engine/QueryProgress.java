@@ -224,20 +224,13 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             boolean jit
     ) {
         if (executionContext.shouldLogSql() && executionContext.getCairoEngine().getConfiguration().getLogSqlQueryProgressExe()) {
-            LogRecord logRecord = LOG.info();
-            try {
-                logRecord.$("exe")
-                        .$(" [id=").$(sqlId)
-                        .$(", sql=`").utf8(sqlText).$('`');
-
-                executionContext.logAdditionalContext(logRecord);
-                logRecord.$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
-                        .$(", cache=").$(executionContext.isCacheHit())
-                        .$(", jit=").$(jit)
-                        .$(']');
-            } finally {
-                logRecord.$();
-            }
+            LOG.info()
+                    .$("exe")
+                    .$(" [id=").$(sqlId)
+                    .$(", sql=`").utf8(sqlText)
+                    .$("`, ").$(executionContext)
+                    .$(", jit=").$(jit)
+                    .I$();
         }
     }
 

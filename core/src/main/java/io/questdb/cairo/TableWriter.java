@@ -264,7 +264,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long committedMasterRef;
     private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
-    private byte dedupMode;
+    private byte dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
     private String designatedTimestampColumnName;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
@@ -1002,9 +1002,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // Set txn number in the column version file to mark the transaction where the column is added
             long firstPartitionTsm = columnVersionWriter.getColumnTopPartitionTimestamp(existingColIndex);
-//            if (firstPartitionTsm == Long.MIN_VALUE && txWriter.getPartitionCount() > 0) {
-//                firstPartitionTsm = txWriter.getPartitionTimestampByIndex(0);
-//            }
             columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, firstPartitionTsm);
 
             if (ColumnType.isSymbol(newType)) {
@@ -1995,7 +1992,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", table=").utf8(tableToken.getTableName())
                     .$(", column=").utf8(columnName)
                     .I$();
+        } catch (CairoException e) {
+            // LOG original exception detail
+            LOG.critical().$("exception on index drop [txn=").$(txWriter.getTxn())
+                    .$(", table=").utf8(tableToken.getTableName())
+                    .$(", column=").utf8(columnName)
+                    .$(", errno=").$(e.errno)
+                    .$(", error=").$((Throwable) e).I$();
+
+            throw CairoException.critical(e.errno)
+                    .put("cannot remove index for [txn=").put(txWriter.getTxn())
+                    .put(", table=").put(tableToken.getTableName())
+                    .put(", column=").put(columnName)
+                    .put("]: ").put(e.getMessage());
         } catch (Throwable e) {
+            // LOG original exception detail
+            LOG.critical().$("exception on index drop [txn=").$(txWriter.getTxn())
+                    .$(", table=").utf8(tableToken.getTableName())
+                    .$(", column=").utf8(columnName)
+                    .$(", error=").$(e).I$();
+
             throw CairoException.critical(0)
                     .put("cannot remove index for [txn=").put(txWriter.getTxn())
                     .put(", table=").put(tableToken.getTableName())
@@ -6150,11 +6166,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 partitionTimestampHi = Long.MIN_VALUE;
                 lastPartitionTimestamp = Long.MIN_VALUE;
 
-                // Schedule removal of all partitions
                 rowAction = ROW_ACTION_OPEN_PARTITION;
-
                 txWriter.resetTimestamp();
-                txWriter.setLagRowCount(0);
 
                 columnVersionWriter.truncate();
                 txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
@@ -6873,7 +6886,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final MemoryR oooMem2 = o3Columns.getQuick(colOffset + 1);
                             final MemoryMA mem1 = columns.getQuick(colOffset);
                             final MemoryMA mem2 = columns.getQuick(colOffset + 1);
-//                            final long srcDataTop = Math.min(getColumnTop(i), srcDataMax);
                             final long srcDataTop = getColumnTop(i);
                             final long srcOooFixAddr;
                             final long srcOooVarAddr;
@@ -6938,6 +6950,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         long o3TimestampLo, o3TimestampHi;
                         if (isCommitReplaceMode()) {
+                            if (isParquet) {
+                                // Parquet partitions do not support replace commits feature yet
+                                o3PartitionUpdRemaining.decrementAndGet();
+                                latchCount--;
+                                pressureControl.updateInflightPartitions(--inflightPartitions);
+                                throw CairoException.critical(0)
+                                        .put("commit replace mode is not supported for Parquet partitions [table=").put(getTableToken().getTableName())
+                                        .put(", partition=").ts(partitionTimestamp).put(']');
+                            }
                             o3TimestampLo = (partitionTimestamp == minO3PartitionTimestamp) ? o3TimestampMin : partitionTimestamp;
                             o3TimestampHi = (partitionTimestamp == maxO3PartitionTimestamp) ? o3TimestampMax :
                                     txWriter.getNextPartitionTimestamp(partitionTimestamp) - 1;
@@ -6990,7 +7011,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 this.txWriter.updateMaxTimestamp(replaceMaxTimestamp);
             }
         } catch (Throwable th) {
-            LOG.error().$(th).$();
+            LOG.error().$("failed to commit data block [table=").$(tableToken).$(", error=").$(th).I$();
             throw th;
         } finally {
             // we are stealing work here it is possible we get exception from this method
@@ -8107,7 +8128,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         txWriter.setLagMinTimestamp(replaceRangeTsLow);
                         txWriter.setLagMaxTimestamp(replaceRangeTsHi);
-                        this.dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
                         // WAL columns are lazily mapped to improve performance. It works ok, except in this case
                         // where access getAddress() calls are concurrent. Map them eagerly now.

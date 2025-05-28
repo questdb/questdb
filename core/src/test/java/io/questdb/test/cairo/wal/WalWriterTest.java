@@ -729,6 +729,24 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            TableToken tableToken = createTable(testName.getMethodName());
+            execute("ALTER TABLE " + tableName + " ADD COLUMN sym SYMBOL INDEX");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym DROP INDEX");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN SYM DROP INDEX");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN SYM Add INDEX");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym DROP INDEX");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN SYm DROP INDEX");
+
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+        });
+    }
+
+    @Test
     public void testAddingDuplicateColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();

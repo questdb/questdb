@@ -824,12 +824,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 if (tableWriter.isCommitReplaceMode()) {
+
+                    if (mergeType == O3_BLOCK_MERGE) {
+                        // When replace range deduplication mode is enabled, we need to take into the merge
+                        // prefix and suffix it's O3 type.
+                        newPartitionSize -= mergeDataHi - mergeDataLo + 1;
+                        srcDataNewPartitionSize -= mergeDataHi - mergeDataLo + 1;
+                    }
+
                     if (srcOooLo <= srcOooHi) {
                         if (mergeType == O3_BLOCK_MERGE) {
-                            // When replace range deduplication mode is enabled, we need to take into the merge
-                            // prefix and suffix it's O3 type.
-                            newPartitionSize -= mergeDataHi - mergeDataLo + 1;
-                            srcDataNewPartitionSize -= mergeDataHi - mergeDataLo + 1;
 
                             if (prefixType == O3_BLOCK_O3) {
                                 prefixHi = mergeO3Hi;
@@ -851,12 +855,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // srcOooLo > srcOooHi means that O3 data is empty
                         if (prefixType == O3_BLOCK_O3) {
                             prefixType = O3_BLOCK_NONE;
-                        }
-
-                        if (mergeType == O3_BLOCK_MERGE) {
-                            // Data merge range is going to be replaced. Adjust partition row counts
-                            newPartitionSize -= mergeDataHi - mergeDataLo + 1;
-                            srcDataNewPartitionSize -= mergeDataHi - mergeDataLo + 1;
                         }
 
                         // srcOooLo > srcOooHi means that O3 data is empty
@@ -898,14 +896,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             }
 
                             // The number of rows in the partition is lower.
-                            // We cannot simply trim partition to lower row numbers
-                            // because next commit can start overwriting the tail of the partition
+                            // We cannot simply trim the partition to lower row numbers
+                            // because the next commit can start overwriting the tail of the partition
                             // while there can be old readers that still read the data
-                            // Proceed with another copy of the partition
-                            // TODO: it is possible to optimise this case by trimming the partition and
-                            // leaving a flag that this partition cannot be appended, so that instead
-                            // it is forced to split or split 1 line from this partition instead of trimming the row number
-
+                            // Proceed with another copy of the partition, but instead of
+                            // copying, spit the last line into the suffix so that if it's economical
+                            // to split the partition, it will be split.
                             // Split the last line of the partition
                             if (prefixHi > prefixLo) {
                                 suffixHi = suffixLo = prefixHi;

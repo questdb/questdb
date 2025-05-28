@@ -166,6 +166,25 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceRangeNotSupportedParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
+
+            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET LIST '2022-02-24'");
+            drainWalQueue();
+
+            insertRowsWithRangeReplace(tableToken, new Utf8StringSink(), "2022-02-24T17", "2022-02-14T17", "2022-02-25T18", true);
+            drainWalQueue();
+
+            Assert.assertTrue("table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+        });
+    }
+
+
+    @Test
     public void testReplaceRangeDeletesMidFirstPartition() throws Exception {
         testReplaceRangeCommit(null, "2022-02-24T18:30", "2022-02-24T20:59:31", false, false);
     }
