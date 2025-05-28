@@ -585,9 +585,14 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                 execute(
                         main1,
-                        "create materialized view price_1h refresh start '" + startStr + "' every 1h as (" +
-                                "select sym, last(price) as price, ts from base_price sample by 1h" +
-                                ") partition by DAY"
+                        "create materialized view price_1h as " +
+                                "select sym, last(price) as price, ts from base_price sample by 1h"
+                );
+
+                execute(
+                        main1,
+                        "create materialized view price_1h_t refresh start '" + startStr + "' every 1h as " +
+                                "select sym, last(price) as price, ts from base_price sample by 1h"
                 );
 
                 execute(
@@ -599,6 +604,14 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
 
                 try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+
+                    assertSql(
+                            main1,
+                            firstExpected,
+                            "price_1h order by ts, sym"
+                    );
+
                     MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
                     drainMatViewTimerQueue(timerJob);
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
@@ -606,7 +619,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     assertSql(
                             main1,
                             firstExpected,
-                            "price_1h order by ts, sym"
+                            "price_1h_t order by ts, sym"
                     );
                 }
             }
@@ -615,6 +628,12 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
                 assertSql(main2, firstExpected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
                 assertSql(main2, firstExpected, "price_1h order by ts, sym");
+                assertSql(main2, firstExpected, "price_1h_t order by ts, sym");
+
+                final String secondExpected = "sym\tprice\tts\n" +
+                        "gbpusd\t1.333\t2024-09-10T12:00:00.000000Z\n" +
+                        "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                        "gbpusd\t1.444\t2024-09-10T13:00:00.000000Z\n";
 
                 execute(
                         main2,
@@ -622,17 +641,16 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ",('gbpusd', 1.444, '2024-09-10T13:03')"
                 );
 
+                drainWalAndMatViewQueues(main2.getEngine());
+
+                assertSql(main2, secondExpected, "price_1h order by ts, sym");
+
                 MatViewTimerJob timerJob = new MatViewTimerJob(main2.getEngine());
                 drainMatViewTimerQueue(timerJob);
                 drainWalAndMatViewQueues(main2.getEngine());
 
-                final String secondExpected = "sym\tprice\tts\n" +
-                        "gbpusd\t1.333\t2024-09-10T12:00:00.000000Z\n" +
-                        "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                        "gbpusd\t1.444\t2024-09-10T13:00:00.000000Z\n";
-
                 assertSql(main2, secondExpected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
-                assertSql(main2, secondExpected, "price_1h order by ts, sym");
+                assertSql(main2, secondExpected, "price_1h_t order by ts, sym");
             }
         });
     }

@@ -322,6 +322,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_INVALIDATION_REASON:
                             return invalidationReason.length() > 0 ? invalidationReason : null;
                         case COLUMN_REFRESH_LIMIT_UNIT:
+                            if (refreshLimitHoursOrMonths == 0) {
+                                return null;
+                            }
                             return TablesFunctionFactory.getTtlUnit(refreshLimitHoursOrMonths);
                         case COLUMN_TIMER_INTERVAL_UNIT:
                             return getTimerIntervalUnit(timerIntervalUnit);

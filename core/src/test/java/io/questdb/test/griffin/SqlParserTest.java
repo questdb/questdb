@@ -1867,7 +1867,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW myview REFRESH START '2010-01-01' EVERY 42U",
                 65,
-                "unsupported interval unit: U"
+                "unsupported interval unit: U, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
         );
     }
 
@@ -1885,7 +1885,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL START '2010-01-01' EVERY 2T;",
                 77,
-                "unsupported interval unit: T"
+                "unsupported interval unit: T, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
         );
     }
 
@@ -1894,7 +1894,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL EVERY 2T;",
                 58,
-                "unsupported interval unit: T"
+                "unsupported interval unit: T, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
         );
     }
 
@@ -1903,7 +1903,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL START '2010-01-01' EVERY 1s;",
                 77,
-                "unsupported interval unit: s"
+                "unsupported interval unit: s, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
         );
     }
 
@@ -1912,7 +1912,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL EVERY 1s;",
                 58,
-                "unsupported interval unit: s"
+                "unsupported interval unit: s, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
         );
     }
 
@@ -1921,7 +1921,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW myview REFRESH EVERY 1s;",
                 46,
-                "unsupported interval unit: s"
+                "unsupported interval unit: s, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
         );
     }
 
