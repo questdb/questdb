@@ -262,7 +262,7 @@ public class FuzzRunner {
                     int size = transaction.operationList.size();
                     for (int operationIndex = 0; operationIndex < size; operationIndex++) {
                         FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                        // Non-wal table don't support replace range commits
+                        // Non-wal tables don't support replace range commits
                         // we simulate it by excluding from the commit all the rows that will be replaced
                         // in the future commits.
                         operation.apply(rnd, engine, writerCopy, -1, transaction.getNoCommitIntervals());

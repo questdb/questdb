@@ -311,7 +311,7 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public void commit() {
         // plain old commit
-        commit0(Long.MIN_VALUE, Long.MIN_VALUE, 0, 0, WAL_DEDUP_MODE_DEFAULT);
+        commit0(WAL_DEFAULT_BASE_TABLE_TXN, WAL_DEFAULT_LAT_REFRESH_TIMESTAMP, 0, 0, WAL_DEDUP_MODE_DEFAULT);
     }
 
     /**
@@ -320,37 +320,18 @@ public class WalWriter implements TableWriterAPI {
      *
      * @param lastRefreshBaseTxn   the base table seqTxn the mat view is refreshed at
      * @param lastRefreshTimestamp the wall clock timestamp when the refresh is done
-     */
-    public void commitMatView(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
-        assert lastRefreshBaseTxn != Numbers.LONG_NULL;
-        if (!(lastReplaceRangeLowTs == 0 && lastReplaceRangeHiTs == 0)) {
-            assert lastReplaceRangeLowTs < lastReplaceRangeHiTs;
-            assert txnMinTimestamp >= lastReplaceRangeLowTs;
-            assert txnMaxTimestamp <= lastReplaceRangeHiTs;
-        }
-        commit0(lastRefreshBaseTxn, lastRefreshTimestamp, 0, 0, WAL_DEDUP_MODE_DEFAULT);
-    }
-
-    /**
-     * Commit the materialized view to update last refresh timestamp and refresh ranges.
-     *
-     * @param lastRefreshBaseTxn    the base table seqTxn the mat view is refreshed at
-     * @param lastRefreshTimestamp  the wall clock timestamp when the refresh is done
      * @param lastReplaceRangeLowTs the low timestamp of the range to be replaced, inclusive
      * @param lastReplaceRangeHiTs  the high timestamp of the range to be replaced, exclusive
      */
     public void commitMatView(long lastRefreshBaseTxn, long lastRefreshTimestamp, long lastReplaceRangeLowTs, long lastReplaceRangeHiTs) {
-        assert lastRefreshBaseTxn != Numbers.LONG_NULL;
-        if (!(lastReplaceRangeLowTs == 0 && lastReplaceRangeHiTs == 0)) {
-            assert lastReplaceRangeLowTs < lastReplaceRangeHiTs;
-            assert txnMinTimestamp >= lastReplaceRangeLowTs;
-            assert txnMaxTimestamp <= lastReplaceRangeHiTs;
-        }
+        assert lastReplaceRangeLowTs < lastReplaceRangeHiTs;
+        assert txnMinTimestamp >= lastReplaceRangeLowTs;
+        assert txnMaxTimestamp <= lastReplaceRangeHiTs;
         commit0(lastRefreshBaseTxn, lastRefreshTimestamp, lastReplaceRangeLowTs, lastReplaceRangeHiTs, WAL_DEDUP_MODE_REPLACE_RANGE);
     }
 
     public void commitWithParams(long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
-        commit0(Long.MIN_VALUE, Long.MIN_VALUE, replaceRangeLowTs, replaceRangeHiTs, dedupMode);
+        commit0(WAL_DEFAULT_BASE_TABLE_TXN, WAL_DEFAULT_LAT_REFRESH_TIMESTAMP, replaceRangeLowTs, replaceRangeHiTs, dedupMode);
     }
 
     public void doClose(boolean truncate) {

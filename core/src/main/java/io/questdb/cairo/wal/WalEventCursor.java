@@ -363,7 +363,7 @@ public class WalEventCursor {
 
 
             // Read the footer that may contains replace range timestamps and dedup mode
-            // The footer may not be present in old WAL files
+            // The footer is not written when the dedup mode is default
             // Format:
             // [replaceRangeTsLow:long, replaceRangeTsHi:long, dedupMode:byte]
             // Length of this footer is 2 * Long.BYTES + Byte.BYTES
@@ -376,11 +376,8 @@ public class WalEventCursor {
                 // But it can be still populated with symbol map values instead of the footer.
                 // Check that the last symbol map diff entry contains the END of symbol diffs marker
 
-                int symbolColIndex = eventMem.getInt(offset);
-                if (symbolColIndex != SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
-                    // Read column index before the footer
-                    symbolColIndex = eventMem.getInt(nextOffset - (Integer.BYTES + 2 * Long.BYTES + Byte.BYTES));
-                }
+                // Read column index before the footer
+                int symbolColIndex = eventMem.getInt(nextOffset - (Integer.BYTES + 2 * Long.BYTES + Byte.BYTES));
 
                 if (symbolColIndex == SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
                     dedupMode = eventMem.getByte(nextOffset - Byte.BYTES);

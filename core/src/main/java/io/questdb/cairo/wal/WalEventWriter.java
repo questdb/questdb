@@ -151,10 +151,10 @@ class WalEventWriter implements Closeable {
         writeSymbolMapDiffs();
 
         if (dedupMode != WAL_DEDUP_MODE_DEFAULT) {
-            // To test backwards compatibility and esure that we still can read WALs
+            // To test backwards compatibility and ensure that we still can read WALs
             // written by the old QuestDB version, make the dedup mode
-            // and replace range value optional. It will then not be written for the most transactions
-            // and it will test the reading WAL-E code to handle that case.
+            // and replace range value optional. It will then not be written for the most transactions,
+            // and it will test the reading WAL-E code to read the old format.
             eventMem.putLong(replaceRangeLowTs);
             eventMem.putLong(replaceRangeHiTs);
             eventMem.putByte(dedupMode);
@@ -316,7 +316,7 @@ class WalEventWriter implements Closeable {
             long replaceRangeHiTs,
             byte dedupMode
     ) {
-        byte msgType = lastRefreshBaseTxn != Numbers.LONG_NULL ? WalTxnType.MAT_VIEW_DATA : WalTxnType.DATA;
+        byte msgType = lastRefreshBaseTxn != WAL_DEFAULT_BASE_TABLE_TXN ? WalTxnType.MAT_VIEW_DATA : WalTxnType.DATA;
         return appendData(
                 msgType,
                 startRowID,
