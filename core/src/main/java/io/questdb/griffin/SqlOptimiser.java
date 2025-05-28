@@ -6831,6 +6831,7 @@ public class SqlOptimiser implements Mutable {
         validateUpdateColumns(updateQueryModel, metadata, sqlExecutionContext);
     }
 
+
     /**
      * Rewrite PIVOT statements.
      * <p>
@@ -6916,43 +6917,89 @@ public class SqlOptimiser implements Mutable {
                 model.addGroupBy(groupByModel.getGroupBy().getQuick(i));
             }
 
+
+            ExpressionNode forInExpr = null;
+
             // copy pivot for expressions into group by and where filter
-            for (int i = 0, n = nested.getPivotFor().size(); i < n; i++) {
-                ExpressionNode forExpr = nested.getPivotFor().getQuick(i);
-                ExpressionNode groupByName = rewritePivotGetAppropriateNameFromInExpr(forExpr);
+            for (int j = 0, n = nested.getPivotFor().size(); j < n; j++) {
+                QueryColumn forColumn = nested.getPivotFor().getQuick(j);
+                ExpressionNode forExpr = forColumn.getAst();
 
-                groupByModel.addGroupBy(groupByName);
+                if (forExpr.type == LITERAL) {
 
-                assert groupByName != null;
+                    if (forInExpr != null) {
+                        // sublist is full
+                        int size = forInExpr.args.size();
+                        if (size >= 2) {
+                            forInExpr.args.reverse();
+                            forInExpr.args.add(forInExpr.lhs);
+                            forInExpr.lhs = null;
+                            forInExpr.paramCount = forInExpr.args.size();
+                        } else {
+                            forInExpr.rhs = forInExpr.args.getLast();
+                            forInExpr.paramCount = 2;
+                            forInExpr.args.clear();
+                        }
 
-                if (!groupByModel.getAliasToColumnMap().contains(groupByName.token)) {
-                    // add to select
-                    groupByModel.addBottomUpColumn(queryColumnPool.next().of(
-                            groupByName.token,
-                            groupByName
-                    ));
+                        // add to where clause
+                        if (nested.getWhereClause() == null) {
+                            nested.setWhereClause(forInExpr);
+                        } else {
+                            nested.setWhereClause(rewritePivotMakeBinaryExpression(nested.getWhereClause(), forInExpr, "and", opAnd));
+                        }
+                    }
+
+                    ExpressionNode groupByName =
+                            expressionNodePool.next().of(LITERAL, forColumn.getName(), 0, forColumn.getAst().position);
+
+                    groupByModel.addGroupBy(groupByName);
+
+                    assert groupByName != null;
+
+                    if (!groupByModel.getAliasToColumnMap().contains(groupByName.token)) {
+                        // add to select
+                        groupByModel.addBottomUpColumn(queryColumnPool.next().of(
+                                groupByName.token,
+                                groupByName
+                        ));
+                    }
+
+
+                    forInExpr = expressionNodePool.next().of(FUNCTION, "in", 0, forColumn.getAst().position);
+                    forInExpr.lhs = forColumn.getAst();
+
+                    // start accumulating list
+                    continue;
+                }
+
+                if (forInExpr != null) {
+                    // accumulating sublist
+                    assert forExpr.type != LITERAL;
+                    forInExpr.args.add(forExpr);
+                }
+            }
+
+            if (forInExpr != null) {
+                // sublist is full
+                int size = forInExpr.args.size();
+                if (size >= 2) {
+                    forInExpr.args.reverse();
+                    forInExpr.args.add(forInExpr.lhs);
+                    forInExpr.lhs = null;
+                    forInExpr.paramCount = forInExpr.args.size();
+                } else {
+                    forInExpr.rhs = forInExpr.args.getLast();
+                    forInExpr.paramCount = 2;
+                    forInExpr.args.clear();
                 }
 
                 // add to where clause
                 if (nested.getWhereClause() == null) {
-                    nested.setWhereClause(forExpr);
+                    nested.setWhereClause(forInExpr);
                 } else {
-                    rewritePivotMakeBinaryExpression(nested.getWhereClause(), forExpr, "and", opAnd);
+                    nested.setWhereClause(rewritePivotMakeBinaryExpression(nested.getWhereClause(), forInExpr, "and", opAnd));
                 }
             }
-
-
-            // naming rules
-            // 0. the alias provided by the user
-            // 1. Named after the column values
-            // i.e. 2000, 2010, 2020
-            // 2. Suffixed with aggregate columns, if multiple
-            // i.e 2000_sum, 2000_first
-            // 3. Suffixed with the parameter inside if multiple
-            // i.e. 2000_price, 2000_amount
-            // 4. suffixed with both if multiple
-            // i.e. 2000_sum_price, 2000_first_amount
-
 
             rewritePivotGenerateAliases(model);
             // add group by columns
@@ -6988,25 +7035,53 @@ public class SqlOptimiser implements Mutable {
             // FOR year in (2000, 2010, 2020)
             //     country in ('NL, 'US')
             // should give 6 columns.
-            int pivotForSize = nested.getPivotFor().size();
-            IntList forMaxes = intListPool.next().thenCheckCapacity(pivotForSize);
-            IntList forDepths = intListPool.next().thenCheckCapacity(pivotForSize);
+
+            IntList forMaxes = intListPool.next();
+            IntList forDepths = intListPool.next();
+
+            int pivotForSize = 0;
+
+            ObjList<ExpressionNode> pivotForNames = new ObjList<>();
 
             int expectedPivotColumnsPerAggregateFunction = 0;
-            for (int i = 0; i < pivotForSize; i++) {
-                // initialise depth to 0
-                forDepths.add(0);
+            for (int j = 0, n = nested.getPivotFor().size(); j < n; j++) {
+                ExpressionNode forExpr = nested.getPivotFor().getQuick(j).getAst();
 
-                // find max value
-                ExpressionNode for_ = nested.getPivotFor().get(i);
-                int numInArgs = for_.paramCount - 1; // skip the LHS of the IN expr
-                int maxIndex = numInArgs - 1; // index is 1 less than list length
+                if (forExpr.type != LITERAL) {
+                    throw SqlException.$(forExpr.position, "unexpected expression");
+                }
+
+                pivotForSize++;
+                pivotForNames.add(forExpr);
+                // initialise depth to 0
+                j++;
+                forDepths.add(j);
+
+                int start = j;
+                while (j < n) {
+                    ExpressionNode arg = nested.getPivotFor().getQuick(j).getAst();
+                    if (arg.type == LITERAL) {
+                        j--;
+                        break;
+                    }
+                    if (j + 1 >= n) {
+                        break;
+                    }
+                    j++;
+                }
+
+                int numInArgs = j + 1 - start;
+                int maxIndex = j;
+
                 forMaxes.add(maxIndex);
                 expectedPivotColumnsPerAggregateFunction = expectedPivotColumnsPerAggregateFunction == 0
                         ? numInArgs
                         : expectedPivotColumnsPerAggregateFunction * numInArgs;
+
             }
 
+            IntList forDepthsBackup = intListPool.next().thenCheckCapacity(forDepths.capacity());
+            forDepthsBackup.addAll(forDepths);
 
             boolean duplicateAggregateFunctions = false;
 
@@ -7041,26 +7116,27 @@ public class SqlOptimiser implements Mutable {
                     CharSequence pivotDefaultValue = "null";
 
                     ExpressionNode caseValue = null;
-                    ExpressionNode inValue = null;
-                    ExpressionNode forInExpr = null;
+                    QueryColumn inValue = null;
+                    ExpressionNode forName = null;
 
                     CharacterStoreEntry nameSink = characterStore.newEntry();
 
                     // for each forValue combination
                     for (int k = 0; k < pivotForSize; k++) {
                         // build name
-                        forInExpr = nested.getPivotFor().getQuick(k);
+                        forName = pivotForNames.getQuick(k);
 
                         // select with the args in the IN list is relevant
-                        inValue = rewritePivotGetAppropriateArgFromInExpr(forInExpr, forMaxes.get(k) - forDepths.get(k));
+                        inValue = nested.getPivotFor().getQuick(forDepths.get(k));
+//                        inValue = rewritePivotGetAppropriateArgFromInExpr(forInExpr, j + forMaxes.get(k) - forDepths.get(k));
 
                         assert inValue != null;
 
                         // start building the name
-                        nameSink.put(GenericLexer.unquote(inValue.token)).put('_');
+                        nameSink.put(GenericLexer.unquote(inValue.getName())).put('_');
 
                         // build AND expr
-                        ExpressionNode caseClause = rewritePivotMakeBinaryExpression(rewritePivotGetAppropriateNameFromInExpr(forInExpr), inValue, "=", opEq);
+                        ExpressionNode caseClause = rewritePivotMakeBinaryExpression(forName, inValue.getAst(), "=", opEq);
 
                         if (caseValue == null) {
                             caseValue = caseClause;
@@ -7142,8 +7218,8 @@ public class SqlOptimiser implements Mutable {
 
                     // case
                     if (pivotForSize == 1) {
-                        caseExpr.args.add(inValue);
-                        caseExpr.args.add(rewritePivotGetAppropriateNameFromInExpr(forInExpr));
+                        caseExpr.args.add(inValue.getAst());
+                        caseExpr.args.add(forName);
                     } else {
                         // A == B AND C == D etc.
                         caseExpr.args.add(caseValue);
@@ -7168,13 +7244,14 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     if (depth == max) {
-                        forDepths.setQuick(z, 0);
+                        forDepths.setQuick(z, forDepthsBackup.getQuick(z));
                     }
                 }
             }
 
             intListPool.release(forMaxes);
             intListPool.release(forDepths);
+            intListPool.release(forDepthsBackup);
 
             // build the tree - model -> bonusModel -> groupByModel -> nested
             model.getNestedModel().clearPivot();

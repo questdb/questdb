@@ -211,7 +211,6 @@ public class PivotTest extends AbstractSqlParserTest {
                         "                    Frame forward scan on: trades\n");
     }
 
-
     @Test
     public void testPivotDefaultNamingRules2() throws Exception {
         assertQueryAndPlan(
@@ -335,7 +334,6 @@ public class PivotTest extends AbstractSqlParserTest {
                         "            Row forward scan\n" +
                         "            Frame forward scan on: cities\n");
     }
-
 
     @Test
     public void testPivotImplicitGroupByWithOrderBy() throws Exception {
@@ -466,6 +464,38 @@ public class PivotTest extends AbstractSqlParserTest {
                         "      keys: [country,name,year]\n" +
                         "      values: [sum(population)]\n" +
                         "      filter: (population%2=0 and year in [2000,2010,2020])\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: cities\n");
+    }
+
+    @Test
+    public void testPivotWithForAliases() throws Exception {
+        assertQueryAndPlan(
+                "country\tD1\tD2\tD3\n",
+                "cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population)\n" +
+                        "    FOR\n" +
+                        "        year IN (2000 as D1, 2010 D2, 2020 as D3)\n" +
+                        "    GROUP BY country\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "country\tD1\tD2\tD3\n" +
+                        "NL\t1005\t1065\t1158\n" +
+                        "US\t8579\t8783\t9510\n",
+                true,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  keys: [country]\n" +
+                        "  values: [sum(case([SUM,nullL,year])),sum(case([SUM,nullL,year])),sum(case([SUM,nullL,year]))]\n" +
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [country,year]\n" +
+                        "      values: [sum(population)]\n" +
+                        "      filter: year in [2000,2010,2020]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: cities\n");
@@ -674,10 +704,45 @@ public class PivotTest extends AbstractSqlParserTest {
                 "GroupBy vectorized: false\n" +
                         "  keys: [name]\n" +
                         "  values: [sum(case([(year=2000 and country='NL'),total,null])),sum(case([(year=2000 and country='NL'),count,0])),sum(case([(year=2000 and country='US'),total,null])),sum(case([(year=2000 and country='US'),count,0])),sum(case([(year=2010 and country='NL'),total,null])),sum(case([(year=2010 and country='NL'),count,0])),sum(case([(year=2010 and country='US'),total,null])),sum(case([(year=2010 and country='US'),count,0]))]\n" +
-                        "    Async JIT Group By workers: 1\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [name,year,country]\n" +
                         "      values: [sum(population),count(population)]\n" +
-                        "      filter: year in [2000,2010]\n" +
+                        "      filter: (year in [2000,2010] and country in [NL,US])\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: cities\n");
+    }
+
+    @Test
+    public void testPivotWithMultipleAliasedAggregatesExplicitGroupByWithForAliases() throws Exception {
+        assertQueryAndPlan(
+                "name\t2K00_Netherlands_total\t2K00_Netherlands_count\t2K00_United States_total\t2K00_United States_count\t2K10_Netherlands_total\t2K10_Netherlands_count\t2K10_United States_total\t2K10_United States_count\n",
+                "cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population) as total,\n" +
+                        "    COUNT(population) as count\n" +
+                        "    FOR\n" +
+                        "        year IN (2000 AS '2K00', 2010 AS '2K10')\n" +
+                        "        country IN ('NL' AS Netherlands, 'US' AS 'United States')\n" +
+                        "    GROUP BY name\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "name\t2K00_Netherlands_total\t2K00_Netherlands_count\t2K00_United States_total\t2K00_United States_count\t2K10_Netherlands_total\t2K10_Netherlands_count\t2K10_United States_total\t2K10_United States_count\n" +
+                        "Amsterdam\t1005\t1\tnull\t0\t1065\t1\tnull\t0\n" +
+                        "Seattle\tnull\t0\t564\t1\tnull\t0\t608\t1\n" +
+                        "New York City\tnull\t0\t8015\t1\tnull\t0\t8175\t1\n",
+                true,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  keys: [name]\n" +
+                        "  values: [sum(case([(year=2000 and country='NL'),total,null])),sum(case([(year=2000 and country='NL'),count,0])),sum(case([(year=2000 and country='US'),total,null])),sum(case([(year=2000 and country='US'),count,0])),sum(case([(year=2010 and country='NL'),total,null])),sum(case([(year=2010 and country='NL'),count,0])),sum(case([(year=2010 and country='US'),total,null])),sum(case([(year=2010 and country='US'),count,0]))]\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [name,year,country]\n" +
+                        "      values: [sum(population),count(population)]\n" +
+                        "      filter: (year in [2000,2010] and country in [NL,US])\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: cities\n");
@@ -706,10 +771,10 @@ public class PivotTest extends AbstractSqlParserTest {
                 false,
                 "GroupBy vectorized: false\n" +
                         "  values: [sum(case([(year=2000 and country='NL'),total,null])),sum(case([(year=2000 and country='NL'),count,0])),sum(case([(year=2000 and country='US'),total,null])),sum(case([(year=2000 and country='US'),count,0])),sum(case([(year=2010 and country='NL'),total,null])),sum(case([(year=2010 and country='NL'),count,0])),sum(case([(year=2010 and country='US'),total,null])),sum(case([(year=2010 and country='US'),count,0]))]\n" +
-                        "    Async JIT Group By workers: 1\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [year,country]\n" +
                         "      values: [sum(population),count(population)]\n" +
-                        "      filter: year in [2000,2010]\n" +
+                        "      filter: (year in [2000,2010] and country in [NL,US])\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: cities\n");
@@ -739,10 +804,10 @@ public class PivotTest extends AbstractSqlParserTest {
                 "GroupBy vectorized: false\n" +
                         "  keys: [name]\n" +
                         "  values: [sum(case([(year=2000 and country='NL'),SUM,null])),sum(case([(year=2000 and country='US'),SUM,null])),sum(case([(year=2010 and country='NL'),SUM,null])),sum(case([(year=2010 and country='US'),SUM,null])),sum(case([(year=2020 and country='NL'),SUM,null])),sum(case([(year=2020 and country='US'),SUM,null]))]\n" +
-                        "    Async JIT Group By workers: 1\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [name,year,country]\n" +
                         "      values: [sum(population)]\n" +
-                        "      filter: year in [2000,2010,2020]\n" +
+                        "      filter: (year in [2000,2010,2020] and country in [NL,US])\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: cities\n"
@@ -773,10 +838,10 @@ public class PivotTest extends AbstractSqlParserTest {
                 false,
                 "GroupBy vectorized: false\n" +
                         "  values: [sum(case([(year=2000 and name='Amsterdam' and country='NL'),SUM,null])),sum(case([(year=2000 and name='Amsterdam' and country='NL'),COUNT,0])),sum(case([(year=2000 and name='Amsterdam' and country='US'),SUM,null])),sum(case([(year=2000 and name='Amsterdam' and country='US'),COUNT,0])),sum(case([(year=2000 and name='Seattle' and country='NL'),SUM,null])),sum(case([(year=2000 and name='Seattle' and country='NL'),COUNT,0])),sum(case([(year=2000 and name='Seattle' and country='US'),SUM,null])),sum(case([(year=2000 and name='Seattle' and country='US'),COUNT,0])),sum(case([(year=2000 and name='New York City' and country='NL'),SUM,null])),sum(case([(year=2000 and name='New York City' and country='NL'),COUNT,0])),sum(case([(year=2000 and name='New York City' and country='US'),SUM,null])),sum(case([(year=2000 and name='New York City' and country='US'),COUNT,0])),sum(case([(year=2010 and name='Amsterdam' and country='NL'),SUM,null])),sum(case([(year=2010 and name='Amsterdam' and country='NL'),COUNT,0])),sum(case([(year=2010 and name='Amsterdam' and country='US'),SUM,null])),sum(case([(year=2010 and name='Amsterdam' and country='US'),COUNT,0])),sum(case([(year=2010 and name='Seattle' and country='NL'),SUM,null])),sum(case([(year=2010 and name='Seattle' and country='NL'),COUNT,0])),sum(case([(year=2010 and name='Seattle' and country='US'),SUM,null])),sum(case([(year=2010 and name='Seattle' and country='US'),COUNT,0])),sum(case([(year=2010 and name='New York City' and country='NL'),SUM,null])),sum(case([(year=2010 and name='New York City' and country='NL'),COUNT,0])),sum(case([(year=2010 and name='New York City' and country='US'),SUM,null])),sum(case([(year=2010 and name='New York City' and country='US'),COUNT,0])),sum(case([(year=2020 and name='Amsterdam' and country='NL'),SUM,null])),sum(case([(year=2020 and name='Amsterdam' and country='NL'),COUNT,0])),sum(case([(year=2020 and name='Amsterdam' and country='US'),SUM,null])),sum(case([(year=2020 and name='Amsterdam' and country='US'),COUNT,0])),sum(case([(year=2020 and name='Seattle' and country='NL'),SUM,null])),sum(case([(year=2020 and name='Seattle' and country='NL'),COUNT,0])),sum(case([(year=2020 and name='Seattle' and country='US'),SUM,null])),sum(case([(year=2020 and name='Seattle' and country='US'),COUNT,0])),sum(case([(year=2020 and name='New York City' and country='NL'),SUM,null])),sum(case([(year=2020 and name='New York City' and country='NL'),COUNT,0])),sum(case([(year=2020 and name='New York City' and country='US'),SUM,null])),sum(case([(year=2020 and name='New York City' and country='US'),COUNT,0]))]\n" +
-                        "    Async JIT Group By workers: 1\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [year,name,country]\n" +
                         "      values: [sum(population),count(population)]\n" +
-                        "      filter: year in [2000,2010,2020]\n" +
+                        "      filter: (year in [2000,2010,2020] and name in [Amsterdam,Seattle,New York City] and country in [NL,US])\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: cities\n"
@@ -960,7 +1025,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         "    Async Group By workers: 1\n" +
                         "      keys: [timestamp,symbol,side]\n" +
                         "      values: [sum(price)]\n" +
-                        "      filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT])\n" +
+                        "      filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT] and side in [buy,sell])\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: trades\n");
@@ -995,7 +1060,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         "        Async JIT Group By workers: 1\n" +
                         "          keys: [timestamp,symbol,side]\n" +
                         "          values: [sum(price)]\n" +
-                        "          filter: symbol in [ETH-USDT]\n" +
+                        "          filter: (symbol in [ETH-USDT] and side in [buy,sell])\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: trades\n");
@@ -1034,7 +1099,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         "        Async JIT Group By workers: 1\n" +
                         "          keys: [timestamp,symbol,side]\n" +
                         "          values: [sum(price)]\n" +
-                        "          filter: symbol in [ETH-USDT]\n" +
+                        "          filter: (symbol in [ETH-USDT] and side in [buy,sell])\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: trades\n"
@@ -1074,7 +1139,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         "        Async JIT Group By workers: 1\n" +
                         "          keys: [timestamp,symbol,side]\n" +
                         "          values: [sum(price)]\n" +
-                        "          filter: symbol in [ETH-USDT]\n" +
+                        "          filter: (symbol in [ETH-USDT] and side in [buy,sell])\n" +
                         "            PageFrame\n" +
                         "                Row backward scan\n" +
                         "                Frame backward scan on: trades\n"
@@ -1163,7 +1228,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         "        Async Group By workers: 1\n" +
                         "          keys: [timestamp,symbol,side]\n" +
                         "          values: [avg(price)]\n" +
-                        "          filter: (symbol in [BTC-USD] and symbol in [BTC-USD])\n" +
+                        "          filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: trades\n");
@@ -1207,7 +1272,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         "                Async Group By workers: 1\n" +
                         "                  keys: [timestamp,symbol,side]\n" +
                         "                  values: [avg(price)]\n" +
-                        "                  filter: (symbol in [BTC-USD] and symbol in [BTC-USD])\n" +
+                        "                  filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])\n" +
                         "                    PageFrame\n" +
                         "                        Row forward scan\n" +
                         "                        Frame forward scan on: trades\n");
@@ -1220,7 +1285,8 @@ public class PivotTest extends AbstractSqlParserTest {
                 "WITH t AS\n" +
                         "        (\n" +
                         "\n" +
-                        "                SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'\n" +
+                        "                SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount \n" +
+                        "FROM trades WHERE symbol IN 'BTC-USD'\n" +
                         "SAMPLE BY 1m\n" +
                         "), P AS (\n" +
                         "        SELECT * FROM t\n" +
@@ -1250,7 +1316,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         "            Async Group By workers: 1\n" +
                         "              keys: [timestamp,symbol,side]\n" +
                         "              values: [avg(price)]\n" +
-                        "              filter: (symbol in [BTC-USD] and symbol in [BTC-USD])\n" +
+                        "              filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])\n" +
                         "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: trades\n");

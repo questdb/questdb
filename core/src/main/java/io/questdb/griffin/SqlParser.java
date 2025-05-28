@@ -2573,105 +2573,103 @@ public class SqlParser {
 
     private CharSequence parsePivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok;
-        ExpressionNode expr = null;
-        QueryColumn col;
 
         expectTok(lexer, '(');
 
-        while (true) {
+        // parse aggregate functions
+        do {
 
-            while (expr == null && lexer.hasNext()) {
-                expr = expr(lexer, model, sqlParserCallback);
-                if (expr == null) {
-                    optTok(lexer);
-                }
-            }
+            QueryColumn nextAggregateCol = parsePivotParseColumn(lexer, model, sqlParserCallback);
 
-            if (expr == null) {
-                throw SqlException.$(lexer.lastTokenPosition(), "missing aggregate expression");
-            }
-
-            if (expr.type != ExpressionNode.FUNCTION) {
+            if (nextAggregateCol.getAst().type != ExpressionNode.FUNCTION) {
                 throw SqlException.$(lexer.lastTokenPosition(), "expected aggregate function");
             }
 
-            CharSequence alias = null;
-            tok = optTok(lexer);
-            col = queryColumnPool.next().of(null, expr);
-
-            if (tok != null && !isForKeyword(tok)) {
-                if (columnAliasStop.excludes(tok)) {
-                    assertNotDot(lexer, tok);
-                    // verify that * wildcard is not aliased
-
-                    if (isAsKeyword(tok)) {
-                        tok = tok(lexer, "alias");
-                        SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-                        CharSequence aliasTok = GenericLexer.immutableOf(tok);
-                        validateIdentifier(lexer, aliasTok);
-                        alias = unquote(aliasTok);
-                    } else {
-                        validateIdentifier(lexer, tok);
-                        SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-                        alias = GenericLexer.immutableOf(unquote(tok));
-                    }
-
-                    if (col.getAst().isWildcard()) {
-                        throw err(lexer, null, "wildcard cannot have alias");
-                    }
-
-                    tok = optTok(lexer);
-                    aliasMap.put(alias, col);
-                    col.setAlias(alias);
-                }
-
-                model.addPivotColumn(col);
-
-                if (tok == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected end of expression");
-                }
-
-                if (isForKeyword(tok)) {
-                    break;
-                }
-
-                expr = null;
-            } else {
-                model.addPivotColumn(col);
-                break;
+            if (nextAggregateCol.getAlias() != null) {
+                aliasMap.put(nextAggregateCol.getAlias(), nextAggregateCol);
             }
-        }
+            model.addPivotColumn(nextAggregateCol);
+
+            tok = SqlUtil.fetchNext(lexer);
+        } while (tok != null && !isForKeyword(tok) && Chars.equals(tok, ','));
+
 
         if (tok == null || !isForKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "expected `FOR`");
         }
 
-        while (true) {
-            expr = expr(lexer, model, sqlParserCallback);
+        for (int i = 0; i < 500; i++) {
 
-            if (expr == null) {
-                break;
+            CharSequence forName = SqlUtil.fetchNext(lexer);
+
+            if (forName == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected FOR expr");
             }
 
-            if (expr.type != ExpressionNode.FUNCTION || !Chars.equals(expr.token, "in")) {
-                throw SqlException.$(expr.position, "expected `IN` clause");
+            ExpressionNode forExpr = expressionNodePool.next().of(ExpressionNode.LITERAL, unquote(GenericLexer.immutableOf(forName)), 0, 0);
+            QueryColumn forColumn = queryColumnPool.next().of(null, forExpr);
+
+            CharSequence inTokenOrAs = SqlUtil.fetchNext(lexer);
+
+            if (isAsKeyword(inTokenOrAs)) {
+                tok = tok(lexer, "alias");
+                SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                CharSequence aliasTok = GenericLexer.immutableOf(tok);
+                validateIdentifier(lexer, aliasTok);
+                forColumn.setAlias(unquote(aliasTok));
             }
 
-            model.addPivotFor(expr);
+            model.addPivotFor(forColumn);
 
-            tok = SqlUtil.fetchNext(lexer);
-
-            if (tok == null) {
-                throw SqlException.$(lexer.lastTokenPosition(), "expected ')' or 'GROUP' or 'ORDER' or 'LIMIT' or ','");
+            if (!isInKeyword(inTokenOrAs)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected `IN` clause");
             }
 
-            if (isGroupKeyword(tok) || Chars.equals(tok, ';') || Chars.equals(tok, ')')
-                    || isOrderKeyword(tok) || isLimitKeyword(tok) || isSampleKeyword(tok)) {
-                break;
-            } else if (Chars.equals(tok, ",")) {
-                tok = tok(lexer, "'FOR-IN'");
-            } else {
-                lexer.unparseLast();
+            CharSequence bracket = SqlUtil.fetchNext(lexer);
+
+            if (!Chars.equals(bracket, '(')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected '('");
+            }
+
+            for (int j = 0; j < 500; j++) {
+                QueryColumn nextFor = parsePivotParseColumn(lexer, model, sqlParserCallback);
+
+                if (nextFor.getAst().type != ExpressionNode.CONSTANT) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected constant");
+                }
+
+                if (nextFor.getAlias() != null) {
+                    aliasMap.put(nextFor.getAlias(), nextFor);
+                }
+
+                tok = SqlUtil.fetchNext(lexer);
+
+                model.addPivotFor(nextFor);
+
+                if (tok == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unclosed list");
+                }
+
+                if (Chars.equals(tok, ',')) {
+                    continue;
+                }
+
+                if (isGroupKeyword(tok) || Chars.equals(tok, ';') || Chars.equals(tok, ')')
+                        || isOrderKeyword(tok) || isLimitKeyword(tok) || isSampleKeyword(tok)) {
+                    break;
+                } else {
+                    lexer.unparseLast();
+                }
+            }
+
+            if (Chars.equals(tok, ')')) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (isGroupKeyword(tok) || Chars.equals(tok, ';') || Chars.equals(tok, ')')
+                        || isOrderKeyword(tok) || isLimitKeyword(tok) || isSampleKeyword(tok)) {
+                    break;
+                } else {
+                    lexer.unparseLast();
+                }
             }
         }
 
@@ -2710,6 +2708,62 @@ public class SqlParser {
         }
 
         return tok;
+    }
+
+    private QueryColumn parsePivotParseColumn(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+        CharSequence tok;
+        ExpressionNode expr = null;
+        QueryColumn col;
+
+        while (expr == null && lexer.hasNext()) {
+            expr = expr(lexer, model, sqlParserCallback);
+            if (expr == null) {
+                optTok(lexer);
+            }
+        }
+
+        if (expr == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "missing column expression");
+        }
+
+        CharSequence alias = null;
+        tok = SqlUtil.fetchNext(lexer);
+        col = queryColumnPool.next().of(null, expr);
+
+        if (tok != null && !isForKeyword(tok)) {
+            if (columnAliasStop.excludes(tok)) {
+                assertNotDot(lexer, tok);
+                // verify that * wildcard is not aliased
+
+                if (isAsKeyword(tok)) {
+                    tok = tok(lexer, "alias");
+                    SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                    CharSequence aliasTok = GenericLexer.immutableOf(tok);
+                    validateIdentifier(lexer, aliasTok);
+                    alias = unquote(aliasTok);
+                } else {
+                    validateIdentifier(lexer, tok);
+                    SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                    alias = GenericLexer.immutableOf(unquote(tok));
+                }
+
+                if (col.getAst().isWildcard()) {
+                    throw err(lexer, null, "wildcard cannot have alias");
+                }
+                tok = SqlUtil.fetchNext(lexer);
+                col.setAlias(alias);
+            }
+
+        }
+
+        if (tok == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected end of expression");
+        }
+
+        if (isForKeyword(tok) || Chars.equals(tok, ',') || Chars.equals(tok, ')')) {
+            lexer.unparseLast();
+        }
+        return col;
     }
 
     private ExecutionModel parseRenameStatement(GenericLexer lexer) throws SqlException {

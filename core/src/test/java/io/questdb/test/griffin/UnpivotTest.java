@@ -29,8 +29,6 @@ import org.junit.Test;
 import static io.questdb.test.griffin.PivotTest.*;
 
 
-// todo(nwoolmer): swap to assertQuery
-
 public class UnpivotTest extends AbstractSqlParserTest {
 
     public static String ddlMonthlySales = "CREATE TABLE monthly_sales\n" +
@@ -181,6 +179,55 @@ public class UnpivotTest extends AbstractSqlParserTest {
                         "  for: month\n" +
                         "  in: [Jan,Feb,Mar,Apr,May,Jun]\n" +
                         "  nulls: included\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: monthly_sales\n");
+    }
+
+    @Test
+    public void testBasicUnpivotOrderByUnpivoted() throws Exception {
+        assertQueryAndPlan(
+                "empid\tdept\tmonth\tsales\n",
+                "monthly_sales UNPIVOT (\n" +
+                        "    sales\n" +
+                        "    FOR month IN (jan, feb, mar, apr, may, jun)\n" +
+                        ")" +
+                        "ORDER BY sales\n;;",
+                ddlMonthlySales,
+                null,
+                dmlMonthlySales,
+                "empid\tdept\tmonth\tsales\n" +
+                        "1\telectronics\tJan\t1\n" +
+                        "1\telectronics\tFeb\t2\n" +
+                        "1\telectronics\tMar\t3\n" +
+                        "1\telectronics\tApr\t4\n" +
+                        "1\telectronics\tMay\t5\n" +
+                        "1\telectronics\tJun\t6\n" +
+                        "2\tclothes\tJan\t10\n" +
+                        "2\tclothes\tFeb\t20\n" +
+                        "2\tclothes\tMar\t30\n" +
+                        "2\tclothes\tApr\t40\n" +
+                        "2\tclothes\tMay\t50\n" +
+                        "2\tclothes\tJun\t60\n" +
+                        "3\tcars\tJan\t100\n" +
+                        "3\tcars\tFeb\t200\n" +
+                        "3\tcars\tMar\t300\n" +
+                        "3\tcars\tApr\t400\n" +
+                        "3\tcars\tMay\t500\n" +
+                        "3\tcars\tJun\t600\n" +
+                        "4\tappliances\tJan\t100\n" +
+                        "4\tappliances\tMar\t100\n" +
+                        "4\tappliances\tApr\t50\n" +
+                        "4\tappliances\tMay\t20\n" +
+                        "4\tappliances\tJun\t350\n",
+                false,
+                false,
+                false,
+                "Unpivot\n" +
+                        "  into: sales\n" +
+                        "  for: month\n" +
+                        "  in: [Jan,Feb,Mar,Apr,May,Jun]\n" +
+                        "  nulls: excluded\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: monthly_sales\n");

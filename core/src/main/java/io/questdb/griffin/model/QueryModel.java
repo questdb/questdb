@@ -197,7 +197,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Inner join expressions
     private ExpressionNode outerJoinExpressionClause;
     private @Nullable ObjList<QueryColumn> pivotColumns = null;
-    private @Nullable ObjList<ExpressionNode> pivotFor = null;
+    private @Nullable ObjList<QueryColumn> pivotFor = null;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
     private ExpressionNode sampleByFrom;
@@ -367,7 +367,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         pivotColumns.add(column);
     }
 
-    public void addPivotFor(ExpressionNode _for) {
+    public void addPivotFor(QueryColumn _for) {
         if (pivotFor == null) {
             pivotFor = new ObjList<>();
         }
@@ -977,7 +977,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return pivotColumns;
     }
 
-    public @Nullable ObjList<ExpressionNode> getPivotFor() {
+    public @Nullable ObjList<QueryColumn> getPivotFor() {
         return pivotFor;
     }
 
