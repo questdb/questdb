@@ -49,7 +49,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -78,7 +78,7 @@ public interface CairoConfiguration {
      *
      * @return true if anything was exported
      */
-    default boolean exportConfiguration(StringSink sink) {
+    default boolean exportConfiguration(Utf8StringSink sink) {
         return false;
     }
 

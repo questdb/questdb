@@ -42,8 +42,8 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.integer;
 import static java.net.HttpURLConnection.*;
@@ -54,7 +54,7 @@ public class SettingsProcessor implements HttpRequestHandler {
     // processor. For different threads to lookup the same value from local value map the key,
     // which is LV, has to be the same between processor instances
     private static final LocalValue<SettingsProcessorState> LV = new LocalValue<>();
-    private static final LocalValue<StringSink> LV_GET = new LocalValue<>();
+    private static final LocalValue<Utf8StringSink> LV_GET = new LocalValue<>();
     private static final String PREFERENCES_VERSION = "preferences.version";
     private static final Utf8String URL_PARAM_VERSION = new Utf8String("version");
     private final GetProcessor getProcessor = new GetProcessor();
@@ -83,16 +83,16 @@ public class SettingsProcessor implements HttpRequestHandler {
 
         @Override
         public void onHeadersReady(HttpConnectionContext context) {
-            final StringSink settings = LV_GET.get(context);
+            final Utf8StringSink settings = LV_GET.get(context);
             if (settings == null) {
                 LOG.debug().$("new settings sink").$();
-                LV_GET.set(context, new StringSink());
+                LV_GET.set(context, new Utf8StringSink());
             }
         }
 
         @Override
         public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            final StringSink settings = LV_GET.get(context);
+            final Utf8StringSink settings = LV_GET.get(context);
             settings.clear();
             settings.putAscii('{');
             serverConfiguration.exportConfiguration(settings);
@@ -105,7 +105,7 @@ public class SettingsProcessor implements HttpRequestHandler {
 
         @Override
         public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-            final StringSink settings = LV_GET.get(context);
+            final Utf8StringSink settings = LV_GET.get(context);
             context.simpleResponse().sendStatusJsonContent(HTTP_OK, settings, false);
         }
     }
@@ -175,18 +175,18 @@ public class SettingsProcessor implements HttpRequestHandler {
         }
 
         private void sendErr(CairoException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            transientState.utf16Sink.clear();
-            transientState.utf16Sink.put("{\"error\":\"").escapeJsonStr(e.getFlyweightMessage()).put("\"}");
+            transientState.utf8Sink.clear();
+            transientState.utf8Sink.put("{\"error\":\"").escapeJsonStr(e.getFlyweightMessage()).put("\"}");
             transientContext.simpleResponse().sendStatusJsonContent(
                     e.isPreferencesOutOfDateError() ? HTTP_CONFLICT
                             : e.isAuthorizationError() ? HTTP_UNAUTHORIZED
                             : HTTP_BAD_REQUEST,
-                    transientState.utf16Sink
+                    transientState.utf8Sink
             );
         }
 
         private void sendOk() throws PeerDisconnectedException, PeerIsSlowToReadException {
-            transientContext.simpleResponse().sendStatusJsonContent(HTTP_OK, "");
+            transientContext.simpleResponse().sendStatusJsonContent(HTTP_OK, Utf8String.EMPTY);
         }
     }
 }
