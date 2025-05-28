@@ -258,7 +258,7 @@ class TestRunner {
                     },
                     // Custom parser for timestamps to match expected microsecond precision
                     timestamp: {
-                        from: [1114],
+                        from: [1184],
                         parse: value => {
                             // Split on the decimal point if it exists
                             const [dateTimePart, fractionPart = '000000'] = value.split('.');
