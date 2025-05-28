@@ -42,6 +42,7 @@ import io.questdb.preferences.PreferencesMap;
 import io.questdb.preferences.PreferencesUpdateListener;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractBootstrapTest;
@@ -585,7 +586,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             public CairoConfiguration getCairoConfiguration() {
                                 return new DefaultCairoConfiguration(bootstrap.getRootDirectory()) {
                                     @Override
-                                    public boolean exportConfiguration(Utf8StringSink sink) {
+                                    public boolean exportConfiguration(CharSink<?> sink) {
                                         final CairoConfiguration config = getCairoConfiguration();
                                         str(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID.getPropertyPath(), config.getDbDirectory(), sink);
                                         integer(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.getPropertyPath(), config.getMaxFileNameLength(), sink);
@@ -599,7 +600,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
                                 return new DefaultPublicPassthroughConfiguration() {
                                     @Override
-                                    public boolean exportConfiguration(Utf8StringSink sink) {
+                                    public boolean exportConfiguration(CharSink<?> sink) {
                                         final PublicPassthroughConfiguration config = getPublicPassthroughConfiguration();
                                         bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), config.isPosthogEnabled(), sink);
                                         str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), config.getPosthogApiKey(), sink);

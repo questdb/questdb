@@ -24,7 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.CharSink;
 
 public interface PublicPassthroughConfiguration {
 
@@ -34,7 +34,7 @@ public interface PublicPassthroughConfiguration {
      *
      * @return true if anything was exported
      */
-    default boolean exportConfiguration(Utf8StringSink sink) {
+    default boolean exportConfiguration(CharSink<?> sink) {
         return false;
     }
 
