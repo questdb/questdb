@@ -30,7 +30,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8StringSink;
 
 import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
@@ -61,7 +61,7 @@ public class RejectProcessorImpl implements RejectProcessor {
     }
 
     @Override
-    public Utf8Sink getMessageSink() {
+    public CharSink<?> getMessageSink() {
         return rejectMessage;
     }
 
