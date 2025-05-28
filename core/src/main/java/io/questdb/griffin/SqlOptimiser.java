@@ -4945,8 +4945,42 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void rewritePivotGenerateAliases(QueryModel model) throws SqlException {
-        QueryModel nested = model.getNestedModel();
+    /**
+     * Rationalises the constructed IN expression and adds to WHERE clause.
+     *
+     * @param forInExpr
+     * @param nested
+     */
+    private void rewritePivotFinaliseInExprAndAddToWhere(ExpressionNode forInExpr, QueryModel nested) {
+        // sublist is full
+        int size = forInExpr.args.size();
+        if (size >= 2) {
+            forInExpr.args.reverse();
+            forInExpr.args.add(forInExpr.lhs);
+            forInExpr.lhs = null;
+            forInExpr.paramCount = forInExpr.args.size();
+        } else {
+            forInExpr.rhs = forInExpr.args.getLast();
+            forInExpr.paramCount = 2;
+            forInExpr.args.clear();
+        }
+
+        // add to where clause
+        if (nested.getWhereClause() == null) {
+            nested.setWhereClause(forInExpr);
+        } else {
+            nested.setWhereClause(rewritePivotMakeBinaryExpression(nested.getWhereClause(), forInExpr, "and", opAnd));
+        }
+    }
+
+    /**
+     * This adds aliases to the `PIVOT` aggregate columns if deemed necessary.
+     * If they are all already aliased, no actions are taken.
+     * If there are duplicate aggregates i.e. multiple SUMs in one PIVOT, an alias will be added.
+     *
+     * @param nested
+     */
+    private void rewritePivotGenerateAliases(QueryModel nested) {
         assert nested.getPivotColumns() != null;
         ObjList<QueryColumn> pivotColumns = nested.getPivotColumns();
         int pivotColumnSize = nested.getPivotColumns().size();
@@ -4972,20 +5006,20 @@ public class SqlOptimiser implements Mutable {
             if (!allAlreadyAliased && duplicateAggregates) {
                 CharSequence tok;
                 for (int i = 0; i < pivotColumnSize; i++) {
-                    final QueryColumn pc = pivotColumns.getQuick(i);
-                    tok = pc.getAst().token;
+                    final QueryColumn col = pivotColumns.getQuick(i);
+                    tok = col.getAst().token;
                     sink.clear();
 
-                    if (pc.getAlias() != null) {
-                        aliasDedupe.add(pc.getAlias());
+                    if (col.getAlias() != null) {
+                        aliasDedupe.add(col.getAlias());
                         continue;
                     }
 
-                    if (aggregateDedupe.get(tok) > 0 && pc.getAlias() == null) {
+                    if (aggregateDedupe.get(tok) > 0 && col.getAlias() == null) {
                         // need to alias it
-                        sink.put(tok).put('_').put(pc.getAst().rhs);
+                        sink.put(tok).put('_').put(col.getAst().rhs);
                         if (aliasDedupe.contains(sink)) {
-                            // already duplicate
+                            // already duplicate, so we will append a digit
                             int aliasLength = sink.length();
                             int suffix = 1;
                             do {
@@ -4999,7 +5033,7 @@ public class SqlOptimiser implements Mutable {
                         if (!aliasDedupe.add(cs)) {
                             throw new UnsupportedOperationException();
                         }
-                        pc.setAlias(cs);
+                        col.setAlias(cs);
                     }
                 }
             }
@@ -6831,7 +6865,6 @@ public class SqlOptimiser implements Mutable {
         validateUpdateColumns(updateQueryModel, metadata, sqlExecutionContext);
     }
 
-
     /**
      * Rewrite PIVOT statements.
      * <p>
@@ -6875,27 +6908,45 @@ public class SqlOptimiser implements Mutable {
                 && nested.getPivotFor() != null && nested.getPivotFor().size() > 0
                 && model.getBottomUpColumns().size() == 1
                 && Chars.equals(model.getBottomUpColumns().getQuick(0).getAlias(), '*')) {
-
-            // inner group by to perform initial aggregation
-            // if we just use one group by and case, first/last won't work properly with nulls
+            /*
+                The nested model contains the `PIVOT` metadata.
+                First, we create additional models for grouping data. This will perform the initial keyed aggregation.
+                If we just rely on `CASE`, some aggregate functions will not work properly, as they do not handle
+                nulls i.e. `first`/`last`.
+             */
             QueryModel groupByModel = queryModelPool.next().ofSelectType(SELECT_MODEL_CHOOSE);
 
-            // needed because rewriteSelectClause assumes there's an extra model and clear things out
+            /*
+                Next, we add a bonus, throwaway model. This satisifies `rewriteSelectClause`'s assumptions that
+                a group by is also parented by a select. This model will be thrown away before compilation.
+             */
             QueryModel bonusModel = queryModelPool.next().ofSelectType(SELECT_MODEL_CHOOSE);
 
-            // we need to remove any columns that are already featured in the query
-            // clear out the '*'
+            /*
+                For final prep, we clear out any existing columns, and lift any `ORDER BY` to a higher model.
+             */
             model.getBottomUpColumns().clear();
             model.getWildcardColumnNames().clear();
-
-            // pull up any order by
             model.moveOrderByFrom(nested);
 
-            // copy the group by columns into the new group by model
+            /*
+                There are two groupings in a `PIVOT` query.
+
+                1. The primary group by (`groupByModel`).
+                   This performs the main grouping and filtering.
+                   This groups on the `GROUP BY` expressions, and also the names of any `FOR` statement.
+
+                2. The secondary group by (`model`).
+                   This groups only on the `GROUP BY` expressions, and allows for the final pivoting of rows to columns.
+
+                We first copy up the columns. Then we shift the group by from the bottom level model (`nested`)
+                to the secondary group by model (`model`).
+             */
             for (int i = 0, n = nested.getGroupBy().size(); i < n; i++) {
                 ExpressionNode groupByExpr = nested.getGroupBy().getQuick(i);
                 if (groupByExpr.type == CONSTANT) {
-                    // in future, perhaps find a way to handle positional group by perhaps by re-ordering calls in `optimise()`
+                    // todo: (at some point) support positional group by with PIVOT.
+                    // This has special logic elsewhere in the optimiser.
                     throw SqlException.$(groupByExpr.position, "cannot use positional group by inside `PIVOT`");
                 } else {
                     model.addBottomUpColumn(queryColumnPool.next().of(
@@ -6909,100 +6960,109 @@ public class SqlOptimiser implements Mutable {
                 }
             }
 
-            // shift the expressions too, if present
             groupByModel.moveGroupByFrom(nested);
 
-            // copy group bys to top level
-            for (int i = 0, n = groupByModel.getGroupBy().size(); i < n; i++) {
-                model.addGroupBy(groupByModel.getGroupBy().getQuick(i));
-            }
 
+            /*
+                Now, we need to take the contents of the `FOR` expressions and add them in two places.
 
+                For example, for this SQL:
+
+                `table PIVOT (sum(value) FOR name IN (p1, p2) GROUP BY g)`.
+
+                1. `name` will be added to the primary group by (`groupByModel`)
+                2. `name IN (p1, p2)` will be added to the (`groupByModel`)'s `WHERE` clause.
+
+                This ensures that only the relevant data is included, and also it is pre-grouped appropriately for
+                later pivoting.
+
+                The `pivotFor` list in `QueryModel` has the format:
+
+                [IN_NAME_0, IN_ARG_0_0, IN_ARG_0_1, IN_NAME_1, IN_ARG_1_0....]
+
+                Essentially, the expressions are all flattened into one list.
+
+                We need to unpack them into separate expressions, appropriate for a `WHERE` clause:
+
+                Therefore, we loop over them, aggregate an IN expression, and then add it to the `WHERE` clause,
+                using an additional `AND` expression.
+             */
             ExpressionNode forInExpr = null;
 
-            // copy pivot for expressions into group by and where filter
-            for (int j = 0, n = nested.getPivotFor().size(); j < n; j++) {
+            ObjList<ExpressionNode> forExprs = new ObjList<>(); // todo(nwoolmer): object pooling
+
+            for (int j = 0, n = nested.getPivotFor().size(); j <= n; j++) {
+
+                // Catch the final index before OOB error reading `getPivotFor()`.
+                // Flush last expression and break.
+                if (forInExpr != null && j == n) {
+                    rewritePivotFinaliseInExprAndAddToWhere(forInExpr, nested);
+                    forExprs.add(forInExpr);
+                    break;
+                }
+
                 QueryColumn forColumn = nested.getPivotFor().getQuick(j);
                 ExpressionNode forExpr = forColumn.getAst();
 
                 if (forExpr.type == LITERAL) {
-
                     if (forInExpr != null) {
-                        // sublist is full
-                        int size = forInExpr.args.size();
-                        if (size >= 2) {
-                            forInExpr.args.reverse();
-                            forInExpr.args.add(forInExpr.lhs);
-                            forInExpr.lhs = null;
-                            forInExpr.paramCount = forInExpr.args.size();
-                        } else {
-                            forInExpr.rhs = forInExpr.args.getLast();
-                            forInExpr.paramCount = 2;
-                            forInExpr.args.clear();
-                        }
-
-                        // add to where clause
-                        if (nested.getWhereClause() == null) {
-                            nested.setWhereClause(forInExpr);
-                        } else {
-                            nested.setWhereClause(rewritePivotMakeBinaryExpression(nested.getWhereClause(), forInExpr, "and", opAnd));
-                        }
+                        rewritePivotFinaliseInExprAndAddToWhere(forInExpr, nested);
+                        forExprs.add(forInExpr);
                     }
 
-                    ExpressionNode groupByName =
-                            expressionNodePool.next().of(LITERAL, forColumn.getName(), 0, forColumn.getAst().position);
+                    ExpressionNode groupByName = expressionNodePool.next().of(
+                            LITERAL,
+                            forColumn.getName(),
+                            0,
+                            forColumn.getAst().position
+                    );
 
                     groupByModel.addGroupBy(groupByName);
 
-                    assert groupByName != null;
-
+                    // If this name is not already part of the bottom-up columns, then we should add it.
+                    // But we should not add duplicates!
                     if (!groupByModel.getAliasToColumnMap().contains(groupByName.token)) {
-                        // add to select
                         groupByModel.addBottomUpColumn(queryColumnPool.next().of(
                                 groupByName.token,
                                 groupByName
                         ));
                     }
 
-
+                    // Create a new expression, ready for accumulation.
                     forInExpr = expressionNodePool.next().of(FUNCTION, "in", 0, forColumn.getAst().position);
                     forInExpr.lhs = forColumn.getAst();
-
-                    // start accumulating list
-                    continue;
-                }
-
-                if (forInExpr != null) {
+                } else if (forInExpr != null) {
                     // accumulating sublist
-                    assert forExpr.type != LITERAL;
                     forInExpr.args.add(forExpr);
+                } else {
+                    // unreachable
+                    throw new UnsupportedOperationException();
                 }
             }
 
-            if (forInExpr != null) {
-                // sublist is full
-                int size = forInExpr.args.size();
-                if (size >= 2) {
-                    forInExpr.args.reverse();
-                    forInExpr.args.add(forInExpr.lhs);
-                    forInExpr.lhs = null;
-                    forInExpr.paramCount = forInExpr.args.size();
-                } else {
-                    forInExpr.rhs = forInExpr.args.getLast();
-                    forInExpr.paramCount = 2;
-                    forInExpr.args.clear();
-                }
+            /*
+                Now, we may have duplicate aggregates (multiple `SUM`s, `COUNT`s etc.).
+                If they are not already aliased, we may need to add aliases to them, based on the aggregate argument.
+                For example:
 
-                // add to where clause
-                if (nested.getWhereClause() == null) {
-                    nested.setWhereClause(forInExpr);
-                } else {
-                    nested.setWhereClause(rewritePivotMakeBinaryExpression(nested.getWhereClause(), forInExpr, "and", opAnd));
-                }
-            }
+                `PIVOT (sum(a), sum(b) ...)`
 
-            rewritePivotGenerateAliases(model);
-            // add group by columns
+                Will lead to aliases like:
+
+                `PIVOT (sum(a) as sum_a, sum(b) as sum_b ...)`
+
+                If they still conflict (i.e. you have truly identical aggregates), then an incrementing digit will be
+                added.
+             */
+            rewritePivotGenerateAliases(nested);
+
+
+
+            /*
+                We previously added the `GROUP BY` keys to the first group by model.
+
+                Now we must add the aggregate columns, defined in the `PIVOT` clause.
+             */
             for (int i = 0, n = nested.getPivotColumns().size(); i < n; i++) {
                 QueryColumn pivotColumn = nested.getPivotColumns().getQuick(i);
                 CharSequence alias = pivotColumn.getAlias() == null ? pivotColumn.getAst().token : pivotColumn.getAlias();
@@ -7012,6 +7072,7 @@ public class SqlOptimiser implements Mutable {
                             pivotColumn.getAst()
                     ));
                 } catch (SqlException e) {
+                    // todo(nwoolmer): see if this is now deprecated code
                     assert e.getMessage().contains("Duplicate");
                     // backup plan, we need to alias
                     int suffix = 1;
@@ -7036,12 +7097,24 @@ public class SqlOptimiser implements Mutable {
             //     country in ('NL, 'US')
             // should give 6 columns.
 
+            /*
+                Next, we need to figure out how many output columns there will be.
+
+                By default, we only include columns generated by the `PIVOT`, and defined in an explicit `GROUP BY`.
+
+                Everything else is removed.
+
+                To do this, we will count up how many columns will be generated for each aggregate function.
+
+                Additionally, we create two lists:
+
+
+             */
+
             IntList forMaxes = intListPool.next();
             IntList forDepths = intListPool.next();
 
-            int pivotForSize = 0;
-
-            ObjList<ExpressionNode> pivotForNames = new ObjList<>();
+            ObjList<ExpressionNode> pivotForNames = new ObjList<>(); // todo(nwoolmer): use a pool
 
             int expectedPivotColumnsPerAggregateFunction = 0;
             for (int j = 0, n = nested.getPivotFor().size(); j < n; j++) {
@@ -7051,7 +7124,6 @@ public class SqlOptimiser implements Mutable {
                     throw SqlException.$(forExpr.position, "unexpected expression");
                 }
 
-                pivotForSize++;
                 pivotForNames.add(forExpr);
                 // initialise depth to 0
                 j++;
@@ -7079,6 +7151,8 @@ public class SqlOptimiser implements Mutable {
                         : expectedPivotColumnsPerAggregateFunction * numInArgs;
 
             }
+
+            int pivotForNamesSize = pivotForNames.size();
 
             IntList forDepthsBackup = intListPool.next().thenCheckCapacity(forDepths.capacity());
             forDepthsBackup.addAll(forDepths);
@@ -7122,7 +7196,7 @@ public class SqlOptimiser implements Mutable {
                     CharacterStoreEntry nameSink = characterStore.newEntry();
 
                     // for each forValue combination
-                    for (int k = 0; k < pivotForSize; k++) {
+                    for (int k = 0; k < pivotForNamesSize; k++) {
                         // build name
                         forName = pivotForNames.getQuick(k);
 
@@ -7195,7 +7269,7 @@ public class SqlOptimiser implements Mutable {
 
                     // CASE(_)
                     ExpressionNode caseExpr;
-                    if (pivotForSize == 1) {
+                    if (pivotForNamesSize == 1) {
                         caseExpr = expressionNodePool.next().of(FUNCTION, "switch", Integer.MIN_VALUE, 0);
                         caseExpr.paramCount = 4;
                     } else {
@@ -7217,7 +7291,7 @@ public class SqlOptimiser implements Mutable {
 
 
                     // case
-                    if (pivotForSize == 1) {
+                    if (pivotForNamesSize == 1) {
                         caseExpr.args.add(inValue.getAst());
                         caseExpr.args.add(forName);
                     } else {

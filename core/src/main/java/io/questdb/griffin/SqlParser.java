@@ -2585,9 +2585,6 @@ public class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "expected aggregate function");
             }
 
-            if (nextAggregateCol.getAlias() != null) {
-                aliasMap.put(nextAggregateCol.getAlias(), nextAggregateCol);
-            }
             model.addPivotColumn(nextAggregateCol);
 
             tok = SqlUtil.fetchNext(lexer);
@@ -2636,10 +2633,6 @@ public class SqlParser {
 
                 if (nextFor.getAst().type != ExpressionNode.CONSTANT) {
                     throw SqlException.$(lexer.lastTokenPosition(), "expected constant");
-                }
-
-                if (nextFor.getAlias() != null) {
-                    aliasMap.put(nextFor.getAlias(), nextFor);
                 }
 
                 tok = SqlUtil.fetchNext(lexer);
