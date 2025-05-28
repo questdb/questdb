@@ -37,7 +37,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 
 import static io.questdb.cairo.wal.WalTxnType.*;
-import static io.questdb.cairo.wal.WalUtils.WALE_HEADER_SIZE;
+import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalEventCursor {
     public static final long END_OF_EVENTS = -1L;
@@ -361,9 +361,38 @@ public class WalEventCursor {
             maxTimestamp = readLong();
             outOfOrder = readBool();
 
-            replaceRangeTsLow = eventMem.getLong(nextOffset - Long.BYTES - Long.BYTES - Byte.BYTES);
-            replaceRangeTsHi = eventMem.getLong(nextOffset - Long.BYTES - Byte.BYTES);
-            dedupMode = eventMem.getByte(nextOffset - Byte.BYTES);
+
+            // Read the footer that may contains replace range timestamps and dedup mode
+            // The footer may not be present in old WAL files
+            // Format:
+            // [replaceRangeTsLow:long, replaceRangeTsHi:long, dedupMode:byte]
+            // Length of this footer is 2 * Long.BYTES + Byte.BYTES
+            dedupMode = WAL_DEDUP_MODE_DEFAULT;
+            replaceRangeTsLow = 0;
+            replaceRangeTsHi = 0;
+
+            if (nextOffset - offset >= Integer.BYTES + 2 * Long.BYTES + Byte.BYTES) {
+                // This is big enough to contain the footer
+                // But it can be still populated with symbol map values instead of the footer.
+                // Check that the last symbol map diff entry contains the END of symbol diffs marker
+
+                int symbolColIndex = eventMem.getInt(offset);
+                if (symbolColIndex != SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
+                    // Read column index before the footer
+                    symbolColIndex = eventMem.getInt(nextOffset - (Integer.BYTES + 2 * Long.BYTES + Byte.BYTES));
+                }
+
+                if (symbolColIndex == SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
+                    dedupMode = eventMem.getByte(nextOffset - Byte.BYTES);
+                    if (dedupMode >= 0 && dedupMode <= WAL_DEDUP_MODE_MAX) {
+                        replaceRangeTsLow = eventMem.getLong(nextOffset - Long.BYTES - Long.BYTES - Byte.BYTES);
+                        replaceRangeTsHi = eventMem.getLong(nextOffset - Long.BYTES - Byte.BYTES);
+                    } else {
+                        // This WAL record does not have dedup mode recognised, clean unrecognised mode value
+                        dedupMode = WAL_DEDUP_MODE_DEFAULT;
+                    }
+                }
+            }
         }
     }
 

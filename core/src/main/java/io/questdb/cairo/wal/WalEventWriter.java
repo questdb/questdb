@@ -150,9 +150,15 @@ class WalEventWriter implements Closeable {
 
         writeSymbolMapDiffs();
 
-        eventMem.putLong(replaceRangeLowTs);
-        eventMem.putLong(replaceRangeHiTs);
-        eventMem.putByte(dedupMode);
+        if (dedupMode != WAL_DEDUP_MODE_DEFAULT) {
+            // To test backwards compatibility and esure that we still can read WALs
+            // written by the old QuestDB version, make the dedup mode
+            // and replace range value optional. It will then not be written for the most transactions
+            // and it will test the reading WAL-E code to handle that case.
+            eventMem.putLong(replaceRangeLowTs);
+            eventMem.putLong(replaceRangeHiTs);
+            eventMem.putByte(dedupMode);
+        }
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
 
@@ -296,6 +302,7 @@ class WalEventWriter implements Closeable {
      * @param lastRefreshTimestamp wall clock mat view refresh timestamp
      * @param replaceRangeLowTs    the low timestamp for the range to be replaced, inclusive
      * @param replaceRangeHiTs     the high timestamp for the range to be replaced, exclusive
+     * @param dedupMode            deduplication mode, can be DEFAULT, NO_DEDUP, UPSERT_NEW or REPLACE_RANGE.
      */
     int appendData(
             long startRowID,
