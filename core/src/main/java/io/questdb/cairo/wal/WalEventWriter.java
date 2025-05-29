@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.VarcharTypeDriver;
-import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.Vm;
@@ -198,8 +197,8 @@ class WalEventWriter implements Closeable {
                 eventMem.putLong128(function.getLong128Lo(null), function.getLong128Hi(null));
                 break;
             case ColumnType.ARRAY:
-                // todo:
-                throw new UnsupportedOperationException("implement me");
+                eventMem.putArray(function.getArray(null));
+                break;
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
         }

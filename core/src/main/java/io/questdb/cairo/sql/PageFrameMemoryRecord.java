@@ -32,8 +32,8 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256Impl;
@@ -61,7 +61,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     public static final byte RECORD_A_LETTER = 0;
     public static final byte RECORD_B_LETTER = 1;
     private final ObjList<BorrowedArray> arrayBuffers = new ObjList<>();
-    private final ObjList<MemoryCR.ByteSequenceView> bsViews = new ObjList<>();
+    private final ObjList<DirectByteSequenceView> bsViews = new ObjList<>();
     private final ObjList<DirectString> csViewsA = new ObjList<>();
     private final ObjList<DirectString> csViewsB = new ObjList<>();
     // Letters are used for parquet buffer reference counting in PageFrameMemoryPool.
@@ -120,6 +120,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         clear();
     }
 
+    @Override
     public ArrayView getArray(int columnIndex, int columnType) {
         final BorrowedArray array = borrowedArray(columnIndex);
         final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
@@ -493,12 +494,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return array;
     }
 
-    private @NotNull MemoryCR.ByteSequenceView bsView(int columnIndex) {
-        MemoryCR.ByteSequenceView view = bsViews.getQuiet(columnIndex);
+    private @NotNull DirectByteSequenceView bsView(int columnIndex) {
+        DirectByteSequenceView view = bsViews.getQuiet(columnIndex);
         if (view != null) {
             return view;
         }
-        bsViews.extendAndSet(columnIndex, view = new MemoryCR.ByteSequenceView());
+        bsViews.extendAndSet(columnIndex, view = new DirectByteSequenceView());
         return view;
     }
 
@@ -520,7 +521,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return view;
     }
 
-    private BinarySequence getBin(long base, long offset, long dataLim, MemoryCR.ByteSequenceView view) {
+    private BinarySequence getBin(long base, long offset, long dataLim, DirectByteSequenceView view) {
         final long address = base + offset;
         final long len = Unsafe.getUnsafe().getLong(address);
         if (len != TableUtils.NULL_LEN) {

@@ -26,16 +26,28 @@ package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.DirectIntSlice;
+import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 
 import static io.questdb.cairo.arr.ArrayTypeDriver.bytesToSkipForAlignment;
 
-public class BorrowedArray extends MutableArray {
+public class BorrowedArray extends MutableArray implements Mutable {
     // Helper object used during init
     private final DirectIntSlice borrowedShape = new DirectIntSlice();
 
     public BorrowedArray() {
         this.flatView = new BorrowedFlatArrayView();
+    }
+
+    /**
+     * Resets to an invalid array.
+     */
+    @Override
+    public void clear() {
+        this.type = ColumnType.UNDEFINED;
+        borrowedFlatView().reset();
+        shape.clear();
+        strides.clear();
     }
 
     public BorrowedArray of(int columnType, long auxAddr, long auxLim, long dataAddr, long dataLim, long rowNum) {
@@ -72,12 +84,12 @@ public class BorrowedArray extends MutableArray {
         return this;
     }
 
-    public BorrowedArray of(int columnType, int nDims, long shapeAddr, long valuePtr, int valueSize) {
+    public BorrowedArray of(int columnType, long shapeAddr, long valuePtr, int valueSize) {
         assert shapeAddr != 0 : "shapeAddr == 0";
         assert ColumnType.isArray(columnType) : "columnType is not Array";
         short elemType = ColumnType.decodeArrayElementType(columnType);
         setType(columnType);
-        loadShape(shapeAddr, nDims);
+        loadShape(shapeAddr, ColumnType.decodeArrayDimensionality(columnType));
         resetToDefaultStrides();
         assert ColumnType.sizeOf(elemType) * flatViewLength == valueSize;
         if (!isEmpty()) {
@@ -86,23 +98,24 @@ public class BorrowedArray extends MutableArray {
         return this;
     }
 
+    public BorrowedArray of(BorrowedArray other) {
+        this.type = other.type;
+        this.shape.addAll(other.shape);
+        this.strides.addAll(other.strides);
+        this.flatViewLength = other.flatViewLength;
+        this.flatViewOffset = other.flatViewOffset;
+        this.borrowedFlatView().of(other.borrowedFlatView());
+        return this;
+    }
+
     /**
      * Sets to a null array.
      */
     public void ofNull() {
-        reset();
+        clear();
         type = ColumnType.NULL;
     }
 
-    /**
-     * Resets to an invalid array.
-     */
-    public void reset() {
-        this.type = ColumnType.UNDEFINED;
-        borrowedFlatView().reset();
-        shape.clear();
-        strides.clear();
-    }
 
     private void loadShape(long shapeAddr, int nDims) {
         borrowedShape.of(shapeAddr, nDims);

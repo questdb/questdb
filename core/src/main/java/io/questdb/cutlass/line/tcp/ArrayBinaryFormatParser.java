@@ -105,7 +105,7 @@ public class ArrayBinaryFormatParser implements QuietCloseable {
                     final int dimLength = Unsafe.getUnsafe().getInt(addr + i * Integer.BYTES);
                     if (dimLength == 0) {
                         int type = ColumnType.encodeArrayType(elemType, nDims);
-                        array.of(type, nDims, shapeAddr, 0L, 0);
+                        array.of(type, shapeAddr, 0L, 0);
                         state = ParserState.FINISH;
                         return true;
                     }
@@ -123,7 +123,7 @@ public class ArrayBinaryFormatParser implements QuietCloseable {
                 return false;
             case VALUES:
                 int type = ColumnType.encodeArrayType(elemType, nDims);
-                array.of(type, nDims, shapeAddr, addr, nextBinaryPartExpectSize);
+                array.of(type, shapeAddr, addr, nextBinaryPartExpectSize);
                 state = ParserState.FINISH;
                 return true;
             default:
@@ -134,7 +134,7 @@ public class ArrayBinaryFormatParser implements QuietCloseable {
     public void reset() {
         nextBinaryPartExpectSize = 1;
         state = ParserState.ELEMENT_TYPE;
-        array.reset();
+        array.clear();
     }
 
     public void shl(long delta) {

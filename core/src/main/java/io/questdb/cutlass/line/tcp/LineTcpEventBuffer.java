@@ -375,7 +375,6 @@ public class LineTcpEventBuffer {
         int dims = ColumnType.decodeArrayDimensionality(type);
         borrowedDirectArrayView.of(
                 type,
-                dims,
                 address,
                 address + (long) dims * Integer.BYTES,
                 totalSize - (dims + 2) * Integer.BYTES

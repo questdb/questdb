@@ -225,7 +225,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
             }
             arrayOut.applyShape(argPositions.getQuick(0));
             MemoryA memA = arrayOut.startMemoryA();
-            array0.appendToMem(memA);
+            array0.appendDataToMem(memA);
             for (int n = args.size(), i = 1; i < n; i++) {
                 ArrayView arrayI = args.getQuick(i).getArray(rec);
                 int argPosI = argPositions.getQuick(i);
@@ -235,7 +235,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                                 .put("array shapes don't match");
                     }
                 }
-                arrayI.appendToMem(memA);
+                arrayI.appendDataToMem(memA);
             }
             return arrayOut;
         }

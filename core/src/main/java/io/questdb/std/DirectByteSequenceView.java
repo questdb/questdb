@@ -22,19 +22,43 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm.api;
+package io.questdb.std;
 
-// mapped appendable tailing
-public interface MemoryMAT extends MemoryA {
-
-    @Override
-    void close();
-
-    long getAddress();
+public class DirectByteSequenceView implements BinarySequence, Mutable {
+    private long address;
+    private long len = -1;
 
     @Override
-    long getAppendOffset();
+    public byte byteAt(long index) {
+        return Unsafe.getUnsafe().getByte(address + index);
+    }
 
     @Override
-    void jumpTo(long offset);
+    public void clear() {
+        len = -1;
+    }
+
+    @Override
+    public void copyTo(long address, final long start, final long length) {
+        long bytesRemaining = Math.min(length, this.len - start);
+        long addr = this.address + start;
+        Vect.memcpy(address, addr, bytesRemaining);
+    }
+
+    @Override
+    public long length() {
+        return len;
+    }
+
+    public DirectByteSequenceView of(long address, long len) {
+        this.address = address;
+        this.len = len;
+        return this;
+    }
+
+    public DirectByteSequenceView of(DirectByteSequenceView other) {
+        this.address = other.address;
+        this.len = other.len;
+        return this;
+    }
 }

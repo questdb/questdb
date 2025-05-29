@@ -188,6 +188,11 @@ public final class DirectArray extends MutableArray implements Mutable {
         }
 
         @Override
+        public void putArray(ArrayView array) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public long putBin(BinarySequence value) {
             throw new UnsupportedOperationException();
         }
