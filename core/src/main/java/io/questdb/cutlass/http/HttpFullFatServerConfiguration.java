@@ -86,4 +86,6 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
     String getUsername();
 
     boolean isQueryCacheEnabled();
+
+    boolean isSettingsReadOnly();
 }

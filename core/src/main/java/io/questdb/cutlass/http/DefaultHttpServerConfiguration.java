@@ -192,6 +192,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     }
 
     @Override
+    public boolean isSettingsReadOnly() {
+        return false;
+    }
+
+    @Override
     public boolean preAllocateBuffers() {
         return false;
     }
