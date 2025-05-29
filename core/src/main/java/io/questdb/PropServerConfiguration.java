@@ -2226,7 +2226,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public static class JsonPropertyValueFormatter {
-        public static void arrayStr(CharSequence key, String value, StringSink sink) {
+        public static void arrayStr(CharSequence key, String value, CharSink<?> sink) {
             sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
         }
 
