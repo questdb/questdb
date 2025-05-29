@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -40,6 +41,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -183,6 +185,49 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testReplaceRangeCommitDataRangeCommitErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
+
+            Utf8StringSink utf8StringSink = new Utf8StringSink();
+            try {
+                insertRowsWithRangeReplace(tableToken, utf8StringSink, "2022-02-24T17", "2022-02-24T18", "2022-02-25T18", true);
+                Assert.fail("exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "Replace range low timestamp must be less than or equal to the minimum timestamp"
+                );
+            }
+
+            try {
+                insertRowsWithRangeReplace(tableToken, utf8StringSink, "2022-02-25T18", "2022-02-24T18", "2022-02-25T17:59:59.999999", true);
+                Assert.fail("exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "Replace range high timestamp must be greater than the maximum timestamp"
+                );
+            }
+
+            try {
+                insertRowsWithRangeReplace(tableToken, utf8StringSink, "2022-02-25T18", "2022-02-25T18", "2022-02-25T17:59:59.999999", true);
+                Assert.fail("exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "Replace range low timestamp must be less than replace range high timestamp"
+                );
+            }
+
+            drainWalQueue();
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+        });
+    }
 
     @Test
     public void testReplaceRangeDeletesMidFirstPartition() throws Exception {

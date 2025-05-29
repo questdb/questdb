@@ -35,6 +35,7 @@ import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -878,6 +879,61 @@ public class MatViewTest extends AbstractCairoTest {
                         "mv_es_ohlcv_1s"
                 );
             }
+        });
+    }
+
+    @Test
+    public void testBaseTableNoDataRangeReplaceCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:00')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                    "price_1h",
+                    "ts",
+                    true,
+                    true
+            );
+
+            final TableToken baseToken = engine.getTableTokenIfExists("base_price");
+            Assert.assertNotNull(baseToken);
+            try (WalWriter writer = engine.getWalWriter(baseToken)) {
+                writer.commitWithParams(
+                        parseFloorPartialTimestamp("2024-09-10T00:00:00.000000Z"),
+                        parseFloorPartialTimestamp("2024-09-10T13:00"),
+                        WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                    "price_1h",
+                    "ts",
+                    true,
+                    true
+            );
         });
     }
 

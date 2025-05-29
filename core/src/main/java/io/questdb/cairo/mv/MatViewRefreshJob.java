@@ -67,7 +67,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_DEFAULT_BASE_TABLE_TXN;
-import static io.questdb.cairo.wal.WalUtils.WAL_DEFAULT_LAT_REFRESH_TIMESTAMP;
+import static io.questdb.cairo.wal.WalUtils.WAL_DEFAULT_LAST_REFRESH_TIMESTAMP;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
@@ -480,8 +480,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             if (replacementTimestampHi > replacementTimestampLo) {
                                 // Gap in the refresh intervals, commit the previous batch
                                 // so that the replacement interval does not span across the gap.
-                                refreshFinishTimestamp = microsecondClock.getTicks();
-                                walWriter.commitMatView(WAL_DEFAULT_BASE_TABLE_TXN, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
+                                walWriter.commitMatView(WAL_DEFAULT_BASE_TABLE_TXN, WAL_DEFAULT_LAST_REFRESH_TIMESTAMP, replacementTimestampLo, replacementTimestampHi);
                                 commitTarget = rowCount + batchSize;
                             }
                             replacementTimestampLo = intervalIterator.getTimestampLo();
@@ -500,9 +499,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             }
 
                             if (rowCount >= commitTarget) {
-                                final boolean isLastInterval = replacementTimestampHi >= intervalIterator.getMaxTimestamp();
+                                final boolean isLastInterval = intervalIterator.isLast();
                                 final long commitBaseTableTxnLocal = isLastInterval ? commitBaseTableTxn : WAL_DEFAULT_BASE_TABLE_TXN;
-                                refreshFinishTimestamp = isLastInterval ? microsecondClock.getTicks() : WAL_DEFAULT_LAT_REFRESH_TIMESTAMP;
+                                refreshFinishTimestamp = isLastInterval ? microsecondClock.getTicks() : WAL_DEFAULT_LAST_REFRESH_TIMESTAMP;
 
                                 walWriter.commitMatView(commitBaseTableTxnLocal, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
                                 replacementTimestampLo = replacementTimestampHi;

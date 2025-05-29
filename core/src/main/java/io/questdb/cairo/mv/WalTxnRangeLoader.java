@@ -161,7 +161,8 @@ public class WalTxnRangeLoader implements QuietCloseable {
                         long maxTimestamp1 = dataInfo.getMaxTimestamp();
                         if (dataInfo.getDedupMode() == WAL_DEDUP_MODE_REPLACE_RANGE) {
                             minTimestamp1 = dataInfo.getReplaceRangeTsLow();
-                            maxTimestamp1 = dataInfo.getReplaceRangeTsHi();
+                            // Replace range high is exclusive, so we subtract 1 to make it maximum inclusive.
+                            maxTimestamp1 = dataInfo.getReplaceRangeTsHi() - 1;
                         }
                         intervals.add(minTimestamp1, maxTimestamp1);
                         IntervalUtils.unionInPlace(intervals, intervals.size() - 2);

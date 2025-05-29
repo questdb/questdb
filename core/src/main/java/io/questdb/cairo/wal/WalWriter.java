@@ -311,15 +311,15 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public void commit() {
         // plain old commit
-        commit0(WAL_DEFAULT_BASE_TABLE_TXN, WAL_DEFAULT_LAT_REFRESH_TIMESTAMP, 0, 0, WAL_DEDUP_MODE_DEFAULT);
+        commit0(WAL_DEFAULT_BASE_TABLE_TXN, WAL_DEFAULT_LAST_REFRESH_TIMESTAMP, 0, 0, WAL_DEDUP_MODE_DEFAULT);
     }
 
     /**
      * Commit the materialized view to update last refresh timestamp.
      * Called as the last transaction of a materialized view refresh.
      *
-     * @param lastRefreshBaseTxn   the base table seqTxn the mat view is refreshed at
-     * @param lastRefreshTimestamp the wall clock timestamp when the refresh is done
+     * @param lastRefreshBaseTxn    the base table seqTxn the mat view is refreshed at
+     * @param lastRefreshTimestamp  the wall clock timestamp when the refresh is done
      * @param lastReplaceRangeLowTs the low timestamp of the range to be replaced, inclusive
      * @param lastReplaceRangeHiTs  the high timestamp of the range to be replaced, exclusive
      */
@@ -331,7 +331,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     public void commitWithParams(long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
-        commit0(WAL_DEFAULT_BASE_TABLE_TXN, WAL_DEFAULT_LAT_REFRESH_TIMESTAMP, replaceRangeLowTs, replaceRangeHiTs, dedupMode);
+        commit0(WAL_DEFAULT_BASE_TABLE_TXN, WAL_DEFAULT_LAST_REFRESH_TIMESTAMP, replaceRangeLowTs, replaceRangeHiTs, dedupMode);
     }
 
     public void doClose(boolean truncate) {

@@ -41,7 +41,10 @@ import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalEventCursor {
     public static final long END_OF_EVENTS = -1L;
-
+    private static final int DEDUP_MODE_OFFSET = Byte.BYTES;
+    private static final int REPLACE_RANGE_HI_OFFSET = DEDUP_MODE_OFFSET + Long.BYTES;
+    private static final int REPLACE_RANGE_LO_OFFSET = REPLACE_RANGE_HI_OFFSET + Long.BYTES;
+    private static final int DEDUP_FOOTER_SIZE = REPLACE_RANGE_LO_OFFSET;
     private final DataInfo dataInfo = new DataInfo();
     private final MemoryCMR eventMem;
     private final MatViewDataInfo mvDataInfo = new MatViewDataInfo();
@@ -371,19 +374,19 @@ public class WalEventCursor {
             replaceRangeTsLow = 0;
             replaceRangeTsHi = 0;
 
-            if (nextOffset - offset >= Integer.BYTES + 2 * Long.BYTES + Byte.BYTES) {
+            if (nextOffset - offset >= Integer.BYTES + DEDUP_FOOTER_SIZE) {
                 // This is big enough to contain the footer
                 // But it can be still populated with symbol map values instead of the footer.
                 // Check that the last symbol map diff entry contains the END of symbol diffs marker
 
                 // Read column index before the footer
-                int symbolColIndex = eventMem.getInt(nextOffset - (Integer.BYTES + 2 * Long.BYTES + Byte.BYTES));
+                int symbolColIndex = eventMem.getInt(nextOffset - (Integer.BYTES + DEDUP_FOOTER_SIZE));
 
                 if (symbolColIndex == SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
-                    dedupMode = eventMem.getByte(nextOffset - Byte.BYTES);
+                    dedupMode = eventMem.getByte(nextOffset - DEDUP_MODE_OFFSET);
                     if (dedupMode >= 0 && dedupMode <= WAL_DEDUP_MODE_MAX) {
-                        replaceRangeTsLow = eventMem.getLong(nextOffset - Long.BYTES - Long.BYTES - Byte.BYTES);
-                        replaceRangeTsHi = eventMem.getLong(nextOffset - Long.BYTES - Byte.BYTES);
+                        replaceRangeTsLow = eventMem.getLong(nextOffset - REPLACE_RANGE_LO_OFFSET);
+                        replaceRangeTsHi = eventMem.getLong(nextOffset - REPLACE_RANGE_HI_OFFSET);
                     } else {
                         // This WAL record does not have dedup mode recognised, clean unrecognised mode value
                         dedupMode = WAL_DEDUP_MODE_DEFAULT;

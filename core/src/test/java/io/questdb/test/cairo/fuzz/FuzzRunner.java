@@ -353,7 +353,7 @@ public class FuzzRunner {
             FuzzTransaction transaction = transactions.getQuick(i);
             for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
                 FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                // WAL table support replace range commits
+                // WAL tables support replace range commits
                 // we apply them by using special commit rather than excluding Ts ranges from the commit
                 operation.apply(tempRnd, engine, writer, -1, null);
             }

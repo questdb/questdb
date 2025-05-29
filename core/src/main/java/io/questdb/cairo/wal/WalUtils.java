@@ -92,7 +92,7 @@ public class WalUtils {
     public static final int WAL_SEQUENCER_FORMAT_VERSION_V1 = 0;
     public static final int WAL_SEQUENCER_FORMAT_VERSION_V2 = 1;
     public static long WAL_DEFAULT_BASE_TABLE_TXN = Long.MIN_VALUE;
-    public static long WAL_DEFAULT_LAT_REFRESH_TIMESTAMP = Long.MIN_VALUE;
+    public static long WAL_DEFAULT_LAST_REFRESH_TIMESTAMP = Long.MIN_VALUE;
 
     public static void createTxnLogFile(FilesFacade ff, MemoryMARW mem, Path txnSeqDirPath, long tableCreateDate, int chunkSize, int mkDirMode) {
         int rootLen = txnSeqDirPath.size();
