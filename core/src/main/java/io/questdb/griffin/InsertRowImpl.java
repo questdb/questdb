@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.std.ObjList;
@@ -40,19 +41,24 @@ public final class InsertRowImpl {
     private final int timestampFunctionPosition;
     private final int tupleIndex;
     private final VirtualRecord virtualRecord;
+    private final TimestampDriver timestampDriver;
+    private final int timestampType;
 
     public InsertRowImpl(
             VirtualRecord virtualRecord,
             RecordToRowCopier copier,
             Function timestampFunction,
             int timestampFunctionPosition,
-            int tupleIndex
+            int tupleIndex,
+            int timestampType
     ) {
         this.virtualRecord = virtualRecord;
         this.copier = copier;
         this.timestampFunction = timestampFunction;
         this.timestampFunctionPosition = timestampFunctionPosition;
         this.tupleIndex = tupleIndex;
+        this.timestampType = timestampType;
+        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
         if (timestampFunction != null) {
             int type = timestampFunction.getType();
             if (ColumnType.isString(type) || ColumnType.isVarchar(type)) {
@@ -89,11 +95,11 @@ public final class InsertRowImpl {
         if (timestampValue != null) {
             try {
                 return tableWriter.newRow(
-                        SqlUtil.parseFloorPartialTimestamp(
+                        timestampDriver.castStr(
                                 timestampFunction.getStrA(null),
                                 tupleIndex,
-                                timestampFunction.getType(),
-                                ColumnType.TIMESTAMP
+                                (short) timestampFunction.getType(),
+                                (short) timestampType
                         )
                 );
             } catch (CairoException e) {

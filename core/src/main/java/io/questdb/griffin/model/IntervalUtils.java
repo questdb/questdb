@@ -1175,12 +1175,12 @@ public final class IntervalUtils {
             // try date instead
         }
         try {
-            long loMillis = TimestampFormatUtils.tryParse(seq, lo, p);
-            long hiMillis = Timestamps.addPeriod(loMillis, type, period);
-            if (hiMillis < loMillis) {
+            long loMicros = TimestampFormatUtils.tryParse(seq, lo, p);
+            long hiMicros = Timestamps.addPeriod(loMicros, type, period);
+            if (hiMicros < loMicros) {
                 throw SqlException.invalidDate(position);
             }
-            addHiLoInterval(loMillis, hiMillis, operation, out);
+            addHiLoInterval(loMicros, hiMicros, operation, out);
         } catch (NumericException e) {
             throw SqlException.invalidDate(position);
         }

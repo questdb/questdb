@@ -631,11 +631,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
+        final int timestampType = writer.getMetadata().getTimestampType();
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             CharSequence str = record.getStrA(cursorTimestampIndex);
             // It's allowed to insert ISO formatted string to timestamp column
-            TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, -1, ColumnType.STRING, ColumnType.TIMESTAMP));
+            TableWriter.Row row = writer.newRow(timestampDriver.castStr(str, -1, ColumnType.STRING, (short) timestampType));
             copier.copy(record, row);
             row.append();
             if (++rowCount >= commitTarget) {
@@ -2393,7 +2395,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                 VirtualRecord record = new VirtualRecord(valueFunctions);
                 RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter);
-                insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction, designatedTimestampPosition, tupleIndex));
+                insertOperation.addInsertRow(new InsertRowImpl(
+                        record,
+                        copier,
+                        timestampFunction,
+                        designatedTimestampPosition,
+                        tupleIndex,
+                        metadata.getTimestampType()
+                )
+                );
             }
             return insertOperation;
         } catch (SqlException e) {
@@ -3494,29 +3504,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void executeWithRetries(
-            ExecutableMethod method,
-            ExecutionModel executionModel,
-            int retries,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        int attemptsLeft = retries;
-        do {
-            try {
-                method.execute(executionModel, executionContext);
-                return;
-            } catch (TableReferenceOutOfDateException e) {
-                attemptsLeft--;
-                clearExceptSqlText();
-                lexer.restart();
-                executionModel = compileExecutionModel(executionContext);
-                if (attemptsLeft < 0) {
-                    throw SqlException.position(0).put("too many ").put(e.getFlyweightMessage());
-                }
-            }
-        } while (true);
-    }
-
     private int filterApply(
             Function filter,
             int functionPosition,
@@ -3988,11 +3975,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             AlterOperationBuilder dropColumnStatement
     ) throws SqlException {
         throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
-    }
-
-    @FunctionalInterface
-    private interface ExecutableMethod {
-        void execute(ExecutionModel model, SqlExecutionContext sqlExecutionContext) throws SqlException;
     }
 
     @FunctionalInterface
