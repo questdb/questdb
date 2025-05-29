@@ -147,10 +147,16 @@ public class SettingsProcessor implements HttpRequestHandler {
                 settingsStore.save(transientState.utf8Sink, mode, version);
                 sendOk();
             } catch (CairoException e) {
-                LOG.error().$("could not save preferences").$((Throwable) e).$();
+                LOG.error().$("could not save preferences [msg=").$(e.getFlyweightMessage()).I$();
                 sendErr(e);
+            } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+                throw e;
+            } catch (Throwable e) {
+                LOG.critical().$("could not save preferences: ").$(e).I$();
+                sendErr(e);
+            } finally {
+                transientState.clear();
             }
-            transientState.clear();
         }
 
         @Override
@@ -182,6 +188,12 @@ public class SettingsProcessor implements HttpRequestHandler {
                             : HTTP_BAD_REQUEST,
                     transientState.utf8Sink
             );
+        }
+
+        private void sendErr(Throwable e) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            transientState.utf8Sink.clear();
+            transientState.utf8Sink.put("{\"error\":\"").escapeJsonStr(e.getMessage()).put("\"}");
+            transientContext.simpleResponse().sendStatusJsonContent(HTTP_BAD_REQUEST, transientState.utf8Sink);
         }
 
         private void sendOk() throws PeerDisconnectedException, PeerIsSlowToReadException {

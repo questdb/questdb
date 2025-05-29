@@ -525,6 +525,37 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testSettingsReadOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.HTTP_SETTINGS_READONLY.getEnvVarName(), "true");
+            }})) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertPreferencesRequest(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc\"}", OVERWRITE, 0L,
+                            HTTP_UNAUTHORIZED, "{\"error\":\"The /settings endpoint is read-only\"}\r\n");
+
+                    assertPreferencesStore(settingsStore, 0, "\"preferences\":{}");
+
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null" +
+                            "}," +
+                            "\"preferences.version\":0," +
+                            "\"preferences\":{" +
+                            "}" +
+                            "}");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSettingsWithDefaultProps() throws Exception {
         final Bootstrap bootstrap = new Bootstrap(
                 new PropBootstrapConfiguration() {

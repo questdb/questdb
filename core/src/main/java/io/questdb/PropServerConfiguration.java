@@ -223,6 +223,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean httpPessimisticHealthCheckEnabled;
     private final int httpSendBufferSize;
     private final boolean httpServerEnabled;
+    private final boolean httpSettingsReadOnly;
     private final int httpSqlCacheBlockCount;
     private final boolean httpSqlCacheEnabled;
     private final int httpSqlCacheRowCount;
@@ -961,6 +962,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpWorkerNapThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_NAP_THRESHOLD, 7_000);
             this.httpWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_THRESHOLD, 10_000);
             this.httpWorkerSleepTimeout = getMillis(properties, env, PropertyKey.HTTP_WORKER_SLEEP_TIMEOUT, 10);
+
+            this.httpSettingsReadOnly = getBoolean(properties, env, PropertyKey.HTTP_SETTINGS_READONLY, false);
 
             // context paths
             this.httpContextWebConsole = stripTrailingSlash(getString(properties, env, PropertyKey.HTTP_CONTEXT_WEB_CONSOLE, "/"));
@@ -4276,6 +4279,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isQueryCacheEnabled() {
             return httpSqlCacheEnabled;
+        }
+
+        @Override
+        public boolean isSettingsReadOnly() {
+            return httpSettingsReadOnly;
         }
 
         @Override
