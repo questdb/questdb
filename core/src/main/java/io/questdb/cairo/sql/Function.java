@@ -55,7 +55,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      * During concurrent SQL execution it might be beneficial to split the "init" phase into per-SQL execution and
      * per-thread. For example "init" could be a heavy SQL execution itself, which would benefit from executing once and
      * copying state of this execution to clones, so that clones to not have to repeat that heavy SQL execution. The
-     * "prototype" function is the one that has already been fully initialized and it is ready to pass its state to
+     * "prototype" function is the one that has already been fully initialized, and it is ready to pass its state to
      * all the clones.
      * <p>
      * Even though the prototype will be trying to pass its state, the clones do not have to accept it and choose to

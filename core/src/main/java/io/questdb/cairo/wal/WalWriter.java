@@ -1559,7 +1559,7 @@ public class WalWriter implements TableWriterAPI {
         if (isCommittingData) {
             // When current transaction is not a data transaction but a column add transaction
             // there is no need to add a record about it to the new segment event file.
-            lastSegmentTxn = events.appendData(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+            lastSegmentTxn = events.appendData(uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
         }
         events.sync();
     }

@@ -161,12 +161,7 @@ public abstract class ArrayView implements QuietCloseable {
             return;
         }
         if (isVanilla) {
-            if (flatView instanceof BorrowedFlatArrayView) {
-                // Ensure a dedicated, inlineable call site
-                flatView.appendToMemFlat(mem);
-            } else {
-                flatView.appendToMemFlat(mem);
-            }
+            flatView.appendToMemFlat(mem);
         } else {
             appendToMemRecursive(0, 0, mem);
         }
