@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
@@ -105,6 +106,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         AbstractCairoTest.tearDownStatic();
     }
 
+    @Override
     @Before
     public void setUp() {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 512);
@@ -6762,7 +6764,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     try {
                         execute("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)");
                         Assert.fail();
-                    } catch (CairoException ignore) {
+                    } catch (CairoException | CairoError ignore) {
                     }
 
                     inError.set(false);
