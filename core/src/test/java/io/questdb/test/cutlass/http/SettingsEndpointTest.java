@@ -587,8 +587,11 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
-                            "\"posthog.api.key\":null" +
+                            "\"posthog.api.key\":null," +
+                            "\"cairo.max.file.name.length\":127" +
                             "}," +
                             "\"preferences.version\":0," +
                             "\"preferences\":{" +
