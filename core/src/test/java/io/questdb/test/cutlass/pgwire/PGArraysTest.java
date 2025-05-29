@@ -94,24 +94,41 @@ public class PGArraysTest extends BasePGTest {
     @Test
     public void testArrayBind() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[], ts timestamp) timestamp(ts) partition by hour")) {
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "create table tango (arr double[], ts timestamp) timestamp(ts) partition by hour")
+            ) {
                 stmt.execute();
             }
-
-            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?, ?)")) {
+            try (PreparedStatement stmt = connection.prepareStatement("insert into tango values (?, ?)")) {
                 Array arr = connection.createArrayOf("int8", new Double[]{1d, 2d, 3d, 4d, 5d});
-                stmt.setArray(1, arr);
-                stmt.setTimestamp(2, new java.sql.Timestamp(0));
+                int pos = 1;
+                stmt.setArray(pos++, arr);
+                stmt.setTimestamp(pos++, new java.sql.Timestamp(0));
                 stmt.execute();
             }
-
             drainWalQueue();
-
-            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+            try (PreparedStatement stmt = connection.prepareStatement("tango")) {
                 sink.clear();
                 try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet("al[ARRAY],ts[TIMESTAMP]\n" +
+                    assertResultSet("arr[ARRAY],ts[TIMESTAMP]\n" +
                                     "{1.0,2.0,3.0,4.0,5.0},1970-01-01 00:00:00.0\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+            try (PreparedStatement stmt = connection.prepareStatement("update tango set arr = ?")) {
+                Array arr = connection.createArrayOf("int8", new Double[]{9d, 8d, 7d, 6d, 5d});
+                int pos = 1;
+                stmt.setArray(pos++, arr);
+                stmt.execute();
+            }
+            drainWalQueue();
+            try (PreparedStatement stmt = connection.prepareStatement("tango")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("arr[ARRAY],ts[TIMESTAMP]\n" +
+                                    "{9.0,8.0,7.0,6.0,5.0},1970-01-01 00:00:00.0\n",
                             sink,
                             rs
                     );
