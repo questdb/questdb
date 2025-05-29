@@ -284,12 +284,15 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
     private static long floorWithDstGapCorrection(long timestamp, TimestampFloorFunction floorFunc, int stride, long offset, TimeZoneRules tzRules) {
         final long localTimestamp = timestamp + tzRules.getOffset(timestamp);
-        final long flooredTimestamp = floorFunc.floor(localTimestamp, stride, offset);
-        // Move the timestamp to the previous hour if it belongs to a DST gap, i.e. non-existing
-        // time interval that occur due to a forward clock shift.
+        long flooredTimestamp = floorFunc.floor(localTimestamp, stride, offset);
+        // Move the timestamp to the last interval in the previous hour if it belongs to a DST gap,
+        // i.e. non-existing time interval that occur due to a forward clock shift.
         // This is required to avoid duplicate timestamps returned by SAMPLE BY + DST time zone + offset
         // queries that get rewritten to a parallel GROUP BY.
-        return flooredTimestamp - tzRules.getGapDuration(flooredTimestamp);
+        while (tzRules.getGapDuration(flooredTimestamp) > 0) {
+            flooredTimestamp = floorFunc.floor(flooredTimestamp - 1, stride, offset);
+        }
+        return flooredTimestamp;
     }
 
     private static TimestampFloorFunction getFloorFunction(char unit, int unitPos) throws SqlException {
