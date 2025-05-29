@@ -5422,7 +5422,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.freeObjList(indexers);
         denseIndexers.clear();
         Misc.freeObjList(filterers);
-        denseFilterers.clear();
+        if (denseFilterers != null) {
+            denseFilterers.clear();
+        }
         Misc.free(txWriter);
         Misc.free(ddlMem);
         Misc.free(other);
