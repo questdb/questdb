@@ -100,6 +100,8 @@ public class BorrowedArray extends MutableArray implements Mutable {
 
     public BorrowedArray of(BorrowedArray other) {
         this.type = other.type;
+        this.shape.clear();
+        this.strides.clear();
         this.shape.addAll(other.shape);
         this.strides.addAll(other.strides);
         this.flatViewLength = other.flatViewLength;
