@@ -426,13 +426,13 @@ public class MatViewTest extends AbstractCairoTest {
             );
             assertExceptionNoLeakCheck(
                     "ALTER MATERIALIZED VIEW 'price_1h_t' SET REFRESH START '2020-09-10T20:00:00.000000Z' EVERY foobaz",
-                    -1,
-                    "Invalid unit: z"
+                    91,
+                    "Invalid unit: foobaz"
             );
             assertExceptionNoLeakCheck(
                     "ALTER MATERIALIZED VIEW 'price_1h_t' SET REFRESH EVERY foobaz",
-                    -1,
-                    "Invalid unit: z"
+                    55,
+                    "Invalid unit: foobaz"
             );
             assertExceptionNoLeakCheck(
                     "ALTER MATERIALIZED VIEW 'price_1h_t' SET REFRESH EVERY 1s;",
