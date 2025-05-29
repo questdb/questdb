@@ -31,7 +31,7 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.CharSink;
 
 import static io.questdb.cutlass.http.HttpRequestValidator.ALL;
 import static io.questdb.cutlass.http.HttpRequestValidator.INVALID;
@@ -40,7 +40,7 @@ public interface RejectProcessor extends HttpMultipartContentProcessor {
 
     void clear();
 
-    Utf16Sink getMessageSink();
+    CharSink<?> getMessageSink();
 
     @Override
     default short getSupportedRequestTypes() {

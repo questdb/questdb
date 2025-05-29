@@ -706,6 +706,25 @@ public final class Chars {
         return -1;
     }
 
+    public static int indexOfLastUnquoted(@NotNull CharSequence seq, char ch) {
+        return indexOfLastUnquoted(seq, ch, 0, seq.length());
+    }
+
+    public static int indexOfLastUnquoted(@NotNull CharSequence seq, char ch, int seqLo, int seqHi) {
+        boolean inQuotes = false;
+        int last = -1;
+        for (int i = seqLo; i < seqHi; i++) {
+            if (seq.charAt(i) == '\"') {
+                inQuotes = !inQuotes;
+            }
+            if (seq.charAt(i) == ch && !inQuotes) {
+                last = i;
+            }
+        }
+
+        return last;
+    }
+
     // Term has to be lower-case.
     public static int indexOfLowerCase(@NotNull CharSequence seq, int seqLo, int seqHi, @NotNull CharSequence termLC) {
         int termLen = termLC.length();
@@ -731,46 +750,6 @@ public final class Chars {
                 }
                 if (j == end) {
                     return i;
-                }
-            }
-        }
-
-        return -1;
-    }
-
-    public static int indexOfUnquoted(@NotNull CharSequence seq, char ch) {
-        return indexOfUnquoted(seq, ch, 0, seq.length(), 1);
-    }
-
-    public static int indexOfUnquoted(@NotNull CharSequence seq, char ch, int seqLo, int seqHi, int occurrence) {
-        if (occurrence == 0) {
-            return -1;
-        }
-
-        int count = 0;
-        boolean inQuotes = false;
-        if (occurrence > 0) {
-            for (int i = seqLo; i < seqHi; i++) {
-                if (seq.charAt(i) == '\"') {
-                    inQuotes = !inQuotes;
-                }
-                if (seq.charAt(i) == ch && !inQuotes) {
-                    count++;
-                    if (count == occurrence) {
-                        return i;
-                    }
-                }
-            }
-        } else {    // if occurrence is negative, search in reverse
-            for (int i = seqHi - 1; i >= seqLo; i--) {
-                if (seq.charAt(i) == '\"') {
-                    inQuotes = !inQuotes;
-                }
-                if (seq.charAt(i) == ch && !inQuotes) {
-                    count--;
-                    if (count == occurrence) {
-                        return i;
-                    }
                 }
             }
         }
