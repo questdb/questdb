@@ -168,11 +168,12 @@ public class ServerMain implements Closeable {
         } else {
             PGWireConfiguration pgWireConfiguration = configuration.getPGWireConfiguration();
             HttpContextConfiguration httpContextConfiguration = configuration.getHttpServerConfiguration().getHttpContextConfiguration();
+            boolean settingsReadOnly = configuration.getHttpServerConfiguration().isSettingsReadOnly();
             boolean pgWireReadOnlyContext = pgWireConfiguration.readOnlySecurityContext();
             boolean pgWireReadOnlyUserEnabled = pgWireConfiguration.isReadOnlyUserEnabled();
             String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgWireConfiguration.getReadOnlyUsername() : null;
             boolean httpReadOnly = httpContextConfiguration.readOnlySecurityContext();
-            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly);
+            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly, settingsReadOnly);
         }
     }
 

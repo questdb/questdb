@@ -441,7 +441,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                 final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     assertPreferencesRequest(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc\"}", OVERWRITE, 0L,
-                            HTTP_BAD_REQUEST, "{\"error\":\"settings is read-only\"}\r\n");
+                            HTTP_UNAUTHORIZED, "{\"error\":\"The /settings endpoint is read-only\"}\r\n");
 
                     assertPreferencesStore(settingsStore, 0, "\"preferences\":{}");
 
