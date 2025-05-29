@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.std.AbstractSelfReturningObject;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
-import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.WeakSelfReturningObjectPool;
 
@@ -57,7 +56,6 @@ public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndIn
         if (!closing) {
             closing = true;
             super.close();
-            insert = Misc.free(insert);
             pgInParameterTypeOIDs.clear();
             pgOutParameterTypes.clear();
             closing = false;

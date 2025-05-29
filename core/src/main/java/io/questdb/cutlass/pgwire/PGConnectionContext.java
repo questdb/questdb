@@ -150,7 +150,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final int INT_BYTES_X = Numbers.bswap(Integer.BYTES);
     private static final int INT_NULL_X = Numbers.bswap(-1);
     private static final int IN_TRANSACTION = 1;
-    private static final Log LOG = LogFactory.getLog(PGConnectionContext.class);
     private static final byte MESSAGE_TYPE_BIND_COMPLETE = '2';
     private static final byte MESSAGE_TYPE_CLOSE_COMPLETE = '3';
     private static final byte MESSAGE_TYPE_COMMAND_COMPLETE = 'C';
@@ -175,6 +174,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final int SYNC_DESCRIBE_PORTAL = 4;
     private static final int SYNC_PARSE = 1;
     private static final String WRITER_LOCK_REASON = "pgConnection";
+    private static final Log LOG = LogFactory.getLog(PGConnectionContext.class);
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     // stores result format codes (0=Text,1=Binary) from the latest bind message
@@ -254,7 +254,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private TypesAndInsert typesAndInsert = null;
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsert> typesAndInsertCache;
-    private boolean typesAndInsertIsCached = false;
     // these references are held by context only for a period of processing single request
     // in PF world this request can span multiple messages, but still, only for one request
     // the rationale is to be able to return "selectAndTypes" instance to thread-local
@@ -446,7 +445,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         typesAndSelectIsCached = true;
         assert typesAndUpdate == null;
         typesAndUpdateIsCached = false;
-        typesAndInsertIsCached = false;
         wrapper = null;
     }
 
@@ -467,7 +465,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // We're about to close the context, so no need to return pending factory to cache.
         typesAndSelectIsCached = false;
         typesAndUpdateIsCached = false;
-        typesAndInsertIsCached = false;
         clear();
         if (sqlExecutionContext != null) {
             sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, null, null, -1, null);
@@ -1301,7 +1298,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 throw BadProtocolException.INSTANCE;
             }
             typesAndUpdateIsCached = true;
-            typesAndInsertIsCached = true;
             typesAndSelectIsCached = true;
         }
         return lo;
@@ -1346,7 +1342,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         freeOrCacheTypesAndUpdate();
-        freeOrCacheTypesAndInsert();
     }
 
     private <T extends Mutable> void clearPool(
@@ -1395,7 +1390,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (typesAndInsert != null) {
                 typesAndInsert.defineBindVariables(bindVariableService);
                 queryTag = TAG_INSERT;
-                typesAndInsertIsCached = true;
                 return false;
             }
 
@@ -1735,18 +1729,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void freeFactory() {
         currentFactory = null;
         typesAndSelect = Misc.free(typesAndSelect);
-    }
-
-    private void freeOrCacheTypesAndInsert() {
-        if (typesAndInsert != null) {
-            if (typesAndInsertIsCached) {
-                assert queryText != null;
-                typesAndInsertCache.put(queryText, typesAndInsert);
-                this.typesAndInsert = null;
-            } else {
-                typesAndInsert = Misc.free(typesAndInsert);
-            }
-        }
     }
 
     private void freeOrCacheTypesAndUpdate() {
@@ -2345,7 +2327,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 queryTag = TAG_INSERT;
                 typesAndInsert = typesAndInsertPool.pop();
                 typesAndInsert.of(cq.getInsertOperation(), bindVariableService);
-                typesAndInsertIsCached = bindVariableService.getIndexedVariableCount() > 0;
+                if (bindVariableService.getIndexedVariableCount() > 0) {
+                    LOG.debug().$("cache insert [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).I$();
+                    // we can add insert to cache right away because it is local to the connection
+                    typesAndInsertCache.put(queryText, typesAndInsert);
+                }
                 break;
             case CompiledQuery.UPDATE:
                 queryTag = TAG_UPDATE;
@@ -2524,9 +2510,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (currentCursor != null || typesAndSelect != null) {
             clearCursorAndFactory();
         }
-        // and clear TypesAndUpdate and TypesAndInsert too
+        // and clear TypesAndUpdate too
         freeOrCacheTypesAndUpdate();
-        freeOrCacheTypesAndInsert();
 
         //TODO: parsePhaseBindVariableCount have to be checked before parseQueryText and fed into it to serve as type hints !
         parseQueryText(lo, hi);
@@ -2576,7 +2561,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // from other clients, but they would not be used.
             typesAndSelectIsCached = false;
             typesAndUpdateIsCached = false;
-            typesAndInsertIsCached = false;
             queryText = characterStore.toImmutable();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compileBatch(queryText, sqlExecutionContext, batchCallback);

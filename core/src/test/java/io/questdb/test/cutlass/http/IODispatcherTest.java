@@ -3004,18 +3004,6 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testInsertNoMemLeak() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
-            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE test(id LONG);");
-            testHttpClient.assertGet("{\"dml\":\"OK\"}", "INSERT INTO test values(alloc(42));");
-            testHttpClient.assertGet(
-                    "{\"query\":\"test;\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[42]],\"count\":1}",
-                    "test;"
-            );
-        });
-    }
-
-    @Test
     public void testInterval() throws Exception {
         testJsonQuery(
                 0,

@@ -33,7 +33,6 @@ import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
@@ -643,11 +642,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             CompiledQuery cq,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        try (InsertOperation insertOp = cq.getInsertOperation()) {
-            insertOp.execute(sqlExecutionContext).await();
-            metrics.jsonQueryMetrics().markComplete();
-            sendInsertConfirmation(state, keepAliveHeader);
-        }
+        cq.getInsertOperation().execute(sqlExecutionContext).await();
+        metrics.jsonQueryMetrics().markComplete();
+        sendInsertConfirmation(state, keepAliveHeader);
     }
 
     private void executeNewSelect(
