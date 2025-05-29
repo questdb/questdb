@@ -299,6 +299,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewRefreshWorkerSleepThreshold;
     private final long matViewRefreshWorkerYieldThreshold;
     private final int matViewRowsPerQueryEstimate;
+    private final long matViewTimerStartEpsilon;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -1273,6 +1274,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
             this.matViewMinRefreshInterval = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL, Timestamps.MINUTE_MICROS);
+            this.matViewTimerStartEpsilon = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_TIMER_START_EPSILON, Timestamps.MINUTE_MICROS);
             this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
             this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
@@ -2945,6 +2947,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMatViewRowsPerQueryEstimate() {
             return matViewRowsPerQueryEstimate;
+        }
+
+        @Override
+        public long getMatViewTimerStartEpsilon() {
+            return matViewTimerStartEpsilon;
         }
 
         @Override
