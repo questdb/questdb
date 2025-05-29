@@ -1,4 +1,4 @@
-use chrono::NaiveDateTime;
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use regex::Regex;
 use serde::Deserialize;
 use serde_yaml::Value;
@@ -302,8 +302,7 @@ fn extract_parameters(
                     // asks (PGWire DESCRIBE) server for a date column, server returns pretends it's a timestamp
                     // and the client refuses to set a date value to a timestamp column
                     "date" => Box::new(
-                        substituted.parse::<chrono::NaiveDate>()?
-                            .and_time(chrono::NaiveTime::MIN)
+                        parse_date(&substituted)?
                     ),
 
                     _ => return Err("Unsupported parameter type".into()),
@@ -315,8 +314,15 @@ fn extract_parameters(
     }).collect()
 }
 
-fn parse_timestamp(s: &str) -> Result<NaiveDateTime, chrono::ParseError> {
-    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.fZ")
+fn parse_timestamp(s: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
+    Ok(NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.fZ")?.and_utc())
+}
+
+
+fn parse_date(s: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
+    let naive_date = NaiveDate::parse_from_str(s, "%Y-%m-%d")?;
+    let naive_datetime = naive_date.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+    Ok(naive_datetime.and_utc())
 }
 
 #[derive(Error, Debug)]
@@ -367,10 +373,10 @@ fn get_value_as_yaml(row: &Row, idx: usize) -> Value {
         tokio_postgres::types::Type::FLOAT4 => Value::Number(serde_yaml::Number::from(row.get::<_, f32>(idx))),
         tokio_postgres::types::Type::FLOAT8 => Value::Number(serde_yaml::Number::from(row.get::<_, f64>(idx))),
         tokio_postgres::types::Type::BOOL => Value::Bool(row.get(idx)),
-        tokio_postgres::types::Type::TIMESTAMP => {
-            let val: NaiveDateTime = row.get(idx);
+        tokio_postgres::types::Type::TIMESTAMPTZ => {
+            let val: DateTime<Utc> = row.get(idx);
             Value::String(val.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string())
-        }
+        },
         tokio_postgres::types::Type::VARCHAR => {
             Value::String(row.get(idx))
         }

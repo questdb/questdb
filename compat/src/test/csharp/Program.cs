@@ -10,7 +10,6 @@ public class Program
 {
     public static async Task Main(string[] args)
     {
-        AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
         if (args.Length != 1)
         {
             Console.WriteLine("Usage: dotnet run <test_file.yaml>");
@@ -246,7 +245,7 @@ public class TestRunner
         "float8" => NpgsqlDbType.Double,
         "boolean" => NpgsqlDbType.Boolean,
         "varchar" => NpgsqlDbType.Varchar,
-        "timestamp" => NpgsqlDbType.Timestamp,
+        "timestamp" => NpgsqlDbType.TimestampTz,
         "date" => NpgsqlDbType.Date,
         "char" => NpgsqlDbType.Char,
         _ => throw new ArgumentException($"Unsupported type: {type}")
@@ -260,9 +259,9 @@ public class TestRunner
             "float4" or "float8" => Convert.ToDouble(value.ToString(), CultureInfo.InvariantCulture),
             "boolean" => Convert.ToBoolean(value),
             "varchar" => value.ToString()!,
-            "date" => DateTime.Parse(value.ToString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+            "date" => DateTime.Parse(value.ToString()!, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal),
             "char" => Convert.ToChar(value),
-            "timestamp" => DateTime.Parse(value.ToString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+            "timestamp" => DateTime.Parse(value.ToString()!, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal),
             _ => value
         };
     }
@@ -317,7 +316,7 @@ public class TestRunner
         return dictList.Select(dict => dict.Values
                 .Select(value => value switch
                 {
-                    DateTime dt => (object)dt.ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ"),
+                    DateTime dt => (object)dt.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ"),
                     // Convert all numeric types to string and cast back to object
                     long l => l.ToString(CultureInfo.InvariantCulture),
                     double d => d.ToString(CultureInfo.InvariantCulture),

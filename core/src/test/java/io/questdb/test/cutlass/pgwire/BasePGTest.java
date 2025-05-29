@@ -71,6 +71,8 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Properties;
@@ -89,6 +91,8 @@ public abstract class BasePGTest extends AbstractCairoTest {
     public static final long CONN_AWARE_EXTENDED = CONN_AWARE_EXTENDED_LIMITED | CONN_AWARE_QUIRKS;
     public static final long CONN_AWARE_SIMPLE = 2;
     public static final long CONN_AWARE_ALL = CONN_AWARE_SIMPLE | CONN_AWARE_EXTENDED;
+    private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.S")
+            .withZone(ZoneOffset.UTC);
     protected final boolean legacyMode;
     protected CopyRequestJob copyRequestJob = null;
     protected int forceRecvFragmentationChunkSize = 1024 * 1024;
@@ -215,7 +219,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
                         if (timestamp == null) {
                             sink.put("null");
                         } else {
-                            sink.put(timestamp.toString());
+                            sink.put(DATE_TIME_FORMATTER.format(timestamp.toInstant()));
                         }
                         break;
                     case REAL:

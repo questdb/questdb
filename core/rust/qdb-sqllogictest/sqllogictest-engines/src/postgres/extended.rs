@@ -1,7 +1,7 @@
 use std::process::Command;
 use std::time::Duration;
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use futures::{pin_mut, StreamExt};
 use pg_interval::Interval;
 use postgres_types::{ToSql, Type};
@@ -148,7 +148,11 @@ fn bool_to_str(value: &bool) -> &'static str {
 }
 
 fn timestamp_to_str(ts: &NaiveDateTime) -> String {
-    return ts.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string();
+    ts.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
+}
+
+fn timestamptz_to_str(ts: &DateTime<Utc>) -> String {
+    ts.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
 }
 
 fn varchar_to_str(value: &str) -> String {
@@ -315,14 +319,14 @@ impl sqllogictest::AsyncDB for Postgres<Extended> {
                         single_process!(self, row, row_vec, idx, Interval, INTERVAL);
                     }
                     Type::TIMESTAMPTZ => {
-                        single_process!(
-                            self,
-                            row,
-                            row_vec,
-                            idx,
-                            DateTime<chrono::Utc>,
-                            TIMESTAMPTZ
-                        );
+                        match data_format.timestamp_format {
+                            Some(TimestampFormat::Iso) => {
+                                single_process!(row, row_vec, idx, DateTime<Utc>, timestamptz_to_str);
+                            }
+                            _ => {
+                                single_process!(row, row_vec, idx, DateTime<Utc>);
+                            }
+                        }
                     }
                     Type::INTERVAL_ARRAY => {
                         array_process!(self, row, row_vec, idx, Interval, INTERVAL);

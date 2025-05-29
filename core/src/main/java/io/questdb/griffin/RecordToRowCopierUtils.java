@@ -130,6 +130,7 @@ public class RecordToRowCopierUtils {
         int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
         int implicitCastStrAsTimestamp = asm.poolMethod(SqlUtil.class, "implicitCastStrAsTimestamp", "(Ljava/lang/CharSequence;)J");
         int implicitCastDateAsTimestamp = asm.poolMethod(SqlUtil.class, "dateToTimestamp", "(J)J");
+        int implictCastTimestampAsDate = asm.poolMethod(SqlUtil.class, "implicitCastTimestampAsDate", "(J)J");
         int implicitCastShortAsByte = asm.poolMethod(SqlUtil.class, "implicitCastShortAsByte", "(S)B");
         int implicitCastIntAsByte = asm.poolMethod(SqlUtil.class, "implicitCastIntAsByte", "(I)B");
         int implicitCastLongAsByte = asm.poolMethod(SqlUtil.class, "implicitCastLongAsByte", "(J)B");
@@ -367,6 +368,7 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         case ColumnType.DATE:
+                            asm.invokeStatic(implictCastTimestampAsDate);
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:

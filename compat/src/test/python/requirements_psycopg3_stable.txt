@@ -4,3 +4,4 @@ pytz==2024.2
 PyYAML==6.0.2
 typing_extensions==4.12.2
 zope.interface==7.0.3
+python-dateutil==2.9.0.post0

@@ -23,6 +23,7 @@
 import datetime
 import yaml
 from string import Template
+from dateutil import parser
 
 
 def load_yaml(file_path):
@@ -67,10 +68,11 @@ def convert_and_append_parameters(value, type, resolved_parameters):
     elif type == 'varchar':
         resolved_parameters.append(str(value))
     elif type == 'timestamp':
-        parsed_value = datetime.datetime.strptime(value, '%Y-%m-%dT%H:%M:%S.%fZ')
+        parsed_value = parser.isoparse(value)
         resolved_parameters.append(parsed_value)
     elif type == 'date':
-        parsed_value = datetime.date.fromisoformat(value)
+        parsed_value = parser.isoparse(value)
+        parsed_value = datetime.datetime.combine(parsed_value, datetime.time.min, tzinfo=datetime.timezone.utc)
         resolved_parameters.append(parsed_value)
     elif type == 'char':
         str_val = str(value)

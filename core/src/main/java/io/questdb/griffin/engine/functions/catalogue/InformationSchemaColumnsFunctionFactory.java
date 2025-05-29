@@ -252,6 +252,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
         // thus they are not in PGOids
         OID_TO_TYPE_NAME.put(PGOids.PG_VARCHAR, "character varying");
         OID_TO_TYPE_NAME.put(PGOids.PG_TIMESTAMP, "timestamp without time zone");
+        OID_TO_TYPE_NAME.put(PGOids.PG_TIMESTAMP_TZ, "timestamp with time zone");
         OID_TO_TYPE_NAME.put(PGOids.PG_FLOAT8, "double precision");
         OID_TO_TYPE_NAME.put(PGOids.PG_FLOAT4, "real");
         OID_TO_TYPE_NAME.put(PGOids.PG_INT4, "integer");
