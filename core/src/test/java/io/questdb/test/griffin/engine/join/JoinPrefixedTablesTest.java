@@ -22,27 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.test.griffin.engine.join;
 
-import io.questdb.std.Mutable;
-import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
 
-import java.io.Closeable;
+public class JoinPrefixedTablesTest extends AbstractCairoTest {
+    @Test
+    public void testSimple() throws Exception {
+        execute("create table 'a.b.c.d' (tableId int, b int, t timestamp) timestamp(t) partition by day");
+        execute("insert into 'a.b.c.d' select x, rnd_int(), timestamp_sequence(0, 1000)");
+        execute("create table 'x.y.z' as (select x::int x, rnd_varchar() name from long_sequence(100))");
 
-class SettingsProcessorState implements Mutable, Closeable {
-    final DirectUtf8Sink utf8Sink;
-
-    SettingsProcessorState(int size) {
-        utf8Sink = new DirectUtf8Sink(size);
-    }
-
-    @Override
-    public void clear() {
-        utf8Sink.clear();
-    }
-
-    @Override
-    public void close() {
-        utf8Sink.close();
+        assertQuery(
+                "tableId\tb\tt\tx\tname\n" +
+                        "1\t-1148479920\t1970-01-01T00:00:00.000000Z\t1\t&BT+\n",
+                "SELECT * FROM a.b.c.d\n" +
+                        "LEFT OUTER JOIN (SELECT x, name from 'x.y.z') t ON t.x = tableId\n",
+                "t"
+        );
     }
 }

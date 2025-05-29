@@ -42,7 +42,9 @@ import io.questdb.preferences.PreferencesMap;
 import io.questdb.preferences.PreferencesUpdateListener;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -92,7 +94,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "}" +
             "}";
 
-    private final StringSink sink = new StringSink();
+    private final Utf8StringSink sink = new Utf8StringSink();
 
     public static void assertSettingsRequest(HttpClient httpClient, String expectedHttpResponse) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
@@ -105,6 +107,52 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
         super.setUp();
         unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testEmojiPreferences() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    savePreferences(httpClient, "{\"instance_name\":\"instance ❤️\",\"instance_desc\":\"desc\"}", OVERWRITE, 0L);
+                    assertPreferencesStore(settingsStore, 1, "\"preferences\":{\"instance_name\":\"instance ❤️\",\"instance_desc\":\"desc\"}");
+
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null" +
+                            "}," +
+                            "\"preferences.version\":1," +
+                            "\"preferences\":{" +
+                            "\"instance_name\":\"instance ❤️\"," +
+                            "\"instance_desc\":\"desc\"" +
+                            "}" +
+                            "}");
+
+                    savePreferences(httpClient, "{\"instance_name\":\"instance ❤️\",\"instance_desc\":\"desc \uD83D\uDE02\"}", OVERWRITE, 1L);
+                    assertPreferencesStore(settingsStore, 2, "\"preferences\":{\"instance_name\":\"instance ❤️\",\"instance_desc\":\"desc \uD83D\uDE02\"}");
+
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null" +
+                            "}," +
+                            "\"preferences.version\":2," +
+                            "\"preferences\":{" +
+                            "\"instance_name\":\"instance ❤️\"," +
+                            "\"instance_desc\":\"desc \uD83D\uDE02\"" +
+                            "}" +
+                            "}");
+                }
+            }
+        });
     }
 
     @Test
@@ -197,6 +245,52 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"instance_name\":\"instance1\"," +
                             "\"instance_desc\":\"desc222\"," +
                             "\"key1\":\"value1\"" +
+                            "}" +
+                            "}");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNonASCIIPreferences() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    savePreferences(httpClient, "{\"instance_name\":\"ветер\",\"instance_desc\":\"HŐMÉRSÉKLET\"}", OVERWRITE, 0L);
+                    assertPreferencesStore(settingsStore, 1, "\"preferences\":{\"instance_name\":\"ветер\",\"instance_desc\":\"HŐMÉRSÉKLET\"}");
+
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null" +
+                            "}," +
+                            "\"preferences.version\":1," +
+                            "\"preferences\":{" +
+                            "\"instance_name\":\"ветер\"," +
+                            "\"instance_desc\":\"HŐMÉRSÉKLET\"" +
+                            "}" +
+                            "}");
+
+                    savePreferences(httpClient, "{\"instance_name\":\"金融\",\"instance_desc\":\"ファイナンス\"}", OVERWRITE, 1L);
+                    assertPreferencesStore(settingsStore, 2, "\"preferences\":{\"instance_name\":\"金融\",\"instance_desc\":\"ファイナンス\"}");
+
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null" +
+                            "}," +
+                            "\"preferences.version\":2," +
+                            "\"preferences\":{" +
+                            "\"instance_name\":\"金融\"," +
+                            "\"instance_desc\":\"ファイナンス\"" +
                             "}" +
                             "}");
                 }
@@ -431,6 +525,37 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testSettingsReadOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.HTTP_SETTINGS_READONLY.getEnvVarName(), "true");
+            }})) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertPreferencesRequest(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc\"}", OVERWRITE, 0L,
+                            HTTP_UNAUTHORIZED, "{\"error\":\"The /settings endpoint is read-only\"}\r\n");
+
+                    assertPreferencesStore(settingsStore, 0, "\"preferences\":{}");
+
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null" +
+                            "}," +
+                            "\"preferences.version\":0," +
+                            "\"preferences\":{" +
+                            "}" +
+                            "}");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSettingsWithDefaultProps() throws Exception {
         final Bootstrap bootstrap = new Bootstrap(
                 new PropBootstrapConfiguration() {
@@ -492,7 +617,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             public CairoConfiguration getCairoConfiguration() {
                                 return new DefaultCairoConfiguration(bootstrap.getRootDirectory()) {
                                     @Override
-                                    public boolean exportConfiguration(StringSink sink) {
+                                    public boolean exportConfiguration(CharSink<?> sink) {
                                         final CairoConfiguration config = getCairoConfiguration();
                                         str(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID.getPropertyPath(), config.getDbDirectory(), sink);
                                         integer(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.getPropertyPath(), config.getMaxFileNameLength(), sink);
@@ -506,7 +631,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
                                 return new DefaultPublicPassthroughConfiguration() {
                                     @Override
-                                    public boolean exportConfiguration(StringSink sink) {
+                                    public boolean exportConfiguration(CharSink<?> sink) {
                                         final PublicPassthroughConfiguration config = getPublicPassthroughConfiguration();
                                         bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), config.isPosthogEnabled(), sink);
                                         str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), config.getPosthogApiKey(), sink);

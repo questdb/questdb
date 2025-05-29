@@ -430,7 +430,11 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                     "create table y as (select * from x union all select * from z)",
                     executionContext
             );
-            compiler.compile("insert into x select * from z", executionContext);
+            execute(
+                    compiler,
+                    "insert into x select * from z",
+                    executionContext
+            );
 
             try (RecordCursorFactory factory = engine.select("x", executionContext)) {
                 Assert.assertTrue(factory.supportsTimeFrameCursor());
