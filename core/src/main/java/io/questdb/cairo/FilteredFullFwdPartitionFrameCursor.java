@@ -62,7 +62,7 @@ public class FilteredFullFwdPartitionFrameCursor extends FullFwdPartitionFrameCu
             filterReader = reader.getSkipFilterReader(partitionIndex - 1, filterColumnIndex);
             maybeContains = filterReader.maybeContainsHash(filterKeyHash);
         } while (!maybeContains && partitionIndex < partitionHi);
-        if (maybeContains) {
+        if (maybeContains && partitionIndex < partitionHi) {
             return frame;
         } else {
             return null;
