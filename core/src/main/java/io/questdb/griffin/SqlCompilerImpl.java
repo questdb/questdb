@@ -302,12 +302,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) throws SqlException {
+        return compile(sqlText, executionContext, true);
+    }
+
+    @NotNull
+    public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext, boolean generateProgressLogger) throws SqlException {
         clear();
         // these are quick executions that do not require building of a model
         lexer.of(sqlText);
         isSingleQueryMode = true;
 
-        compileInner(executionContext, sqlText, true);
+        compileInner(executionContext, sqlText, generateProgressLogger);
         return compiledQuery;
     }
 
@@ -2114,14 +2119,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executor.execute(executionContext, sqlText);
                 // executor might decide that SQL contains secret, otherwise we're logging it
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy **" : sqlText;
-                QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
-            } catch (Throwable e) {
+                if (!generateProgressLogger) {
+                    QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
+                }
+            } catch (Throwable th) {
                 // Executor is all-in-one, it parses SQL text and executes it right away. The convention is
                 // that before parsing secrets the executor will notify the execution context. In that, even if
                 // executor fails, the secret SQL text must not be logged
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy** " : sqlText;
-                QueryProgress.logError(e, -1, this.sqlText, executionContext, beginNanos);
-                throw e;
+                QueryProgress.logError(th, -1, this.sqlText, executionContext, beginNanos);
+                throw th;
             }
         } else {
             this.sqlText = sqlText;
