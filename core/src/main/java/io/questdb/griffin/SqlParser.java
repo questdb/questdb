@@ -26,9 +26,14 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
@@ -2628,35 +2633,107 @@ public class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "expected '('");
             }
 
-            for (int j = 0; j < 500; j++) {
-                QueryColumn nextFor = parsePivotParseColumn(lexer, model, sqlParserCallback);
+            CharSequence maybeSelect = SqlUtil.fetchNext(lexer);
 
-                if (nextFor.getAst().type != ExpressionNode.CONSTANT) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "expected constant");
+            if (isSelectKeyword(maybeSelect)) {
+                int start = lexer.lastTokenPosition();
+//                // the IN list must come from a subquery
+//                // We need to compile and execute the query, and then use the cursor to generate an IN list
+
+                // need to find the closing bracket
+                int bracketStack = 1;
+                int j, n;
+                for (j = lexer.getPosition(), n = lexer.getContent().length(); j < n; j++) {
+                    if (bracketStack == 0) {
+                        break;
+                    }
+                    switch (lexer.getContent().charAt(j)) {
+                        case '(':
+                            bracketStack++;
+                            break;
+                        case ')':
+                            bracketStack--;
+                            break;
+                    }
+                }
+
+                String query = Chars.toString(lexer.getContent(), start, j - 1);
+                lexer.goToPosition(j);
+                SqlCompilerImpl compiler = (SqlCompilerImpl) sqlParserCallback;
+
+                SqlExecutionContext executionContext = new SqlExecutionContextImpl(compiler.getEngine(), 1);
+
+                try (RecordCursorFactory inListFactory = compiler.getEngine().select(query, executionContext)) {
+                    RecordMetadata inListMetadata = inListFactory.getMetadata();
+                    if (inListMetadata.getColumnCount() != 1) {
+                        throw SqlException.$(start, "`SELECT` subquery must return a single column");
+                    }
+
+                    boolean hadEntries = false;
+                    try (RecordCursor cursor = inListFactory.getCursor(executionContext)) {
+                        while (cursor.hasNext()) {
+                            hadEntries = true;
+                            CharacterStoreEntry cse = characterStore.newEntry();
+                            Record record = cursor.getRecord();
+                            CursorPrinter.printColumn(record, inListMetadata, 0, cse);
+                            QueryColumn qc = queryColumnPool.next().of(
+                                    null,
+                                    expressionNodePool.next().of(ExpressionNode.CONSTANT, cse.toImmutable(), 0, 0)
+                            );
+                            model.addPivotFor(qc);
+                        }
+                    }
+
+                    if (!hadEntries) {
+                        throw SqlException.$(start, "query returned no results [query=").put(query).put(']');
+                    }
+
                 }
 
                 tok = SqlUtil.fetchNext(lexer);
 
-                model.addPivotFor(nextFor);
-
-                if (tok == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "unclosed list");
-                }
-
-                if (Chars.equals(tok, ',')) {
-                    continue;
-                }
-
                 if (isGroupKeyword(tok) || Chars.equals(tok, ';') || Chars.equals(tok, ')')
                         || isOrderKeyword(tok) || isLimitKeyword(tok) || isSampleKeyword(tok)) {
+                    if (Chars.equals(tok, ')')) {
+                        tok = SqlUtil.fetchNext(lexer);
+                    }
                     break;
                 } else {
                     lexer.unparseLast();
                 }
-            }
+            } else {
+                lexer.unparseLast();
 
-            if (Chars.equals(tok, ')')) {
-                tok = SqlUtil.fetchNext(lexer);
+                for (int j = 0; j < 500; j++) {
+                    QueryColumn nextFor = parsePivotParseColumn(lexer, model, sqlParserCallback);
+
+                    if (nextFor.getAst().type != ExpressionNode.CONSTANT) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "expected constant, did you provide an empty IN list?");
+                    }
+
+                    tok = SqlUtil.fetchNext(lexer);
+
+                    model.addPivotFor(nextFor);
+
+                    if (tok == null) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unclosed list");
+                    }
+
+                    if (Chars.equals(tok, ',')) {
+                        continue;
+                    }
+
+                    if (isGroupKeyword(tok) || Chars.equals(tok, ';') || Chars.equals(tok, ')')
+                            || isOrderKeyword(tok) || isLimitKeyword(tok) || isSampleKeyword(tok)) {
+                        if (Chars.equals(tok, ')')) {
+                            tok = SqlUtil.fetchNext(lexer);
+                        }
+                        break;
+                    } else {
+                        lexer.unparseLast();
+                    }
+                }
+
                 if (isGroupKeyword(tok) || Chars.equals(tok, ';') || Chars.equals(tok, ')')
                         || isOrderKeyword(tok) || isLimitKeyword(tok) || isSampleKeyword(tok)) {
                     break;
@@ -2719,7 +2796,7 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "missing column expression");
         }
 
-        CharSequence alias = null;
+        CharSequence alias;
         tok = SqlUtil.fetchNext(lexer);
         col = queryColumnPool.next().of(null, expr);
 
