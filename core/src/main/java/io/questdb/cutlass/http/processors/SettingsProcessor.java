@@ -191,9 +191,9 @@ public class SettingsProcessor implements HttpRequestHandler {
         }
 
         private void sendErr(Throwable e) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            transientState.utf16Sink.clear();
-            transientState.utf16Sink.put("{\"error\":\"").escapeJsonStr(e.getMessage()).put("\"}");
-            transientContext.simpleResponse().sendStatusJsonContent(HTTP_BAD_REQUEST, transientState.utf16Sink);
+            transientState.utf8Sink.clear();
+            transientState.utf8Sink.put("{\"error\":\"").escapeJsonStr(e.getMessage()).put("\"}");
+            transientContext.simpleResponse().sendStatusJsonContent(HTTP_BAD_REQUEST, transientState.utf8Sink);
         }
 
         private void sendOk() throws PeerDisconnectedException, PeerIsSlowToReadException {
