@@ -54,8 +54,8 @@ public class SettingsProcessor implements HttpRequestHandler {
     // Local value has to be static because each thread will have its own instance of
     // processor. For different threads to lookup the same value from local value map the key,
     // which is LV, has to be the same between processor instances
-    private static final LocalValue<SettingsProcessorState> LV = new LocalValue<>();
-    private static final LocalValue<Utf8StringSink> LV_GET = new LocalValue<>();
+    private static final LocalValue<Utf8StringSink> LV_GET_SINK = new LocalValue<>();
+    private static final LocalValue<SettingsProcessorState> LV_POST_STATE = new LocalValue<>();
     private static final String PREFERENCES_VERSION = "preferences.version";
     private static final Utf8String URL_PARAM_VERSION = new Utf8String("version");
     private final GetProcessor getProcessor = new GetProcessor();
@@ -84,16 +84,16 @@ public class SettingsProcessor implements HttpRequestHandler {
 
         @Override
         public void onHeadersReady(HttpConnectionContext context) {
-            final Utf8StringSink settings = LV_GET.get(context);
+            final Utf8StringSink settings = LV_GET_SINK.get(context);
             if (settings == null) {
                 LOG.debug().$("new settings sink").$();
-                LV_GET.set(context, new Utf8StringSink());
+                LV_GET_SINK.set(context, new Utf8StringSink());
             }
         }
 
         @Override
         public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            final Utf8StringSink settings = LV_GET.get(context);
+            final Utf8StringSink settings = LV_GET_SINK.get(context);
             settings.clear();
             settings.putAscii('{');
             serverConfiguration.exportConfiguration(settings);
@@ -106,7 +106,7 @@ public class SettingsProcessor implements HttpRequestHandler {
 
         @Override
         public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-            final Utf8StringSink settings = LV_GET.get(context);
+            final Utf8StringSink settings = LV_GET_SINK.get(context);
             context.simpleResponse().sendStatusJsonContent(HTTP_OK, settings, false);
         }
     }
@@ -130,10 +130,10 @@ public class SettingsProcessor implements HttpRequestHandler {
         @Override
         public void onHeadersReady(HttpConnectionContext context) {
             transientContext = context;
-            transientState = LV.get(context);
+            transientState = LV_POST_STATE.get(context);
             if (transientState == null) {
                 LOG.debug().$("new settings state").$();
-                LV.set(context, transientState = new SettingsProcessorState(serverConfiguration.getHttpServerConfiguration().getRecvBufferSize()));
+                LV_POST_STATE.set(context, transientState = new SettingsProcessorState(serverConfiguration.getHttpServerConfiguration().getRecvBufferSize()));
             }
         }
 
@@ -156,7 +156,7 @@ public class SettingsProcessor implements HttpRequestHandler {
         @Override
         public void resumeRecv(HttpConnectionContext context) {
             transientContext = context;
-            transientState = LV.get(context);
+            transientState = LV_POST_STATE.get(context);
         }
 
         @Override
