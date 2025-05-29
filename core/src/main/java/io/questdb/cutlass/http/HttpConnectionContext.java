@@ -63,7 +63,6 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -473,8 +472,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             connectionCountGauge = processor.connectionCountGauge(metrics);
             final long numOfConnections = connectionCountGauge.incrementAndGet();
             if (numOfConnections > connectionLimit) {
-                Utf16Sink utf16Sink = rejectProcessor.getMessageSink();
-                utf16Sink
+                rejectProcessor.getMessageSink()
                         .put("exceeded connection limit [name=").put(connectionCountGauge.getName())
                         .put(", numOfConnections=").put(numOfConnections)
                         .put(", connectionLimit=").put(connectionLimit)
@@ -482,8 +480,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 return rejectProcessor.withShutdownWrite().reject(HTTP_BAD_REQUEST);
             }
             if (numOfConnections == connectionLimit && !securityContext.isSystemAdmin()) {
-                Utf16Sink utf16Sink = rejectProcessor.getMessageSink();
-                utf16Sink.put("non-admin user reached connection limit [name=").put(connectionCountGauge.getName())
+                rejectProcessor.getMessageSink()
+                        .put("non-admin user reached connection limit [name=").put(connectionCountGauge.getName())
                         .put(", numOfConnections=").put(numOfConnections)
                         .put(", connectionLimit=").put(connectionLimit)
                         .put(']');

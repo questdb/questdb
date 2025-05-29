@@ -38,6 +38,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
@@ -46,6 +48,10 @@ import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_STATUS_FORMAT;
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_STATUS_TABLE_NAME;
 
 public class TableStatusCheckProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
+    private static final Utf8Sequence DOES_NOT_EXIST = new Utf8String("Does not exist");
+    private static final Utf8Sequence EXISTS = new Utf8String("Exists");
+    private static final Utf8Sequence RESERVED_NAME = new Utf8String("Reserved name");
+    private static final Utf8Sequence TABLE_NAME_MISSING = new Utf8String("table name missing");
 
     private final CairoEngine cairoEngine;
     private final String keepAliveHeader;
@@ -78,7 +84,7 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, HttpRequ
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         DirectUtf8Sequence tableName = context.getRequestHeader().getUrlParam(URL_PARAM_STATUS_TABLE_NAME);
         if (tableName == null) {
-            context.simpleResponse().sendStatusTextContent(200, "table name missing", null);
+            context.simpleResponse().sendStatusTextContent(200, TABLE_NAME_MISSING, null);
         } else {
             int check = TableUtils.TABLE_DOES_NOT_EXIST;
             utf16Sink.clear();
@@ -92,7 +98,7 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, HttpRequ
                 response.headers().put(keepAliveHeader);
                 response.sendHeader();
 
-                response.put('{').putAsciiQuoted("status").putAscii(':').putAsciiQuoted(toResponse(check)).putAscii('}');
+                response.put('{').putAsciiQuoted("status").putAscii(':').putQuoted(toResponse(check)).putAscii('}');
                 response.sendChunk(true);
             } else {
                 context.simpleResponse().sendStatusTextContent(200, toResponse(check), null);
@@ -100,14 +106,14 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, HttpRequ
         }
     }
 
-    private static String toResponse(int existenceCheckResult) {
+    private static Utf8Sequence toResponse(int existenceCheckResult) {
         switch (existenceCheckResult) {
             case TableUtils.TABLE_EXISTS:
-                return "Exists";
+                return EXISTS;
             case TableUtils.TABLE_DOES_NOT_EXIST:
-                return "Does not exist";
+                return DOES_NOT_EXIST;
             default:
-                return "Reserved name";
+                return RESERVED_NAME;
         }
     }
 }

@@ -110,6 +110,7 @@ import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -2229,15 +2230,15 @@ public class PropServerConfiguration implements ServerConfiguration {
             sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
         }
 
-        public static void bool(CharSequence key, boolean value, StringSink sink) {
+        public static void bool(CharSequence key, boolean value, CharSink<?> sink) {
             sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
         }
 
-        public static void integer(CharSequence key, long value, StringSink sink) {
+        public static void integer(CharSequence key, long value, CharSink<?> sink) {
             sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
         }
 
-        public static void str(CharSequence key, CharSequence value, StringSink sink) {
+        public static void str(CharSequence key, CharSequence value, CharSink<?> sink) {
             sink.putQuoted(key).putAscii(':');
             if (value != null) {
                 sink.putQuoted(value);
@@ -2593,7 +2594,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean exportConfiguration(StringSink sink) {
+        public boolean exportConfiguration(CharSink<?> sink) {
             str(RELEASE_TYPE, getReleaseType(), sink);
             str(RELEASE_VERSION, getBuildInformation().getSwVersion(), sink);
             if (!Chars.empty(httpUsername)) {
@@ -5306,7 +5307,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     class PropPublicPassthroughConfiguration implements PublicPassthroughConfiguration {
         @Override
-        public boolean exportConfiguration(StringSink sink) {
+        public boolean exportConfiguration(CharSink<?> sink) {
             bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), isPosthogEnabled(), sink);
             str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), getPosthogApiKey(), sink);
             integer(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.toString(), maxFileNameLength, sink);
