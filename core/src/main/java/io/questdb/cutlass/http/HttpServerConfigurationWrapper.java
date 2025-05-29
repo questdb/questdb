@@ -336,6 +336,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
+    public boolean isSettingsReadOnly() {
+        return getDelegate().isSettingsReadOnly();
+    }
+
+    @Override
     public Counter listenerStateChangeCounter() {
         return getDelegate().listenerStateChangeCounter();
     }

@@ -30,8 +30,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8StringSink;
 
 import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 import static java.net.HttpURLConnection.HTTP_UNAUTHORIZED;
@@ -39,7 +39,7 @@ import static java.net.HttpURLConnection.HTTP_UNAUTHORIZED;
 public class RejectProcessorImpl implements RejectProcessor {
     private static final Log LOG = LogFactory.getLog(RejectProcessorImpl.class);
     protected final HttpConnectionContext httpConnectionContext;
-    private final StringSink rejectMessage = new StringSink();
+    private final Utf8StringSink rejectMessage = new Utf8StringSink();
     protected byte authenticationType = AUTH_TYPE_NONE;
     protected int rejectCode = 0;
     protected CharSequence rejectCookieName = null;
@@ -61,7 +61,7 @@ public class RejectProcessorImpl implements RejectProcessor {
     }
 
     @Override
-    public Utf16Sink getMessageSink() {
+    public CharSink<?> getMessageSink() {
         return rejectMessage;
     }
 
