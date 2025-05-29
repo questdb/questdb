@@ -39,6 +39,7 @@ public class DoubleArray extends AbstractArray {
 
     /**
      * Appends the value at the current append positions, and then advances it.
+     * The append position advances in the row-major order across the entire array.
      * If the append position is currently beyond the last element, it first resets
      * the position to zero and then appends the new value.
      * <p>
