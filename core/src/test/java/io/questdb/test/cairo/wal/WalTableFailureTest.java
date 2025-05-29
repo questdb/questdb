@@ -112,6 +112,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
                                 12,
                                 false,
                                 false,
+                                false,
+                                0,
                                 null
                         );
                         return 0;
@@ -160,6 +162,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
                                 12,
                                 false,
                                 false,
+                                false,
+                                0,
                                 null
                         );
                         return 0;
@@ -428,6 +432,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
                                 12,
                                 false,
                                 false,
+                                false,
+                                0,
                                 null
                         );
                         return 0;
@@ -476,6 +482,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
                                 12,
                                 false,
                                 false,
+                                false,
+                                0,
                                 null
                         );
                         return 0;

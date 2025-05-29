@@ -71,6 +71,11 @@ public class TableStructMetadataAdapter implements TableStructure {
     }
 
     @Override
+    public int getFilterCapacity(int columnIndex) {
+        return 4096;
+    }
+
+    @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return 256;
     }
@@ -114,6 +119,11 @@ public class TableStructMetadataAdapter implements TableStructure {
     @Override
     public boolean isDedupKey(int columnIndex) {
         return metadata.isDedupKey(columnIndex);
+    }
+
+    @Override
+    public boolean isFiltered(int columnIndex) {
+        return metadata.isColumnFiltered(columnIndex);
     }
 
     @Override

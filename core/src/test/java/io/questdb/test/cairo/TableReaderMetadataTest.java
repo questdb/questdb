@@ -168,11 +168,11 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "varchar:" + stringColumnType + "\n" +
                 "bool2:BOOLEAN\n";
         assertThat(expected,
-                w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, false, 0, false, null),
-                w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, false, 0, false, null),
+                w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, false, 0, false, false, 0, null),
+                w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, false, 0, false, false, 0, null),
                 w -> w.removeColumn("bool"),
-                w -> w.addColumn("bool2", ColumnType.BOOLEAN, 0, false, false, 0, false, false, null),
-                w -> w.changeColumnType("varchar", ColumnType.STRING, 0, false, false, 0, false, null)
+                w -> w.addColumn("bool2", ColumnType.BOOLEAN, 0, false, false, 0, false, false, false, 0, null),
+                w -> w.changeColumnType("varchar", ColumnType.STRING, 0, false, false, 0, false, false, 0, null)
         );
     }
 
@@ -192,10 +192,10 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
                 long structVersion;
                 try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
-                    writer.changeColumnType("int", ColumnType.LONG, 0, false, false, 0, false, null);
-                    writer.changeColumnType("sym", ColumnType.VARCHAR, 0, false, false, 0, false, null);
+                    writer.changeColumnType("int", ColumnType.LONG, 0, false, false, 0, false, false, 0, null);
+                    writer.changeColumnType("sym", ColumnType.VARCHAR, 0, false, false, 0, false, false, 0, null);
                     writer.removeColumn("bool");
-                    writer.addColumn("bool2", ColumnType.BOOLEAN, 0, false, false, 0, false, false, null);
+                    writer.addColumn("bool2", ColumnType.BOOLEAN, 0, false, false, 0, false, false, false, 0, null);
                     structVersion = writer.getMetadataVersion();
                 }
 
@@ -223,8 +223,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "date:DATE\n" +
                 "varchar:" + varcharColumnType + "\n";
         assertThat(expected,
-                w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, false, 0, false, null),
-                w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, false, 0, false, null)
+                w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, false, 0, false, false, 0, null),
+                w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, false, 0, false, false, 0, null)
         );
     }
 
