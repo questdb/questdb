@@ -513,6 +513,49 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWithElse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+
+            String query =
+                    "cities\n" +
+                            "PIVOT (\n" +
+                            "    SUM(population)\n" +
+                            "    FOR\n" +
+                            "        year IN (2000) ELSE 'other_years'\n" +
+                            "    GROUP BY country\n" +
+                            ");\n";
+
+//            assertException(query, 60, "query returned no results");
+
+            execute(dmlCities);
+
+            assertQueryNoLeakCheck(
+                    "country\t2000\t2010\t2020\n" +
+                            "NL\t1005\t1065\t1158\n" +
+                            "US\t8579\t8783\t9510\n",
+                    query,
+                    null,
+                    true,
+                    true,
+                    false
+            );
+
+            assertPlanNoLeakCheck(query,
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [country]\n" +
+                            "  values: [sum(case([SUM,nullL,year])),sum(case([SUM,nullL,year])),sum(case([SUM,nullL,year]))]\n" +
+                            "    Async JIT Group By workers: 1\n" +
+                            "      keys: [country,year]\n" +
+                            "      values: [sum(population)]\n" +
+                            "      filter: year in [2000,2010,2020]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: cities\n");
+        });
+    }
+
+    @Test
     public void testPivotWithForAliases() throws Exception {
         assertQueryAndPlan(
                 "country\tD1\tD2\tD3\n",

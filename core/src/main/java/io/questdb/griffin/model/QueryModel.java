@@ -197,6 +197,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Inner join expressions
     private ExpressionNode outerJoinExpressionClause;
     private @Nullable ObjList<QueryColumn> pivotColumns = null;
+    private @Nullable ObjList<ExpressionNode> pivotElse = null;
     private @Nullable ObjList<QueryColumn> pivotFor = null;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
@@ -367,6 +368,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         pivotColumns.add(column);
     }
 
+    public void addPivotElse(ExpressionNode _else) {
+        if (pivotElse == null) {
+            pivotElse = new ObjList<>();
+        }
+        pivotElse.add(_else);
+    }
+
     public void addPivotFor(QueryColumn _for) {
         if (pivotFor == null) {
             pivotFor = new ObjList<>();
@@ -513,6 +521,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         skipped = false;
         Misc.clear(pivotColumns);
         Misc.clear(pivotFor);
+        Misc.clear(pivotElse);
         Misc.clear(unpivotColumns);
         Misc.clear(unpivotFor);
         unpivotIncludeNulls = false;
@@ -540,6 +549,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void clearPivot() {
         Misc.clear(pivotFor);
         Misc.clear(pivotColumns);
+        Misc.clear(pivotElse);
     }
 
     public void clearSampleBy() {
@@ -748,6 +758,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(decls, that.decls)
                 && Objects.equals(pivotColumns, that.pivotColumns)
                 && Objects.equals(pivotFor, that.pivotFor)
+                && Objects.equals(pivotElse, that.pivotElse)
                 && Objects.equals(unpivotColumns, that.unpivotColumns)
                 && Objects.equals(unpivotFor, that.unpivotFor)
                 && Objects.equals(unpivotIncludeNulls, that.unpivotIncludeNulls);
@@ -977,6 +988,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return pivotColumns;
     }
 
+    public @Nullable ObjList<ExpressionNode> getPivotElse() {
+        return pivotElse;
+    }
+
     public @Nullable ObjList<QueryColumn> getPivotFor() {
         return pivotFor;
     }
@@ -1141,7 +1156,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 isUpdateModel, modelType, updateTableModel,
                 updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls,
                 allowPropagationOfOrderByAdvice,
-                pivotColumns, pivotFor, unpivotColumns, unpivotFor, unpivotIncludeNulls
+                pivotColumns, pivotFor, pivotElse, unpivotColumns, unpivotFor, unpivotIncludeNulls
         );
     }
 
@@ -2112,13 +2127,33 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             pivotColumns.toSink(sink);
             sink.putAscii(" for ");
 
+            ExpressionNode _else;
             assert pivotFor != null;
             for (int i = 0, n = pivotFor.size(); i < n; i++) {
-                pivotFor.getQuick(i).toSink(sink);
+                QueryColumn pivotForName = pivotFor.getQuick(i);
+
+                sink.put(pivotForName).put("in").put("(");
+                while (i++ < n) {
+                    QueryColumn pivotForValue = pivotFor.getQuick(i);
+                    if (pivotForValue.getAst().type == ExpressionNode.CONSTANT) {
+                        sink.put(pivotForValue);
+                        if (i + 1 < n && pivotFor.getQuick(i + 1).getAst().type != ExpressionNode.CONSTANT) {
+                            sink.put(',');
+                        }
+                    }
+
+                }
+
+                sink.put(')');
+
+                if (pivotElse != null && (_else = pivotElse.getQuick(i)) != null) {
+                    sink.put(" ELSE ").put(_else);
+                }
                 if (i + 1 < n) {
                     sink.putAscii(' ');
                 }
             }
+
         }
 
         if (unpivotColumns != null && unpivotColumns.size() > 0) {

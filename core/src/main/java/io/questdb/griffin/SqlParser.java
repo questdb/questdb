@@ -2602,6 +2602,7 @@ public class SqlParser {
 
         for (int i = 0; i < 500; i++) {
 
+            int pivotForSize = model.getPivotFor() != null ? model.getPivotFor().size() : 0;
             CharSequence forName = SqlUtil.fetchNext(lexer);
 
             if (forName == null) {
@@ -2692,6 +2693,14 @@ public class SqlParser {
 
                 tok = SqlUtil.fetchNext(lexer);
 
+                if (isElseKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    model.addPivotElse(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf(tok), 0, 0));
+                    SqlUtil.fetchNext(lexer);
+                } else {
+                    model.addPivotElse(null);
+                }
+
                 if (isGroupKeyword(tok) || Chars.equals(tok, ';') || Chars.equals(tok, ')')
                         || isOrderKeyword(tok) || isLimitKeyword(tok) || isSampleKeyword(tok)) {
                     if (Chars.equals(tok, ')')) {
@@ -2723,10 +2732,22 @@ public class SqlParser {
                         continue;
                     }
 
+
                     if (isGroupKeyword(tok) || Chars.equals(tok, ';') || Chars.equals(tok, ')')
                             || isOrderKeyword(tok) || isLimitKeyword(tok) || isSampleKeyword(tok)) {
                         if (Chars.equals(tok, ')')) {
                             tok = SqlUtil.fetchNext(lexer);
+                            if (isElseKeyword(tok)) {
+                                tok = SqlUtil.fetchNext(lexer);
+
+                                // else means all the columns that aren't in the list
+                                // lets build a FOR
+
+                                model.addPivotElse(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf(tok), 0, 0));
+                                SqlUtil.fetchNext(lexer);
+                            } else {
+                                model.addPivotElse(null);
+                            }
                         }
                         break;
                     } else {

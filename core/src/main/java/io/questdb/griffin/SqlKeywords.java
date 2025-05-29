@@ -491,6 +491,14 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'p';
     }
 
+    public static boolean isElseKeyword(CharSequence tok) {
+        return tok.length() == 4
+                && (tok.charAt(0) | 32) == 'e'
+                && (tok.charAt(1) | 32) == 'l'
+                && (tok.charAt(2) | 32) == 's'
+                && (tok.charAt(3) | 32) == 'e';
+    }
+
     public static boolean isEmptyAlias(CharSequence tok) {
         return tok.length() == 2
                 && ((tok.charAt(0) == '\'' && tok.charAt(1) == '\'') || (tok.charAt(0) == '"' && tok.charAt(1) == '"'));
