@@ -237,14 +237,14 @@ public class CairoEngine implements Closeable, WriterSource {
             SqlExecutionContext sqlExecutionContext,
             @Nullable SCSequence eventSubSeq
     ) throws SqlException {
-        CompiledQuery cc = compiler.compile(sqlText, sqlExecutionContext);
-        switch (cc.getType()) {
+        CompiledQuery cq = compiler.compile(sqlText, sqlExecutionContext);
+        switch (cq.getType()) {
             case CREATE_TABLE:
             case CREATE_TABLE_AS_SELECT:
             case CREATE_MAT_VIEW:
             case DROP:
                 assert sqlExecutionContext.getCairoEngine() == compiler.getEngine();
-                try (Operation op = cc.getOperation()) {
+                try (Operation op = cq.getOperation()) {
                     assert op != null;
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
@@ -253,38 +253,15 @@ public class CairoEngine implements Closeable, WriterSource {
                 break;
             case INSERT:
             case INSERT_AS_SELECT:
-                insert(cc, sqlText, sqlExecutionContext);
+                insert(cq, sqlExecutionContext);
                 break;
             case SELECT:
                 throw SqlException.$(0, "use select()");
             default:
-                try (OperationFuture future = cc.execute(eventSubSeq)) {
+                try (OperationFuture future = cq.execute(eventSubSeq)) {
                     future.await();
                 }
                 break;
-        }
-    }
-
-    public static void insert(
-            CompiledQuery cq,
-            CharSequence insertSql,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        switch (cq.getType()) {
-            case INSERT:
-            case INSERT_AS_SELECT:
-                try (InsertOperation insertOperation = cq.popInsertOperation();
-                     InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
-                    insertMethod.execute(sqlExecutionContext);
-                    insertMethod.commit();
-                }
-                break;
-            case SELECT:
-                throw SqlException.$(0, "use select()");
-            case DROP:
-                throw SqlException.$(0, "use drop()");
-            default:
-                throw SqlException.$(0, "use ddl()");
         }
     }
 
@@ -1551,6 +1528,30 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         if (!tt.equals(tableToken)) {
             throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), tt.getTableId(), tt.getTableId(), -1);
+        }
+    }
+
+    private static void insert(
+            CompiledQuery cq,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        switch (cq.getType()) {
+            case INSERT:
+            case INSERT_AS_SELECT:
+                try (
+                        InsertOperation insertOperation = cq.popInsertOperation();
+                        InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
+                ) {
+                    insertMethod.execute(sqlExecutionContext);
+                    insertMethod.commit();
+                }
+                break;
+            case SELECT:
+                throw SqlException.$(0, "use select()");
+            case DROP:
+                throw SqlException.$(0, "use drop()");
+            default:
+                throw SqlException.$(0, "use ddl()");
         }
     }
 

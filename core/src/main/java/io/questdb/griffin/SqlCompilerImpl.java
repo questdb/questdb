@@ -2294,18 +2294,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private InsertOperation compileInsert(InsertModel insertModel, SqlExecutionContext executionContext) throws SqlException {
         // todo: consider moving this method to InsertModel
         final ExpressionNode tableNameExpr = insertModel.getTableNameExpr();
+        InsertOperationImpl insertOperation = null;
+        Function timestampFunction = null;
         ObjList<Function> valueFunctions = null;
         TableToken token = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
 
         try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(token)) {
             final long metadataVersion = metadata.getMetadataVersion();
-            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
+            insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
             final int metadataTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = insertModel.getColumnNameList();
             final int columnSetSize = columnNameList.size();
             int designatedTimestampPosition = 0;
             for (int tupleIndex = 0, n = insertModel.getRowTupleCount(); tupleIndex < n; tupleIndex++) {
-                Function timestampFunction = null;
+                timestampFunction = null;
                 listColumnFilter.clear();
                 if (columnSetSize > 0) {
                     valueFunctions = new ObjList<>(columnSetSize);
@@ -2386,15 +2388,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
 
-
                 VirtualRecord record = new VirtualRecord(valueFunctions);
                 RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter);
                 insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction, designatedTimestampPosition, tupleIndex));
             }
             return insertOperation;
-        } catch (SqlException e) {
+        } catch (Throwable th) {
+            Misc.free(insertOperation);
+            Misc.free(timestampFunction);
             Misc.freeObjList(valueFunctions);
-            throw e;
+            throw th;
         }
     }
 
