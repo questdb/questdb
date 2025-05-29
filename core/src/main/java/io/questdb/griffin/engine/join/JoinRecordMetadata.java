@@ -136,7 +136,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     @Override
     public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
         final MapKey key = map.withKey();
-        final int dot = Chars.indexOf(columnName, lo, '.');
+        final int dot = Chars.indexOfLastUnquoted(columnName, '.', lo, hi);
         if (dot == -1) {
             key.putStr(null);
             key.putStrLowerCase(columnName, lo, hi);

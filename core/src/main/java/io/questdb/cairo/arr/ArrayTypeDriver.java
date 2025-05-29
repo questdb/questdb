@@ -309,7 +309,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
         int type = ColumnType.encodeArrayType(elementType, nDim);
         long valuePtr = dataMemAddr + (long) nDim * Integer.BYTES;
-        value.of(type, nDim, dataMemAddr, valuePtr, cardinality * ColumnType.sizeOf(elementType));
+        value.of(type, dataMemAddr, valuePtr, cardinality * ColumnType.sizeOf(elementType));
         return value;
     }
 
@@ -818,7 +818,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         // for shorts, it's on a 2-byte boundary. For booleans, we align to the byte.
         final int requiredByteAlignment = ColumnType.sizeOf(array.getElemType());
         padTo(dataMem, requiredByteAlignment);
-        array.appendToMem(dataMem);
+        array.appendDataToMem(dataMem);
         // We pad at the end, ready for the next entry that starts with an int.
         padTo(dataMem, Integer.BYTES);
     }
@@ -828,10 +828,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      */
     private static void writeShape(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
         assert dataMem.getAppendOffset() % Integer.BYTES == 0; // aligned integer write
-        int dim = array.getDimCount();
-        for (int i = 0; i < dim; ++i) {
-            dataMem.putInt(array.getDimLen(i));
-        }
+        array.appendShapeToMem(dataMem);
     }
 
     /**

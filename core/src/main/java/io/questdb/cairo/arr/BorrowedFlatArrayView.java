@@ -74,6 +74,13 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
         return this;
     }
 
+    public BorrowedFlatArrayView of(BorrowedFlatArrayView other) {
+        this.ptr = other.ptr;
+        this.length = other.length;
+        this.size = other.size;
+        return this;
+    }
+
     public long ptr() {
         return this.ptr;
     }

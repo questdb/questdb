@@ -197,8 +197,8 @@ class WalEventWriter implements Closeable {
                 eventMem.putLong128(function.getLong128Lo(null), function.getLong128Hi(null));
                 break;
             case ColumnType.ARRAY:
-                // todo:
-                throw new UnsupportedOperationException("implement me");
+                eventMem.putArray(function.getArray(null));
+                break;
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
         }

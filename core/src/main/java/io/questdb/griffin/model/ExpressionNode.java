@@ -106,7 +106,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                 return true;
             }
 
-            int dot = Chars.indexOf(tok, '.');
+            int dot = Chars.indexOfLastUnquoted(tok, '.');
             if (dot > -1
                     && translatingModel.getModelAliasIndex(tok, 0, dot) > -1
                     && Chars.equals(qcTok, tok, dot + 1, tok.length())) {

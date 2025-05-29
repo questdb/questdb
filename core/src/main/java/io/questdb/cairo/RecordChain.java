@@ -34,8 +34,8 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -381,7 +381,7 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
 
     protected class RecordChainRecord implements Record {
         private final ObjList<BorrowedArray> arrays;
-        private final ObjList<MemoryCR.ByteSequenceView> bsViews;
+        private final ObjList<DirectByteSequenceView> bsViews;
         private final ObjList<DirectString> csViewsA;
         private final ObjList<DirectString> csViewsB;
         private final ObjList<Interval> intervals;
@@ -606,9 +606,9 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
             return arrays.getQuick(columnIndex);
         }
 
-        private MemoryCR.ByteSequenceView bsView(int columnIndex) {
+        private DirectByteSequenceView bsView(int columnIndex) {
             if (bsViews.getQuiet(columnIndex) == null) {
-                bsViews.extendAndSet(columnIndex, new MemoryCR.ByteSequenceView());
+                bsViews.extendAndSet(columnIndex, new DirectByteSequenceView());
             }
             return bsViews.getQuick(columnIndex);
         }

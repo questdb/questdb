@@ -153,7 +153,7 @@ public abstract class ArrayView implements QuietCloseable {
     protected boolean isVanilla = true;
     protected int type = ColumnType.UNDEFINED;
 
-    public final void appendToMem(MemoryA mem) {
+    public final void appendDataToMem(MemoryA mem) {
         // We need isEmpty() check to protect us from running appendToMemRecursive() for an
         // almost unbounded number of steps, e.g., on an array of shape (100_000_000, 100_000_000, 0).
         // We also need it to protect from ptr == 0 in flatView.
@@ -164,6 +164,12 @@ public abstract class ArrayView implements QuietCloseable {
             flatView.appendToMemFlat(mem);
         } else {
             appendToMemRecursive(0, 0, mem);
+        }
+    }
+
+    public final void appendShapeToMem(MemoryA mem) {
+        for (int i = 0, dim = getDimCount(); i < dim; ++i) {
+            mem.putInt(getDimLen(i));
         }
     }
 
@@ -312,6 +318,20 @@ public abstract class ArrayView implements QuietCloseable {
      */
     public final long getLong(int flatIndex) {
         return flatView.getLongAtAbsIndex(flatViewOffset + flatIndex);
+    }
+
+    public final long getMemoryVanillaSize() {
+        if (isNull()) {
+            return 0;
+        } else {
+            long elemSize = ColumnType.sizeOf(ColumnType.decodeArrayElementType(type));
+            int dim = getDimCount();
+            for (int i = 0; i < dim; ++i) {
+                elemSize *= getDimLen(i);
+            }
+            // type + shape + data
+            return (long) Integer.BYTES * (dim + 1) + elemSize;
+        }
     }
 
     /**

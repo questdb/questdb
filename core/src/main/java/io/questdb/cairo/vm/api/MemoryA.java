@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -45,6 +46,8 @@ public interface MemoryA extends Closeable {
 
     void jumpTo(long offset);
 
+    void putArray(ArrayView array);
+
     long putBin(BinarySequence value);
 
     long putBin(long from, long len);
@@ -54,8 +57,6 @@ public interface MemoryA extends Closeable {
     void putBool(boolean value);
 
     void putByte(byte value);
-
-    void zeroMem(int length);
 
     void putChar(char value);
 
@@ -113,4 +114,6 @@ public interface MemoryA extends Closeable {
     void skip(long bytes);
 
     void truncate();
+
+    void zeroMem(int length);
 }
