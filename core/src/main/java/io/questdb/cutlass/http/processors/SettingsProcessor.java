@@ -42,6 +42,7 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 
@@ -134,18 +135,16 @@ public class SettingsProcessor implements HttpRequestHandler {
                 LOG.debug().$("new settings state").$();
                 LV.set(context, transientState = new SettingsProcessorState(serverConfiguration.getHttpServerConfiguration().getRecvBufferSize()));
             }
-
-            transientState.mode = SettingsStore.Mode.of(context.getRequestHeader().getMethod());
-
-            transientState.utf16Sink.clear();
-            transientState.utf16Sink.put(context.getRequestHeader().getUrlParam(URL_PARAM_VERSION));
         }
 
         @Override
         public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
             try {
                 context.getSecurityContext().authorizeSettings();
-                settingsStore.save(transientState.utf8Sink, transientState.mode, parseVersion(transientState.utf16Sink));
+
+                final SettingsStore.Mode mode = SettingsStore.Mode.of(context.getRequestHeader().getMethod());
+                final long version = parseVersion(context.getRequestHeader().getUrlParam(URL_PARAM_VERSION));
+                settingsStore.save(transientState.utf8Sink, mode, version);
                 sendOk();
             } catch (CairoException e) {
                 LOG.error().$("could not save preferences").$((Throwable) e).$();
@@ -165,7 +164,7 @@ public class SettingsProcessor implements HttpRequestHandler {
             context.resumeResponseSend();
         }
 
-        private long parseVersion(CharSequence version) {
+        private long parseVersion(Utf8Sequence version) {
             try {
                 return Numbers.parseLong(version);
             } catch (NumericException e) {
