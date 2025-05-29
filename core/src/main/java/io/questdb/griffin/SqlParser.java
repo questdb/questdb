@@ -41,6 +41,7 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
@@ -169,8 +170,8 @@ public class SqlParser {
         CharSequence tok;
         int valuePos = lexer.getPosition();
         tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "missing argument, should be TTL <number> <unit> or <number_with_unit>");
+        if (tok == null || Chars.equals(tok, ';')) {
+            throw SqlException.$(lexer.getPosition(), "missing argument, should be <number> <unit> or <number_with_unit>");
         }
         int tokLength = tok.length();
         int unit = -1;
@@ -184,15 +185,10 @@ public class SqlParser {
                 try {
                     Numbers.parseLong(tok, 0, tokLength - 1);
                 } catch (NumericException e) {
-                    throw SqlException.$(
-                            valuePos,
-                            "invalid argument, should be TTL <number> <unit> or <number_with_unit>"
-                    );
+                    throw SqlException.$(valuePos, "invalid argument, should be <number> <unit> or <number_with_unit>");
                 }
-                throw SqlException.$(
-                        valuePos + tokLength - 1,
-                        "invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was '"
-                ).put(unitChar).put('\'');
+                throw SqlException.$(valuePos + tokLength - 1, "invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was '")
+                        .put(unitChar).put('\'');
             }
         }
         // at this point, unit == -1 means the syntax wasn't of the "1H" form, it can still be of the "1 HOUR" form
@@ -200,32 +196,23 @@ public class SqlParser {
         try {
             long ttlLong = unit == -1 ? Numbers.parseLong(tok) : Numbers.parseLong(tok, 0, tokLength - 1);
             if (ttlLong > Integer.MAX_VALUE || ttlLong < 0) {
-                throw SqlException.$(valuePos, "TTL value out of range: ").put(ttlLong)
+                throw SqlException.$(valuePos, "value out of range: ").put(ttlLong)
                         .put(". Max value: ").put(Integer.MAX_VALUE);
             }
             ttlValue = (int) ttlLong;
         } catch (NumericException e) {
-            throw SqlException.$(
-                    valuePos,
-                    "invalid syntax, should be TTL <number> <unit> but was TTL "
-            ).put(tok);
+            throw SqlException.$(valuePos, "invalid syntax, should be <number> <unit> but was ").put(tok);
         }
         if (unit == -1) {
             unitPos = lexer.getPosition();
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null) {
-                throw SqlException.$(
-                        unitPos,
-                        "missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected"
-                );
+                throw SqlException.$(unitPos, "missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected");
             }
             unit = PartitionBy.ttlUnitFromString(tok, 0, tok.length());
         }
         if (unit == -1) {
-            throw SqlException.$(
-                            unitPos,
-                            "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '"
-                    )
+            throw SqlException.$(unitPos, "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '")
                     .put(tok).put('\'');
         }
         return Timestamps.toHoursOrMonths(ttlValue, unit, valuePos);
@@ -255,6 +242,13 @@ public class SqlParser {
         }
 
         return visitor.visit(node);
+    }
+
+    public static void validateMatViewIntervalUnit(char unit, int pos) throws SqlException {
+        if (unit != 'M' && unit != 'y' && unit != 'w' && unit != 'd' && unit != 'h' && unit != 'm') {
+            throw SqlException.position(pos).put("unsupported interval unit: ").put(unit)
+                    .put(", supported units are 'm', 'h', 'd', 'w', 'y', 'M'");
+        }
     }
 
     private static void collectAllTableNames(
@@ -458,7 +452,7 @@ public class SqlParser {
     }
 
     private void assertNotDot(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (Chars.indexOfUnquoted(tok, '.') != -1) {
+        if (Chars.indexOfLastUnquoted(tok, '.') != -1) {
             throw SqlException.$(lexer.lastTokenPosition(), "'.' is not allowed here");
         }
     }
@@ -478,7 +472,7 @@ public class SqlParser {
         return SqlUtil.createColumnAlias(
                 characterStore,
                 unquote(token),
-                Chars.indexOfUnquoted(token, '.'),
+                Chars.indexOfLastUnquoted(token, '.'),
                 aliasToColumnMap,
                 type != ExpressionNode.LITERAL
         );
@@ -892,18 +886,41 @@ public class SqlParser {
             tok = tok(lexer, "'as' or 'refresh'");
         }
 
-        // For now, incremental refresh is the only supported refresh type.
         int refreshType = MatViewDefinition.INCREMENTAL_REFRESH_TYPE;
         if (isRefreshKeyword(tok)) {
-            tok = tok(lexer, "'incremental' or 'manual' or 'interval' expected");
-            if (isManualKeyword(tok)) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("manual refresh is not yet supported");
-            } else if (isIntervalKeyword(tok)) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("interval refresh is not yet supported");
-            } else if (!isIncrementalKeyword(tok)) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("'incremental' or 'manual' or 'interval' expected");
+            tok = tok(lexer, "'incremental' or 'start' or 'every' or 'as' expected");
+            if (isIncrementalKeyword(tok)) {
+                tok = tok(lexer, "'start' or 'every' or 'as'");
+            } else if (!isStartKeyword(tok) && !isEveryKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'incremental' or 'start' or 'every' or 'as' expected");
             }
-            tok = tok(lexer, "'as'");
+
+            long start = Numbers.LONG_NULL;
+            if (isStartKeyword(tok)) {
+                tok = tok(lexer, "START timestamp");
+                try {
+                    start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
+                }
+                tok = tok(lexer, "'every'");
+            }
+
+            if (isEveryKeyword(tok)) {
+                if (start == Numbers.LONG_NULL) {
+                    // Use the current time as the start timestamp if it wasn't specified.
+                    start = configuration.getMicrosecondClock().getTicks();
+                }
+                tok = tok(lexer, "interval");
+                final int interval = Timestamps.getStrideMultiple(tok);
+                final char unit = Timestamps.getStrideUnit(tok);
+                validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
+                refreshType = MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE;
+                tableOpBuilder.setMatViewTimer(start, interval, unit);
+                tok = tok(lexer, "'as'");
+            } else if (start != Numbers.LONG_NULL) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("'every' expected");
+            }
         }
         mvOpBuilder.setRefreshType(refreshType);
 
@@ -948,6 +965,10 @@ public class SqlParser {
             mvOpBuilder.setBaseTableName(baseTableNameStr);
 
             // Basic validation - check all nested models that read from the base table for window functions, unions, FROM-TO, or FILL.
+            if (!isTableQueried(queryModel, baseTableNameStr)) {
+                throw SqlException.position(queryModel.getModelPosition())
+                        .put("base table is not referenced in materialized view query: ").put(baseTableName);
+            }
             validateMatViewQuery(queryModel, baseTableNameStr);
 
             final QueryModel nestedModel = queryModel.getNestedModel();
@@ -975,7 +996,7 @@ public class SqlParser {
                 return mvOpBuilder;
             }
         } else {
-            throw SqlException.position(lexer.getPosition()).put("'as' expected");
+            throw SqlException.position(lexer.lastTokenPosition()).put("'refresh' or 'as' expected");
         }
 
         // Optional clauses that go after the parentheses.
@@ -1010,8 +1031,8 @@ public class SqlParser {
         }
 
         if (tok != null && isTtlKeyword(tok)) {
-            int ttlValuePos = lexer.getPosition();
-            int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
+            final int ttlValuePos = lexer.getPosition();
+            final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
             if (partitionBy != -1) {
                 PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
             }
@@ -1172,8 +1193,8 @@ public class SqlParser {
             tok = optTok(lexer);
 
             if (tok != null && isTtlKeyword(tok)) {
-                int ttlValuePos = lexer.getPosition();
-                int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
+                final int ttlValuePos = lexer.getPosition();
+                final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
                 PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
                 builder.setTtlHoursOrMonths(ttlHoursOrMonths);
                 tok = optTok(lexer);
@@ -2307,7 +2328,7 @@ public class SqlParser {
     }
 
     private void parseHints(GenericLexer lexer, QueryModel model) {
-        CharSequence hintToken = null;
+        CharSequence hintToken;
         boolean parsingParams = false;
         CharSequence hintKey = null;
         CharacterStoreEntry hintValuesEntry = null;
@@ -2965,6 +2986,9 @@ public class SqlParser {
                                                 // In this case the end point cannot be value_expr PRECEDING.
                                                 throw SqlException.$(lexer.lastTokenPosition(), "start row is CURRENT, end row not must be PRECEDING");
                                             }
+                                            if (winCol.getRowsLoKind() == WindowColumn.FOLLOWING) {
+                                                throw SqlException.$(lexer.lastTokenPosition(), "start row is FOLLOWING, end row not must be PRECEDING");
+                                            }
                                             winCol.setRowsHiKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
                                         } else if (isFollowingKeyword(tok)) {
                                             winCol.setRowsHiKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
@@ -3128,7 +3152,7 @@ public class SqlParser {
                     }
                     CharSequence alias;
 
-                    if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOfUnquoted(token, '.') != -1) {
+                    if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOfLastUnquoted(token, '.') != -1) {
                         alias = createConstColumnAlias(aliasMap);
                     } else {
                         CharSequence tokenAlias = qc.getAst().token;
@@ -3184,7 +3208,7 @@ public class SqlParser {
                     model.setNestedModel(parseWith(lexer, withClause, sqlParserCallback, model.getDecls()));
                     model.setAlias(literal(tableName, expr.position));
                 } else {
-                    int dot = Chars.indexOfUnquoted(tableName, '.');
+                    int dot = Chars.indexOfLastUnquoted(tableName, '.');
                     if (dot == -1) {
                         model.setTableNameExpr(literal(tableName, expr.position));
                     } else {

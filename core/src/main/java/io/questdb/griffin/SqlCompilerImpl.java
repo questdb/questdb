@@ -100,6 +100,7 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
@@ -126,6 +127,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
 import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -693,7 +695,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok != null && isExistsKeyword(tok)) {
                         tok = SqlUtil.fetchNext(lexer); // captured column name
-                        if (tableMetadata.getColumnIndexQuiet(tok) != -1) {
+                        final int columnIndex = tableMetadata.getColumnIndexQuiet(tok);
+                        if (columnIndex != -1) {
+                            tok = expectToken(lexer, "column type");
+                            final int columnType = ColumnType.typeOf(tok);
+                            if (columnType == -1) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "unrecognized column type: ").put(tok);
+                            }
+                            final int existingType = tableMetadata.getColumnType(columnIndex);
+                            if (existingType != columnType) {
+                                throw SqlException
+                                        .$(lexer.lastTokenPosition(), "column already exists with a different column type [current type=")
+                                        .put(ColumnType.nameOf(existingType))
+                                        .put(", requested type=")
+                                        .put(ColumnType.nameOf(columnType))
+                                        .put(']');
+                            }
                             break;
                         }
                     } else {
@@ -734,6 +751,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         addColumnSuffix(securityContext, null, tableToken, alterOperationBuilder);
         compiledQuery.ofAlter(alterOperationBuilder.build());
+        if (alterOperationBuilder.getExtraStrInfo().size() == 0) {
+            // there is no column to add, set the done flag to avoid execution of the query
+            compiledQuery.done();
+        }
     }
 
     private void alterTableChangeColumnType(
@@ -1395,6 +1416,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         assertTableNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
         final TableToken matViewToken = tableExistsOrFail(matViewNamePosition, GenericLexer.unquote(tok), executionContext);
         final SecurityContext securityContext = executionContext.getSecurityContext();
+        final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+        if (viewDefinition == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist");
+        }
 
         try (TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(matViewToken)) {
             tok = expectToken(lexer, "'alter' or 'resume' or 'suspend'");
@@ -1419,6 +1444,77 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         tableMetadata,
                         columnIndex
                 );
+            } else if (isSetKeyword(tok)) {
+                tok = expectToken(lexer, "'ttl' or 'refresh'");
+                if (isTtlKeyword(tok)) {
+                    final int ttlValuePos = lexer.getPosition();
+                    final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+                    try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                        CairoTable table = metadataRO.getTable(matViewToken);
+                        assert table != null : "CairoTable == null after we already checked it exists";
+                        PartitionBy.validateTtlGranularity(table.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
+                    }
+                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
+                            matViewNamePosition,
+                            matViewToken,
+                            tableMetadata.getTableId(),
+                            ttlHoursOrMonths
+                    );
+                    compiledQuery.ofAlter(setTtl.build());
+                } else if (isRefreshKeyword(tok)) {
+                    tok = expectToken(lexer, "'start' or 'every' or 'limit'");
+                    if (isStartKeyword(tok) || isEveryKeyword(tok)) {
+                        if (viewDefinition.getRefreshType() != MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "materialized view must be of timer refresh type");
+                        }
+
+                        long start = Numbers.LONG_NULL;
+                        if (isStartKeyword(tok)) {
+                            tok = expectToken(lexer, "START timestamp");
+                            try {
+                                start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                            } catch (NumericException e) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
+                            }
+                            tok = expectToken(lexer, "'every'");
+                        }
+
+                        if (isEveryKeyword(tok)) {
+                            if (start == Numbers.LONG_NULL) {
+                                // Use the current time as the start timestamp if it wasn't specified.
+                                start = configuration.getMicrosecondClock().getTicks();
+                            }
+                            tok = expectToken(lexer, "interval");
+                            final int interval = Timestamps.getStrideMultiple(tok);
+                            final char unit = Timestamps.getStrideUnit(tok);
+                            SqlParser.validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
+                            final AlterOperationBuilder setTimer = alterOperationBuilder.ofSetMatViewRefreshTimer(
+                                    matViewNamePosition,
+                                    matViewToken,
+                                    tableMetadata.getTableId(),
+                                    start,
+                                    interval,
+                                    unit
+                            );
+                            compiledQuery.ofAlter(setTimer.build());
+                        } else if (start != Numbers.LONG_NULL) {
+                            throw SqlException.position(lexer.lastTokenPosition()).put("'every' expected");
+                        }
+                    } else if (isLimitKeyword(tok)) {
+                        final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+                        final AlterOperationBuilder setRefreshLimit = alterOperationBuilder.ofSetMatViewRefreshLimit(
+                                matViewNamePosition,
+                                matViewToken,
+                                tableMetadata.getTableId(),
+                                limitHoursOrMonths
+                        );
+                        compiledQuery.ofAlter(setRefreshLimit.build());
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'start' or 'every' or 'limit' expected");
+                    }
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' or 'start' expected");
+                }
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(matViewToken, matViewNamePosition, executionContext);
             } else if (isSuspendKeyword(tok)) {
@@ -1640,17 +1736,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
                     }
                 } else if (isTtlKeyword(tok)) {
-                    int ttlValuePos = lexer.getPosition();
-                    int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+                    final int ttlValuePos = lexer.getPosition();
+                    final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
                     try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                         CairoTable table = metadataRO.getTable(tableToken);
                         assert table != null : "CairoTable == null after we already checked it exists";
                         PartitionBy.validateTtlGranularity(table.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
                     }
-                    compiledQuery.ofAlter(
-                            alterOperationBuilder.ofSetTtlHoursOrMonths(tableNamePosition, tableToken, tableMetadata.getTableId(), ttlHoursOrMonths)
-                                    .build()
+                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
+                            tableNamePosition,
+                            tableToken,
+                            tableMetadata.getTableId(),
+                            ttlHoursOrMonths
                     );
+                    compiledQuery.ofAlter(setTtl.build());
                 } else if (isTypeKeyword(tok)) {
                     tok = expectToken(lexer, "'bypass' or 'wal'");
                     if (isBypassKeyword(tok)) {
@@ -1685,7 +1784,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                 if (isDisableKeyword(tok)) {
                     executionContext.getSecurityContext().authorizeAlterTableDedupDisable(tableToken);
-                    AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupDisable(
+                    final AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupDisable(
                             tableNamePosition,
                             tableToken
                     );
@@ -2198,12 +2297,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw e;
             }
             createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
-            queryModel.setIsMatView(true);
+
+            final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
+            executionContext.setAllowNonDeterministicFunction(false);
             try {
                 compiledQuery.ofSelect(generateSelectWithRetries(queryModel, executionContext, false));
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
+            } finally {
+                executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
             }
         } catch (Throwable th) {
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
@@ -2237,10 +2340,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table name");
         }
 
-        tok = expectToken(lexer, "'full' or 'incremental'");
-        final boolean incremental = isIncrementalKeyword(tok);
-        if (!incremental && !isFullKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'full' or 'incremental' expected");
+        tok = expectToken(lexer, "'full' or 'incremental' or 'range'");
+        final boolean full = isFullKeyword(tok);
+        long from = Numbers.LONG_NULL;
+        long to = Numbers.LONG_NULL;
+        if (isRangeKeyword(tok)) {
+            expectKeyword(lexer, "from");
+            tok = expectToken(lexer, "FROM timestamp");
+            try {
+                from = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+            } catch (NumericException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid FROM timestamp value");
+            }
+            expectKeyword(lexer, "to");
+            tok = expectToken(lexer, "TO timestamp");
+            try {
+                to = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+            } catch (NumericException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid TO timestamp value");
+            }
+            if (from > to) {
+                throw SqlException.$(lexer.lastTokenPosition(), "TO timestamp must not be earlier than FROM timestamp");
+            }
+        } else if (!full && !isIncrementalKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'full' or 'incremental' or 'range' expected");
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -2250,10 +2373,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
         executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
-        if (incremental) {
-            matViewStateStore.enqueueIncrementalRefresh(matViewToken);
-        } else {
+        if (full) {
             matViewStateStore.enqueueFullRefresh(matViewToken);
+        } else if (from != Numbers.LONG_NULL) {
+            matViewStateStore.enqueueRangeRefresh(matViewToken, from, to);
+        } else {
+            matViewStateStore.enqueueIncrementalRefresh(matViewToken);
         }
         compiledQuery.ofRefreshMatView();
     }
@@ -2851,7 +2976,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
-        if (createMatViewOp.getRefreshType() != MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
+        if (createMatViewOp.getRefreshType() != MatViewDefinition.INCREMENTAL_REFRESH_TYPE
+                && createMatViewOp.getRefreshType() != MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
             throw SqlException.$(createMatViewOp.getTableNamePosition(), "unexpected refresh type: ").put(createMatViewOp.getRefreshType());
         }
 

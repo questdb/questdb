@@ -42,6 +42,7 @@ import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpConstants;
 import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
@@ -77,7 +78,7 @@ import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_LIMIT;
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_QUERY;
 import static java.net.HttpURLConnection.*;
 
-public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
+public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
 
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessor.class);
     private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
@@ -269,6 +270,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         logInternalError(e, state, metrics);
         sendException(response, context, 0, e.getFlyweightMessage(), state.getQuery(), configuration.getKeepAliveHeader(), HTTP_BAD_REQUEST);
         response.shutdownWrite();
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
     }
 
     @Override
@@ -622,7 +628,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         sendConfirmation(state, keepAliveHeader);
     }
 
-    // same as select new but disallows caching of explain plans
+    // same as select new but disallows caching of EXPLAIN plans
     private void executeExplain(
             JsonQueryProcessorState state,
             CompiledQuery cq,
@@ -719,12 +725,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 state.setOperationFuture(fut);
                 throw EntryUnavailableException.instance("retry update table wait");
             }
-            // All good, finished update
+            // All good, finished updates
             final long updatedCount = fut.getAffectedRowsCount();
             metrics.jsonQueryMetrics().markComplete();
             sendUpdateConfirmation(state, keepAliveHeader, updatedCount);
         } catch (CairoException e) {
-            // close e.g. when query has been cancelled, or we got an OOM
+            // close e.g., when the query has been cancelled, or we got an OOM
             if (e.isInterruption() || e.isOutOfMemory()) {
                 Misc.free(cq.getUpdateOperation());
             }
@@ -750,14 +756,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             Metrics metrics
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         logInternalError(e, state, metrics);
+        final int messagePosition = e instanceof CairoException ? ((CairoException) e).getPosition() : 0;
         if (bytesSent > 0) {
-            state.querySuffixWithError(response, code, message);
+            state.querySuffixWithError(response, code, message, messagePosition);
         } else {
-            final int position = e instanceof CairoException ? ((CairoException) e).getPosition() : 0;
             sendException(
                     response,
                     state.getHttpConnectionContext(),
-                    position,
+                    messagePosition,
                     message,
                     state.getQuery(),
                     configuration.getKeepAliveHeader(),
@@ -779,7 +785,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 state.configure(header, null, 0, Long.MAX_VALUE);
             } catch (Utf8Exception e) {
                 // This should never happen.
-                // since we are not parsing query text, we should not have any encoding issues.
+                // Since we are not parsing query text, we should not have any encoding issues.
             }
             state.info().$("Empty query header received. Sending empty reply.").$();
             sendEmptyQueryNotice(state, null, keepAliveHeader);

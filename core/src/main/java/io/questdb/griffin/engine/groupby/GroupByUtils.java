@@ -122,10 +122,6 @@ public class GroupByUtils {
                             executionContext
                     );
 
-                    if (model.isMatView() && function.isNonDeterministic()) {
-                        throw SqlException.nonDeterministicColumn(node.position, node.token);
-                    }
-
                     // record functions will have all model function, including consecutive duplicates
                     outRecordFunctions.add(function);
 
@@ -473,12 +469,12 @@ public class GroupByUtils {
             final ExpressionNode key = groupByColumns.getQuick(i);
             switch (key.type) {
                 case ExpressionNode.LITERAL:
-                    final int dotIndex = Chars.indexOf(key.token, '.');
+                    final int dotIndex = Chars.indexOfLastUnquoted(key.token, '.');
 
                     if (dotIndex > -1) {
                         int aliasIndex = model.getModelAliasIndex(key.token, 0, dotIndex);
                         if (aliasIndex > -1) {
-                            // we should now check against main model
+                            // we should now check against the main model
                             int refColumn = model.getAliasToColumnMap().keyIndex(key.token);
                             if (refColumn > -1) {
                                 // a.x not found, look for "x"

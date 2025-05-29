@@ -31,9 +31,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.mv.MatViewRefreshJob;
-import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -588,16 +585,12 @@ public class TableBackupTest extends AbstractTest {
     }
 
     private void drainWalQueue() {
-        drainWalQueue(mainEngine);
+        drainWalQueueConditionally(mainEngine);
     }
 
-    private void drainWalQueue(CairoEngine engine) {
+    private void drainWalQueueConditionally(CairoEngine engine) {
         if (isWal) {
-            try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
-                walApplyJob.drain(0);
-                new CheckWalTransactionsJob(engine).run(0);
-                walApplyJob.drain(0);
-            }
+            drainWalQueue(engine);
         }
     }
 
@@ -608,7 +601,7 @@ public class TableBackupTest extends AbstractTest {
                 SqlCompiler compiler = engine.getSqlCompiler()
         ) {
             compiler.compile(sql, context).execute(null).await();
-            drainWalQueue(engine);
+            drainWalQueueConditionally(engine);
         }
     }
 
@@ -627,10 +620,7 @@ public class TableBackupTest extends AbstractTest {
         );
 
         drainWalQueue();
-        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, mainEngine)) {
-            refreshJob.run(0);
-        }
-
+        drainMatViewQueue(mainEngine);
         TableToken tableToken = mainEngine.verifyTableName(matViewName);
         Assert.assertNotNull(tableToken);
         Assert.assertTrue(tableToken.isMatView());

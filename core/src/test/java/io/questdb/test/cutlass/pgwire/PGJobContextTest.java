@@ -32,7 +32,6 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -12164,12 +12163,7 @@ create table tab as (
 
     private void mayDrainWalAndMatViewQueues() {
         if (walEnabled) {
-            drainWalQueue();
-            try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-                while (refreshJob.run(0)) {
-                }
-                drainWalQueue();
-            }
+            drainWalAndMatViewQueues();
         }
     }
 

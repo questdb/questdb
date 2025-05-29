@@ -73,6 +73,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private DirectUtf8String contentDispositionName;
     private long contentLength;
     private DirectUtf8String contentType;
+    private boolean getRequest = false;
     private DirectUtf8String headerName;
     private long headerPtr;
     private long hi;
@@ -87,8 +88,10 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private DirectUtf8String methodLine;
     private boolean needMethod;
     private boolean needProtocol = true;
+    private boolean postRequest = false;
     private DirectUtf8String protocol;
     private DirectUtf8String protocolLine;
+    private boolean putRequest = false;
     private DirectUtf8String query;
     private long statementTimeout = -1L;
     private DirectUtf8String statusCode;
@@ -250,8 +253,23 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         return boundary != null;
     }
 
+    @Override
+    public boolean isGetRequest() {
+        return getRequest;
+    }
+
     public boolean isIncomplete() {
         return incomplete;
+    }
+
+    @Override
+    public boolean isPostRequest() {
+        return postRequest;
+    }
+
+    @Override
+    public boolean isPutRequest() {
+        return putRequest;
     }
 
     /**
@@ -773,6 +791,10 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     }
                     methodLine = csPool.next().of(method.lo(), _wptr);
                     needMethod = false;
+
+                    getRequest = Utf8s.equalsNcAscii(METHOD_GET, method);
+                    postRequest = Utf8s.equalsNcAscii(METHOD_POST, method);
+                    putRequest = Utf8s.equalsNcAscii(METHOD_PUT, method);
 
                     // parse and decode query string
                     if (query != null) {

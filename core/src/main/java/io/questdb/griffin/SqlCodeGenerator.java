@@ -3115,7 +3115,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         assert intrinsicModel.keyValueFuncs.size() == 0;
         // get the latest rows for all values of "latest by" column
 
-        if (indexed && filter == null) {
+        if (indexed && filter == null && configuration.useWithinLatestByOptimisation()) {
             return new LatestByAllIndexedRecordCursorFactory(
                     configuration,
                     metadata,
@@ -3949,7 +3949,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
             TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
-            int dot = Chars.indexOf(colMetadata.getColumnName(), '.');
+            int dot = Chars.indexOfLastUnquoted(colMetadata.getColumnName(), '.');
             if (dot > -1) { // remove inner table alias
                 selectMetadata.add(
                         new TableColumnMetadata(
@@ -5404,34 +5404,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.deepCopyOf(metadata);
         final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, myMeta);
         final TableToken tableToken = metadata.getTableToken();
+        ExpressionNode withinExtracted;
 
-        final ExpressionNode withinExtracted = whereClauseParser.extractWithin(
-                model,
-                model.getWhereClause(),
-                myMeta,
-                functionParser,
-                executionContext,
-                prefixes
-        );
+        if (latestByColumnCount > 0 && configuration.useWithinLatestByOptimisation()) {
+            withinExtracted = whereClauseParser.extractWithin(
+                    model,
+                    model.getWhereClause(),
+                    myMeta,
+                    functionParser,
+                    executionContext,
+                    prefixes
+            );
 
-        if (prefixes.size() > 0) {
-            if (latestByColumnCount < 1) {
-                throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause requires LATEST BY clause");
-            } else {
+            boolean allSymbolsAreIndexed = true;
+            if (prefixes.size() > 0) {
                 for (int i = 0; i < latestByColumnCount; i++) {
                     int idx = listColumnFilterA.getColumnIndexFactored(i);
                     if (!ColumnType.isSymbol(myMeta.getColumnType(idx)) || !myMeta.isColumnIndexed(idx)) {
-                        throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause requires LATEST BY using only indexed symbol columns");
+                        allSymbolsAreIndexed = false;
                     }
                 }
             }
+
+            if (allSymbolsAreIndexed) {
+                model.setWhereClause(withinExtracted);
+            }
         }
 
-        model.setWhereClause(withinExtracted);
+        ExpressionNode whereClause = model.getWhereClause();
 
-        if (withinExtracted != null || executionContext.isOverriddenIntrinsics(reader.getTableToken())) {
+        if (whereClause != null || executionContext.isOverriddenIntrinsics(reader.getTableToken())) {
             final IntrinsicModel intrinsicModel;
-            if (withinExtracted != null) {
+            if (whereClause != null) {
                 CharSequence preferredKeyColumn = null;
                 if (latestByColumnCount == 1) {
                     final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
@@ -5442,7 +5446,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 intrinsicModel = whereClauseParser.extract(
                         model,
-                        withinExtracted,
+                        whereClause,
                         metadata,
                         preferredKeyColumn,
                         readerTimestampIndex,
@@ -5481,10 +5485,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     model.getLatestBy().clear();
                     Misc.free(filter);
                     return new EmptyTableRecordCursorFactory(myMeta);
-                }
-
-                if (prefixes.size() > 0 && filter != null) {
-                    throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause doesn't work with filters");
                 }
 
                 // a sub-query present in the filter may have used the latest by
@@ -6201,7 +6201,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (columnIndex > -1) {
                 filter.add(columnIndex + 1);
             } else {
-                int dot = Chars.indexOf(columnName, '.');
+                int dot = Chars.indexOfLastUnquoted(columnName, '.');
                 if (dot > -1) {
                     columnIndex = metadata.getColumnIndexQuiet(columnName, dot + 1, columnName.length());
                     if (columnIndex > -1) {
