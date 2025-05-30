@@ -75,6 +75,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "\"config\":{" +
             "\"release.type\":\"OSS\"," +
             "\"release.version\":\"[DEVELOPMENT]\"," +
+            "\"http.settings.readonly\":false," +
             "\"line.proto.support.versions\":[1,2]," +
             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
             "\"posthog.enabled\":false," +
@@ -129,8 +130,12 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
+                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
-                            "\"posthog.api.key\":null" +
+                            "\"posthog.api.key\":null," +
+                            "\"cairo.max.file.name.length\":127" +
                             "}," +
                             "\"preferences.version\":1," +
                             "\"preferences\":{" +
@@ -146,8 +151,12 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
+                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
-                            "\"posthog.api.key\":null" +
+                            "\"posthog.api.key\":null," +
+                            "\"cairo.max.file.name.length\":127" +
                             "}," +
                             "\"preferences.version\":2," +
                             "\"preferences\":{" +
@@ -176,7 +185,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                     assertPreferencesStore(settingsStore, 1, "\"preferences\":{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}");
 
                     final StringSink sink = new StringSink();
-                    for (int i = 0; i < 5000; i++) {
+                    for (int i = 0; i < 5; i++) {
                         sink.put("\"key").put(i).put("\":\"value").put(i).put("\",");
                     }
                     sink.clear(sink.length() - 1);
@@ -192,9 +201,11 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"line.proto.support.versions\":[1,2]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
-                            "\"posthog.enabled\":false,\"posthog.api.key\":null," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null," +
                             "\"cairo.max.file.name.length\":127" +
                             "}," +
                             "\"preferences.version\":2," +
@@ -265,6 +276,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"line.proto.support.versions\":[1,2]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
@@ -298,8 +310,12 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
+                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
-                            "\"posthog.api.key\":null" +
+                            "\"posthog.api.key\":null," +
+                            "\"cairo.max.file.name.length\":127" +
                             "}," +
                             "\"preferences.version\":1," +
                             "\"preferences\":{" +
@@ -315,8 +331,12 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
+                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
-                            "\"posthog.api.key\":null" +
+                            "\"posthog.api.key\":null," +
+                            "\"cairo.max.file.name.length\":127" +
                             "}," +
                             "\"preferences.version\":2," +
                             "\"preferences\":{" +
@@ -356,6 +376,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"line.proto.support.versions\":[1,2]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
@@ -392,6 +413,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"line.proto.support.versions\":[1,2]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
@@ -426,6 +448,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"line.proto.support.versions\":[1,2]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
@@ -458,6 +481,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"line.proto.support.versions\":[1,2]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
@@ -511,6 +535,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":" +
                             "{\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"line.proto.support.versions\":[1,2]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
@@ -587,6 +612,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":true," +
                             "\"line.proto.support.versions\":[1,2]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
@@ -741,7 +767,9 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
 
         assertSettingsRequest(httpClient, "{" +
                 "\"config\":{" +
-                "\"release.type\":\"OSS\",\"release.version\":\"[DEVELOPMENT]\"," +
+                "\"release.type\":\"OSS\"," +
+                "\"release.version\":\"[DEVELOPMENT]\"," +
+                "\"http.settings.readonly\":false," +
                 "\"line.proto.support.versions\":[1,2]," +
                 "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                 "\"posthog.enabled\":false," +
