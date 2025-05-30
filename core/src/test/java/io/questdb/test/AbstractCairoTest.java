@@ -56,7 +56,6 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.CompiledQuery;
@@ -1318,6 +1317,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setRostiAllocFacade(rostiAllocFacade);
     }
 
+    protected static void configOverrideUseWithinLatestByOptimisation() {
+        Overrides overrides = node1.getConfigurationOverrides();
+        overrides.setProperty(PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, true);
+    }
+
     protected static void configOverrideWalMaxLagTxnCount() {
         Overrides overrides = node1.getConfigurationOverrides();
         overrides.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, 1);
@@ -1346,6 +1350,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static ApplyWal2TableJob createWalApplyJob() {
         return createWalApplyJob(engine);
+    }
+
+    protected static void drainPurgeJob() {
+        TestUtils.drainPurgeJob(engine);
     }
 
     protected static void drainWalAndMatViewQueues() {
@@ -1584,17 +1592,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected static void runWalPurgeJob(FilesFacade ff) {
-        try (WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock())) {
-            engine.setWalPurgeJobRunLock(job.getRunLock());
-            job.drain(0);
-        }
-    }
-
-    protected static void runWalPurgeJob() {
-        runWalPurgeJob(engine.getConfiguration().getFilesFacade());
-    }
-
     protected static RecordCursorFactory select(CharSequence selectSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
         return engine.select(selectSql, sqlExecutionContext);
     }
@@ -1653,7 +1650,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    void assertFactoryCursor(
+    protected void assertFactoryCursor(
             String expected,
             String expectedTimestamp,
             RecordCursorFactory factory,
@@ -1740,6 +1737,24 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     false
             );
         }
+    }
+
+    protected void assertQueryAndPlan(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp,
+            @Nullable CharSequence ddl2,
+            @Nullable CharSequence expected2,
+            boolean supportsRandomAccess,
+            boolean expectSize,
+            boolean sizeCanBeVariable,
+            @Nullable CharSequence expectedPlan
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable);
+            assertPlanNoLeakCheck(query, expectedPlan);
+        });
     }
 
     protected void assertQueryFullFatNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean fullFatJoin) throws SqlException {

@@ -43,6 +43,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -80,6 +81,25 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         };
     }
 
+    private static String getTimerIntervalUnit(char unit) {
+        switch (unit) {
+            case 'm':
+                return "MINUTE";
+            case 'h':
+                return "HOUR";
+            case 'd':
+                return "DAY";
+            case 'w':
+                return "WEEK";
+            case 'y':
+                return "YEAR";
+            case 'M':
+                return "MONTH";
+            default:
+                return null;
+        }
+    }
+
     private static class MatViewsCursorFactory implements RecordCursorFactory {
         private static final int COLUMN_VIEW_NAME = 0;
         private static final int COLUMN_REFRESH_TYPE = COLUMN_VIEW_NAME + 1;
@@ -92,6 +112,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_VIEW_STATUS = COLUMN_INVALIDATION_REASON + 1;
         private static final int COLUMN_LAST_REFRESH_BASE_TABLE_TXN = COLUMN_VIEW_STATUS + 1;
         private static final int COLUMN_LAST_APPLIED_BASE_TABLE_TXN = COLUMN_LAST_REFRESH_BASE_TABLE_TXN + 1;
+        private static final int COLUMN_REFRESH_LIMIT_VALUE = COLUMN_LAST_APPLIED_BASE_TABLE_TXN + 1;
+        private static final int COLUMN_REFRESH_LIMIT_UNIT = COLUMN_REFRESH_LIMIT_VALUE + 1;
+        private static final int COLUMN_TIMER_START = COLUMN_REFRESH_LIMIT_UNIT + 1;
+        private static final int COLUMN_TIMER_INTERVAL_VALUE = COLUMN_TIMER_START + 1;
+        private static final int COLUMN_TIMER_INTERVAL_UNIT = COLUMN_TIMER_INTERVAL_VALUE + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor = new ViewsListCursor();
 
@@ -174,8 +199,23 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             // showing obsolete base table txn.
                             final long lastAppliedBaseTxn = baseTableToken != null
                                     ? engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn() : -1;
+
+                            final int refreshLimitHoursOrMonths;
+                            long timerStart = Numbers.LONG_NULL;
+                            int timerInterval = 0;
+                            char timerIntervalUnit = 0;
+                            try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
+                                refreshLimitHoursOrMonths = matViewMeta.getMatViewRefreshLimitHoursOrMonths();
+                                if (matViewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
+                                    timerStart = matViewMeta.getMatViewTimerStart();
+                                    timerInterval = matViewMeta.getMatViewTimerInterval();
+                                    timerIntervalUnit = matViewMeta.getMatViewTimerIntervalUnit();
+                                }
+                            }
+
                             final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
                             final long lastRefreshStartTimestamp = state != null ? state.getLastRefreshStartTimestamp() : Numbers.LONG_NULL;
+
                             record.of(
                                     matViewDefinition,
                                     lastRefreshStartTimestamp,
@@ -183,7 +223,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                     lastRefreshedBaseTxn,
                                     lastAppliedBaseTxn,
                                     viewStateReader.getInvalidationReason(),
-                                    viewStateReader.isInvalid()
+                                    viewStateReader.isInvalid(),
+                                    refreshLimitHoursOrMonths,
+                                    timerStart,
+                                    timerInterval,
+                                    timerIntervalUnit
                             );
                             viewIndex++;
                             return true;
@@ -217,7 +261,23 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 private long lastRefreshFinishTimestamp;
                 private long lastRefreshStartTimestamp;
                 private long lastRefreshTxn;
+                private int refreshLimitHoursOrMonths;
+                private int timerInterval;
+                private char timerIntervalUnit;
+                private long timerStart;
                 private MatViewDefinition viewDefinition;
+
+                @Override
+                public int getInt(int col) {
+                    switch (col) {
+                        case COLUMN_REFRESH_LIMIT_VALUE:
+                            return TablesFunctionFactory.getTtlValue(refreshLimitHoursOrMonths);
+                        case COLUMN_TIMER_INTERVAL_VALUE:
+                            return timerInterval;
+                        default:
+                            return 0;
+                    }
+                }
 
                 @Override
                 public long getLong(int col) {
@@ -230,6 +290,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             return lastRefreshTxn;
                         case COLUMN_LAST_APPLIED_BASE_TABLE_TXN:
                             return lastAppliedBaseTxn;
+                        case COLUMN_TIMER_START:
+                            return timerStart;
                         default:
                             return 0;
                     }
@@ -241,11 +303,14 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_VIEW_NAME:
                             return viewDefinition.getMatViewToken().getTableName();
                         case COLUMN_REFRESH_TYPE:
-                            // For now, incremental refresh is the only supported refresh type.
-                            if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
-                                return "incremental";
+                            switch (viewDefinition.getRefreshType()) {
+                                case MatViewDefinition.INCREMENTAL_REFRESH_TYPE:
+                                    return "incremental";
+                                case MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE:
+                                    return "incremental_timer";
+                                default:
+                                    return "unknown";
                             }
-                            return "unknown";
                         case COLUMN_BASE_TABLE_NAME:
                             return viewDefinition.getBaseTableName();
                         case COLUMN_VIEW_SQL:
@@ -256,6 +321,13 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             return getViewStatus();
                         case COLUMN_INVALIDATION_REASON:
                             return invalidationReason.length() > 0 ? invalidationReason : null;
+                        case COLUMN_REFRESH_LIMIT_UNIT:
+                            if (refreshLimitHoursOrMonths == 0) {
+                                return null;
+                            }
+                            return TablesFunctionFactory.getTtlUnit(refreshLimitHoursOrMonths);
+                        case COLUMN_TIMER_INTERVAL_UNIT:
+                            return getTimerIntervalUnit(timerIntervalUnit);
                         default:
                             return null;
                     }
@@ -278,7 +350,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         long lastRefreshTxn,
                         long lastAppliedBaseTxn,
                         CharSequence invalidationReason,
-                        boolean invalid
+                        boolean invalid,
+                        int refreshLimitHoursOrMonths,
+                        long timerStart,
+                        int timerInterval,
+                        char timerIntervalUnit
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshStartTimestamp = lastRefreshStartTimestamp;
@@ -288,6 +364,10 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.invalidationReason.clear();
                     this.invalidationReason.put(invalidationReason);
                     this.invalid = invalid;
+                    this.refreshLimitHoursOrMonths = refreshLimitHoursOrMonths;
+                    this.timerStart = timerStart;
+                    this.timerInterval = timerInterval;
+                    this.timerIntervalUnit = timerIntervalUnit;
                 }
 
                 private CharSequence getViewStatus() {
@@ -314,6 +394,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("view_status", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("refresh_base_table_txn", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("base_table_txn", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("refresh_limit_value", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("refresh_limit_unit", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("timer_start", ColumnType.TIMESTAMP));
+            metadata.add(new TableColumnMetadata("timer_interval_value", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("timer_interval_unit", ColumnType.STRING));
             METADATA = metadata;
         }
     }

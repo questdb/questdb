@@ -39,5 +39,5 @@ public interface HttpResponseHeader extends Utf8Sink {
         }
     }
 
-    String status(CharSequence httpProtocolVersion, int code, CharSequence contentType, long contentLength);
+    void status(CharSequence httpProtocolVersion, int code, CharSequence contentType, long contentLength);
 }

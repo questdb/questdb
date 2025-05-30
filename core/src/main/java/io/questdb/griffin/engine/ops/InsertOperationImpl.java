@@ -94,7 +94,7 @@ public class InsertOperationImpl implements InsertOperation {
     @Override
     public OperationFuture execute(SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (InsertMethod insertMethod = createMethod(sqlExecutionContext)) {
-            insertMethod.execute();
+            insertMethod.execute(sqlExecutionContext);
             insertMethod.commit();
             return doneFuture;
         }
@@ -121,12 +121,17 @@ public class InsertOperationImpl implements InsertOperation {
         }
 
         @Override
-        public long execute() {
+        public long execute(SqlExecutionContext executionContext) {
             for (int i = 0, n = insertRows.size(); i < n; i++) {
                 InsertRowImpl row = insertRows.get(i);
                 row.append(writer);
             }
             return insertRows.size();
+        }
+
+        @Override
+        public TableWriterAPI getWriter() {
+            return writer;
         }
 
         @Override

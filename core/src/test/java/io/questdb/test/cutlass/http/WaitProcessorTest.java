@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorSelector;
 import io.questdb.cutlass.http.RescheduleContext;
@@ -33,7 +34,6 @@ import io.questdb.cutlass.http.RetryAttemptAttributes;
 import io.questdb.cutlass.http.WaitProcessor;
 import io.questdb.cutlass.http.WaitProcessorConfiguration;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.DirectUtf8String;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -149,7 +149,7 @@ public class WaitProcessorTest {
             }
 
             @Override
-            public HttpRequestProcessor select(DirectUtf8String url) {
+            public HttpRequestProcessor select(HttpRequestHeader header) {
                 return null;
             }
         };

@@ -53,8 +53,8 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
-import io.questdb.std.DirectLongLongHeap;
-import io.questdb.std.DirectLongLongMinHeap;
+import io.questdb.std.DirectLongLongAscList;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -1707,7 +1707,7 @@ public class OrderedMapTest extends AbstractCairoTest {
 
             try (
                     OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE);
-                    DirectLongLongHeap heap = new DirectLongLongMinHeap(heapCapacity, MemoryTag.NATIVE_DEFAULT)
+                    DirectLongLongSortedList list = new DirectLongLongAscList(heapCapacity, MemoryTag.NATIVE_DEFAULT)
             ) {
                 for (int i = 0; i < 100; i++) {
                     MapKey key = map.withKey();
@@ -1718,12 +1718,12 @@ public class OrderedMapTest extends AbstractCairoTest {
                 }
 
                 MapRecordCursor mapCursor = map.getCursor();
-                mapCursor.longTopK(heap, new LongColumn(0));
+                mapCursor.longTopK(list, new LongColumn(0));
 
-                Assert.assertEquals(heapCapacity, heap.size());
+                Assert.assertEquals(heapCapacity, list.size());
 
                 MapRecord mapRecord = mapCursor.getRecord();
-                DirectLongLongHeap.Cursor heapCursor = heap.getCursor();
+                DirectLongLongSortedList.Cursor heapCursor = list.getCursor();
                 for (int i = 0; i < heapCapacity; i++) {
                     Assert.assertTrue(heapCursor.hasNext());
                     mapCursor.recordAt(mapRecord, heapCursor.index());
@@ -1742,7 +1742,7 @@ public class OrderedMapTest extends AbstractCairoTest {
 
             try (
                     OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE);
-                    DirectLongLongHeap heap = new DirectLongLongMinHeap(heapCapacity, MemoryTag.NATIVE_DEFAULT)
+                    DirectLongLongSortedList list = new DirectLongLongAscList(heapCapacity, MemoryTag.NATIVE_DEFAULT)
             ) {
                 for (int i = 0; i < 100; i++) {
                     MapKey key = map.withKey();
@@ -1753,12 +1753,12 @@ public class OrderedMapTest extends AbstractCairoTest {
                 }
 
                 MapRecordCursor mapCursor = map.getCursor();
-                mapCursor.longTopK(heap, new LongColumn(0));
+                mapCursor.longTopK(list, new LongColumn(0));
 
-                Assert.assertEquals(heapCapacity, heap.size());
+                Assert.assertEquals(heapCapacity, list.size());
 
                 MapRecord mapRecord = mapCursor.getRecord();
-                DirectLongLongHeap.Cursor heapCursor = heap.getCursor();
+                DirectLongLongSortedList.Cursor heapCursor = list.getCursor();
                 for (int i = 0; i < heapCapacity; i++) {
                     Assert.assertTrue(heapCursor.hasNext());
                     mapCursor.recordAt(mapRecord, heapCursor.index());

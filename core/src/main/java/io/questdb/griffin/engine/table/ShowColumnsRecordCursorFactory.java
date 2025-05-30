@@ -142,16 +142,16 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             @Override
             public boolean getBool(int col) {
                 if (col == N_INDEXED_COL) {
-                    return cairoColumn.getIsIndexed();
+                    return cairoColumn.isIndexed();
                 }
                 if (col == N_SYMBOL_CACHED_COL) {
-                    return cairoColumn.getSymbolCached();
+                    return cairoColumn.isSymbolCached();
                 }
                 if (col == N_DESIGNATED_COL) {
-                    return cairoColumn.getIsDesignated();
+                    return cairoColumn.isDesignated();
                 }
                 if (col == N_UPSERT_KEY_COL) {
-                    return cairoColumn.getIsDedupKey();
+                    return cairoColumn.isDedupKey();
                 }
                 throw new UnsupportedOperationException();
             }

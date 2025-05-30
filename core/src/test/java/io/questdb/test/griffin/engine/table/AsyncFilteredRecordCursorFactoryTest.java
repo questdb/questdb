@@ -138,7 +138,9 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                 sqlExecutionContext
                         );
 
-                        compiler.compile("insert into x select rnd_symbol('C','D') s, timestamp_sequence(100000000000, 100000) from long_sequence(100)", sqlExecutionContext);
+                        execute(compiler,
+                                "insert into x select rnd_symbol('C','D') s, timestamp_sequence(100000000000, 100000) from long_sequence(100)",
+                                sqlExecutionContext);
 
                         // Verify that all symbol tables (original and views) are refreshed to include the new symbols.
                         assertCursor(
@@ -774,8 +776,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     sqlExecutionContext
             );
 
-            compiler.compile("insert into x select rnd_symbol('C','D') s, timestamp_sequence(1000000000, 100000) from long_sequence(100)", sqlExecutionContext);
-
+            execute(
+                    compiler,
+                    "insert into x select rnd_symbol('C','D') s, timestamp_sequence(1000000000, 100000) from long_sequence(100)",
+                    sqlExecutionContext
+            );
             // Verify that all symbol tables (original and views) are refreshed to include the new symbols.
             assertCursor(
                     "s\tt\n" +
@@ -976,53 +981,53 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             TestUtils.setupWorkerPool(sharedPool, engine);
             sharedPool.start();
 
-            final WorkerPool stealingPool = new TestWorkerPool("pool1", stealingPoolWorkerCount);
+            try (final WorkerPool stealingPool = new TestWorkerPool("pool1", stealingPoolWorkerCount)) {
 
-            SOCountDownLatch doneLatch = new SOCountDownLatch(1);
+                SOCountDownLatch doneLatch = new SOCountDownLatch(1);
 
-            stealingPool.assign(new SynchronizedJob() {
-                boolean run = true;
+                stealingPool.assign(new SynchronizedJob() {
+                    boolean run = true;
 
-                @Override
-                protected boolean runSerially() {
-                    if (run) {
-                        try {
-                            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                                runnable.run(
-                                        engine, compiler, new DelegatingSqlExecutionContext() {
-                                            @Override
-                                            public Rnd getRandom() {
-                                                return rnd;
+                    @Override
+                    protected boolean runSerially() {
+                        if (run) {
+                            try {
+                                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                                    runnable.run(
+                                            engine, compiler, new DelegatingSqlExecutionContext() {
+                                                @Override
+                                                public Rnd getRandom() {
+                                                    return rnd;
+                                                }
+
+                                                @Override
+                                                public int getWorkerCount() {
+                                                    return sharedPoolWorkerCount;
+                                                }
                                             }
-
-                                            @Override
-                                            public int getWorkerCount() {
-                                                return sharedPoolWorkerCount;
-                                            }
-                                        }
-                                );
+                                    );
+                                }
+                            } catch (Throwable e) {
+                                e.printStackTrace(System.out);
+                                errorCounter.incrementAndGet();
+                            } finally {
+                                doneLatch.countDown();
+                                run = false;
                             }
-                        } catch (Throwable e) {
-                            e.printStackTrace(System.out);
-                            errorCounter.incrementAndGet();
-                        } finally {
-                            doneLatch.countDown();
-                            run = false;
+                            return true;
                         }
-                        return true;
+                        return false;
                     }
-                    return false;
+                });
+
+                stealingPool.start();
+
+                try {
+                    doneLatch.await();
+                    Assert.assertEquals(0, errorCounter.get());
+                } finally {
+                    sharedPool.halt();
                 }
-            });
-
-            stealingPool.start();
-
-            try {
-                doneLatch.await();
-                Assert.assertEquals(0, errorCounter.get());
-            } finally {
-                sharedPool.halt();
-                stealingPool.halt();
             }
         });
     }
@@ -1085,6 +1090,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     private static abstract class DelegatingSqlExecutionContext implements SqlExecutionContext {
+
+        @Override
+        public boolean allowNonDeterministicFunctions() {
+            return sqlExecutionContext.allowNonDeterministicFunctions();
+        }
 
         @Override
         public void clearWindowContext() {
@@ -1260,6 +1270,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void resetFlags() {
             sqlExecutionContext.resetFlags();
+        }
+
+        @Override
+        public void setAllowNonDeterministicFunction(boolean value) {
+            sqlExecutionContext.setAllowNonDeterministicFunction(value);
         }
 
         @Override
