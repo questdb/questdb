@@ -43,7 +43,7 @@ public final class StaticHttpAuthenticator implements HttpAuthenticator {
         if (header == null) {
             return false;
         }
-        return Utf8s.equalsIgnoreCaseAscii(expectedHeader, header);
+        return Utf8s.equals(expectedHeader, header);
     }
 
     @Override
