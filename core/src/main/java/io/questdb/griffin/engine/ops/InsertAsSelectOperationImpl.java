@@ -68,7 +68,8 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
             long metadataVersion,
             int timestampIndex,
             long batchSize,
-            long o3MaxLag) {
+            long o3MaxLag
+    ) {
         this.batchSize = batchSize;
         this.copier = copier;
         this.engine = engine;
