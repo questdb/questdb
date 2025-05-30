@@ -365,6 +365,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
         } catch (Throwable th) {
+            if (handleErrorRetryRefresh(th, viewToken, stateStore, refreshTask)) {
+                // Full refresh is re-scheduled.
+                return false;
+            }
             // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
             // invalid state transaction. Update the in-memory state and call it a day.
             LOG.error()
@@ -394,6 +398,39 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 tableWriter.getMetadata(),
                 columnFilter
         );
+    }
+
+    private boolean handleErrorRetryRefresh(
+            Throwable th,
+            TableToken viewToken,
+            @Nullable MatViewStateStore stateStore,
+            @Nullable MatViewRefreshTask refreshTask
+    ) {
+        if (th instanceof CairoException) {
+            CairoException ex = (CairoException) th;
+            if (ex.isTableDoesNotExist()) {
+                // Can be that the mat view underlying table is in the middle of being renamed at this moment,
+                // do not invalidate the view in this case.
+                TableToken updatedToken = engine.getUpdatedTableToken(viewToken);
+                if (updatedToken != null && updatedToken != viewToken) {
+                    // The table was renamed, so we need to update the state
+                    if (stateStore != null) {
+                        if (refreshTask == null || refreshTask.operation == MatViewRefreshTask.INCREMENTAL_REFRESH) {
+                            stateStore.enqueueIncrementalRefresh(updatedToken);
+                        } else if (refreshTask.operation == MatViewRefreshTask.FULL_REFRESH) {
+                            stateStore.enqueueFullRefresh(updatedToken);
+                        } else if (refreshTask.operation == MatViewRefreshTask.RANGE_REFRESH) {
+                            stateStore.enqueueRangeRefresh(updatedToken, refreshTask.rangeFrom, refreshTask.rangeTo);
+                        } else {
+                            // Invalid task, we cannot retry it.
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private boolean incrementalRefresh(MatViewRefreshTask refreshTask) {
@@ -640,21 +677,32 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return;
             }
 
-            try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
+            try {
                 // Mark the view invalid only if the operation is forced or the view was never refreshed.
                 if (force || state.getLastRefreshBaseTxn() != -1) {
-                    final long invalidationTimestamp = microsecondClock.getTicks();
-                    LOG.error().$("marking materialized view as invalid [view=").$(viewToken)
-                            .$(", reason=").$(invalidationReason)
-                            .$(", ts=").$ts(invalidationTimestamp)
-                            .I$();
-                    setInvalidState(state, walWriter, invalidationReason, invalidationTimestamp);
+                    while (true) {
+                        // Just in case the view is being concurrently renamed.
+                        viewToken = engine.getUpdatedTableToken(viewToken);
+                        try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
+                            final long invalidationTimestamp = microsecondClock.getTicks();
+                            LOG.error().$("marking materialized view as invalid [view=").$(viewToken)
+                                    .$(", reason=").$(invalidationReason)
+                                    .$(", ts=").$ts(invalidationTimestamp)
+                                    .I$();
+
+                            setInvalidState(state, walWriter, invalidationReason, invalidationTimestamp);
+                            break;
+                        } catch (CairoException ex) {
+                            if (!handleErrorRetryRefresh(ex, viewToken, null, null)) {
+                                throw ex;
+                            }
+                        }
+                    }
                 }
             } finally {
                 state.unlock();
                 state.tryCloseIfDropped();
             }
-
             // Invalidate dependent views recursively.
             enqueueInvalidateDependentViews(viewToken, "base materialized view is invalidated");
         }
@@ -759,6 +807,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
         } catch (Throwable th) {
+            if (handleErrorRetryRefresh(th, viewToken, stateStore, refreshTask)) {
+                // Range refresh is re-scheduled.
+                return false;
+            }
             // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
             // invalid state transaction. Update the in-memory state and call it a day.
             LOG.error()
@@ -802,27 +854,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     stateStore.enqueueIncrementalRefresh(viewToken);
                     continue;
                 }
-                try {
-                    try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
-                        try {
-                            refreshed |= refreshIncremental0(state, baseTableToken, walWriter, refreshTriggerTimestamp);
-                        } catch (Throwable th) {
-                            refreshFailState(state, walWriter, th);
-                        }
-                    } catch (CairoException ex) {
-                        if (ex.isTableDoesNotExist()) {
-                            // Can be that the mat view underlying table is in the middle of being renamed at this moment,
-                            // do not invalidate the view in this case.
-                            TableToken updatedToken = engine.getUpdatedTableToken(viewToken);
-                            if (updatedToken != null && updatedToken != viewToken) {
-                                // The table was renamed, so we need to update the state
-                                stateStore.enqueueIncrementalRefresh(updatedToken);
-                                continue;
-                            }
-                        }
-                        throw ex;
+                try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
+                    try {
+                        refreshed |= refreshIncremental0(state, baseTableToken, walWriter, refreshTriggerTimestamp);
+                    } catch (Throwable th) {
+                        refreshFailState(state, walWriter, th);
                     }
                 } catch (Throwable th) {
+                    if (handleErrorRetryRefresh(th, viewToken, stateStore, null)) {
+                        // Incremental refresh is re-scheduled.
+                        continue;
+                    }
                     // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
                     // invalid state transaction. Update the in-memory state and call it a day.
                     LOG.error()
@@ -912,6 +954,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
         } catch (Throwable th) {
+            if (handleErrorRetryRefresh(th, viewToken, stateStore, null)) {
+                // Incremental refresh is re-scheduled.
+                return false;
+            }
+
             // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
             // invalid state transaction. Update the in-memory state and call it a day.
             LOG.error()
