@@ -1075,6 +1075,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 pipelineCurrentEntry.ofCachedInsert(utf16SqlText, tai);
                 cachedStatus = CACHE_HIT_INSERT_VALID;
             } else {
+                // Cache miss, get rid of this entry.
                 tai.close();
                 cachedStatus = CACHE_HIT_INSERT_INVALID;
             }
