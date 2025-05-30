@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -55,6 +56,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
     private final FilteredAsOfJoinKeyedFastRecordCursor cursor;
     private final SelectedRecordCursorFactory.SelectedTimeFrameCursor selectedTimeFrameCursor;
     private final Function slaveRecordFilter;
+    private final long toleranceIntervalMicros;
 
     /**
      * Creates a new instance with filtered slave record support and optional crossindex projection.
@@ -78,7 +80,9 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             int columnSplit,
             @NotNull Record slaveNullRecord,
             @Nullable IntList slaveColumnCrossIndex,
-            int slaveTimestampIndex) {
+            int slaveTimestampIndex,
+            long toleranceIntervalMicros
+    ) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.slaveRecordFilter = slaveRecordFilter;
@@ -94,6 +98,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         } else {
             this.selectedTimeFrameCursor = null;
         }
+        this.toleranceIntervalMicros = toleranceIntervalMicros;
     }
 
     @Override
@@ -201,6 +206,13 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 return true;
             }
 
+            long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+            if (toleranceIntervalMicros != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceIntervalMicros) {
+                // we are past the tolerance interval, no need to traverse the slave cursor any further
+                record.hasSlave(false);
+                return true;
+            }
+
             if (slaveRecordFilter.getBool(filterRecord)) {
                 // we have a match, that's awesome, no need to traverse the slave cursor!
                 return true;
@@ -259,6 +271,14 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 }
 
                 if (filteredRowId < stopUnderRowId) {
+                    record.hasSlave(false);
+                    highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);
+                    break;
+                }
+
+                slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                if (toleranceIntervalMicros != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceIntervalMicros) {
+                    // we are past the tolerance interval, no need to traverse the slave cursor any further
                     record.hasSlave(false);
                     highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);
                     break;

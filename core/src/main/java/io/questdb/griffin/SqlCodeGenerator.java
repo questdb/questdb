@@ -2567,7 +2567,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         masterMetadata.getColumnCount(),
                                                         NullRecordFactory.getInstance(slaveMetadata),
                                                         null,
-                                                        slaveTimestampIndex
+                                                        slaveTimestampIndex,
+                                                        toleranceInterval
                                                 );
                                                 created = true;
                                             }
@@ -2606,7 +2607,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                                 masterMetadata.getColumnCount(),
                                                                 NullRecordFactory.getInstance(slaveMetadata),
                                                                 stolenCrossIndex,
-                                                                slaveTimestampIndex
+                                                                slaveTimestampIndex,
+                                                                toleranceInterval
                                                         );
                                                         created = true;
                                                     }

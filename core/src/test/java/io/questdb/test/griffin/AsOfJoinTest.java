@@ -505,6 +505,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
             assertQuery(expected, query, null, "ts", false, true);
+
+            // non-keyed join and slave has a filter + hint -> should use FilteredAsOfJoinNoKeyFastRecordCursorFactory
+            query = "SELECT /*+ use_asof_binary_search(t1 t2) */ * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
+            assertQuery(expected, query, null, "ts", false, true);
         });
     }
 
