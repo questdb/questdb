@@ -1047,7 +1047,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory slave,
             RecordSink slaveKeySink,
             int columnSplit,
-            JoinContext joinContext
+            JoinContext joinContext,
+            long toleranceInterval
     ) {
         valueTypes.clear();
         valueTypes.add(ColumnType.LONG);
@@ -1063,7 +1064,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 masterKeySink,
                 slaveKeySink,
                 columnSplit,
-                joinContext
+                joinContext,
+                toleranceInterval
         );
     }
 
@@ -2512,7 +2514,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     slave,
                                                     slaveSink,
                                                     masterMetadata.getColumnCount(),
-                                                    slaveModel.getContext()
+                                                    slaveModel.getContext(),
+                                                    toleranceInterval
                                             );
                                         }
                                     } else {
