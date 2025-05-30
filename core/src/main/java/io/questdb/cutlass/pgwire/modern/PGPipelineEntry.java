@@ -161,7 +161,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // this is a "union", so should only be one, depending on SQL type
     // SELECT or EXPLAIN
     private RecordCursorFactory factory = null;
-    private InsertOperation insertOp = null;
     private int msgBindParameterValueCount;
     private short msgBindSelectFormatCodeCount = 0;
     private Utf8String namedPortal;
@@ -243,7 +242,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         } else if (tai != null && taiCache != null) {
             taiCache.put(sqlText, tai);
             // make sure we don't close insert operation when the pipeline entry is closed
-            insertOp = null;
+            tai = null;
         }
     }
 
@@ -275,14 +274,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         if (!isCopy) {
             // if we are a copy, we do not own operations -> we cannot close them
             // so we just null them out and let the original entry close them
-            tai = Misc.free(tai); // also closes insertOp
-            insertOp = null;
+            tai = Misc.free(tai);
             operation = Misc.free(operation);
             if (compiledQuery != null) {
                 Misc.free(compiledQuery.getUpdateOperation());
             }
         } else {
-            insertOp = null;
+            tai = null;
             operation = null;
         }
 
@@ -331,7 +329,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateParse = false;
         stateParseExecuted = false;
         stateSync = SYNC_PARSE;
-        tai = null;
         tas = null;
         utf8StringSink.clear();
     }
@@ -864,7 +861,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void ofCachedInsert(CharSequence utf16SqlText, TypesAndInsertModern tai) {
         this.sqlText = utf16SqlText;
-        this.insertOp = tai.getInsert();
         this.sqlTag = tai.getSqlTag();
         this.sqlType = tai.getSqlType();
         this.cacheHit = true;
@@ -1098,7 +1094,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.isCopy = true;
         this.cacheHit = blueprint.cacheHit;
         this.empty = blueprint.empty;
-        this.insertOp = blueprint.insertOp;
         this.operation = blueprint.operation;
         this.parentPreparedStatementPipelineEntry = blueprint.parentPreparedStatementPipelineEntry;
         this.namedStatement = blueprint.namedStatement;
@@ -1436,6 +1431,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 engine.getMetrics().pgWireMetrics().markStart();
                 try {
                     for (int attempt = 1; ; attempt++) {
+                        final InsertOperation insertOp = tai.getInsert();
                         InsertMethod m;
                         try {
                             m = insertOp.createMethod(sqlExecutionContext, writerSource);
@@ -1456,8 +1452,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
-                            tai = Misc.free(tai); // also closes insertOp
-                            insertOp = null;
+                            tai = Misc.free(tai);
                             if (attempt == maxRecompileAttempts) {
                                 throw e;
                             }
@@ -2582,7 +2577,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 break;
             case CompiledQuery.INSERT:
             case CompiledQuery.INSERT_AS_SELECT:
-                insertOp = cq.popInsertOperation();
+                final InsertOperation insertOp = cq.popInsertOperation();
                 tai = taiPool.pop();
                 sqlTag = sqlType == CompiledQuery.INSERT ? TAG_INSERT : TAG_INSERT_AS_SELECT;
                 tai.of(
