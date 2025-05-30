@@ -100,28 +100,28 @@ public class TimeZoneRulesMicrosTest {
         final ZoneId zone = ZoneId.of("Europe/Berlin");
         final TimeZoneRulesMicros rules = new TimeZoneRulesMicros(zone.getRules());
 
-        Assert.assertEquals(0, rules.getGapDuration(0));
-        Assert.assertEquals(0, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("1888-05-12T23:45:51.045Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(0));
+        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1888-05-12T23:45:51.045Z")));
 
         // DST
-        Assert.assertEquals(0, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("2021-03-28T01:00:00.000Z")));
-        Assert.assertEquals(3600000000L, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("2021-03-28T02:00:00.000Z")));
-        Assert.assertEquals(3600000000L, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("2021-03-28T02:01:00.000Z")));
-        Assert.assertEquals(0, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("2021-03-28T03:00:00.000Z")));
-        Assert.assertEquals(0, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("2021-03-28T03:01:00.000Z")));
-        Assert.assertEquals(0, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("2021-10-31T01:01:00.000Z")));
-        Assert.assertEquals(0, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("2021-10-31T02:01:00.000Z")));
-        Assert.assertEquals(0, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("2021-10-31T03:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("2021-03-28T01:00:00.000Z")));
+        Assert.assertEquals(0L, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("2021-03-28T02:00:00.000Z")));
+        Assert.assertEquals(60001000L, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("2021-03-28T02:01:00.001Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("2021-03-28T03:00:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("2021-03-28T03:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("2021-10-31T01:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("2021-10-31T02:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("2021-10-31T03:01:00.000Z")));
 
         // historical
-        Assert.assertEquals(0, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("1997-03-30T01:01:00.000Z")));
-        Assert.assertEquals(3600000000L, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("1997-03-30T02:00:00.000Z")));
-        Assert.assertEquals(3600000000L, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("1997-03-30T02:01:00.000Z")));
-        Assert.assertEquals(0, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("1997-03-30T03:00:00.000Z")));
-        Assert.assertEquals(0, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("1997-03-30T03:01:00.000Z")));
-        Assert.assertEquals(0, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("1997-10-26T01:01:00.000Z")));
-        Assert.assertEquals(0, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("1997-10-26T02:01:00.000Z")));
-        Assert.assertEquals(0, rules.getGapDuration(TimestampFormatUtils.parseTimestamp("1997-10-26T03:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1997-03-30T01:01:00.000Z")));
+        Assert.assertEquals(0L, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1997-03-30T02:00:00.000Z")));
+        Assert.assertEquals(60000001L, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1997-03-30T02:01:00.000001Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1997-03-30T03:00:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1997-03-30T03:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1997-10-26T01:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1997-10-26T02:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1997-10-26T03:01:00.000Z")));
     }
 
     @Test

@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 
@@ -41,7 +42,7 @@ public class FuzzRenameColumnOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex) {
+    public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex, LongList excludedTsIntervals) {
         AlterOperationBuilder builder = new AlterOperationBuilder().ofRenameColumn(
                 0,
                 wApi.getTableToken(),

@@ -266,8 +266,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
-                assertTrue(metadata.isDedupKey(0));
-                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(0));
+                assertFalse(metadata.isDedupKey(1));
                 assertFalse(metadata.isDedupKey(2));
                 assertEquals(3 * 7 * 24, metadata.getTtlHoursOrMonths());
             }
@@ -287,8 +287,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
-                assertTrue(metadata.isDedupKey(0));
-                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(0));
+                assertFalse(metadata.isDedupKey(1));
                 assertFalse(metadata.isDedupKey(2));
                 assertEquals(3 * 7 * 24, metadata.getTtlHoursOrMonths());
             }
@@ -307,8 +307,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
-                assertTrue(metadata.isDedupKey(0));
-                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(0));
+                assertFalse(metadata.isDedupKey(1));
                 assertFalse(metadata.isDedupKey(2));
                 assertEquals(0, metadata.getTtlHoursOrMonths());
             }
@@ -389,8 +389,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
-                assertTrue(metadata.isDedupKey(0));
-                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(0));
+                assertFalse(metadata.isDedupKey(1));
                 assertEquals(startEpoch, metadata.getMatViewTimerStart());
                 assertEquals(5, metadata.getMatViewTimerInterval());
                 assertEquals('m', metadata.getMatViewTimerIntervalUnit());
@@ -417,8 +417,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
-                assertTrue(metadata.isDedupKey(0));
-                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(0));
+                assertFalse(metadata.isDedupKey(1));
                 assertEquals(startEpoch, metadata.getMatViewTimerStart());
                 assertEquals(5, metadata.getMatViewTimerInterval());
                 assertEquals('m', metadata.getMatViewTimerIntervalUnit());
@@ -510,8 +510,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery0("ts\tk\tavg\tlast\n", "test", "ts");
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
-                assertTrue(metadata.isDedupKey(0));
-                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(0));
+                assertFalse(metadata.isDedupKey(1));
                 assertFalse(metadata.isDedupKey(2));
                 assertFalse(metadata.isDedupKey(3));
                 assertEquals(7 * 24, metadata.getTtlHoursOrMonths());
@@ -820,8 +820,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
-                assertTrue(metadata.isDedupKey(0));
-                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(0));
+                assertFalse(metadata.isDedupKey(1));
                 assertFalse(metadata.isDedupKey(2));
                 assertEquals(0, metadata.getTtlHoursOrMonths());
             }
@@ -1051,8 +1051,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
-                assertTrue(metadata.isDedupKey(0));
-                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(0));
+                assertFalse(metadata.isDedupKey(1));
                 assertFalse(metadata.isDedupKey(2));
                 assertEquals(3 * 7 * 24, metadata.getTtlHoursOrMonths());
                 assertEquals(-1, metadata.getMatViewRefreshLimitHoursOrMonths());
@@ -1094,8 +1094,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
-                assertTrue(metadata.isDedupKey(0));
-                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(0));
+                assertFalse(metadata.isDedupKey(1));
                 assertFalse(metadata.isDedupKey(2));
                 assertEquals(-1, metadata.getTtlHoursOrMonths());
             }
@@ -1222,8 +1222,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
-                assertTrue(metadata.isDedupKey(0));
-                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(0));
+                assertFalse(metadata.isDedupKey(1));
                 assertFalse(metadata.isDedupKey(2));
 
                 assertFalse(metadata.isColumnIndexed(0));
@@ -1259,59 +1259,33 @@ public class CreateMatViewTest extends AbstractCairoTest {
     @Test
     public void testCreateMatViewWithNonBaseTableKeys() throws Exception {
         final String[] queries = new String[]{
-                "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
-                "create materialized view test with base x as (select \"t1\".\"ts\", \"t2\".\"k1\", avg(\"t1\".\"v\") from \"x\" as \"t1\" join \"y\" as \"t2\" on \"v\" sample by 1m) partition by day",
+                "create materialized view test1 with base x as (select t1.ts, t2.k1, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
+                "create materialized view test2 with base x as (select \"t1\".\"ts\", \"t2\".\"k1\", avg(\"t1\".\"v\") from \"x\" as \"t1\" join \"y\" as \"t2\" on \"v\" sample by 1m) partition by day",
                 // test table alias case-insensitivity
-                "create materialized view test with base x as (select \"t1\".\"ts\", \"t2\".\"k1\", avg(\"t1\".\"v\") from \"x\" as \"T1\" join \"y\" as \"T2\" on \"v\" sample by 1m) partition by day",
-                "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
+                "create materialized view test3 with base x as (select \"t1\".\"ts\", \"t2\".\"k1\", avg(\"t1\".\"v\") from \"x\" as \"T1\" join \"y\" as \"T2\" on \"v\" sample by 1m) partition by day",
+                "create materialized view test4 with base x as (select t1.ts, t2.k1, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
                 // test table name case-insensitivity
-                "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as T1 join y as T2 on v sample by 1m) partition by day",
-        };
-        final int[] errorPositions = new int[]{
-                60,
-                64,
-                64,
-                60,
-                60
+                "create materialized view test5 with base x as (select t1.ts, t2.k1, avg(t1.v) from x as T1 join y as T2 on v sample by 1m) partition by day",
         };
 
-        testCreateMatViewWithNonDedupBaseKeys(
-                queries,
-                "only base table columns can be used as materialized view keys [invalid key=t2.k1]",
-                errorPositions
-        );
+        testCreateMatViewWithNonDedupBaseKeys(queries);
     }
 
     @Test
     public void testCreateMatViewWithNonDedupBaseKeys() throws Exception {
         final String[] queries = new String[]{
-                "create materialized view x_hourly as (select ts, k2, avg(v) from x sample by 1h) partition by day;",
-                "create materialized view x_hourly as (select xx.ts, xx.k2, avg(xx.v) from x as xx sample by 1h) partition by day;",
-                "create materialized view x_hourly as (select ts, k1, k2, avg(v) from x sample by 1h) partition by day;",
-                "create materialized view x_hourly as (select ts, concat(k1, k2) k, avg(v) from x sample by 1h) partition by day;",
-                "create materialized view x_hourly as (select ts, k, avg(v) from (select concat(k1, k2) k, v, ts from x) sample by 1h) partition by day;",
-                "create materialized view x_hourly as (select ts, k, avg(v) from (select concat(k2, 'foobar') k, v, ts from x) sample by 1h) partition by day;",
-                "create materialized view x_hourly as (select ts, k, avg(v) from (select concat('foobar', k2) k, v, ts from x) sample by 1h) partition by day;",
-                "create materialized view x_hourly as (select ts, k, avg(v) from (select ts, k2 as k, v from x) sample by 1h) partition by day;",
+                "create materialized view x_hourly1 as (select ts, k2, avg(v) from x sample by 1h) partition by day;",
+                "create materialized view x_hourly2 as (select xx.ts, xx.k2, avg(xx.v) from x as xx sample by 1h) partition by day;",
+                "create materialized view x_hourly3 as (select ts, k1, k2, avg(v) from x sample by 1h) partition by day;",
+                "create materialized view x_hourly4 as (select ts, concat(k1, k2) k, avg(v) from x sample by 1h) partition by day;",
+                "create materialized view x_hourly5 as (select ts, k, avg(v) from (select concat(k1, k2) k, v, ts from x) sample by 1h) partition by day;",
+                "create materialized view x_hourly6 as (select ts, k, avg(v) from (select concat(k2, 'foobar') k, v, ts from x) sample by 1h) partition by day;",
+                "create materialized view x_hourly7 as (select ts, k, avg(v) from (select concat('foobar', k2) k, v, ts from x) sample by 1h) partition by day;",
+                "create materialized view x_hourly8 as (select ts, k, avg(v) from (select ts, k2 as k, v from x) sample by 1h) partition by day;",
                 "create materialized view test with base x as (select t1.ts, t1.k2, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day"
         };
-        final int[] errorPositions = new int[]{
-                49,
-                52,
-                53,
-                60,
-                83,
-                79,
-                89,
-                76,
-                60
-        };
 
-        testCreateMatViewWithNonDedupBaseKeys(
-                queries,
-                "key column must be one of the base table's dedup keys [columnName=k2, baseTableName=x, baseTableDedupKeys=[ts,k1]]",
-                errorPositions
-        );
+        testCreateMatViewWithNonDedupBaseKeys(queries);
     }
 
     @Test
@@ -2054,7 +2028,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertNull(getMatViewDefinition("test"));
     }
 
-    private void testCreateMatViewWithNonDedupBaseKeys(String[] queries, String errorMessage, int[] errorPositions) throws Exception {
+    private void testCreateMatViewWithNonDedupBaseKeys(String[] queries) throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "create table x " +
@@ -2067,10 +2041,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             " timestamp(ts) partition by day wal;"
             );
 
-            Assert.assertEquals("queries and error position arrays must be the same length", queries.length, errorPositions.length);
-
             for (int i = 0, n = queries.length; i < n; i++) {
-                assertExceptionNoLeakCheck(queries[i], errorPositions[i], errorMessage);
+                execute(queries[i]);
             }
         });
     }

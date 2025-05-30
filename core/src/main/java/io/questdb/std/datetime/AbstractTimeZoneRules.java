@@ -138,19 +138,19 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     }
 
     @Override
-    public long getGapDuration(long localEpoch) {
+    public long getDstGapOffset(long localEpoch) {
         if (standardOffset != Long.MIN_VALUE) {
             return 0; // no offset switches, no gaps
         }
 
         if (ruleCount > 0 && localEpoch > localCutoffTransition) {
-            return gapDurationFromRules(localEpoch);
+            return gapOffsetFromRules(localEpoch);
         }
 
         if (localEpoch > localCutoffTransition) {
             return 0; // no offset switches, no gaps
         }
-        return gapDurationFromHistory(localEpoch);
+        return gapOffsetFromHistory(localEpoch);
     }
 
     @Override
@@ -312,7 +312,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         return Long.MAX_VALUE;
     }
 
-    private long gapDurationFromHistory(long localEpoch) {
+    private long gapOffsetFromHistory(long localEpoch) {
         int index = localHistoricTransitions.binarySearch(localEpoch, Vect.BIN_SEARCH_SCAN_UP);
         if (index == -1) {
             return 0; // no offset switches, no gaps
@@ -327,12 +327,14 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
             // check if it's a gap transition
             int offsetBefore = wallOffsets[index / 2];
             int offsetAfter = wallOffsets[(index / 2) + 1];
-            return Math.max(0, (offsetAfter - offsetBefore) * multiplier);
+            if (offsetBefore < offsetAfter) {
+                return localEpoch - localHistoricTransitions.get(index);
+            }
         }
         return 0;
     }
 
-    private long gapDurationFromRules(long localEpoch) {
+    private long gapOffsetFromRules(long localEpoch) {
         final int year = getYear(localEpoch);
         final Transition[] transitions = getTransitions(year);
         for (int i = 0, n = transitions.length; i < n; i++) {
@@ -342,7 +344,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
             final long localAfter = tr.transition + tr.offsetAfter;
             // check if the timestamp is within transition boundaries
             if (localEpoch >= localBefore && localEpoch < localAfter) {
-                return tr.offsetAfter - tr.offsetBefore;
+                return localEpoch - localBefore;
             }
         }
         return 0;
