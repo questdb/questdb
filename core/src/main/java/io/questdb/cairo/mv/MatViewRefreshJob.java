@@ -492,7 +492,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         try (RecordCursor cursor = factory.getCursor(refreshExecutionContext)) {
                             final Record record = cursor.getRecord();
                             while (cursor.hasNext()) {
-                                TableWriter.Row row = walWriter.newRow(record.getTimestamp(cursorTimestampIndex));
+                                long timestamp = record.getTimestamp(cursorTimestampIndex);
+                                assert timestamp >= replacementTimestampLo && timestamp < replacementTimestampHi
+                                        : "timestamp out of range [expected: " + Timestamps.toUSecString(replacementTimestampLo) + ", "
+                                        + Timestamps.toUSecString(replacementTimestampHi) + "), actual: "
+                                        + Timestamps.toUSecString(timestamp);
+                                TableWriter.Row row = walWriter.newRow(timestamp);
                                 copier.copy(record, row);
                                 row.append();
                                 rowCount++;
