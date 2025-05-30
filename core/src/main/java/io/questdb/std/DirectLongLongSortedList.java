@@ -22,16 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.std;
 
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.ServerDisconnectException;
+import io.questdb.cairo.Reopenable;
 
-public interface HttpMultipartContentListener {
-    void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
+/**
+ * Off-heap bounded sorted list for long values accompanied by a long index.
+ */
+public interface DirectLongLongSortedList extends QuietCloseable, Mutable, Reopenable {
 
-    void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
+    void add(long index, long value);
 
-    void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
+    int getCapacity();
+
+    Cursor getCursor();
+
+    int size();
+
+    interface Cursor {
+
+        boolean hasNext();
+
+        long index();
+
+        void toTop();
+
+        long value();
+    }
 }

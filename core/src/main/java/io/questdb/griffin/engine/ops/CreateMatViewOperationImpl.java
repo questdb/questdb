@@ -167,6 +167,21 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public int getMatViewTimerInterval() {
+        return createTableOperation.getMatViewTimerInterval();
+    }
+
+    @Override
+    public char getMatViewTimerIntervalUnit() {
+        return createTableOperation.getMatViewTimerIntervalUnit();
+    }
+
+    @Override
+    public long getMatViewTimerStart() {
+        return createTableOperation.getMatViewTimerStart();
+    }
+
+    @Override
     public int getMaxUncommittedRows() {
         return createTableOperation.getMaxUncommittedRows();
     }
@@ -456,7 +471,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public void validateAndUpdateMetadataFromSelect(
-            RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata
+            RecordMetadata selectMetadata,
+            TableReaderMetadata baseTableMetadata
     ) throws SqlException {
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
         // SELECT validation
@@ -515,7 +531,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             if (node.type == ExpressionNode.LITERAL) {
                 if (model.getTableName() != null) {
                     // We've found a lowest-level model. Let's check if the column belongs to it.
-                    final int dotIndex = Chars.indexOf(node.token, '.');
+                    final int dotIndex = Chars.indexOfLastUnquoted(node.token, '.');
                     if (dotIndex > -1) {
                         if (Chars.equalsIgnoreCase(model.getName(), node.token, 0, dotIndex)) {
                             if (!Chars.equalsIgnoreCase(model.getTableName(), baseTableName)) {
@@ -650,7 +666,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     private static @Nullable CharSequence resolveColumnName(ExpressionNode columnNode, QueryModel queryModel) {
-        final int dotIndex = Chars.indexOf(columnNode.token, '.');
+        final int dotIndex = Chars.indexOfLastUnquoted(columnNode.token, '.');
         if (dotIndex > -1) {
             if (Chars.equalsIgnoreCase(queryModel.getName(), columnNode.token, 0, dotIndex)) {
                 return columnNode.token.subSequence(dotIndex + 1, columnNode.token.length());

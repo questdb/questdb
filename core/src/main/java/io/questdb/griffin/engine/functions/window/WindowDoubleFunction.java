@@ -22,31 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.engine.window.WindowFunction;
 
-/**
- * Off-heap min/max heap for long values accompanied by a long index.
- */
-public interface DirectLongLongHeap extends QuietCloseable, Mutable, Reopenable {
-
-    void add(long index, long value);
-
-    int getCapacity();
-
-    Cursor getCursor();
-
-    int size();
-
-    interface Cursor {
-
-        boolean hasNext();
-
-        long index();
-
-        void toTop();
-
-        long value();
+public interface WindowDoubleFunction extends WindowFunction {
+    @Override
+    default int getType() {
+        return ColumnType.DOUBLE;
     }
 }

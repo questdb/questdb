@@ -22,12 +22,37 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.std.ObjList;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.Numbers;
 
-public interface HttpRequestProcessorFactory {
-    ObjList<String> getUrls();
+public interface WindowLongFunction extends WindowFunction {
+    @Override
+    default long getDate(Record rec) {
+        return getLong(rec);
+    }
 
-    HttpRequestProcessor newInstance();
+    @Override
+    default double getDouble(Record rec) {
+        final long val = getLong(rec);
+        return val != Numbers.LONG_NULL ? val : Double.NaN;
+    }
+
+    @Override
+    default float getFloat(Record rec) {
+        return Numbers.longToFloat(getLong(rec));
+    }
+
+    @Override
+    default long getTimestamp(Record rec) {
+        return getLong(rec);
+    }
+
+    @Override
+    default int getType() {
+        return ColumnType.LONG;
+    }
 }

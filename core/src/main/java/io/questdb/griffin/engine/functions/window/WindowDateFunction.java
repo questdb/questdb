@@ -22,22 +22,39 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.Metrics;
-import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.metrics.AtomicLongGauge;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.Numbers;
 
-public interface LineHttpProcessor extends HttpRequestProcessor {
-
+public interface WindowDateFunction extends WindowFunction {
     @Override
-    default AtomicLongGauge connectionCountGauge(Metrics metrics) {
-        return metrics.lineMetrics().httpConnectionCountGauge();
+    default double getDouble(Record rec) {
+        final long val = getDate(rec);
+        return val != Numbers.LONG_NULL ? val : Double.NaN;
     }
 
     @Override
-    default int getConnectionLimit(HttpContextConfiguration configuration) {
-        return configuration.getIlpConnectionLimit();
+    default float getFloat(Record rec) {
+        final long val = getDate(rec);
+        return val != Numbers.LONG_NULL ? val : Float.NaN;
+    }
+
+    @Override
+    default long getLong(Record rec) {
+        return getDate(rec);
+    }
+
+    @Override
+    default long getTimestamp(Record rec) {
+        final long value = getDate(rec);
+        return value == Numbers.LONG_NULL ? value : value * 1000L;
+    }
+
+    @Override
+    default int getType() {
+        return ColumnType.DATE;
     }
 }

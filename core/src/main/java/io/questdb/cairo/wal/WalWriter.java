@@ -415,23 +415,6 @@ public class WalWriter implements TableWriterAPI {
         return segmentRowCount > currentTxnStartRowNum;
     }
 
-    // Marks the materialized view as invalid or resets its invalidation status,
-    // depending on the input values.
-    public void invalidateMatView(
-            long lastRefreshBaseTxn,
-            long lastRefreshTimestamp,
-            boolean invalid,
-            @Nullable CharSequence invalidationReason
-    ) {
-        try {
-            lastSegmentTxn = events.appendMatViewInvalidate(lastRefreshBaseTxn, lastRefreshTimestamp, invalid, invalidationReason);
-            getSequencerTxn();
-        } catch (Throwable th) {
-            rollback();
-            throw th;
-        }
-    }
-
     public boolean isDistressed() {
         return distressed;
     }
@@ -488,6 +471,23 @@ public class WalWriter implements TableWriterAPI {
         long txn = apply(alterOp, true);
         assert Chars.equals(newTableName, tableToken.getTableName());
         return txn;
+    }
+
+    // Marks the materialized view as invalid or resets its invalidation status,
+    // depending on the input values.
+    public void resetMatViewState(
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            boolean invalid,
+            @Nullable CharSequence invalidationReason
+    ) {
+        try {
+            lastSegmentTxn = events.appendMatViewInvalidate(lastRefreshBaseTxn, lastRefreshTimestamp, invalid, invalidationReason);
+            getSequencerTxn();
+        } catch (Throwable th) {
+            rollback();
+            throw th;
+        }
     }
 
     public void rollSegment() {
@@ -831,8 +831,9 @@ public class WalWriter implements TableWriterAPI {
                 if (metaValidatorSvc.structureVersion != getColumnStructureVersion() + 1) {
                     retry = false;
                     throw CairoException.nonCritical()
-                            .put("statements containing multiple transactions, such as 'alter table add column col1, col2'" +
-                                    " are currently not supported for WAL tables [table=").put(tableToken.getTableName())
+                            .put("statement is either no-op,")
+                            .put(" or contains multiple transactions, such as 'alter table add column col1, col2',")
+                            .put(" and currently not supported for WAL tables [table=").put(tableToken.getTableName())
                             .put(", oldStructureVersion=").put(getColumnStructureVersion())
                             .put(", newStructureVersion=").put(metaValidatorSvc.structureVersion).put(']');
                 }

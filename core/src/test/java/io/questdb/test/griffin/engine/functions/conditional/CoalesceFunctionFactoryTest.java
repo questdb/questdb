@@ -328,22 +328,20 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testFailsWithSingleArg() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table alex as (" +
-                    "select CASE WHEN x % 2 = 0 THEN CAST(NULL as long) ELSE x END as x," +
-                    " CASE WHEN x % 3 = 0 THEN x * 2 ELSE CAST(NULL as long) END as a," +
-                    " CASE WHEN x % 3 = 1 THEN x * 3 ELSE CAST(NULL as long) END as b" +
-                    " from long_sequence(6)" +
-                    ")");
+            execute(
+                    "create table alex as (" +
+                            "select CASE WHEN x % 2 = 0 THEN CAST(NULL as long) ELSE x END as x," +
+                            " CASE WHEN x % 3 = 0 THEN x * 2 ELSE CAST(NULL as long) END as a," +
+                            " CASE WHEN x % 3 = 1 THEN x * 3 ELSE CAST(NULL as long) END as b" +
+                            " from long_sequence(6)" +
+                            ")"
+            );
 
-            try {
-                execute(
-                        "select coalesce(b)\n" +
-                                "from alex"
-                );
-                Assert.fail("SqlException expected");
-            } catch (SqlException ex) {
-                Assert.assertTrue(ex.getMessage().contains("coalesce"));
-            }
+            assertExceptionNoLeakCheck(
+                    "select coalesce(b) from alex",
+                    7,
+                    "coalesce can be used with 2 or more arguments"
+            );
         });
     }
 
@@ -481,6 +479,15 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                 null,
                 true,
                 true
+        );
+    }
+
+    @Test
+    public void testNoArgs() throws Exception {
+        assertException(
+                "select coalesce();",
+                7,
+                "coalesce can be used with 2 or more arguments"
         );
     }
 

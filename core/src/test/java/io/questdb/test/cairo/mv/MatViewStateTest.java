@@ -59,8 +59,8 @@ public class MatViewStateTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(tableToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
                 assertFalse(configuration.getFilesFacade().exists(path.$()));
                 assertQueryNoLeakCheck(
-                        "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\trefresh_limit_value\trefresh_limit_unit\n" +
-                                "price_1h\tincremental\tbase_price\t\t\tselect sym0, last(price0) price, ts0 from (select ts as ts0, sym as sym0, price as price0 from base_price) sample by 1h\tprice_1h~2\t\tvalid\t-1\t0\t0\tHOUR\n",
+                        "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_base_table_txn\tbase_table_txn\trefresh_limit_value\trefresh_limit_unit\ttimer_start\ttimer_interval_value\ttimer_interval_unit\n" +
+                                "price_1h\tincremental\tbase_price\t\t\tselect sym0, last(price0) price, ts0 from (select ts as ts0, sym as sym0, price as price0 from base_price) sample by 1h\tprice_1h~2\t\tvalid\t-1\t0\t0\t\t\t0\t\n",
                         "select * from materialized_views()",
                         null
                 );
@@ -103,7 +103,7 @@ public class MatViewStateTest extends AbstractCairoTest {
                 for (int i = 0; i < iterations; i++) {
                     boolean invalidate = rnd.nextBoolean();
                     if (invalidate) {
-                        walWriter.invalidateMatView(i, i, true, "Invalidating " + i);
+                        walWriter.resetMatViewState(i, i, true, "Invalidating " + i);
                         assertState(tableToken, i, i, true, "Invalidating " + i);
                     }
                     TableWriter.Row row = walWriter.newRow(0);
@@ -126,7 +126,7 @@ public class MatViewStateTest extends AbstractCairoTest {
                     assertState(tableToken, iterations - 1, iterations - 1, false, null);
                 }
 
-                walWriter.invalidateMatView(42, 42, true, "missed invalidation");
+                walWriter.resetMatViewState(42, 42, true, "missed invalidation");
                 drainWalQueue();
                 assertState(tableToken, iterations - 1, iterations - 1, false, null);
             }

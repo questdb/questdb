@@ -79,7 +79,7 @@ public class MetadataCache implements QuietCloseable {
     /**
      * Used on a background thread at startup to populate the cache.
      * Cache is also populated on-demand by SQL metadata functions.
-     * Takes a lock per table to not prevent ongoing probress of the database.
+     * Takes a lock per table to not prevent the ongoing progress of the database.
      * Generally completes quickly.
      */
     public void onStartupAsyncHydrator() {
@@ -151,14 +151,13 @@ public class MetadataCache implements QuietCloseable {
 
         Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
 
-        // set up dir path
+        // set up the dir path
         path.concat(token.getDirName());
 
         boolean isSoftLink = Files.isSoftLink(path.$());
 
-        // set up table path
-        path.concat(TableUtils.META_FILE_NAME)
-                .trimTo(path.size());
+        // set up the table path
+        path.concat(TableUtils.META_FILE_NAME).trimTo(path.size());
 
         // create table to work with
         CairoTable table = new CairoTable(token);
@@ -197,62 +196,73 @@ public class MetadataCache implements QuietCloseable {
             table.setPartitionBy(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
             table.setMaxUncommittedRows(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
             table.setO3MaxLag(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
-            table.setTimestampIndex(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
+            int timestampWriterIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+            table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
             table.setMatViewRefreshLimitHoursOrMonths(TableUtils.getMatViewRefreshLimitHoursOrMonths(metaMem));
-            table.setIsSoftLink(isSoftLink);
+            table.setMatViewTimerStart(TableUtils.getMatViewTimerStart(metaMem));
+            table.setMatViewTimerInterval(TableUtils.getMatViewTimerInterval(metaMem));
+            table.setMatViewTimerIntervalUnit(TableUtils.getMatViewTimerIntervalUnit(metaMem));
+            table.setSoftLinkFlag(isSoftLink);
 
-            TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, columnCount);
+            TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
             boolean isMetaFormatUpToDate = TableUtils.isMetaFormatUpToDate(metaMem);
             // populate columns
-            for (int i = 0, n = table.columnOrderMap.size(); i < n; i += 3) {
-                int writerIndex = table.columnOrderMap.get(i);
+            for (int i = 0, n = table.columnOrderList.size(); i < n; i += 3) {
+                int writerIndex = table.columnOrderList.get(i);
+                // negative writer index columns were "replaced", as in renamed, or had their type changed
                 if (writerIndex < 0) {
                     continue;
                 }
 
-                CharSequence name = metaMem.getStrA(table.columnOrderMap.get(i + 1));
+                CharSequence name = metaMem.getStrA(table.columnOrderList.get(i + 1));
 
                 assert name != null;
                 int columnType = TableUtils.getColumnType(metaMem, writerIndex);
 
-                if (columnType > -1) {
-                    String columnName = Chars.toString(name);
-                    CairoColumn column = new CairoColumn();
+                // negative type means column was deleted
+                if (columnType < 0) {
+                    continue;
+                }
+                String columnName = Chars.toString(name);
+                CairoColumn column = new CairoColumn();
 
-                    LOG.debug().$("hydrating column [table=").$(token).$(", column=").utf8(columnName).I$();
+                LOG.debug().$("hydrating column [table=").$(token).$(", column=").utf8(columnName).I$();
 
-                    column.setName(columnName);
-                    table.upsertColumn(column);
+                column.setName(columnName);
 
-                    // Column positions already determined
-                    column.setPosition(table.getColumnCount() - 1);
-                    column.setType(columnType);
+                // Column positions already determined
+                column.setPosition(table.getColumnCount());
+                column.setType(columnType);
+                column.setIndexedFlag(TableUtils.isColumnIndexed(metaMem, writerIndex));
+                column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
+                column.setSymbolTableStaticFlag(true);
+                column.setDedupKeyFlag(TableUtils.isColumnDedupKey(metaMem, writerIndex));
+                column.setWriterIndex(writerIndex);
 
-                    if (column.getType() < 0) {
-                        // deleted
-                        continue;
-                    }
+                boolean isDesignated = writerIndex == timestampWriterIndex;
+                column.setDesignatedFlag(isDesignated);
+                if (isDesignated) {
+                    // Timestamp index is the logical index of the column in the column list. Rather than
+                    // physical index of the column in the metadata file (writer index).
+                    table.setTimestampIndex(table.getColumnCount());
+                }
 
-                    column.setIsIndexed(TableUtils.isColumnIndexed(metaMem, writerIndex));
-                    column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
-                    column.setIsSymbolTableStatic(true);
-                    column.setIsDedupKey(TableUtils.isColumnDedupKey(metaMem, writerIndex));
-                    column.setWriterIndex(writerIndex);
-                    column.setIsDesignated(writerIndex == table.getTimestampIndex());
-                    if (columnType == ColumnType.SYMBOL) {
-                        if (isMetaFormatUpToDate) {
-                            column.setSymbolCapacity(TableUtils.getSymbolCapacity(metaMem, writerIndex));
-                            column.setSymbolCached(TableUtils.isSymbolCached(metaMem, writerIndex));
-                        } else {
-                            LOG.debug().$("updating symbol capacity [table=").$(token).$(", column=").utf8(columnName).I$();
-                            loadCapacities(column, token, path, engine.getConfiguration(), getColumnVersionReader());
-                        }
-                    }
-                    if (column.getIsDedupKey()) {
-                        table.setIsDedup(true);
+                if (column.isDedupKey()) {
+                    table.setDedupFlag(true);
+                }
+
+                if (columnType == ColumnType.SYMBOL) {
+                    if (isMetaFormatUpToDate) {
+                        column.setSymbolCapacity(TableUtils.getSymbolCapacity(metaMem, writerIndex));
+                        column.setSymbolCached(TableUtils.isSymbolCached(metaMem, writerIndex));
+                    } else {
+                        LOG.debug().$("updating symbol capacity [table=").$(token).$(", column=").utf8(columnName).I$();
+                        loadCapacities(column, token, path, engine.getConfiguration(), getColumnVersionReader());
                     }
                 }
+
+                table.upsertColumn(column);
             }
 
             tableMap.put(table.getTableName(), table);
@@ -260,7 +270,7 @@ public class MetadataCache implements QuietCloseable {
         } catch (Throwable e) {
             // get rid of stale metadata
             tableMap.remove(token.getTableName());
-            // if we can't hydrate and table is not dropped, it's a critical error
+            // if we can't hydrate and the table is not dropped, it's a critical error
             LogRecord log = engine.isTableDropped(token) ? LOG.info() : LOG.critical();
             try {
                 log
@@ -304,14 +314,14 @@ public class MetadataCache implements QuietCloseable {
                 columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
             }
 
-            // initialise symbol map memory
+            // initialize symbol map memory
             final long capacityOffset = SymbolMapWriter.HEADER_CAPACITY;
             final int capacity;
             final byte isCached;
             final LPSZ offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
             long fd = TableUtils.openRO(ff, offsetFileName, LOG);
             try {
-                // use txn to find correct symbol entry
+                // use txn to find the correct symbol entry
                 capacity = ff.readNonNegativeInt(fd, capacityOffset);
                 isCached = ff.readNonNegativeByte(fd, SymbolMapWriter.HEADER_CACHE_ENABLED);
             } finally {
@@ -529,41 +539,49 @@ public class MetadataCache implements QuietCloseable {
             table.setPartitionBy(tableMetadata.getPartitionBy());
             table.setMaxUncommittedRows(tableMetadata.getMaxUncommittedRows());
             table.setO3MaxLag(tableMetadata.getO3MaxLag());
-
-            int timestampIndex = tableMetadata.getTimestampIndex();
-            table.setTimestampIndex(timestampIndex);
+            int timestampWriterIndex = tableMetadata.getTimestampIndex();
+            table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(tableMetadata.getTtlHoursOrMonths());
             table.setMatViewRefreshLimitHoursOrMonths(tableMetadata.getMatViewRefreshLimitHoursOrMonths());
+            table.setMatViewTimerStart(tableMetadata.getMatViewTimerStart());
+            table.setMatViewTimerInterval(tableMetadata.getMatViewTimerInterval());
+            table.setMatViewTimerIntervalUnit(tableMetadata.getMatViewTimerIntervalUnit());
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
-            table.setIsSoftLink(engine.getConfiguration().getFilesFacade().isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
+            table.setSoftLinkFlag(Files.isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 
             for (int i = 0; i < columnCount; i++) {
                 final TableColumnMetadata columnMetadata = tableMetadata.getColumnMetadata(i);
-                CharSequence columnName = columnMetadata.getColumnName();
 
                 int columnType = columnMetadata.getColumnType();
-
                 if (columnType < 0) {
                     continue; // marked for deletion
                 }
 
+                String columnName = columnMetadata.getColumnName();
                 LOG.debug().$("hydrating column [table=").$(tableToken).$(", column=").utf8(columnName).I$();
 
                 CairoColumn column = new CairoColumn();
 
-                column.setName(columnName); // check this, not sure the char sequence is preserved
+                column.setName(columnName);
                 column.setType(columnType);
                 int replacingIndex = columnMetadata.getReplacingIndex();
                 column.setPosition(replacingIndex > -1 ? replacingIndex : i);
-                column.setIsIndexed(columnMetadata.isSymbolIndexFlag());
+                column.setIndexedFlag(columnMetadata.isSymbolIndexFlag());
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
-                column.setIsSymbolTableStatic(columnMetadata.isSymbolTableStatic());
-                column.setIsDedupKey(columnMetadata.isDedupKeyFlag());
-                column.setWriterIndex(columnMetadata.getWriterIndex());
-                column.setIsDesignated(column.getWriterIndex() == timestampIndex);
+                column.setSymbolTableStaticFlag(columnMetadata.isSymbolTableStatic());
+                column.setDedupKeyFlag(columnMetadata.isDedupKeyFlag());
 
-                if (column.getIsDedupKey()) {
-                    table.setIsDedup(true);
+                int writerIndex = columnMetadata.getWriterIndex();
+                column.setWriterIndex(writerIndex);
+
+                boolean isDesignated = writerIndex == timestampWriterIndex;
+                column.setDesignatedFlag(isDesignated);
+                if (isDesignated) {
+                    table.setTimestampIndex(table.getColumnCount());
+                }
+
+                if (column.isDedupKey()) {
+                    table.setDedupFlag(true);
                 }
 
                 if (ColumnType.isSymbol(column.getType())) {
