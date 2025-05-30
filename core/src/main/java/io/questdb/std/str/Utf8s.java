@@ -375,6 +375,10 @@ public final class Utf8s {
         return true;
     }
 
+    public static boolean equalsIgnoreCaseNcAscii(@NotNull CharSequence asciiSeq, @Nullable Utf8Sequence seq) {
+        return seq != null && equalsIgnoreCaseAscii(asciiSeq, seq);
+    }
+
     public static boolean equalsNcAscii(@NotNull CharSequence asciiSeq, @Nullable Utf8Sequence seq) {
         return seq != null && equalsAscii(asciiSeq, seq);
     }
