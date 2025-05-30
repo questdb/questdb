@@ -289,6 +289,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -753,6 +754,49 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private static boolean isStringyType(int colType) {
         return colType == ColumnType.VARCHAR || colType == ColumnType.STRING;
+    }
+
+    private static long tolerance(QueryModel slaveModel) throws SqlException {
+        // todo: implement the case where tolerance units are segregated from the interval itself,
+        //       e.g when the interval uses a function
+        assert slaveModel.getAsOfJoinToleranceUnit() == null : "todo";
+
+        ExpressionNode tolerance = slaveModel.getAsOfJoinTolerance();
+        long toleranceInterval = Numbers.LONG_NULL;
+        if (tolerance != null) {
+            int k = TimestampSamplerFactory.findIntervalEndIndex(tolerance.token, tolerance.position);
+            assert tolerance.token.length() > k;
+            toleranceInterval = TimestampSamplerFactory.parseInterval(tolerance.token, k, tolerance.position);
+            char unit = tolerance.token.charAt(k);
+            long multiplier;
+            switch (unit) {
+                case 'U':
+                    multiplier = 1;
+                    break;
+                case 'T':
+                    multiplier = Timestamps.MILLI_MICROS;
+                    break;
+                case 's':
+                    multiplier = Timestamps.SECOND_MICROS;
+                    break;
+                case 'm':
+                    multiplier = Timestamps.MINUTE_MICROS;
+                    break;
+                case 'h':
+                    multiplier = Timestamps.HOUR_MICROS;
+                    break;
+                case 'd':
+                    multiplier = Timestamps.DAY_MICROS;
+                    break;
+                case 'w':
+                    multiplier = Timestamps.WEEK_MICROS;
+                    break;
+                default:
+                    throw SqlException.$(tolerance.position, "unsupported interval qualifier");
+            }
+            toleranceInterval *= multiplier;
+        }
+        return toleranceInterval;
     }
 
     private static RecordMetadata widenSetMetadata(RecordMetadata typesA, RecordMetadata typesB) {
@@ -2415,6 +2459,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateOuterJoinExpressions(slaveModel, "ASOF");
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
+
+                                long toleranceInterval = tolerance(slaveModel);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                                         RecordSink masterSink = RecordSinkFactory.getInstance(
@@ -2432,6 +2478,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 writeStringAsVarcharA
                                         );
                                         if (slave.supportsTimeFrameCursor() && fastAsOfJoins) {
+                                            // support for short-circuiting when joining on a single symbol column and the slave table does not have a matching key
                                             SymbolShortCircuit symbolShortCircuit = SymbolShortCircuit.DISABLED;
                                             if (listColumnFilterA.getColumnCount() == 1 && listColumnFilterB.getColumnCount() == 1) {
                                                 int slaveColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
@@ -2454,7 +2501,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     slaveSink,
                                                     masterMetadata.getColumnCount(),
                                                     symbolShortCircuit,
-                                                    slaveModel.getContext()
+                                                    slaveModel.getContext(),
+                                                    toleranceInterval
                                             );
                                         } else {
                                             master = createAsOfJoin(

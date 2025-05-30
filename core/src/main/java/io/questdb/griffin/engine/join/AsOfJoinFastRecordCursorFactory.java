@@ -40,13 +40,15 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
-    private SymbolShortCircuit symbolShortCircuit;
+    private final SymbolShortCircuit symbolShortCircuit;
+    private final long toleranceIntervalMicros;
 
     public AsOfJoinFastRecordCursorFactory(
             CairoConfiguration configuration,
@@ -57,7 +59,9 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             RecordSink slaveKeySink,
             int columnSplit,
             SymbolShortCircuit symbolShortCircuit,
-            JoinContext joinContext) {
+            JoinContext joinContext,
+            long toleranceIntervalMicros
+    ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.masterKeySink = masterKeySink;
@@ -73,6 +77,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 configuration.getSqlAsOfJoinLookAhead()
         );
         this.symbolShortCircuit = symbolShortCircuit;
+        this.toleranceIntervalMicros = toleranceIntervalMicros;
     }
 
     @Override
@@ -210,6 +215,13 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             origSlaveRowId = keyedRowId;
             int keyedFrameIndex = timeFrame.getFrameIndex();
             for (; ; ) {
+                long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                if (toleranceIntervalMicros != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceIntervalMicros) {
+                    // we are past the tolerance interval, no need to traverse the slave cursor any further
+                    record.hasSlave(false);
+                    break;
+                }
+
                 slaveSinkTarget.clear();
                 slaveKeySink.copy(slaveRecB, slaveSinkTarget);
                 if (masterSinkTarget.memeq(slaveSinkTarget)) {

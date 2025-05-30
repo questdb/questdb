@@ -2556,7 +2556,29 @@ public class SqlParser {
                 break;
         }
 
-        return joinModel;
+        tok = optTok(lexer);
+        if (tok == null || !SqlKeywords.isToleranceKeyword(tok)) {
+            lexer.unparseLast();
+            return joinModel;
+        }
+        if (joinType != QueryModel.JOIN_ASOF) {
+            throw SqlException.$(lexer.lastTokenPosition(), "TOLERANCE is only supported for ASOF joins");
+        }
+
+        final ExpressionNode n = expr(lexer, null, sqlParserCallback, decls);
+        if (isFullSampleByPeriod(n)) {
+            joinModel.setAsOfJoinTolerance(n);
+            return joinModel;
+        }
+
+        final int pos = lexer.lastTokenPosition();
+        tok = tok(lexer, "time interval unit");
+
+        if (isValidSampleByPeriodLetter(tok)) {
+            joinModel.setAsOfJoinTolerance(n, SqlUtil.nextLiteral(expressionNodePool, tok, pos));
+            return joinModel;
+        }
+        throw SqlException.$(pos, "one letter sample by period unit expected");
     }
 
     private void parseLatestBy(GenericLexer lexer, QueryModel model) throws SqlException {

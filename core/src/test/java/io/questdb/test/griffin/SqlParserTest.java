@@ -1127,6 +1127,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testAsOfJoinTolerance() throws SqlException {
+        assertQuery(
+                "select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1, q.tag tag1 from (select [timestamp, tag] from trades t timestamp (timestamp) asof join select [timestamp, tag] from quotes q timestamp (timestamp) on q.tag = t.tag tolerance 10m post-join-where q.tag = null) t",
+                "select * from trades t ASOF JOIN quotes q on tag TOLERANCE 10m WHERE q.tag is null",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
+                modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL)
+        );
+
+        // todo: test unhappy paths - TOLERANCE with no or bad units, TOLERANCE with incompatible join types, etc.
+    }
+
+    @Test
     public void testAtAsColumnAlias() throws Exception {
         assertQuery(
                 "select-choose l at from (select [l] from testat timestamp (ts))",
