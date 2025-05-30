@@ -463,7 +463,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
             execute("create table t2 as (select x as id, (x)::timestamp ts from long_sequence(5)) timestamp(ts) partition by day;");
 
 
+            // keyed join and slave supports timeframe -> plan should use AsOfJoinFastRecordCursorFactory
             String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 2s;";
+            // sanity check: uses AsOfJoinFastRecordCursorFactory
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
             String expected = "id\tts\tid1\tts1\n" +
                     "1\t1970-01-01T00:00:01.000001Z\t1\t1970-01-01T00:00:00.000001Z\n" +
                     "2\t1970-01-01T00:00:02.000002Z\t2\t1970-01-01T00:00:00.000002Z\n" +
@@ -477,7 +481,29 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
             assertQuery(expected, query, null, "ts", false, true);
 
+            // keyed join and slave has no timeframe support -> should use AsOfJoinLightRecordCursorFactory
             query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) ON id TOLERANCE 2s;";
+            // sanity check: uses AsOfJoinLightRecordCursorFactory
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "AsOf Join Light");
+            assertQuery(expected, query, null, "ts", false, true);
+
+
+            // non-keyed join and slave supports timeframe -> should use AsOfJoinNoKeyFastRecordCursorFactory
+            query = "SELECT * FROM t1 ASOF JOIN t2 TOLERANCE 2s;";
+            expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001Z\t5\t1970-01-01T00:00:00.000005Z\n" +
+                    "2\t1970-01-01T00:00:02.000002Z\t5\t1970-01-01T00:00:00.000005Z\n" +
+                    "3\t1970-01-01T00:00:03.000003Z\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004Z\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005Z\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006Z\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007Z\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008Z\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009Z\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
             assertQuery(expected, query, null, "ts", false, true);
         });
     }

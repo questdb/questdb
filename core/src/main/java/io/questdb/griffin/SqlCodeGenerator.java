@@ -2529,7 +2529,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                                         master,
                                                         slave,
-                                                        masterMetadata.getColumnCount()
+                                                        masterMetadata.getColumnCount(),
+                                                        toleranceInterval
                                                 );
                                                 created = true;
                                             }
