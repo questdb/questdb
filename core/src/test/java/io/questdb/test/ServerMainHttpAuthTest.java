@@ -37,7 +37,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import static io.questdb.test.cutlass.http.SettingsEndpointTest.*;
+import static io.questdb.test.cutlass.http.SettingsEndpointTest.assertSettingsRequest;
 
 public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
     private static final String PASSWORD = "quest";
@@ -190,6 +190,7 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"acl.enabled\":true," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null" +

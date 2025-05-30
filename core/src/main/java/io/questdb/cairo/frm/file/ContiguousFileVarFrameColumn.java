@@ -24,7 +24,12 @@
 
 package io.questdb.cairo.frm.file;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -44,6 +49,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private final boolean mixedIOFlag;
     private long appendOffsetRowCount = -1;
     private long auxFd = -1;
+    private boolean closed = false;
     private int columnIndex;
     private long columnTop;
     private int columnType;
@@ -225,19 +231,22 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
     @Override
     public void close() {
-        if (auxFd != -1) {
-            ff.close(auxFd);
-            auxFd = -1;
-        }
-        if (dataFd != -1) {
-            ff.close(dataFd);
-            dataFd = -1;
-        }
+        if (!closed) {
+            if (auxFd != -1) {
+                ff.close(auxFd);
+                auxFd = -1;
+            }
+            if (dataFd != -1) {
+                ff.close(dataFd);
+                dataFd = -1;
+            }
 
-        if (recycleBin != null && !recycleBin.isClosed()) {
-            appendOffsetRowCount = 0;
-            dataAppendOffsetBytes = 0;
-            recycleBin.put(this);
+            if (recycleBin != null && !recycleBin.isClosed()) {
+                appendOffsetRowCount = 0;
+                dataAppendOffsetBytes = 0;
+                recycleBin.put(this);
+            }
+            closed = true;
         }
     }
 
@@ -273,22 +282,26 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
     public void ofRO(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex, boolean isEmpty) {
         assert auxFd == -1;
-        this.columnType = columnType;
-        this.columnTypeDriver = ColumnType.getDriver(columnType);
-        this.columnTop = columnTop;
-        this.columnIndex = columnIndex;
-        this.appendOffsetRowCount = -1;
-
+        closed = false;
         int plen = partitionPath.size();
+
         try {
+            this.columnType = columnType;
+            this.columnTypeDriver = ColumnType.getDriver(columnType);
+            this.columnTop = columnTop;
+            this.columnIndex = columnIndex;
+            this.appendOffsetRowCount = -1;
+
             if (!isEmpty) {
                 dFile(partitionPath, columnName, columnTxn);
                 this.dataFd = TableUtils.openRO(ff, partitionPath.$(), LOG);
-
                 partitionPath.trimTo(plen);
                 iFile(partitionPath, columnName, columnTxn);
                 this.auxFd = TableUtils.openRO(ff, partitionPath.$(), LOG);
             }
+        } catch (Exception e) {
+            close();
+            throw e;
         } finally {
             partitionPath.trimTo(plen);
         }
@@ -296,22 +309,26 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
     public void ofRW(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex) {
         assert auxFd == -1;
-        // Negative col top means column does not exist in the partition.
-        // Create it.
-        this.columnType = columnType;
-        this.columnTypeDriver = ColumnType.getDriver(columnType);
-        this.columnTop = columnTop;
-        this.columnIndex = columnIndex;
-        this.appendOffsetRowCount = -1;
-
+        closed = false;
         int plen = partitionPath.size();
+
         try {
+            // Negative col top means column does not exist in the partition.
+            // Create it.
+            this.columnType = columnType;
+            this.columnTypeDriver = ColumnType.getDriver(columnType);
+            this.columnTop = columnTop;
+            this.columnIndex = columnIndex;
+            this.appendOffsetRowCount = -1;
+
             dFile(partitionPath, columnName, columnTxn);
             this.dataFd = TableUtils.openRW(ff, partitionPath.$(), LOG, fileOpts);
-
             partitionPath.trimTo(plen);
             iFile(partitionPath, columnName, columnTxn);
             this.auxFd = TableUtils.openRW(ff, partitionPath.$(), LOG, fileOpts);
+        } catch (Throwable e) {
+            close();
+            throw e;
         } finally {
             partitionPath.trimTo(plen);
         }

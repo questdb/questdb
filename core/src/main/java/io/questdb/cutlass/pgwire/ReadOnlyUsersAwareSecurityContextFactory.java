@@ -35,18 +35,26 @@ public final class ReadOnlyUsersAwareSecurityContextFactory implements SecurityC
     private final boolean httpReadOnly;
     private final boolean pgWireReadOnly;
     private final String pgWireReadOnlyUser;
+    private final boolean settingsReadOnly;
 
     public ReadOnlyUsersAwareSecurityContextFactory(boolean pgWireReadOnly, String pgWireReadOnlyUser, boolean httpReadOnly) {
+        this(pgWireReadOnly, pgWireReadOnlyUser, httpReadOnly, false);
+    }
+
+    public ReadOnlyUsersAwareSecurityContextFactory(boolean pgWireReadOnly, String pgWireReadOnlyUser, boolean httpReadOnly, boolean settingsReadOnly) {
         this.pgWireReadOnly = pgWireReadOnly;
         this.pgWireReadOnlyUser = pgWireReadOnlyUser;
         this.httpReadOnly = httpReadOnly;
+        this.settingsReadOnly = settingsReadOnly;
     }
 
     @Override
     public SecurityContext getInstance(CharSequence principal, ObjList<CharSequence> groups, byte authType, byte interfaceId) {
         switch (interfaceId) {
             case SecurityContextFactory.HTTP:
-                return httpReadOnly ? ReadOnlySecurityContext.INSTANCE : AllowAllSecurityContext.INSTANCE;
+                return httpReadOnly
+                        ? (settingsReadOnly ? ReadOnlySecurityContext.SETTINGS_READ_ONLY : ReadOnlySecurityContext.INSTANCE)
+                        : (settingsReadOnly ? AllowAllSecurityContext.SETTINGS_READ_ONLY : AllowAllSecurityContext.INSTANCE);
             case SecurityContextFactory.PGWIRE:
                 return isReadOnlyPgWireUser(principal) ? ReadOnlySecurityContext.INSTANCE : AllowAllSecurityContext.INSTANCE;
             default:

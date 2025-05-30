@@ -32,6 +32,7 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -186,7 +187,9 @@ public class AbstractO3Test extends AbstractTest {
         // create third table, which will contain both X and 1AM
         engine.execute(referenceTableDDL, sqlExecutionContext);
 
-        compiler.compile(o3InsertSQL, sqlExecutionContext);
+        try (InsertOperation op = compiler.compile(o3InsertSQL, sqlExecutionContext).popInsertOperation()) {
+            op.execute(sqlExecutionContext);
+        }
 
         TestUtils.assertEquals(
                 compiler,
