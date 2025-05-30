@@ -28,7 +28,13 @@ import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.LimitOverflowException;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
+import io.questdb.std.Long256;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
 
 public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenable {
@@ -69,7 +75,7 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
 
     @Override
     public void putArray(ArrayView value) {
-        int byteCount = ArrayTypeDriver.getSingleMemValueByteCount(value);
+        long byteCount = ArrayTypeDriver.getPlainValueSize(value);
         checkCapacity(byteCount);
         ArrayTypeDriver.appendPlainValue(appendAddress, value);
         appendAddress += byteCount;

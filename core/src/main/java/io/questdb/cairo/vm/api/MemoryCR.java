@@ -25,8 +25,8 @@
 package io.questdb.cairo.vm.api;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.vm.Vm;
@@ -48,17 +48,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
     }
 
     default ArrayView getArray(long offset, BorrowedArray array) {
-        long addr = addressOf(offset);
-        final long totalSize = Unsafe.getUnsafe().getLong(addr);
-        if (totalSize <= 0) {
-            array.ofNull();
-            return array;
-        }
-        addr += Long.BYTES;
-        final int type = Unsafe.getUnsafe().getInt(addr);
-        int dims = ColumnType.decodeArrayDimensionality(type);
-        array.of(type, addr + Integer.BYTES, addr + (long) (dims + 1) * Integer.BYTES, (int) (totalSize - (dims + 1) * Integer.BYTES));
-        return array;
+        return ArrayTypeDriver.getPlainValue(addressOf(offset), array);
     }
 
     default BinarySequence getBin(long offset, DirectByteSequenceView view) {

@@ -25,6 +25,7 @@
 package io.questdb.cairo.vm.api;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.BinarySequence;
@@ -50,14 +51,9 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     @Override
     default void putArray(ArrayView array) {
-        if (array == null || array.isNull()) {
-            putLong(TableUtils.NULL_LEN);
-        } else {
-            putLong(array.getVanillaMemoryLayoutSize());
-            putInt(array.getType());
-            array.appendShapeToMem(this);
-            array.appendDataToMem(this);
-        }
+        long size = ArrayTypeDriver.getPlainValueSize(array);
+        long addr = appendAddressFor(size);
+        ArrayTypeDriver.appendPlainValue(addr, array);
     }
 
     @Override

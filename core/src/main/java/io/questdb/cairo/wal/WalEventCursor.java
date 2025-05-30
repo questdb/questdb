@@ -160,7 +160,7 @@ public class WalEventCursor {
             totalSize = 0;
         }
         checkMemSize(totalSize + Long.BYTES);
-        array.of((BorrowedArray) eventMem.getArray(offset));
+        eventMem.getArray(offset, array);
         offset += Long.BYTES + totalSize;
         return array;
     }

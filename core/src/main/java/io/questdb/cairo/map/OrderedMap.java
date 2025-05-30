@@ -913,9 +913,9 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void putArray(ArrayView value) {
-            int byteCount = ArrayTypeDriver.getSingleMemValueByteCount(value);
+            long byteCount = ArrayTypeDriver.getPlainValueSize(value);
             checkCapacity(byteCount);
-            int writtenBytes = ArrayTypeDriver.appendPlainValue(appendAddress, value);
+            long writtenBytes = ArrayTypeDriver.appendPlainValue(appendAddress, value);
             assert writtenBytes == byteCount;
             appendAddress += byteCount;
         }

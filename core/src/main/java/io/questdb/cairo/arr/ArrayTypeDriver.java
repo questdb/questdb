@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.O3Utils;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -143,30 +144,22 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         }
     }
 
-    public static int appendPlainValue(long appendAddress, @NotNull ArrayView value) {
-        final long origAddress = appendAddress;
-        if (value.isNull()) {
-            Unsafe.getUnsafe().putShort(appendAddress, ColumnType.NULL);
-            return Short.BYTES;
+    public static long appendPlainValue(long appendAddress, ArrayView value) {
+        long startAddress = appendAddress;
+        if (value == null || value.isNull()) {
+            Unsafe.getUnsafe().putLong(appendAddress, TableUtils.NULL_LEN);
+            return Long.BYTES;
         }
-        short elemType = value.getElemType();
-        Unsafe.getUnsafe().putShort(appendAddress, elemType);
-        appendAddress += Short.BYTES;
-
-        int dimCount = value.getDimCount();
-        Unsafe.getUnsafe().putInt(appendAddress, dimCount);
+        Unsafe.getUnsafe().putLong(appendAddress, value.getVanillaMemoryLayoutSize());
+        appendAddress += Long.BYTES;
+        Unsafe.getUnsafe().putInt(appendAddress, value.getType());
         appendAddress += Integer.BYTES;
-
-        int cardinality = value.getCardinality();
-        Unsafe.getUnsafe().putInt(appendAddress, cardinality);
-        appendAddress += Integer.BYTES;
-
-        for (int i = 0; i < dimCount; i++) {
+        for (int nDims = value.getDimCount(), i = 0; i < nDims; i++) {
             Unsafe.getUnsafe().putInt(appendAddress, value.getDimLen(i));
             appendAddress += Integer.BYTES;
         }
-
         if (value.isVanilla()) {
+            short elemType = value.getElemType();
             for (int i = 0, n = value.getFlatViewLength(); i < n; i++) {
                 switch (elemType) {
                     case ColumnType.DOUBLE:
@@ -180,9 +173,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         } else {
             appendAddress = appendToMemRecursive(value, 0, 0, appendAddress);
         }
-        long bytesWritten = appendAddress - origAddress;
-        assert bytesWritten > 0 && bytesWritten <= Integer.MAX_VALUE;
-        return (int) bytesWritten;
+        long bytesWritten = appendAddress - startAddress;
+        assert bytesWritten > 0;
+        return bytesWritten;
     }
 
     public static void appendValue(
@@ -293,44 +286,28 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return ARRAY_AUX_WIDTH_BYTES * row;
     }
 
-    public static BorrowedArray getPlainValue(long dataMemAddr, @NotNull BorrowedArray value) {
-        short elementType = Unsafe.getUnsafe().getShort(dataMemAddr);
-        if (elementType == ColumnType.NULL) {
+    public static BorrowedArray getPlainValue(long addr, @NotNull BorrowedArray value) {
+        final long totalSize = Unsafe.getUnsafe().getLong(addr);
+        addr += Long.BYTES;
+        if (totalSize <= 0) {
             value.ofNull();
             return value;
         }
-        dataMemAddr += Short.BYTES;
-
-        int nDim = Unsafe.getUnsafe().getInt(dataMemAddr);
-        dataMemAddr += Integer.BYTES;
-
-        int cardinality = Unsafe.getUnsafe().getInt(dataMemAddr);
-        dataMemAddr += Integer.BYTES;
-
-        int type = ColumnType.encodeArrayType(elementType, nDim);
-        long valuePtr = dataMemAddr + (long) nDim * Integer.BYTES;
-        value.of(type, dataMemAddr, valuePtr, cardinality * ColumnType.sizeOf(elementType));
+        final int type = Unsafe.getUnsafe().getInt(addr);
+        addr += Integer.BYTES;
+        int nDims = ColumnType.decodeArrayDimensionality(type);
+        int shapeLen = nDims * Integer.BYTES;
+        int headerLen = Integer.BYTES + shapeLen;
+        value.of(type, addr, addr + shapeLen, (int) (totalSize - headerLen));
         return value;
     }
 
-    public static int getSingleMemValueByteCount(@NotNull ArrayView value) {
-        if (value.isNull()) {
-            return Short.BYTES;
-        }
-        return calculateSize(value.getDimCount(), value.getElemType(), value.getCardinality());
+    public static long getPlainValueSize(long arrayAddress) {
+        return Long.BYTES + Unsafe.getUnsafe().getLong(arrayAddress);
     }
 
-    public static int getSingleMemValueSize(long arrayAddress) {
-        short elementType = Unsafe.getUnsafe().getShort(arrayAddress);
-        if (elementType == ColumnType.NULL) {
-            return Short.BYTES;
-        }
-        arrayAddress += Short.BYTES;
-        int nDim = Unsafe.getUnsafe().getInt(arrayAddress);
-        arrayAddress += Integer.BYTES;
-        int cardinality = Unsafe.getUnsafe().getInt(arrayAddress);
-
-        return calculateSize(nDim, elementType, cardinality);
+    public static long getPlainValueSize(@NotNull ArrayView value) {
+        return Long.BYTES + value.getVanillaMemoryLayoutSize();
     }
 
     @Override
@@ -736,14 +713,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             }
         }
         writeState.putCharIfNew(sink, closeChar);
-    }
-
-    private static int calculateSize(int nDim, short elementType, int cardinality) {
-        return Short.BYTES // element type
-                + Integer.BYTES // number of dimensions
-                + nDim * Integer.BYTES // dimension sizes
-                + Integer.BYTES // size of the data vector
-                + ColumnType.sizeOf(elementType) * cardinality;
     }
 
     private static void padTo(@NotNull MemoryA dataMem, int byteAlignment) {

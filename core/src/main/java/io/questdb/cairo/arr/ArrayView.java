@@ -340,15 +340,12 @@ public abstract class ArrayView implements QuietCloseable {
     public final long getVanillaMemoryLayoutSize() {
         if (isNull()) {
             return 0;
-        } else {
-            long elemSize = ColumnType.sizeOf(ColumnType.decodeArrayElementType(type));
-            int dim = getDimCount();
-            for (int i = 0; i < dim; ++i) {
-                elemSize *= getDimLen(i);
-            }
-            // type + shape + data
-            return (long) Integer.BYTES * (dim + 1) + elemSize;
         }
+        long elemSize = ColumnType.sizeOf(ColumnType.decodeArrayElementType(type));
+        long intBytes = Integer.BYTES; // using this to avoid (long) casts below
+        return intBytes + // type
+                getDimCount() * intBytes // shape
+                + getCardinality() * elemSize; // data
     }
 
     /**

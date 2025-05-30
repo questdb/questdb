@@ -196,7 +196,7 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
         recordOffset += 8;
         // appendAddressFor grows the memory if necessary
-        int byteCount = ArrayTypeDriver.getSingleMemValueByteCount(value);
+        long byteCount = ArrayTypeDriver.getPlainValueSize(value);
         final long appendAddress = mem.appendAddressFor(varAppendOffset, byteCount);
         ArrayTypeDriver.appendPlainValue(appendAddress, value);
         varAppendOffset += byteCount;
