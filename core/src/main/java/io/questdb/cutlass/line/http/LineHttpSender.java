@@ -324,7 +324,7 @@ public final class LineHttpSender implements Sender {
 
     private static boolean keepAliveDisabled(HttpClient.ResponseHeaders response) {
         DirectUtf8Sequence connectionHeader = response.getHeader(HttpConstants.HEADER_CONNECTION);
-        return connectionHeader != null && Utf8s.equalsAscii("close", connectionHeader);
+        return connectionHeader != null && Utf8s.equalsIgnoreCaseAscii("close", connectionHeader);
     }
 
     private int backoff(int retryBackoff) {

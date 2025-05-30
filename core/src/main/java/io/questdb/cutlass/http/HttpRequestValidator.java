@@ -39,9 +39,9 @@ public class HttpRequestValidator {
         this.requestHeader = requestHeader;
 
         contentLength = requestHeader.getContentLength();
-        chunked = Utf8s.equalsNcAscii(HEADER_TRANSFER_ENCODING_CHUNKED, requestHeader.getHeader(HEADER_TRANSFER_ENCODING));
-        multipart = Utf8s.equalsNcAscii(CONTENT_TYPE_MULTIPART_FORM_DATA, requestHeader.getContentType())
-                || Utf8s.equalsNcAscii(CONTENT_TYPE_MULTIPART_MIXED, requestHeader.getContentType());
+        chunked = Utf8s.equalsIgnoreCaseNcAscii(HEADER_TRANSFER_ENCODING_CHUNKED, requestHeader.getHeader(HEADER_TRANSFER_ENCODING));
+        multipart = Utf8s.equalsIgnoreCaseNcAscii(CONTENT_TYPE_MULTIPART_FORM_DATA, requestHeader.getContentType())
+                || Utf8s.equalsIgnoreCaseNcAscii(CONTENT_TYPE_MULTIPART_MIXED, requestHeader.getContentType());
         requestType = INVALID;
     }
 

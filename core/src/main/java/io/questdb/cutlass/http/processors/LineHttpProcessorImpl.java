@@ -53,7 +53,7 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.*;
 
 public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, HttpRequestHandler {
     private static final Utf8String CONTENT_ENCODING = new Utf8String("Content-Encoding");
-    private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
+    private static final Log LOG = LogFactory.getLog(LineHttpProcessorImpl.class);
     private static final LocalValue<LineHttpProcessorState> LV = new LocalValue<>();
     private static final Utf8String URL_PARAM_PRECISION = new Utf8String("precision");
     private final LineHttpProcessorConfiguration configuration;

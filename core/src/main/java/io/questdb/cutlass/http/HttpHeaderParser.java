@@ -320,7 +320,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                         parseKnownHeaders();
                         return p;
                     }
-                    if (Utf8s.equals(HEADER_SET_COOKIE, headerName)) {
+                    if (Utf8s.equalsIgnoreCaseAscii(HEADER_SET_COOKIE, headerName)) {
                         cookieParse(_lo, _wptr - 1);
                     } else {
                         headers.put(headerName, csPool.next().of(_lo, _wptr - 1));
