@@ -457,6 +457,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinTolerance() throws Exception {
         assertMemoryLeak(() -> {
+            // we add 1_000_000_000 to each timestamps so timestamps in t2 (where we subtract multiplies of 1_000_000) are always after the unix epoch
             execute("create table t1 as (select x as id, (1_000_000_000 + x)::timestamp ts from long_sequence(5)) timestamp(ts) partition by day;");
 
             // x-th row in t2 is x*1 seconds before x-th row in t1
@@ -466,11 +467,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
             final String query = "SELECT *\n" +
                     "FROM t1 ASOF JOIN t2 ON id TOLERANCE 2s;";
             final String expected = "id\tts\tid1\tts1\n" +
-                    "1\t1970-01-01T00:16:40.000001Z\t1\t1970-01-01T00:16:39.000001Z\n" +
-                    "2\t1970-01-01T00:16:40.000002Z\t2\t1970-01-01T00:16:38.000002Z\n" +
-                    "3\t1970-01-01T00:16:40.000003Z\tnull\t\n" +
-                    "4\t1970-01-01T00:16:40.000004Z\tnull\t\n" +
-                    "5\t1970-01-01T00:16:40.000005Z\tnull\t\n";
+                    "1\t1970-01-01T00:16:40.000001Z\t1\t1970-01-01T00:16:39.000001Z\n" + // 1st row = 1s apart, within tolerance
+                    "2\t1970-01-01T00:16:40.000002Z\t2\t1970-01-01T00:16:38.000002Z\n" + // 2nd row = 2s apart, within tolerance
+                    "3\t1970-01-01T00:16:40.000003Z\tnull\t\n" + // 3rd row = 3s apart, outside tolerance
+                    "4\t1970-01-01T00:16:40.000004Z\tnull\t\n" + // 4th row = 4s apart, outside tolerance
+                    "5\t1970-01-01T00:16:40.000005Z\tnull\t\n"; // 5th row = 5s apart, outside tolerance
             assertQuery(expected, query, null, "ts", false, true);
         });
     }
