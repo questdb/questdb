@@ -275,7 +275,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         if (!isCopy) {
             // if we are a copy, we do not own operations -> we cannot close them
             // so we just null them out and let the original entry close them
-            insertOp = Misc.free(insertOp);
+            tai = Misc.free(tai); // also closes insertOp
+            insertOp = null;
             operation = Misc.free(operation);
             if (compiledQuery != null) {
                 Misc.free(compiledQuery.getUpdateOperation());
@@ -1455,7 +1456,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
-                            insertOp = Misc.free(insertOp);
+                            tai = Misc.free(tai); // also closes insertOp
+                            insertOp = null;
                             if (attempt == maxRecompileAttempts) {
                                 throw e;
                             }
