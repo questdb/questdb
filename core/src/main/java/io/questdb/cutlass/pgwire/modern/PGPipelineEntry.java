@@ -597,6 +597,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case CompiledQuery.SELECT:
                 case CompiledQuery.PSEUDO_SELECT:
                 case CompiledQuery.INSERT:
+                case CompiledQuery.INSERT_AS_SELECT:
                 case CompiledQuery.UPDATE:
                 case CompiledQuery.ALTER:
                     copyParameterValuesToBindVariableService(
@@ -616,6 +617,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     msgExecuteSelect(sqlExecutionContext, transactionState, pendingWriters, taiPool, maxRecompileAttempts);
                     break;
                 case CompiledQuery.INSERT:
+                case CompiledQuery.INSERT_AS_SELECT:
                     msgExecuteInsert(sqlExecutionContext, transactionState, taiCache, pendingWriters, writerSource, taiPool);
                     break;
                 case CompiledQuery.UPDATE:
@@ -1441,6 +1443,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case IMPLICIT_TRANSACTION:
                 // fall through, there is no difference between implicit and explicit transaction at this stage
             case IN_TRANSACTION: {
+                sqlExecutionContext.setCacheHit(cacheHit);
                 engine.getMetrics().pgWireMetrics().markStart();
                 try {
                     for (int attempt = 1; ; attempt++) {
@@ -1448,7 +1451,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         try {
                             m = insertOp.createMethod(sqlExecutionContext, writerSource);
                             try {
-                                sqlAffectedRowCount = m.execute();
+                                sqlAffectedRowCount = m.execute(sqlExecutionContext);
                                 TableWriterAPI writer = m.popWriter();
                                 pendingWriters.put(writer.getTableToken(), writer);
 
@@ -1460,12 +1463,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                 }
                             } catch (Throwable e) {
                                 TableWriterAPI w = m.popWriter();
-                                pendingWriters.remove(w.getTableToken());
+                                if (w != null) {
+                                    pendingWriters.remove(w.getTableToken());
+                                }
                                 Misc.free(w);
                                 throw e;
                             }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
+                            insertOp = Misc.free(insertOp);
                             if (attempt == maxRecompileAttempts) {
                                 throw e;
                             }
@@ -2738,9 +2744,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 this.factory = cq.getRecordCursorFactory();
                 break;
             case CompiledQuery.INSERT:
-                this.insertOp = cq.getInsertOperation();
+            case CompiledQuery.INSERT_AS_SELECT:
+                this.insertOp = cq.popInsertOperation();
                 tai = taiPool.pop();
-                sqlTag = TAG_INSERT;
+                sqlTag = sqlType == CompiledQuery.INSERT ? TAG_INSERT : TAG_INSERT_AS_SELECT;
                 tai.of(
                         insertOp,
                         sqlType,
@@ -2758,10 +2765,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 compiledQuery.ofUpdate(updateOperation);
                 compiledQuery.withSqlText(sqlText);
                 sqlTag = TAG_UPDATE;
-                break;
-            case CompiledQuery.INSERT_AS_SELECT:
-                sqlTag = TAG_INSERT_AS_SELECT;
-                sqlAffectedRowCount = cq.getAffectedRowsCount();
                 break;
             case CompiledQuery.SET:
                 sqlTag = TAG_SET;

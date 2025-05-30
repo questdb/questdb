@@ -31,6 +31,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxnScoreboard;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -85,6 +86,7 @@ import static io.questdb.cairo.vm.Vm.getStorageLength;
 public class O3Test extends AbstractO3Test {
     private final StringBuilder tstData = new StringBuilder();
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -93,6 +95,7 @@ public class O3Test extends AbstractO3Test {
         LOG.info().$("partitionO3SplitThreshold = ").$(partitionO3SplitThreshold).$();
     }
 
+    @Override
     @After
     public void tearDown() throws Exception {
         int count = Vect.getPerformanceCountersCount();
@@ -8157,7 +8160,9 @@ public class O3Test extends AbstractO3Test {
                                 try {
                                     toRun = false;
                                     barrier.await();
-                                    compiler2.compile("insert into x1 select * from y1", executionContext2);
+                                    try (InsertOperation op = compiler2.compile("insert into x1 select * from y1", executionContext2).popInsertOperation()) {
+                                        op.execute(executionContext2);
+                                    }
                                 } catch (Throwable e) {
                                     //noinspection CallToPrintStackTrace
                                     e.printStackTrace();

@@ -62,6 +62,7 @@ public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndIn
             Misc.free(insert);
             closing = false;
         }
+        insert = Misc.free(insert);
     }
 
     public InsertOperation getInsert() {

@@ -252,6 +252,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 break;
             case INSERT:
+            case INSERT_AS_SELECT:
                 insert(cc, sqlExecutionContext);
                 break;
             case SELECT:
@@ -271,14 +272,10 @@ public class CairoEngine implements Closeable, WriterSource {
         switch (cq.getType()) {
             case INSERT:
             case INSERT_AS_SELECT:
-                try (InsertOperation insertOperation = cq.getInsertOperation()) {
-                    if (insertOperation != null) {
-                        // for insert as select the operation is null
-                        try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
-                            insertMethod.execute();
-                            insertMethod.commit();
-                        }
-                    }
+                try (InsertOperation insertOperation = cq.popInsertOperation();
+                     InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
+                    insertMethod.execute(sqlExecutionContext);
+                    insertMethod.commit();
                 }
                 break;
             case SELECT:
