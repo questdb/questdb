@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.PartitionBy;
@@ -1318,7 +1319,8 @@ public class AggregateTest extends AbstractCairoTest {
                                 true
                         );
                         Assert.fail();
-                    } catch (OutOfMemoryError oome) {
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isOutOfMemory());
                         long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
                         Assert.assertEquals(memBefore, memAfter);
                     }
@@ -1975,7 +1977,8 @@ public class AggregateTest extends AbstractCairoTest {
                     cursor.hasNext();
                 }
                 Assert.fail("Cursor should throw OOM for " + query + " !");
-            } catch (OutOfMemoryError oome) {
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isOutOfMemory());
                 long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
                 // rostis are minimized on OOM
                 Assert.assertTrue(memAfter < memBefore + 10 * 1024);

@@ -69,8 +69,8 @@ public class DistinctIntKeyTest extends AbstractCairoTest {
 
             try {
                 assertExceptionNoLeakCheck("select DISTINCT i from tab order by 1 LIMIT 3", sqlExecutionContext);
-            } catch (OutOfMemoryError e) {
-                // ignore
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isOutOfMemory());
             }
         });
     }

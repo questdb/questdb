@@ -337,7 +337,8 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                                 .position(task.getErrorMessagePosition())
                                 .put(task.getErrorMsg())
                                 .setCancellation(task.isCancelled())
-                                .setInterruption(task.isCancelled());
+                                .setInterruption(task.isCancelled())
+                                .setOutOfMemory(task.isOutOfMemory());
                     }
 
                     allFramesActive &= frameSequence.isActive();
