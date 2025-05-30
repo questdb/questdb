@@ -25,7 +25,7 @@
 package org.questdb;
 
 import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.network.Net;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
@@ -114,8 +114,8 @@ public class LineTCPSenderMainFileLimitSimulation {
 
     private static void fillDates(Rnd rnd, LineTcpSender sender) throws NumericException {
         long period = Timestamps.MINUTE_MICROS * 1000L * 10;
-        long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-25") * 1000L;
-        long endTs = IntervalUtils.parseFloorPartialTimestamp("2022-03-26T20") * 1000L;
+        long ts = TimestampUtils.parseFloorPartialTimestamp("2022-02-25") * 1000L;
+        long endTs = TimestampUtils.parseFloorPartialTimestamp("2022-03-26T20") * 1000L;
 
         while (ts < endTs) {
             sendLine(rnd, sender, ts);

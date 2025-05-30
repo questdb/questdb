@@ -36,7 +36,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -1214,7 +1214,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         );
 
         try (WalWriter walWriter = getWalWriter("x")) {
-            TableWriter.Row row = walWriter.newRow(IntervalUtils.parseFloorPartialTimestamp("2024-02-04"));
+            TableWriter.Row row = walWriter.newRow(TimestampUtils.parseFloorPartialTimestamp("2024-02-04"));
             switch (columnType) {
                 case ColumnType.STRING:
                     row.putStr(0, "abc");

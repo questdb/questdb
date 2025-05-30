@@ -32,7 +32,7 @@ import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.http.LineHttpSender;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
@@ -685,7 +685,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
-        long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
+        long timestamp = TimestampUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
         int i = 0;
 
         int port = serverMain.getHttpServerPort();

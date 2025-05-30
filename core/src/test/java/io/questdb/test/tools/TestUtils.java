@@ -64,7 +64,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
@@ -1052,7 +1052,7 @@ public final class TestUtils {
             String startDate,
             int partitionCount
     ) throws NumericException {
-        long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
+        long fromTimestamp = TimestampUtils.parseFloorPartialTimestamp(startDate);
         int timestampType = TableUtils.getTimestampType(tableModel);
         int partitionBy = tableModel.getPartitionBy();
         long increment = partitionIncrement(
@@ -1475,7 +1475,7 @@ public final class TestUtils {
             String startDate,
             int partitionCount
     ) throws NumericException {
-        long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
+        long fromTimestamp = TimestampUtils.parseFloorPartialTimestamp(startDate);
         long increment = partitionIncrement(
                 TableUtils.getTimestampType(tableModel),
                 tableModel.getPartitionBy(),

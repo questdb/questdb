@@ -34,8 +34,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
 import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
@@ -139,6 +139,7 @@ public final class WhereClauseParser implements Mutable {
         this.preferredKeyColumn = preferredKeyColumn;
 
         IntrinsicModel model = models.next();
+        model.of(reader.getMetadata().getTimestampType(), reader.getPartitionedBy());
 
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
@@ -195,8 +196,10 @@ public final class WhereClauseParser implements Mutable {
         return model;
     }
 
-    public IntrinsicModel getEmpty() {
-        return models.next();
+    public IntrinsicModel getEmpty(int timestampType, int partitionBy) {
+        IntrinsicModel model = models.next();
+        model.of(timestampType, partitionBy);
+        return model;
     }
 
     private static short adjustComparison(boolean equalsTo, boolean isLo) {
@@ -262,7 +265,7 @@ public final class WhereClauseParser implements Mutable {
 
     private static long parseStringAsTimestamp(CharSequence str, int position, boolean detectIntervals) throws SqlException {
         try {
-            return IntervalUtils.parseFloorPartialTimestamp(str);
+            return TimestampUtils.parseFloorPartialTimestamp(str);
         } catch (NumericException ignore) {
             if (detectIntervals) {
                 for (int i = 0, lim = str.length(); i < lim; i++) {
@@ -278,7 +281,7 @@ public final class WhereClauseParser implements Mutable {
     private static long parseTokenAsTimestamp(ExpressionNode lo) throws SqlException {
         try {
             if (!isNullKeyword(lo.token)) {
-                return IntervalUtils.parseFloorPartialTimestamp(lo.token, 1, lo.token.length() - 1);
+                return TimestampUtils.parseFloorPartialTimestamp(lo.token, 1, lo.token.length() - 1);
             }
             return Numbers.LONG_NULL;
         } catch (NumericException e1) {

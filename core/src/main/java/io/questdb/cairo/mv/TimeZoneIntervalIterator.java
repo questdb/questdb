@@ -150,12 +150,12 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
     private long adjustHiBoundary(long localTs) {
         final int idx = IntervalUtils.findInterval(localShifts, localTs);
         if (idx != -1) {
-            final long shiftLo = IntervalUtils.getEncodedPeriodLo(localShifts, idx << 1);
+            final long shiftLo = IntervalUtils.decodeIntervalLo(localShifts, idx << 1);
             if (localTs == shiftLo) {
                 // We're precisely at the left of the shift interval. No need to adjust.
                 return localTs;
             }
-            final long shiftHi = IntervalUtils.getEncodedPeriodHi(localShifts, idx << 1);
+            final long shiftHi = IntervalUtils.decodeIntervalHi(localShifts, idx << 1);
             return sampler.nextTimestamp(sampler.round(shiftHi - 1));
         }
         return localTs;
@@ -164,7 +164,7 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
     private long adjustLoBoundary(long localTs) {
         final int idx = IntervalUtils.findInterval(localShifts, localTs);
         if (idx != -1) {
-            final long shiftLo = IntervalUtils.getEncodedPeriodLo(localShifts, idx << 1);
+            final long shiftLo = IntervalUtils.decodeIntervalLo(localShifts, idx << 1);
             return sampler.round(shiftLo);
         }
         return localTs;

@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -46,7 +46,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
 
 import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
-import static io.questdb.griffin.model.IntervalUtils.parseAndApplyIntervalEx;
+import static io.questdb.griffin.model.TimestampUtils.parseAndApplyIntervalEx;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
@@ -163,7 +163,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
     private static long tryParseTimestamp(CharSequence seq, int position) throws SqlException {
         try {
-            return IntervalUtils.parseFloorPartialTimestamp(seq);
+            return TimestampUtils.parseFloorPartialTimestamp(seq);
         } catch (NumericException e) {
             throw SqlException.invalidDate(seq, position);
         }
@@ -330,7 +330,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     case ColumnType.SYMBOL:
                     case ColumnType.VARCHAR:
                         CharSequence str = func.getStrA(null);
-                        val = str != null ? IntervalUtils.tryParseTimestamp(str) : Numbers.LONG_NULL;
+                        val = str != null ? TimestampUtils.tryParseTimestamp(str) : Numbers.LONG_NULL;
                         break;
                 }
                 timestampValues.add(val);
@@ -439,7 +439,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     case ColumnType.SYMBOL:
                     case ColumnType.VARCHAR:
                         CharSequence str = func.getStrA(rec);
-                        val = str != null ? IntervalUtils.tryParseTimestamp(str) : Numbers.LONG_NULL;
+                        val = str != null ? TimestampUtils.tryParseTimestamp(str) : Numbers.LONG_NULL;
                         break;
                 }
                 if (val == ts) {

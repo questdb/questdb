@@ -28,11 +28,10 @@ import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.ServerMain;
-import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
@@ -239,7 +238,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
         }, Bootstrap.getServerMainArgs(root));
 
-        long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
+        long timestamp = TimestampUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
         try (final ServerMain serverMain = new ServerMain(bootstrap)) {
             serverMain.start();
             server.set(serverMain);

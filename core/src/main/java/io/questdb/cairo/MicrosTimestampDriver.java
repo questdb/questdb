@@ -27,7 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.ptt.PartitionDateParseUtil;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
@@ -122,7 +122,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public void appendMem(CharSequence value, MemoryA mem) {
         if (value != null) {
             try {
-                mem.putLong(IntervalUtils.parseFloorPartialTimestamp(value));
+                mem.putLong(TimestampUtils.parseFloorPartialTimestamp(value));
                 return;
             } catch (NumericException e) {
                 // Fall through
@@ -232,7 +232,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long parseFloorPartialTimestamp(CharSequence token, int start, int len) throws NumericException {
-        return IntervalUtils.parseFloorPartialTimestamp(token, start, len);
+        return TimestampUtils.parseFloorPartialTimestamp(token, start, len);
     }
 
     @Override

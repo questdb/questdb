@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
@@ -694,7 +695,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (Chars.isQuoted(token)) {
             if (predicateContext.type == PredicateType.TIMESTAMP) {
                 try {
-                    long ts = IntervalUtils.parseFloorPartialTimestamp(token, 1, len - 1);
+                    long ts = TimestampUtils.parseFloorPartialTimestamp(token, 1, len - 1);
                     putOperand(offset, IMM, I8_TYPE, ts);
                 } catch (NumericException e) {
                     throw SqlException.invalidDate(token, position);
@@ -702,7 +703,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 return;
             } else if (predicateContext.type == PredicateType.DATE) {
                 try {
-                    long date = IntervalUtils.parseFloorPartialTimestamp(token, 1, len - 1) / Timestamps.MILLI_MICROS;
+                    long date = TimestampUtils.parseFloorPartialTimestamp(token, 1, len - 1) / Timestamps.MILLI_MICROS;
                     putOperand(offset, IMM, I8_TYPE, date);
                 } catch (NumericException e) {
                     throw SqlException.invalidDate(token, position);
@@ -834,14 +835,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
 
         final LongList intervals = predicateContext.inIntervals;
-        IntervalUtils.parseAndApplyIntervalEx(intervalEx, intervals, position);
+        TimestampUtils.parseAndApplyIntervalEx(intervalEx, intervals, position);
 
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
 
         int orCount = -1;
         for (int i = 0, n = intervals.size(); i < n; i += 2) {
-            long lo = IntervalUtils.getEncodedPeriodLo(intervals, i);
-            long hi = IntervalUtils.getEncodedPeriodHi(intervals, i);
+            long lo = IntervalUtils.decodeIntervalLo(intervals, i);
+            long hi = IntervalUtils.decodeIntervalHi(intervals, i);
             putOperand(IMM, I8_TYPE, lo);
             inPredicateTraverseAlgo.traverse(lhs, this);
             putOperator(GE);

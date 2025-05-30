@@ -51,18 +51,22 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     private final LongList intervals;
     // This used to assemble result
     private LongList outIntervals;
+    private final int timestampType;
+    private final int partitionBy;
 
-    public RuntimeIntervalModel(LongList intervals) {
-        this(intervals, null);
+    public RuntimeIntervalModel(int timestampType, int partitionBy, LongList intervals) {
+        this(timestampType, partitionBy, intervals, null);
     }
 
-    public RuntimeIntervalModel(LongList staticIntervals, ObjList<Function> dynamicRangeList) {
+    public RuntimeIntervalModel(int timestampType, int partitionBy, LongList staticIntervals, ObjList<Function> dynamicRangeList) {
         this.intervals = staticIntervals;
         this.dynamicRangeList = dynamicRangeList;
+        this.timestampType = timestampType;
+        this.partitionBy = partitionBy;
     }
 
     @Override
-    public boolean allIntervalsHitOnePartition(int timestampType, int partitionBy) {
+    public boolean allIntervalsHitOnePartition() {
         return !PartitionBy.isPartitioned(partitionBy) || allIntervalsHitOnePartition(PartitionBy.getPartitionFloorMethod(timestampType, partitionBy));
     }
 
@@ -140,10 +144,10 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             if (dynamicFunction == null) {
                 // copy 4 longs to output and apply the operation
                 outIntervals.add(intervals, i, i + STATIC_LONGS_PER_DYNAMIC_INTERVAL);
-                IntervalUtils.applyLastEncodedIntervalEx(outIntervals);
+                IntervalUtils.applyLastEncodedIntervalEx(timestampType, outIntervals);
             } else {
-                long lo = IntervalUtils.getEncodedPeriodLo(intervals, i);
-                long hi = IntervalUtils.getEncodedPeriodHi(intervals, i);
+                long lo = IntervalUtils.decodeIntervalLo(intervals, i);
+                long hi = IntervalUtils.decodeIntervalHi(intervals, i);
                 short adjustment = IntervalUtils.getEncodedAdjustment(intervals, i);
                 short dynamicHiLo = IntervalUtils.getEncodedDynamicIndicator(intervals, i);
 
@@ -266,8 +270,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     private void applyInterval(LongList outIntervals, Interval interval) {
-        IntervalUtils.applyInterval(interval, outIntervals, IntervalOperation.INTERSECT);
-        IntervalUtils.applyLastEncodedIntervalEx(outIntervals);
+        IntervalUtils.encodeInterval(interval, IntervalOperation.INTERSECT, outIntervals);
+        IntervalUtils.applyLastEncodedIntervalEx(timestampType, outIntervals);
     }
 
     private long getTimestamp(Function dynamicFunction, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -276,7 +280,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             final CharSequence value = dynamicFunction.getStrA(null);
             if (value != null) {
                 try {
-                    return IntervalUtils.parseFloorPartialTimestamp(value);
+                    return TimestampUtils.parseFloorPartialTimestamp(value);
                 } catch (NumericException e) {
                     return Numbers.LONG_NULL;
                 }
@@ -312,8 +316,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     private boolean tryParseInterval(LongList outIntervals, CharSequence strInterval) {
         if (strInterval != null) {
             try {
-                IntervalUtils.parseIntervalEx(strInterval, 0, strInterval.length(), 0, outIntervals, IntervalOperation.INTERSECT);
-                IntervalUtils.applyLastEncodedIntervalEx(outIntervals);
+                TimestampUtils.parseIntervalEx(strInterval, 0, strInterval.length(), 0, outIntervals, IntervalOperation.INTERSECT);
+                IntervalUtils.applyLastEncodedIntervalEx(timestampType, outIntervals);
             } catch (SqlException e) {
                 return true;
             }

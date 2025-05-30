@@ -102,10 +102,10 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.InsertModel;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -1632,7 +1632,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         if (isStartKeyword(tok)) {
                             tok = expectToken(lexer, "START timestamp");
                             try {
-                                start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                                start = TimestampUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
                             } catch (NumericException e) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                             }
@@ -2644,14 +2644,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             expectKeyword(lexer, "from");
             tok = expectToken(lexer, "FROM timestamp");
             try {
-                from = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                from = TimestampUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
             } catch (NumericException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), "invalid FROM timestamp value");
             }
             expectKeyword(lexer, "to");
             tok = expectToken(lexer, "TO timestamp");
             try {
-                to = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                to = TimestampUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
             } catch (NumericException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), "invalid TO timestamp value");
             }

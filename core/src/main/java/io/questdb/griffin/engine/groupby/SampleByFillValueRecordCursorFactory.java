@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.engine.functions.groupby.InterpolationGroupByFunction;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
@@ -145,7 +145,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     if (!Chars.isQuoted(fillNode.token)) {
                         throw SqlException.position(fillNode.position).put("Invalid fill value: '").put(fillNode.token).put("'. Timestamp fill value must be in quotes. Example: '2019-01-01T00:00:00.000Z'");
                     }
-                    long ts = IntervalUtils.parseFloorPartialTimestamp(fillNode.token, 1, fillNode.token.length() - 1);
+                    long ts = TimestampUtils.parseFloorPartialTimestamp(fillNode.token, 1, fillNode.token.length() - 1);
                     return TimestampConstant.newInstance(ts);
                 default:
                     throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));

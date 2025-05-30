@@ -39,7 +39,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -1125,7 +1125,7 @@ public class O3Test extends AbstractO3Test {
                                     ") timestamp (ts) partition by DAY", sqlExecutionContext
                     );
 
-                    long maxTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24") + records * 1000L;
+                    long maxTimestamp = TimestampUtils.parseFloorPartialTimestamp("2022-02-24") + records * 1000L;
                     CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
                     engine.execute("insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
 
@@ -8198,7 +8198,7 @@ public class O3Test extends AbstractO3Test {
         long pageSize = configuration.getMiscAppendPageSize();
         Assert.assertNotEquals("Batch size must be unaligned with page size", 0, batchOnDiskSize % pageSize);
 
-        long start = IntervalUtils.parseFloorPartialTimestamp("2021-10-09T10:00:00");
+        long start = TimestampUtils.parseFloorPartialTimestamp("2021-10-09T10:00:00");
         String[] varCol = new String[]{"aldfjkasdlfkj", "2021-10-10T12:00:00", "12345678901234578"};
         Utf8Sequence[] varcharCol = new Utf8Sequence[]{
                 new Utf8String("aldfjkasdlfkj"),

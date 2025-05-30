@@ -31,9 +31,9 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
@@ -892,7 +892,7 @@ public class SqlUtil {
      */
     public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int sourceColumnType, int targetColumnType) {
         try {
-            return IntervalUtils.parseFloorPartialTimestamp(value);
+            return TimestampUtils.parseFloorPartialTimestamp(value);
         } catch (NumericException e) {
             throw ImplicitCastException.inconvertibleValue(tupleIndex, value, sourceColumnType, targetColumnType);
         }
@@ -930,7 +930,7 @@ public class SqlUtil {
 
             // Parse as ISO with variable length.
             try {
-                return IntervalUtils.parseFloorPartialTimestamp(value);
+                return TimestampUtils.parseFloorPartialTimestamp(value);
             } catch (NumericException ignore) {
             }
 

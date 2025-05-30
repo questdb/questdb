@@ -61,7 +61,7 @@ import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
-import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
+import static io.questdb.griffin.model.TimestampUtils.parseFloorPartialTimestamp;
 
 
 @RunWith(Parameterized.class)

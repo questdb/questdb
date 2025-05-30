@@ -34,7 +34,7 @@ import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
@@ -221,7 +221,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         runInContext(r -> {
             String confString = "tcp::addr=127.0.0.1:" + bindPort + ";user=" + AUTH_KEY_ID1 + ";token=" + TOKEN + ";";
             try (Sender sender = Sender.fromConfig(confString)) {
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                long tsMicros = TimestampUtils.parseFloorPartialTimestamp("2022-02-25");
                 sender.table("mytable")
                         .longColumn("int_field", 42)
                         .boolColumn("bool_field", true)
@@ -275,7 +275,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()) {
 
-                long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                long ts = TimestampUtils.parseFloorPartialTimestamp("2022-02-25");
                 sender.table("mytable")
                         .doubleColumn("negative_inf", Double.NEGATIVE_INFINITY)
                         .doubleColumn("positive_inf", Double.POSITIVE_INFINITY)
@@ -302,7 +302,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()) {
 
-                long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                long ts = TimestampUtils.parseFloorPartialTimestamp("2022-02-25");
                 // the poison table sets the timestamp column index explicitly
                 sender.table("poison")
                         .stringColumn("str_col1", "str_col1")
@@ -345,7 +345,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()) {
 
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                long tsMicros = TimestampUtils.parseFloorPartialTimestamp("2022-02-25");
                 sender.table("mytable")
                         .stringColumn("s", "non-ascii äöü")
                         .stringColumn("u", "11111111-2222-3333-4444-555555555555")
@@ -383,7 +383,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()) {
 
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                long tsMicros = TimestampUtils.parseFloorPartialTimestamp("2022-02-25");
                 sender.table("mytable")
                         .stringColumn("u1", "11111111-1111-1111-1111-111111111111")
                         // u2 empty -> insert as null
@@ -441,7 +441,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()) {
 
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2023-09-18T12:01:01.01Z");
+                long tsMicros = TimestampUtils.parseFloorPartialTimestamp("2023-09-18T12:01:01.01Z");
                 sender.table("mytable")
                         .stringColumn("unit", "ns")
                         .timestampColumn("ts", tsMicros * 1000, ChronoUnit.NANOS)
@@ -626,7 +626,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .build()
             ) {
                 String table = "string_table";
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2024-02-27");
+                long tsMicros = TimestampUtils.parseFloorPartialTimestamp("2024-02-27");
                 String expectedValue = "čćžšđçğéíáýůř";
                 sender.table(table)
                         .stringColumn("string1", expectedValue)
@@ -652,7 +652,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()) {
 
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                long tsMicros = TimestampUtils.parseFloorPartialTimestamp("2022-02-25");
                 sender.table("mytable")
                         .longColumn("int_field", 42)
                         .boolColumn("bool_field", true)
@@ -680,7 +680,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()) {
 
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2023-02-22");
+                long tsMicros = TimestampUtils.parseFloorPartialTimestamp("2023-02-22");
                 sender.table(table)
                         .longColumn("max", Long.MAX_VALUE)
                         .longColumn("min", Long.MIN_VALUE)
@@ -766,7 +766,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()) {
 
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                long tsMicros = TimestampUtils.parseFloorPartialTimestamp("2022-02-25");
                 sender.table("mytable")
                         .stringColumn("u1", value)
                         .at(tsMicros, ChronoUnit.MICROS);
@@ -779,7 +779,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()) {
 
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                long tsMicros = TimestampUtils.parseFloorPartialTimestamp("2022-02-25");
                 sender.table("mytable")
                         .stringColumn("u1", "11111111-1111-1111-1111-111111111111")
                         .at(tsMicros, ChronoUnit.MICROS);

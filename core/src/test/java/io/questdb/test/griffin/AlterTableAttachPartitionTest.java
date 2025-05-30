@@ -36,7 +36,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -637,7 +637,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         writer.attachPartition(timestamp);
                     }
                     path.of(configuration.getDbRoot()).concat(dstTableToken);
-                    TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, IntervalUtils.parseFloorPartialTimestamp("2022-08-01"), txn);
+                    TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, TimestampUtils.parseFloorPartialTimestamp("2022-08-01"), txn);
                     int pathLen = path.size();
 
                     // Extra columns not deleted

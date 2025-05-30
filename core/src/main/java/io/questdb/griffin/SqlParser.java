@@ -41,10 +41,10 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.InsertModel;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.griffin.model.WithClauseModel;
 import io.questdb.std.BufferWindowCharSequence;
@@ -899,7 +899,7 @@ public class SqlParser {
             if (isStartKeyword(tok)) {
                 tok = tok(lexer, "START timestamp");
                 try {
-                    start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                    start = TimestampUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
                 } catch (NumericException e) {
                     throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                 }

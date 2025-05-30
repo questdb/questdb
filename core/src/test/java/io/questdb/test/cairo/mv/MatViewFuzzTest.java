@@ -30,7 +30,7 @@ import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -472,7 +472,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 throw new IllegalStateException("unexpected unit: " + intervalUnit);
         }
 
-        final long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
+        final long start = TimestampUtils.parseFloorPartialTimestamp("2022-02-24T17");
         currentMicros = start;
         final long clockJumpLimit = start + (SPIN_LOCK_TIMEOUT / clockJump);
 
@@ -653,7 +653,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private void testMvFuzz(String baseTableName, String... mvNamesAndSqls) throws Exception {
-        long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
+        long start = TimestampUtils.parseFloorPartialTimestamp("2022-02-24T17");
         testMvFuzz(baseTableName, start, mvNamesAndSqls);
     }
 

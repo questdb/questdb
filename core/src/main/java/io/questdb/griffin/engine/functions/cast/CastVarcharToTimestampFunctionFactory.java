@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -64,7 +64,7 @@ public class CastVarcharToTimestampFunctionFactory implements FunctionFactory {
             // Timestamp literal may contain non-ascii characters, for example hyphens, days of the week etc.
             final CharSequence value = arg.getStrA(rec);
             try {
-                return value == null ? Numbers.LONG_NULL : IntervalUtils.parseFloorPartialTimestamp(value);
+                return value == null ? Numbers.LONG_NULL : TimestampUtils.parseFloorPartialTimestamp(value);
             } catch (NumericException e) {
                 return Numbers.LONG_NULL;
             }
