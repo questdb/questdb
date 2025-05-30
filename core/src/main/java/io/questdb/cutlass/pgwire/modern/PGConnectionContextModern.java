@@ -591,8 +591,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         for (int i = 0, n = names.size(); i < n; i++) {
             PGPipelineEntry pe = cache.get(names.getQuick(i));
             pe.setStateClosed(true, isStatementClose);
-            // return the factory back to global cache in case of a select
-            pe.cacheIfPossible(tasCache, null);
+            pe.cacheIfPossible(tasCache, taiCache);
             releaseToPool(pe);
         }
         cache.clear();
@@ -1070,15 +1069,12 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // will have the supplied parameter types.
 
         int cachedStatus = CACHE_MISS;
-        int taiKeyIndex = taiCache.keyIndex(utf16SqlText);
-        final TypesAndInsertModern tai = taiCache.peek(taiKeyIndex);
+        final TypesAndInsertModern tai = taiCache.poll(utf16SqlText);
         if (tai != null) {
             if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
                 pipelineCurrentEntry.ofCachedInsert(utf16SqlText, tai);
                 cachedStatus = CACHE_HIT_INSERT_VALID;
             } else {
-                TypesAndInsertModern tai2 = taiCache.poll(taiKeyIndex);
-                assert tai2 == tai;
                 tai.close();
                 cachedStatus = CACHE_HIT_INSERT_INVALID;
             }

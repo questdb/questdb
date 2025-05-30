@@ -62,7 +62,6 @@ public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndIn
             pgOutParameterTypes.clear();
             closing = false;
         }
-        insert = Misc.free(insert);
     }
 
     public InsertOperation getInsert() {

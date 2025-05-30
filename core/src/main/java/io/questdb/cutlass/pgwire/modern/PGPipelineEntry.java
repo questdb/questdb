@@ -223,7 +223,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         namedPortals.add(portalName);
     }
 
-    public void cacheIfPossible(@NotNull AssociativeCache<TypesAndSelectModern> tasCache, @Nullable SimpleAssociativeCache<TypesAndInsertModern> taiCache) {
+    public void cacheIfPossible(
+            @NotNull AssociativeCache<TypesAndSelectModern> tasCache,
+            @Nullable SimpleAssociativeCache<TypesAndInsertModern> taiCache
+    ) {
         if (isPortal() || isPreparedStatement()) {
             // must not cache prepared statements etc.; we must only cache abandoned pipeline entries (their contents)
             return;
@@ -1442,13 +1445,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                 if (tai.hasBindVariables()) {
                                     taiCache.put(sqlText, tai);
                                 }
-                            } catch (Throwable e) {
+                            } catch (Throwable th) {
                                 TableWriterAPI w = m.popWriter();
                                 if (w != null) {
                                     pendingWriters.remove(w.getTableToken());
                                 }
                                 Misc.free(w);
-                                throw e;
+                                throw th;
                             }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
@@ -2546,8 +2549,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 sqlTag = TAG_OK;
                 break;
             case CompiledQuery.EXPLAIN:
-                this.sqlTag = TAG_EXPLAIN;
-                this.factory = cq.getRecordCursorFactory();
+                sqlTag = TAG_EXPLAIN;
+                factory = cq.getRecordCursorFactory();
                 tas = new TypesAndSelectModern(
                         this.factory,
                         sqlType,
@@ -2557,8 +2560,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 );
                 break;
             case CompiledQuery.SELECT:
-                this.sqlTag = TAG_SELECT;
-                this.factory = cq.getRecordCursorFactory();
+                sqlTag = TAG_SELECT;
+                factory = cq.getRecordCursorFactory();
                 tas = new TypesAndSelectModern(
                         factory,
                         sqlType,
@@ -2572,12 +2575,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 // we do not intend to cache it. The fact we don't have
                 // TypesAndSelect instance here should be enough to tell the
                 // system not to cache.
-                this.sqlTag = TAG_PSEUDO_SELECT;
-                this.factory = cq.getRecordCursorFactory();
+                sqlTag = TAG_PSEUDO_SELECT;
+                factory = cq.getRecordCursorFactory();
                 break;
             case CompiledQuery.INSERT:
             case CompiledQuery.INSERT_AS_SELECT:
-                this.insertOp = cq.popInsertOperation();
+                insertOp = cq.popInsertOperation();
                 tai = taiPool.pop();
                 sqlTag = sqlType == CompiledQuery.INSERT ? TAG_INSERT : TAG_INSERT_AS_SELECT;
                 tai.of(
@@ -2738,8 +2741,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // It is irrelevant which types were defined by the SQL compiler. We are assuming that same SQL text will
     // produce the same parameter definitions for every compilation.
     boolean msgParseReconcileParameterTypes(short parameterTypeCount, TypeContainer typeContainer) {
-        IntList cachedTypes = typeContainer.getPgInParameterTypeOIDs();
-        int cachedTypeCount = cachedTypes.size();
+        final IntList cachedTypes = typeContainer.getPgInParameterTypeOIDs();
+        final int cachedTypeCount = cachedTypes.size();
         if (parameterTypeCount != cachedTypeCount) {
             return false;
         }
