@@ -3949,6 +3949,7 @@ public class SqlParser {
         tableAliasStop.add("except");
         tableAliasStop.add("intersect");
         tableAliasStop.add("from");
+        tableAliasStop.add("tolerance");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");
