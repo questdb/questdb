@@ -407,6 +407,54 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnNullSymbolKeys() throws Exception {
+        final String expected = "tag\thi\tlo\n" +
+                "AA\t315515118\t315515118\n" +
+                "BB\t-727724771\t-727724771\n" +
+                "\t-948263339\t-948263339\n" +
+                "\t592859671\t592859671\n" +
+                "AA\t-847531048\t-847531048\n" +
+                "BB\t-2041844972\t-2041844972\n" +
+                "BB\t-1575378703\t-1575378703\n" +
+                "BB\t1545253512\t1545253512\n" +
+                "AA\t1573662097\t1573662097\n" +
+                "AA\t339631474\t339631474\n";
+
+        assertQuery(
+                "tag\thi\tlo\n",
+                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)",
+                "create table tab (\n" +
+                        "    tag symbol index,\n" +
+                        "    seq int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into tab select * from (select rnd_symbol('AA', 'BB', null) tag, \n" +
+                        "        rnd_int() seq, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                false,
+                true,
+                false
+        );
+
+        execute("create table tab2 as (select * from tab where tag is not null)");
+        assertQuery("tag\thi\tlo\n" +
+                        "AA\t315515118\t315515118\n" +
+                        "BB\t-727724771\t-727724771\n" +
+                        "\t-948263339\tnull\n" +
+                        "\t592859671\tnull\n" +
+                        "AA\t-847531048\t-847531048\n" +
+                        "BB\t-2041844972\t-2041844972\n" +
+                        "BB\t-1575378703\t-1575378703\n" +
+                        "BB\t1545253512\t1545253512\n" +
+                        "AA\t1573662097\t1573662097\n" +
+                        "AA\t339631474\t339631474\n",
+                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab2 b on (tag)", null, null, false, true);
+    }
+
+    @Test
     public void testExplicitTimestampIsNotNecessaryWhenAsofJoiningExplicitlyOrderedTables() throws Exception {
         testExplicitTimestampIsNotNecessaryWhenJoining("asof join", "ts");
     }

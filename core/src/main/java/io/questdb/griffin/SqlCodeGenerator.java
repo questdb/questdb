@@ -208,6 +208,7 @@ import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.SymbolShortCircuit;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
@@ -2431,6 +2432,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 writeStringAsVarcharA
                                         );
                                         if (slave.supportsTimeFrameCursor() && fastAsOfJoins) {
+                                            SymbolShortCircuit symbolShortCircuit = SymbolShortCircuit.DISABLED;
+                                            if (listColumnFilterA.getColumnCount() == 1 && listColumnFilterB.getColumnCount() == 1) {
+                                                int slaveColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                                                int masterColumnIndex = listColumnFilterB.getColumnIndexFactored(0);
+                                                if (
+                                                        masterMetadata.getColumnType(masterColumnIndex) == ColumnType.SYMBOL
+                                                                && slaveMetadata.getColumnType(slaveColumnIndex) == ColumnType.SYMBOL
+                                                                && slaveMetadata.isSymbolTableStatic(slaveColumnIndex)
+                                                ) {
+                                                    symbolShortCircuit = new SymbolShortCircuit(masterColumnIndex, slaveColumnIndex);
+                                                }
+                                            }
+
                                             master = new AsOfJoinFastRecordCursorFactory(
                                                     configuration,
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
@@ -2439,6 +2453,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     slave,
                                                     slaveSink,
                                                     masterMetadata.getColumnCount(),
+                                                    symbolShortCircuit,
                                                     slaveModel.getContext()
                                             );
                                         } else {

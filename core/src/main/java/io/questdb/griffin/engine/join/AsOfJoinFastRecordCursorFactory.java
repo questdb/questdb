@@ -46,6 +46,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
     private final AsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
+    private SymbolShortCircuit symbolShortCircuit;
 
     public AsOfJoinFastRecordCursorFactory(
             CairoConfiguration configuration,
@@ -55,6 +56,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             RecordCursorFactory slaveFactory,
             RecordSink slaveKeySink,
             int columnSplit,
+            SymbolShortCircuit symbolShortCircuit,
             JoinContext joinContext) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
@@ -70,6 +72,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
+        this.symbolShortCircuit = symbolShortCircuit;
     }
 
     @Override
@@ -181,6 +184,13 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 return true;
             }
 
+            if (symbolShortCircuit.isShortCircuit(masterRecord)) {
+                // the master record's symbol does not match any symbol in the slave table, so we can skip the key matching part
+                // and report no match.
+                record.hasSlave(false);
+                return true;
+            }
+
             // ok, the non-keyed matcher found a record with a matching timestamp.
             // we have to make sure the JOIN keys match as well.
             masterSinkTarget.clear();
@@ -237,6 +247,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor);
+            symbolShortCircuit.of(slaveCursor);
             masterSinkTarget.reopen();
             slaveSinkTarget.reopen();
             this.circuitBreaker = circuitBreaker;
