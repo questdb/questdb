@@ -95,7 +95,6 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.function.Consumer;
 
@@ -160,7 +159,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // this is a "union", so should only be one, depending on SQL type
     // SELECT or EXPLAIN
     private RecordCursorFactory factory = null;
-    private InsertOperation insertOp = null;
     private int msgBindParameterValueCount;
     private short msgBindSelectFormatCodeCount = 0;
     private Utf8String namedPortal;
@@ -222,7 +220,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         namedPortals.add(portalName);
     }
 
-    public void cacheIfPossible(@NotNull AssociativeCache<TypesAndSelectModern> tasCache, @Nullable SimpleAssociativeCache<TypesAndInsertModern> taiCache) {
+    public void cacheIfPossible(
+            @NotNull AssociativeCache<TypesAndSelectModern> tasCache,
+            @NotNull SimpleAssociativeCache<TypesAndInsertModern> taiCache
+    ) {
         if (isPortal() || isPreparedStatement()) {
             // must not cache prepared statements etc.; we must only cache abandoned pipeline entries (their contents)
             return;
@@ -236,10 +237,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
             tasCache.put(sqlText, tas);
             tas = null;
-        } else if (tai != null && taiCache != null) {
+        } else if (tai != null) {
             taiCache.put(sqlText, tai);
             // make sure we don't close insert operation when the pipeline entry is closed
-            insertOp = null;
+            tai = null;
         }
     }
 
@@ -271,13 +272,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         if (!isCopy) {
             // if we are a copy, we do not own operations -> we cannot close them
             // so we just null them out and let the original entry close them
-            insertOp = Misc.free(insertOp);
+            tai = Misc.free(tai);
             operation = Misc.free(operation);
             if (compiledQuery != null) {
                 Misc.free(compiledQuery.getUpdateOperation());
             }
         } else {
-            insertOp = null;
+            tai = null;
             operation = null;
         }
 
@@ -326,7 +327,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateParse = false;
         stateParseExecuted = false;
         stateSync = SYNC_PARSE;
-        tai = null;
         tas = null;
         utf8StringSink.clear();
     }
@@ -383,7 +383,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     // variables.
                     msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
                 }
-                CompiledQuery cq = compiler.compile(this.sqlText, sqlExecutionContext);
+                CompiledQuery cq = compiler.compile(sqlText, sqlExecutionContext);
                 // copy actual bind variable types as supplied by the client + defined by the SQL compiler
                 msgParseCopyOutTypeDescriptionTypeOIDs(sqlExecutionContext.getBindVariableService());
                 setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
@@ -567,7 +567,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     public int msgExecute(
             SqlExecutionContext sqlExecutionContext,
             int transactionState,
-            SimpleAssociativeCache<TypesAndInsertModern> taiCache,
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             WriterSource writerSource,
@@ -610,7 +609,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     break;
                 case CompiledQuery.INSERT:
                 case CompiledQuery.INSERT_AS_SELECT:
-                    msgExecuteInsert(sqlExecutionContext, transactionState, taiCache, pendingWriters, writerSource, taiPool);
+                    msgExecuteInsert(sqlExecutionContext, transactionState, pendingWriters, writerSource, taiPool);
                     break;
                 case CompiledQuery.UPDATE:
                     msgExecuteUpdate(sqlExecutionContext, transactionState, pendingWriters, tempSequence, taiPool);
@@ -859,7 +858,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void ofCachedInsert(CharSequence utf16SqlText, TypesAndInsertModern tai) {
         this.sqlText = utf16SqlText;
-        this.insertOp = tai.getInsert();
         this.sqlTag = tai.getSqlTag();
         this.sqlType = tai.getSqlType();
         this.cacheHit = true;
@@ -1093,7 +1091,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.isCopy = true;
         this.cacheHit = blueprint.cacheHit;
         this.empty = blueprint.empty;
-        this.insertOp = blueprint.insertOp;
         this.operation = blueprint.operation;
         this.parentPreparedStatementPipelineEntry = blueprint.parentPreparedStatementPipelineEntry;
         this.namedStatement = blueprint.namedStatement;
@@ -1416,10 +1413,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private void msgExecuteInsert(
             SqlExecutionContext sqlExecutionContext,
             int transactionState,
+            ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             // todo: WriterSource is the interface used exclusively in PG Wire. We should not need to pass
             //    around heaps of state in very long call stacks
-            SimpleAssociativeCache<TypesAndInsertModern> taiCache,
-            ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             WriterSource writerSource,
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws SqlException, BadProtocolException {
@@ -1431,6 +1427,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 engine.getMetrics().pgWireMetrics().markStart();
                 try {
                     for (int attempt = 1; ; attempt++) {
+                        final InsertOperation insertOp = tai.getInsert();
                         InsertMethod m;
                         try {
                             m = insertOp.createMethod(sqlExecutionContext, writerSource);
@@ -1438,20 +1435,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                 sqlAffectedRowCount = m.execute(sqlExecutionContext);
                                 TableWriterAPI writer = m.popWriter();
                                 pendingWriters.put(writer.getTableToken(), writer);
-                                if (tai.hasBindVariables()) {
-                                    taiCache.put(sqlText, tai);
-                                }
-                            } catch (Throwable e) {
+                            } catch (Throwable th) {
                                 TableWriterAPI w = m.popWriter();
                                 if (w != null) {
                                     pendingWriters.remove(w.getTableToken());
                                 }
                                 Misc.free(w);
-                                throw e;
+                                throw th;
                             }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
-                            insertOp = Misc.free(insertOp);
+                            tai = Misc.free(tai);
                             if (attempt == maxRecompileAttempts) {
                                 throw e;
                             }
@@ -2545,8 +2539,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 sqlTag = TAG_OK;
                 break;
             case CompiledQuery.EXPLAIN:
-                this.sqlTag = TAG_EXPLAIN;
-                this.factory = cq.getRecordCursorFactory();
+                sqlTag = TAG_EXPLAIN;
+                factory = cq.getRecordCursorFactory();
                 tas = new TypesAndSelectModern(
                         this.factory,
                         sqlType,
@@ -2556,8 +2550,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 );
                 break;
             case CompiledQuery.SELECT:
-                this.sqlTag = TAG_SELECT;
-                this.factory = cq.getRecordCursorFactory();
+                sqlTag = TAG_SELECT;
+                factory = cq.getRecordCursorFactory();
                 tas = new TypesAndSelectModern(
                         factory,
                         sqlType,
@@ -2571,12 +2565,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 // we do not intend to cache it. The fact we don't have
                 // TypesAndSelect instance here should be enough to tell the
                 // system not to cache.
-                this.sqlTag = TAG_PSEUDO_SELECT;
-                this.factory = cq.getRecordCursorFactory();
+                sqlTag = TAG_PSEUDO_SELECT;
+                factory = cq.getRecordCursorFactory();
                 break;
             case CompiledQuery.INSERT:
             case CompiledQuery.INSERT_AS_SELECT:
-                this.insertOp = cq.popInsertOperation();
+                final InsertOperation insertOp = cq.popInsertOperation();
                 tai = taiPool.pop();
                 sqlTag = sqlType == CompiledQuery.INSERT ? TAG_INSERT : TAG_INSERT_AS_SELECT;
                 tai.of(
@@ -2737,8 +2731,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // It is irrelevant which types were defined by the SQL compiler. We are assuming that same SQL text will
     // produce the same parameter definitions for every compilation.
     boolean msgParseReconcileParameterTypes(short parameterTypeCount, TypeContainer typeContainer) {
-        IntList cachedTypes = typeContainer.getPgInParameterTypeOIDs();
-        int cachedTypeCount = cachedTypes.size();
+        final IntList cachedTypes = typeContainer.getPgInParameterTypeOIDs();
+        final int cachedTypeCount = cachedTypes.size();
         if (parameterTypeCount != cachedTypeCount) {
             return false;
         }

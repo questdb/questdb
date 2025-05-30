@@ -73,6 +73,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "\"config\":{" +
             "\"release.type\":\"OSS\"," +
             "\"release.version\":\"[DEVELOPMENT]\"," +
+            "\"http.settings.readonly\":false," +
             "\"posthog.enabled\":false," +
             "\"posthog.api.key\":null" +
             "}," +
@@ -124,6 +125,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null" +
                             "}," +
@@ -141,6 +143,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null" +
                             "}," +
@@ -187,6 +190,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null" +
                             "}," +
@@ -237,6 +241,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null" +
                             "}," +
@@ -267,6 +272,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null" +
                             "}," +
@@ -284,6 +290,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null" +
                             "}," +
@@ -325,6 +332,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null" +
                             "}," +
@@ -358,6 +366,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null" +
                             "}," +
@@ -389,6 +398,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null" +
                             "}," +
@@ -418,6 +428,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null" +
                             "}," +
@@ -468,6 +479,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null" +
                             "}," +
@@ -543,6 +555,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":true," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null" +
                             "}," +
@@ -696,6 +709,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                 "\"config\":{" +
                 "\"release.type\":\"OSS\"," +
                 "\"release.version\":\"[DEVELOPMENT]\"," +
+                "\"http.settings.readonly\":false," +
                 "\"posthog.enabled\":false," +
                 "\"posthog.api.key\":null" +
                 "}," +

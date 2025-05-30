@@ -2555,8 +2555,12 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean exportConfiguration(CharSink<?> sink) {
-            str(RELEASE_TYPE, getReleaseType(), sink);
+            final String releaseType = getReleaseType();
+            str(RELEASE_TYPE, releaseType, sink);
             str(RELEASE_VERSION, getBuildInformation().getSwVersion(), sink);
+            if (Chars.equalsNc(releaseType, OSS)) {
+                bool(PropertyKey.HTTP_SETTINGS_READONLY.getPropertyPath(), httpSettingsReadOnly, sink);
+            }
             if (!Chars.empty(httpUsername)) {
                 bool(ACL_ENABLED, true, sink);
             }
