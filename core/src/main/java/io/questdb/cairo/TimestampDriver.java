@@ -31,6 +31,11 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public interface TimestampDriver {
+
+    long addMonths(long timestamp, int months);
+
+    long addYears(long timestamp, int years);
+
     void append(CharSink<?> sink, long timestamp);
 
     void append2(CharSink<?> sink, long timestamp);
@@ -43,6 +48,14 @@ public interface TimestampDriver {
 
     // todo: explore static ref
     boolean convertToVar(long fixedAddr, CharSink<?> stringSink);
+
+    long fromDays(int days);
+
+    long fromHours(int hours);
+
+    long fromMinutes(int minutes);
+
+    long fromSeconds(int seconds);
 
     PartitionAddMethod getPartitionAddMethod(int partitionBy);
 

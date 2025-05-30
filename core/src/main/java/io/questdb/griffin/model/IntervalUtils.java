@@ -24,10 +24,11 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 public final class IntervalUtils {
     public static final int HI_INDEX = 1;
@@ -50,7 +51,8 @@ public final class IntervalUtils {
             intervals.setQuick(index, lo);
             return;
         }
-        apply(intervals, lo, hi, period, periodType, count);
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        apply(timestampDriver, intervals, lo, hi, period, periodType, count);
     }
 
     public static long decodeIntervalHi(LongList out, int index) {
@@ -399,7 +401,7 @@ public final class IntervalUtils {
         intervals.setPos(writePoint);
     }
 
-    private static void addMillisInterval(long period, int count, LongList out) {
+    private static void addLinearInterval(long period, int count, LongList out) {
         int k = out.size();
         long lo = out.getQuick(k - 2);
         long hi = out.getQuick(k - 1);
@@ -420,69 +422,69 @@ public final class IntervalUtils {
         }
     }
 
-    private static void addMonthInterval(int period, int count, LongList out) {
+    private static void addMonthInterval(TimestampDriver timestampDriver, int period, int count, LongList out) {
         int k = out.size();
         long lo = out.getQuick(k - 2);
         long hi = out.getQuick(k - 1);
         int writePoint = k / 2;
         int n = count - 1;
         if (period < 0) {
-            lo = Timestamps.addMonths(lo, period * n);
-            hi = Timestamps.addMonths(hi, period * n);
+            lo = timestampDriver.addMonths(lo, period * n);
+            hi = timestampDriver.addMonths(hi, period * n);
             out.setQuick(k - 2, lo);
             out.setQuick(k - 1, hi);
             period = -period;
         }
 
         for (int i = 0; i < n; i++) {
-            lo = Timestamps.addMonths(lo, period);
-            hi = Timestamps.addMonths(hi, period);
+            lo = timestampDriver.addMonths(lo, period);
+            hi = timestampDriver.addMonths(hi, period);
             writePoint = append(out, writePoint, lo, hi);
         }
     }
 
-    private static void addYearIntervals(int period, int count, LongList out) {
+    private static void addYearIntervals(TimestampDriver timestampDriver, int period, int count, LongList out) {
         int k = out.size();
         long lo = out.getQuick(k - 2);
         long hi = out.getQuick(k - 1);
         int writePoint = k / 2;
         int n = count - 1;
         if (period < 0) {
-            lo = Timestamps.addYears(lo, period * n);
-            hi = Timestamps.addYears(hi, period * n);
+            lo = timestampDriver.addYears(lo, period * n);
+            hi = timestampDriver.addYears(hi, period * n);
             out.setQuick(k - 2, lo);
             out.setQuick(k - 1, hi);
             period = -period;
         }
 
         for (int i = 0; i < n; i++) {
-            lo = Timestamps.addYears(lo, period);
-            hi = Timestamps.addYears(hi, period);
+            lo = timestampDriver.addYears(lo, period);
+            hi = timestampDriver.addYears(hi, period);
             writePoint = append(out, writePoint, lo, hi);
         }
     }
 
-    private static void apply(LongList temp, long lo, long hi, int period, char periodType, int count) {
+    private static void apply(TimestampDriver timestampDriver, LongList temp, long lo, long hi, int period, char periodType, int count) {
         temp.add(lo, hi);
         if (count > 1) {
             switch (periodType) {
                 case PeriodType.YEAR:
-                    addYearIntervals(period, count, temp);
+                    addYearIntervals(timestampDriver, period, count, temp);
                     break;
                 case PeriodType.MONTH:
-                    addMonthInterval(period, count, temp);
+                    addMonthInterval(timestampDriver, period, count, temp);
                     break;
                 case PeriodType.HOUR:
-                    addMillisInterval(period * Timestamps.HOUR_MICROS, count, temp);
+                    addLinearInterval(timestampDriver.fromHours(period), count, temp);
                     break;
                 case PeriodType.MINUTE:
-                    addMillisInterval(period * Timestamps.MINUTE_MICROS, count, temp);
+                    addLinearInterval(timestampDriver.fromMinutes(period), count, temp);
                     break;
                 case PeriodType.SECOND:
-                    addMillisInterval(period * Timestamps.SECOND_MICROS, count, temp);
+                    addLinearInterval(timestampDriver.fromSeconds(period), count, temp);
                     break;
                 case PeriodType.DAY:
-                    addMillisInterval(period * Timestamps.DAY_MICROS, count, temp);
+                    addLinearInterval(timestampDriver.fromDays(period), count, temp);
                     break;
             }
         }

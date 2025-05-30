@@ -109,6 +109,16 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long addMonths(long timestamp, int months) {
+        return Timestamps.addMonths(timestamp, months);
+    }
+
+    @Override
+    public long addYears(long timestamp, int years) {
+        return Timestamps.addYears(timestamp, years);
+    }
+
+    @Override
     public void append(CharSink<?> sink, long timestamp) {
         TimestampFormatUtils.appendDateTime(sink, timestamp);
     }
@@ -149,6 +159,26 @@ public class MicrosTimestampDriver implements TimestampDriver {
             return true;
         }
         return false;
+    }
+
+    @Override
+    public long fromDays(int days) {
+        return days * Timestamps.DAY_MICROS;
+    }
+
+    @Override
+    public long fromHours(int hours) {
+        return hours * Timestamps.HOUR_MICROS;
+    }
+
+    @Override
+    public long fromMinutes(int minutes) {
+        return minutes * Timestamps.MINUTE_MICROS;
+    }
+
+    @Override
+    public long fromSeconds(int seconds) {
+        return seconds * Timestamps.SECOND_MICROS;
     }
 
     @Override

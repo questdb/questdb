@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -82,6 +83,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
         );
         try {
             final ObjList<Function> placeholderFunctions = createPlaceholderFunctions(
+                    ColumnType.getTimestampDriver(base.getMetadata().getTimestampType()),
                     groupByFunctions,
                     recordFunctions,
                     recordFunctionPositions,
@@ -124,7 +126,13 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
         sink.child(base);
     }
 
-    static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type, ExpressionNode fillNode) throws SqlException {
+    static Function createPlaceHolderFunction(
+            TimestampDriver timestampDriver,
+            IntList recordFunctionPositions,
+            int index,
+            int type,
+            ExpressionNode fillNode
+    ) throws SqlException {
         try {
             switch (ColumnType.tagOf(type)) {
                 case ColumnType.INT:
@@ -145,8 +153,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     if (!Chars.isQuoted(fillNode.token)) {
                         throw SqlException.position(fillNode.position).put("Invalid fill value: '").put(fillNode.token).put("'. Timestamp fill value must be in quotes. Example: '2019-01-01T00:00:00.000Z'");
                     }
-                    long ts = TimestampUtils.parseFloorPartialTimestamp(fillNode.token, 1, fillNode.token.length() - 1);
-                    return TimestampConstant.newInstance(ts);
+                    return TimestampConstant.newInstance(timestampDriver.parseFloorPartialTimestamp(fillNode.token, 1, fillNode.token.length() - 1));
                 default:
                     throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
             }
@@ -157,6 +164,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
 
     @NotNull
     static ObjList<Function> createPlaceholderFunctions(
+            TimestampDriver timestampDriver,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             @Transient IntList recordFunctionPositions,
@@ -186,7 +194,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     groupByFunctions.set(fillIndex - 1, interpolation);
                     recordFunctions.set(i, interpolation);
                 } else {
-                    placeholderFunctions.add(createPlaceHolderFunction(recordFunctionPositions, i, function.getType(), fillNode));
+                    placeholderFunctions.add(createPlaceHolderFunction(timestampDriver, recordFunctionPositions, i, function.getType(), fillNode));
                 }
             } else {
                 placeholderFunctions.add(function);
