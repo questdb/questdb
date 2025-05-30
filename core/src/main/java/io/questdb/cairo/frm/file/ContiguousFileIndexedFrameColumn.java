@@ -92,7 +92,12 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
             boolean isEmpty
     ) {
         super.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
-        indexWriter.of(partitionPath, columnName, columnTxn, isEmpty ? indexBlockCapacity : 0);
+        try {
+            indexWriter.of(partitionPath, columnName, columnTxn, isEmpty ? indexBlockCapacity : 0);
+        } catch (Throwable e) {
+            // indexWriter has already closed
+            super.close();
+        }
     }
 
     @Override
@@ -104,6 +109,9 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
             long columnTop,
             int columnIndex
     ) {
+        // close to reuse
+        closed = false;
+        super.close();
         throw new UnsupportedOperationException();
     }
 
