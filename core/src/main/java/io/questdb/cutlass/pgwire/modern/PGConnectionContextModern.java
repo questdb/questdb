@@ -955,7 +955,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         transactionState = pipelineCurrentEntry.msgExecute(
                 sqlExecutionContext,
                 transactionState,
-                taiCache,
                 taiPool,
                 pendingWriters,
                 this,
@@ -1556,7 +1555,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             transactionState = pipelineCurrentEntry.msgExecute(
                     sqlExecutionContext,
                     transactionState,
-                    taiCache,
                     taiPool,
                     pendingWriters,
                     PGConnectionContextModern.this,

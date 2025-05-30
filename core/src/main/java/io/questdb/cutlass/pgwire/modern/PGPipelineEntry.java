@@ -97,7 +97,6 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.function.Consumer;
 
@@ -224,7 +223,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void cacheIfPossible(
             @NotNull AssociativeCache<TypesAndSelectModern> tasCache,
-            @Nullable SimpleAssociativeCache<TypesAndInsertModern> taiCache
+            @NotNull SimpleAssociativeCache<TypesAndInsertModern> taiCache
     ) {
         if (isPortal() || isPreparedStatement()) {
             // must not cache prepared statements etc.; we must only cache abandoned pipeline entries (their contents)
@@ -239,7 +238,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
             tasCache.put(sqlText, tas);
             tas = null;
-        } else if (tai != null && taiCache != null) {
+        } else if (tai != null) {
             taiCache.put(sqlText, tai);
             // make sure we don't close insert operation when the pipeline entry is closed
             tai = null;
@@ -569,7 +568,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     public int msgExecute(
             SqlExecutionContext sqlExecutionContext,
             int transactionState,
-            SimpleAssociativeCache<TypesAndInsertModern> taiCache,
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             WriterSource writerSource,
@@ -612,7 +610,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     break;
                 case CompiledQuery.INSERT:
                 case CompiledQuery.INSERT_AS_SELECT:
-                    msgExecuteInsert(sqlExecutionContext, transactionState, taiCache, pendingWriters, writerSource, taiPool);
+                    msgExecuteInsert(sqlExecutionContext, transactionState, pendingWriters, writerSource, taiPool);
                     break;
                 case CompiledQuery.UPDATE:
                     msgExecuteUpdate(sqlExecutionContext, transactionState, pendingWriters, tempSequence, taiPool);
@@ -1416,10 +1414,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private void msgExecuteInsert(
             SqlExecutionContext sqlExecutionContext,
             int transactionState,
+            ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             // todo: WriterSource is the interface used exclusively in PG Wire. We should not need to pass
             //    around heaps of state in very long call stacks
-            SimpleAssociativeCache<TypesAndInsertModern> taiCache,
-            ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             WriterSource writerSource,
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws SqlException, BadProtocolException {
@@ -1439,9 +1436,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                 sqlAffectedRowCount = m.execute(sqlExecutionContext);
                                 TableWriterAPI writer = m.popWriter();
                                 pendingWriters.put(writer.getTableToken(), writer);
-                                if (tai.hasBindVariables()) {
-                                    taiCache.put(sqlText, tai);
-                                }
                             } catch (Throwable th) {
                                 TableWriterAPI w = m.popWriter();
                                 if (w != null) {
