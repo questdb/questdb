@@ -44,7 +44,7 @@ public class InsertCastTest extends AbstractCairoTest {
             // execute insert statement for each value of reference table
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
             ) {
                 bindVariableService.setByte(0, (byte) 9);
                 insert.execute(sqlExecutionContext);
@@ -486,7 +486,7 @@ public class InsertCastTest extends AbstractCairoTest {
             // execute insert statement for each value of reference table
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
             ) {
                 bindVariableService.setDouble(0, 1.7e25);
                 insert.execute(sqlExecutionContext);
@@ -701,7 +701,7 @@ public class InsertCastTest extends AbstractCairoTest {
             // execute insert statement for each value of reference table
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
             ) {
                 bindVariableService.setShort(0, (short) 2);
                 insert.execute(sqlExecutionContext);
@@ -916,7 +916,7 @@ public class InsertCastTest extends AbstractCairoTest {
             // execute insert statement for each value of reference table
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
             ) {
                 bindVariableService.setStr(0, "2012-04-11 10:45:11Z");
                 insert.execute(sqlExecutionContext);
@@ -1118,7 +1118,7 @@ public class InsertCastTest extends AbstractCairoTest {
             // execute insert statement for each value of reference table
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
             ) {
                 bindVariableService.setStr(0, "2012-04-11T10:45:11");
                 insert.execute(sqlExecutionContext);
@@ -1360,7 +1360,7 @@ public class InsertCastTest extends AbstractCairoTest {
         // execute insert statement for each value of reference table
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
-                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
         ) {
             bindVariableService.setChar(0, '0');
             insert.execute(sqlExecutionContext);
@@ -1388,7 +1388,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 InsertOperation insert = compiler.compile(
                         "insert into y values (cast(rnd_int(0, 10, 0) + 47 as char))",
                         sqlExecutionContext
-                ).getInsertOperation()
+                ).popInsertOperation()
         ) {
             insert.execute(sqlExecutionContext);
             insert.execute(sqlExecutionContext);
@@ -1429,7 +1429,7 @@ public class InsertCastTest extends AbstractCairoTest {
         // execute insert statement for each value of reference table
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
-                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
         ) {
             bindVariableService.setInt(0, 3); // compatible with everything
             insert.execute(sqlExecutionContext);
@@ -1453,7 +1453,7 @@ public class InsertCastTest extends AbstractCairoTest {
         // execute insert statement for each value of reference table
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
-                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
         ) {
             bindVariableService.setLong(0, 8); // compatible with everything
             insert.execute(sqlExecutionContext);
@@ -1477,7 +1477,7 @@ public class InsertCastTest extends AbstractCairoTest {
         // execute insert statement for each value of reference table
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
-                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
         ) {
             bindVariableService.setShort(0, (short) 12);
             insert.execute(sqlExecutionContext);
@@ -1505,7 +1505,7 @@ public class InsertCastTest extends AbstractCairoTest {
         // execute insert statement for each value of reference table
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
-                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
         ) {
             bindVariableService.setStr(0, "12");
             insert.execute(sqlExecutionContext);
@@ -1558,7 +1558,7 @@ public class InsertCastTest extends AbstractCairoTest {
         // execute insert statement for each value of reference table
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
-                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
         ) {
             bindVariableService.setTimestamp(0, 8); // compatible with everything
             insert.execute(sqlExecutionContext);
@@ -1582,7 +1582,7 @@ public class InsertCastTest extends AbstractCairoTest {
         // execute insert statement for each value of reference table
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
-                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
         ) {
             bindVariableService.setTimestamp(0, 8); // compatible with everything
             insert.execute(sqlExecutionContext);
