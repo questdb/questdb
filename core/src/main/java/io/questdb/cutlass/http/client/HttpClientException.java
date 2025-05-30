@@ -72,4 +72,9 @@ public class HttpClientException extends RuntimeException {
         message.put(cs);
         return this;
     }
+
+    public HttpClientException putSize(long value) {
+        message.putSize(value);
+        return this;
+    }
 }

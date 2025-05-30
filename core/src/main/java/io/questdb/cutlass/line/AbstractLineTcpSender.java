@@ -36,46 +36,23 @@ import java.time.temporal.ChronoUnit;
  * LineTcpSender is for testing purposes only. It has error-prone API and comes with no API guarantees
  * If you are looking for an ILP client for your application use {@link Sender} instead.
  */
-public class LineTcpSender extends AbstractLineSender {
+public abstract class AbstractLineTcpSender extends AbstractLineSender {
 
     /**
      * @param ip             IP address of a server
      * @param port           port where a server is listening
      * @param bufferCapacity capacity of an internal buffer in bytes
-     * @deprecated use {@link #newSender(int, int, int)} instead.
+     * @deprecated use {@link LineTcpSenderV2#newSender(int, int, int)} instead.
      * <br>
      * IP address is encoded as <code>int</code> obtained via {@link io.questdb.network.Net#parseIPv4(CharSequence)}
      */
     @Deprecated
-    public LineTcpSender(int ip, int port, int bufferCapacity) {
-        super(new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, ip, port, bufferCapacity * 2), bufferCapacity);
+    public AbstractLineTcpSender(int ip, int port, int bufferCapacity) {
+        super(new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, ip, port, bufferCapacity * 2), bufferCapacity, 127);
     }
 
-    public LineTcpSender(LineChannel channel, int bufferCapacity) {
-        super(channel, bufferCapacity);
-    }
-
-    /**
-     * Create a new LineTcpSender.
-     * <br>
-     * IP address is encoded as <code>int</code> obtained via {@link io.questdb.network.Net#parseIPv4(CharSequence)}
-     * <br>
-     * This is meant to be used for testing only, it's not something most users want to use.
-     * See {@link Sender} instead
-     *
-     * @param ip             IP address of a server
-     * @param port           port where a server is listening
-     * @param bufferCapacity capacity of an internal buffer in bytes
-     * @return LineTcpSender instance of LineTcpSender
-     */
-    public static LineTcpSender newSender(int ip, int port, int bufferCapacity) {
-        PlainTcpLineChannel channel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, ip, port, bufferCapacity * 2);
-        try {
-            return new LineTcpSender(channel, bufferCapacity);
-        } catch (Throwable t) {
-            channel.close();
-            throw t;
-        }
+    public AbstractLineTcpSender(LineChannel channel, int bufferCapacity, int maxNameLength) {
+        super(channel, bufferCapacity, maxNameLength);
     }
 
     @Override

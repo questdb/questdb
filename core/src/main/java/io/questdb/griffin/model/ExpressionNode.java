@@ -40,17 +40,18 @@ import java.util.Objects;
 
 public class ExpressionNode implements Mutable, Sinkable {
 
-    public static final int ARRAY_ACCESS = 9;
-    public static final int BIND_VARIABLE = 6;
-    public static final int CONSTANT = 2;
-    public static final int CONTROL = 16;
+    public static final int ARRAY_ACCESS = 1;
+    public static final int ARRAY_CONSTRUCTOR = ARRAY_ACCESS + 1;
+    public static final int BIND_VARIABLE = ARRAY_CONSTRUCTOR + 1;
+    public static final int CONSTANT = BIND_VARIABLE + 1;
+    public static final int CONTROL = CONSTANT + 1;
+    public static final int FUNCTION = CONTROL + 1;
+    public static final int LITERAL = FUNCTION + 1;
+    public static final int MEMBER_ACCESS = LITERAL + 1;
+    public static final int OPERATION = MEMBER_ACCESS + 1;
+    public static final int QUERY = OPERATION + 1;
+    public static final int SET_OPERATION = QUERY + 1;
     public static final ExpressionNodeFactory FACTORY = new ExpressionNodeFactory();
-    public static final int FUNCTION = 8;
-    public static final int LITERAL = 4;
-    public static final int MEMBER_ACCESS = 5;
-    public static final int OPERATION = 1;
-    public static final int QUERY = 65;
-    public static final int SET_OPERATION = 32;
     public static final int UNKNOWN = 0;
     public final ObjList<ExpressionNode> args = new ObjList<>(4);
     public boolean innerPredicate = false;
@@ -269,6 +270,11 @@ public class ExpressionNode implements Mutable, Sinkable {
                 }
                 break;
         }
+    }
+
+    @Override
+    public String toString() {
+        return Objects.toString(token);
     }
 
     private static boolean compareArgs(

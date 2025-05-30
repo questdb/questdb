@@ -32,7 +32,9 @@ public interface MemoryMAT extends MemoryA {
 
     long getAddress();
 
+    @Override
     long getAppendOffset();
 
+    @Override
     void jumpTo(long offset);
 }

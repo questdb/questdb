@@ -28,10 +28,12 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256Impl;
@@ -48,6 +50,7 @@ import io.questdb.std.str.DirectString;
 import io.questdb.std.str.StableStringSource;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -57,7 +60,8 @@ import org.jetbrains.annotations.Nullable;
 public class PageFrameMemoryRecord implements Record, StableStringSource, QuietCloseable, Mutable {
     public static final byte RECORD_A_LETTER = 0;
     public static final byte RECORD_B_LETTER = 1;
-    private final ObjList<MemoryCR.ByteSequenceView> bsViews = new ObjList<>();
+    private final ObjList<BorrowedArray> arrayBuffers = new ObjList<>();
+    private final ObjList<DirectByteSequenceView> bsViews = new ObjList<>();
     private final ObjList<DirectString> csViewsA = new ObjList<>();
     private final ObjList<DirectString> csViewsB = new ObjList<>();
     // Letters are used for parquet buffer reference counting in PageFrameMemoryPool.
@@ -111,8 +115,31 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     @Override
     public void close() {
         Misc.freeObjListIfCloseable(symbolTableCache);
+        Misc.freeObjList(arrayBuffers);
         symbolTableCache.clear();
         clear();
+    }
+
+    @Override
+    public ArrayView getArray(int columnIndex, int columnType) {
+        final BorrowedArray array = borrowedArray(columnIndex);
+        final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
+        if (auxPageAddress != 0) {
+            final long auxPageLim = auxPageAddress + auxPageSizes.getQuick(columnIndex);
+            final long dataPageAddress = pageAddresses.getQuick(columnIndex);
+            final long dataPageLim = dataPageAddress + pageSizes.getQuick(columnIndex);
+            array.of(
+                    columnType,
+                    auxPageAddress,
+                    auxPageLim,
+                    dataPageAddress,
+                    dataPageLim,
+                    rowIndex
+            );
+        } else {
+            array.ofNull();
+        }
+        return array;
     }
 
     @Override
@@ -327,6 +354,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     @Override
+    public long getLongIPv4(int columnIndex) {
+        return Numbers.ipv4ToLong(getIPv4(columnIndex));
+    }
+
+    @Override
     public long getRowId() {
         return Rows.toRowID(frameIndex, rowIndex);
     }
@@ -453,28 +485,43 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.rowIndex = rowIndex;
     }
 
-    private MemoryCR.ByteSequenceView bsView(int columnIndex) {
-        if (bsViews.getQuiet(columnIndex) == null) {
-            bsViews.extendAndSet(columnIndex, new MemoryCR.ByteSequenceView());
+    private @NotNull BorrowedArray borrowedArray(int columnIndex) {
+        BorrowedArray array = arrayBuffers.getQuiet(columnIndex);
+        if (array != null) {
+            return array;
         }
-        return bsViews.getQuick(columnIndex);
+        arrayBuffers.extendAndSet(columnIndex, array = new BorrowedArray());
+        return array;
     }
 
-    private DirectString csViewA(int columnIndex) {
-        if (csViewsA.getQuiet(columnIndex) == null) {
-            csViewsA.extendAndSet(columnIndex, new DirectString(this));
+    private @NotNull DirectByteSequenceView bsView(int columnIndex) {
+        DirectByteSequenceView view = bsViews.getQuiet(columnIndex);
+        if (view != null) {
+            return view;
         }
-        return csViewsA.getQuick(columnIndex);
+        bsViews.extendAndSet(columnIndex, view = new DirectByteSequenceView());
+        return view;
     }
 
-    private DirectString csViewB(int columnIndex) {
-        if (csViewsB.getQuiet(columnIndex) == null) {
-            csViewsB.extendAndSet(columnIndex, new DirectString(this));
+    private @NotNull DirectString csViewA(int columnIndex) {
+        DirectString view = csViewsA.getQuiet(columnIndex);
+        if (view != null) {
+            return view;
         }
-        return csViewsB.getQuick(columnIndex);
+        csViewsA.extendAndSet(columnIndex, view = new DirectString(this));
+        return view;
     }
 
-    private BinarySequence getBin(long base, long offset, long dataLim, MemoryCR.ByteSequenceView view) {
+    private @NotNull DirectString csViewB(int columnIndex) {
+        DirectString view = csViewsB.getQuiet(columnIndex);
+        if (view != null) {
+            return view;
+        }
+        csViewsB.extendAndSet(columnIndex, view = new DirectString(this));
+        return view;
+    }
+
+    private BinarySequence getBin(long base, long offset, long dataLim, DirectByteSequenceView view) {
         final long address = base + offset;
         final long len = Unsafe.getUnsafe().getLong(address);
         if (len != TableUtils.NULL_LEN) {
@@ -574,32 +621,40 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return null; // Column top.
     }
 
-    private Long256Impl long256A(int columnIndex) {
-        if (longs256A.getQuiet(columnIndex) == null) {
-            longs256A.extendAndSet(columnIndex, new Long256Impl());
+    private @NotNull Long256Impl long256A(int columnIndex) {
+        Long256Impl long256 = longs256A.getQuiet(columnIndex);
+        if (long256 != null) {
+            return long256;
         }
-        return longs256A.getQuick(columnIndex);
+        longs256A.extendAndSet(columnIndex, long256 = new Long256Impl());
+        return long256;
     }
 
-    private Long256Impl long256B(int columnIndex) {
-        if (longs256B.getQuiet(columnIndex) == null) {
-            longs256B.extendAndSet(columnIndex, new Long256Impl());
+    private @NotNull Long256Impl long256B(int columnIndex) {
+        Long256Impl long256 = longs256B.getQuiet(columnIndex);
+        if (long256 != null) {
+            return long256;
         }
-        return longs256B.getQuick(columnIndex);
+        longs256B.extendAndSet(columnIndex, long256 = new Long256Impl());
+        return long256;
     }
 
-    private Utf8SplitString utf8ViewA(int columnIndex) {
-        if (utf8ViewsA.getQuiet(columnIndex) == null) {
-            utf8ViewsA.extendAndSet(columnIndex, new Utf8SplitString(this));
+    private @NotNull Utf8SplitString utf8ViewA(int columnIndex) {
+        Utf8SplitString view = utf8ViewsA.getQuiet(columnIndex);
+        if (view != null) {
+            return view;
         }
-        return utf8ViewsA.getQuick(columnIndex);
+        utf8ViewsA.extendAndSet(columnIndex, view = new Utf8SplitString(this));
+        return view;
     }
 
-    private Utf8SplitString utf8ViewB(int columnIndex) {
-        if (utf8ViewsB.getQuiet(columnIndex) == null) {
-            utf8ViewsB.extendAndSet(columnIndex, new Utf8SplitString(this));
+    private @NotNull Utf8SplitString utf8ViewB(int columnIndex) {
+        Utf8SplitString view = utf8ViewsB.getQuiet(columnIndex);
+        if (view != null) {
+            return view;
         }
-        return utf8ViewsB.getQuick(columnIndex);
+        utf8ViewsB.extendAndSet(columnIndex, view = new Utf8SplitString(this));
+        return view;
     }
 
     void init(

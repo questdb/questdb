@@ -192,8 +192,11 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
                             "\"acl.enabled\":true," +
+                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
-                            "\"posthog.api.key\":null" +
+                            "\"posthog.api.key\":null," +
+                            "\"cairo.max.file.name.length\":127" +
                             "}," +
                             "\"preferences.version\":0," +
                             "\"preferences\":{" +

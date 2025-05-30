@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
@@ -42,6 +43,8 @@ public interface MemoryR extends Closeable {
     void close();
 
     void extend(long size);
+
+    ArrayView getArray(long offset);
 
     BinarySequence getBin(long offset);
 

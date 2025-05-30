@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
@@ -75,6 +76,11 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public long getAppendOffset() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public ArrayView getArray(long offset) {
         throw new UnsupportedOperationException();
     }
 
@@ -159,6 +165,11 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public int pageIndex(long offset) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putArray(ArrayView array) {
         throw new UnsupportedOperationException();
     }
 

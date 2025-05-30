@@ -26,8 +26,6 @@ package io.questdb.test.griffin.engine.functions.json;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cutlass.http.HttpQueryTestBuilder;
-import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
 import io.questdb.test.cutlass.http.TestHttpClient;
 import org.junit.Test;
 
@@ -239,21 +237,14 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testHttpAccess() throws Exception {
         final String json = "'{\"path\": 0.0000000000000000000000000001}'";
-
-        HttpQueryTestBuilder http = new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false);
-
-        try (TestHttpClient httpClient = new TestHttpClient()) {
-            http.run((engine, sqlExecutionContext) -> {
+        getSimpleTester().run((engine, sqlExecutionContext) -> {
+            try (TestHttpClient httpClient = new TestHttpClient()) {
                 engine.execute("create table json_test as (select " + json + "::varchar text)", sqlExecutionContext);
                 httpClient.assertGet(
                         "{\"query\":\"select json_extract(text, '.path') from json_test\",\"columns\":[{\"name\":\"json_extract\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[\"0.0000000000000000000000000001\"]],\"count\":1}",
                         "select json_extract(text, '.path') from json_test");
-            });
-        }
+            }
+        });
     }
 
     @Test

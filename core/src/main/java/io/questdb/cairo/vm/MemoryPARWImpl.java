@@ -25,6 +25,7 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
@@ -88,6 +89,7 @@ public class MemoryPARWImpl implements MemoryARW {
         this.memoryTag = memoryTag;
     }
 
+    @Override
     public long addressOf(long offset) {
         if (roOffsetLo < offset && offset < roOffsetHi) {
             return absolutePointer + offset;
@@ -154,6 +156,11 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public final long getAppendOffset() {
         return baseOffset + appendPointer;
+    }
+
+    @Override
+    public ArrayView getArray(long offset) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -424,6 +431,11 @@ public class MemoryPARWImpl implements MemoryARW {
 
     public long pageRemaining(long offset) {
         return getPageSize() - offsetInPage(offset);
+    }
+
+    @Override
+    public void putArray(ArrayView array) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -897,6 +909,7 @@ public class MemoryPARWImpl implements MemoryARW {
      *
      * @param bytes number of bytes to skip
      */
+    @Override
     public void skip(long bytes) {
         assert bytes >= 0;
         if (pageHi - appendPointer > bytes) {
@@ -914,6 +927,18 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void zero() {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void zeroMem(int length) {
+        if (pageHi - appendPointer >= length) {
+            Unsafe.getUnsafe().setMemory(appendPointer, length, (byte) 0);
+            appendPointer += length;
+        } else {
+            for (int i = 0; i < length; i++) {
+                putByte((byte) 0);
+            }
+        }
     }
 
     private static void copyStrChars(CharSequence value, int pos, int len, long address) {
@@ -1273,7 +1298,7 @@ public class MemoryPARWImpl implements MemoryARW {
         }
     }
 
-    private class CharSequenceView extends AbstractCharSequence {
+    public class CharSequenceView extends AbstractCharSequence {
         private int len;
         private long offset;
 

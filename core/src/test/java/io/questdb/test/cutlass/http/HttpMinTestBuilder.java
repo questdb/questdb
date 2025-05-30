@@ -60,16 +60,17 @@ public class HttpMinTestBuilder {
     public void run(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
+
+            CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
+
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withBaseDir(temp.getRoot().getAbsolutePath())
                     .withTcpSndBufSize(tcpSndBufSize)
                     .withSendBufferSize(sendBufferSize)
                     .withWorkerCount(workerCount)
-                    .build();
+                    .build(cairoConfiguration);
 
             final WorkerPool workerPool = new TestWorkerPool(httpConfiguration.getWorkerCount());
-
-            CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
 
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration);

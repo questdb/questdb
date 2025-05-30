@@ -31,6 +31,8 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
@@ -651,6 +653,11 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
+        public void putArray(ArrayView view) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void putBin(BinarySequence value) {
             throw new UnsupportedOperationException();
         }
@@ -902,6 +909,15 @@ public class OrderedMap implements Map, Reopenable {
         @Override
         public long hash() {
             return Hash.hashMem64(startAddress + keyOffset, len);
+        }
+
+        @Override
+        public void putArray(ArrayView value) {
+            long byteCount = ArrayTypeDriver.getPlainValueSize(value);
+            checkCapacity(byteCount);
+            long writtenBytes = ArrayTypeDriver.appendPlainValue(appendAddress, value);
+            assert writtenBytes == byteCount;
+            appendAddress += byteCount;
         }
 
         @Override

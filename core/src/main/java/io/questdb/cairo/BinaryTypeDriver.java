@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 public class BinaryTypeDriver extends StringTypeDriver {
@@ -37,6 +38,22 @@ public class BinaryTypeDriver extends StringTypeDriver {
 
     public long getDataVectorMinEntrySize() {
         return Long.BYTES;
+    }
+
+    @Override
+    public boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount) {
+        for (int row = 0; row < rowCount; row++) {
+            long offset = Unsafe.getUnsafe().getLong(auxMemAddr + (long) row * Long.BYTES);
+            long iLen = Unsafe.getUnsafe().getLong(auxMemAddr + (long) (row + 1) * Long.BYTES) - offset;
+            long dLen = Unsafe.getUnsafe().getLong(dataMemAddr + offset);
+            int lenLen = 8;
+            long dStorageLen = dLen > 0 ? dLen + lenLen : lenLen;
+            if (iLen != dStorageLen) {
+                // Swiss cheese hole in var col file
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -71,11 +88,11 @@ public class BinaryTypeDriver extends StringTypeDriver {
 
     @Override
     public void setFullAuxVectorNull(long auxMemAddr, long rowCount) {
-        Vect.setVarColumnRefs64Bit(auxMemAddr, 0, rowCount + 1);
+        Vect.setBinaryColumnNullRefs(auxMemAddr, 0, rowCount + 1);
     }
 
     @Override
     public void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop) {
-        Vect.setVarColumnRefs64Bit(auxMemAddr, initialOffset, columnTop);
+        Vect.setBinaryColumnNullRefs(auxMemAddr, initialOffset, columnTop);
     }
 }

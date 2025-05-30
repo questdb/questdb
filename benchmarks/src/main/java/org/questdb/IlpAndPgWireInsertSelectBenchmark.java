@@ -42,7 +42,7 @@ import java.util.stream.IntStream;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 
-public class PGWireInsertSelectBenchmark {
+public class IlpAndPgWireInsertSelectBenchmark {
     public static final int COOLDOWN_PERIOD_SECONDS = 30;
     private static final int INSERT_BATCH_SIZE = 100;
     private static final int N_INSERTERS = 1;

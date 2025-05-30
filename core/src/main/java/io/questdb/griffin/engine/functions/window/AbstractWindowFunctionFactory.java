@@ -41,7 +41,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
-
     protected long rowsHi;
     protected long rowsLo;
     protected WindowContext windowContext;
@@ -142,7 +141,6 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
     }
 
     static abstract class BaseNullFunction extends BaseWindowFunction {
-
         private final boolean isRange;
         private final String name;
         private final VirtualRecord partitionByRecord;
@@ -233,7 +231,6 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
     }
 
     static class LongNullFunction extends BaseNullFunction implements WindowLongFunction {
-
         private final Long zeroValue;
 
         LongNullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, long zeroValue) {

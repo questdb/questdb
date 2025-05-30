@@ -27,9 +27,9 @@ package io.questdb.test.cutlass.line.tcp;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.std.Unsafe;
 
-import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 
-public class StringChannel implements LineChannel {
+public class ByteChannel implements LineChannel {
     private static final int BUFFER_SIZE = 1024;
 
     private final byte[] buffer = new byte[BUFFER_SIZE];
@@ -39,6 +39,50 @@ public class StringChannel implements LineChannel {
     @Override
     public void close() {
         //empty
+    }
+
+    public boolean contain(byte[] elem) {
+        if (elem == null || elem.length == 0) return false;
+        int elemLen = elem.length;
+        for (int i = 0; i <= pos - elemLen; i++) {
+            if (buffer[i] != elem[0]) continue;
+
+            boolean match = true;
+            for (int j = 1; j < elemLen; j++) {
+                if (buffer[i + j] != elem[j]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) return true;
+        }
+        return false;
+    }
+
+    public String encodeBase64String() {
+        byte[] validData = new byte[pos];
+        System.arraycopy(buffer, 0, validData, 0, pos - 1);
+        return Base64.getEncoder().encodeToString(validData);
+    }
+
+    public boolean endWith(byte elem) {
+        return pos > 0 && buffer[pos - 1] == elem;
+    }
+
+    public boolean equals(byte[] other, int begin, int end) {
+        if (other == null) {
+            return false;
+        }
+        if (pos < end) {
+            return false;
+        }
+
+        for (int i = begin; i < end; i++) {
+            if (other[i] != buffer[i]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
@@ -65,10 +109,5 @@ public class StringChannel implements LineChannel {
             buffer[i + pos] = Unsafe.getUnsafe().getByte(ptr + i);
         }
         pos += len;
-    }
-
-    @Override
-    public String toString() {
-        return new String(buffer, 0, pos, StandardCharsets.UTF_8);
     }
 }
