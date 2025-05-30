@@ -130,6 +130,24 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBadInterval() throws Exception {
+        assertException(
+                "select b, sum(a), k from x sample by 1min",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                37,
+                "Invalid unit: 1min"
+        );
+    }
+
+    @Test
     public void testBindVarsInPeriodSyntax() throws Exception {
         testSampleByPeriodFails(
                 "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by $1 T align to calendar",

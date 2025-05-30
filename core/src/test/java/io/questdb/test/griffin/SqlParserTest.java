@@ -1857,8 +1857,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateMatView18() throws Exception {
         assertSyntaxError(
                 "create materialized view myview WITH BASE mytable1 REFRESH INCREMENTAL START '2010-01-01' EVERY foobar",
-                -1,
-                "Invalid unit: r"
+                96,
+                "Invalid unit: foobar"
         );
     }
 
