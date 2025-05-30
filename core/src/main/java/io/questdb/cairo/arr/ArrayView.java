@@ -320,20 +320,6 @@ public abstract class ArrayView implements QuietCloseable {
         return flatView.getLongAtAbsIndex(flatViewOffset + flatIndex);
     }
 
-    public final long getMemoryVanillaSize() {
-        if (isNull()) {
-            return 0;
-        } else {
-            long elemSize = ColumnType.sizeOf(ColumnType.decodeArrayElementType(type));
-            int dim = getDimCount();
-            for (int i = 0; i < dim; ++i) {
-                elemSize *= getDimLen(i);
-            }
-            // type + shape + data
-            return (long) Integer.BYTES * (dim + 1) + elemSize;
-        }
-    }
-
     /**
      * Returns the stride for the given dimension. You need this when calculating the
      * flat index of an array element from its coordinates.
@@ -349,6 +335,20 @@ public abstract class ArrayView implements QuietCloseable {
      */
     public final int getType() {
         return type;
+    }
+
+    public final long getVanillaMemoryLayoutSize() {
+        if (isNull()) {
+            return 0;
+        } else {
+            long elemSize = ColumnType.sizeOf(ColumnType.decodeArrayElementType(type));
+            int dim = getDimCount();
+            for (int i = 0; i < dim; ++i) {
+                elemSize *= getDimLen(i);
+            }
+            // type + shape + data
+            return (long) Integer.BYTES * (dim + 1) + elemSize;
+        }
     }
 
     /**

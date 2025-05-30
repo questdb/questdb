@@ -53,7 +53,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         if (array == null || array.isNull()) {
             putLong(TableUtils.NULL_LEN);
         } else {
-            putLong(array.getMemoryVanillaSize());
+            putLong(array.getVanillaMemoryLayoutSize());
             putInt(array.getType());
             array.appendShapeToMem(this);
             array.appendDataToMem(this);
