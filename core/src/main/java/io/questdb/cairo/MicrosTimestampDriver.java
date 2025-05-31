@@ -261,8 +261,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long parseFloorPartialTimestamp(CharSequence token, int start, int len) throws NumericException {
-        return TimestampUtils.parseFloorPartialTimestamp(token, start, len);
+    public long parseFloorConstant(CharSequence token) throws NumericException {
+        return TimestampUtils.parseFloorPartialTimestamp(token, 1, token.length() - 1);
     }
 
     @Override

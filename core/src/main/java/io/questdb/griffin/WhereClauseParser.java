@@ -286,7 +286,7 @@ public final class WhereClauseParser implements Mutable {
     private static long parseTokenAsTimestamp(TimestampDriver timestampDriver, ExpressionNode lo) throws SqlException {
         try {
             if (!isNullKeyword(lo.token)) {
-                return timestampDriver.parseFloorPartialTimestamp(lo.token, 1, lo.token.length() - 1);
+                return timestampDriver.parseFloorConstant(lo.token);
             }
             return Numbers.LONG_NULL;
         } catch (NumericException e1) {
@@ -1913,10 +1913,9 @@ public final class WhereClauseParser implements Mutable {
             boolean isLo
     ) throws NumericException {
         long ts;
-        final int len = node.token.length();
         try {
             // Timestamp string
-            ts = timestampDriver.parseFloorPartialTimestamp(node.token, 1, len - 1);
+            ts = timestampDriver.parseFloorConstant(node.token);
         } catch (NumericException e) {
             try {
                 // Timestamp epoch (long)

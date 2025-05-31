@@ -524,8 +524,8 @@ public class TimestampUtils {
                 }
 
                 try {
-                    long millis = parseFloorPartialTimestamp(seq, lo, lim);
-                    IntervalUtils.encodeInterval(millis, millis, operation, out);
+                    long micros = parseFloorPartialTimestamp(seq, lo, lim);
+                    IntervalUtils.encodeInterval(micros, micros, operation, out);
                     break;
                 } catch (NumericException e) {
                     try {

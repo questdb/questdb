@@ -275,7 +275,7 @@ public final class ColumnType {
     }
 
     public static boolean isTimestamp(int columnType) {
-        return columnType == TIMESTAMP;
+        return ColumnType.tagOf(columnType) == TIMESTAMP;
     }
 
     public static boolean isToSameOrWider(int fromType, int toType) {

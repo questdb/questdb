@@ -35,11 +35,24 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.constants.*;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.FloatConstant;
+import io.questdb.griffin.engine.functions.constants.IPv4Constant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.groupby.InterpolationGroupByFunction;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.TimestampUtils;
-import io.questdb.std.*;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.griffin.SqlKeywords.*;
@@ -153,7 +166,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     if (!Chars.isQuoted(fillNode.token)) {
                         throw SqlException.position(fillNode.position).put("Invalid fill value: '").put(fillNode.token).put("'. Timestamp fill value must be in quotes. Example: '2019-01-01T00:00:00.000Z'");
                     }
-                    return TimestampConstant.newInstance(timestampDriver.parseFloorPartialTimestamp(fillNode.token, 1, fillNode.token.length() - 1));
+                    return TimestampConstant.newInstance(timestampDriver.parseFloorConstant(fillNode.token));
                 default:
                     throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
             }

@@ -67,7 +67,7 @@ public interface TimestampDriver {
 
     long parseAnyFormat(CharSequence token, int start, int len) throws NumericException;
 
-    long parseFloorPartialTimestamp(CharSequence token, int start, int len) throws NumericException;
+    long parseFloorConstant(CharSequence quotedTimestampStr) throws NumericException;
 
     long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi);
 
