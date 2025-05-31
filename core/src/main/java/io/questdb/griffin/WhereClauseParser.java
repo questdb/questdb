@@ -36,7 +36,6 @@ import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
 import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntrinsicModel;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
@@ -228,6 +227,7 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private static long getTimestampFromConstFunction(
+            TimestampDriver timestampDriver,
             Function function,
             int functionPosition,
             boolean detectIntervals
@@ -235,8 +235,7 @@ public final class WhereClauseParser implements Mutable {
         if (!ColumnType.isSymbolOrString(function.getType())) {
             return function.getTimestamp(null);
         }
-        CharSequence str = function.getStrA(null);
-        return parseStringAsTimestamp(str, functionPosition, detectIntervals);
+        return parseStringAsTimestamp(timestampDriver, function.getStrA(null), functionPosition, detectIntervals);
     }
 
     private static boolean isFunc(ExpressionNode n) {
@@ -268,9 +267,14 @@ public final class WhereClauseParser implements Mutable {
                 && Chars.equals(left.token, right.token);
     }
 
-    private static long parseStringAsTimestamp(CharSequence str, int position, boolean detectIntervals) throws SqlException {
+    private static long parseStringAsTimestamp(
+            TimestampDriver timestampDriver,
+            CharSequence str,
+            int position,
+            boolean detectIntervals
+    ) throws SqlException {
         try {
-            return TimestampUtils.parseFloorPartialTimestamp(str);
+            return timestampDriver.parseFloorLiteral(str);
         } catch (NumericException ignore) {
             if (detectIntervals) {
                 for (int i = 0, lim = str.length(); i < lim; i++) {
@@ -382,6 +386,7 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private boolean analyzeEquals(
+            TimestampDriver timestampDriver,
             AliasTranslator translator,
             IntrinsicModel model,
             ExpressionNode node,
@@ -393,6 +398,7 @@ public final class WhereClauseParser implements Mutable {
     ) throws SqlException {
         checkNodeValid(node);
         return analyzeEquals0( // left == right
+                timestampDriver,
                 translator,
                 model,
                 node,
@@ -406,6 +412,7 @@ public final class WhereClauseParser implements Mutable {
         )
                 ||
                 analyzeEquals0( // right == left
+                        timestampDriver,
                         translator,
                         model,
                         node,
@@ -420,6 +427,7 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private boolean analyzeEquals0(
+            TimestampDriver timestampDriver,
             AliasTranslator translator,
             IntrinsicModel model,
             ExpressionNode node,
@@ -450,7 +458,7 @@ public final class WhereClauseParser implements Mutable {
                 final Function func = functionParser.parseFunction(b, m, executionContext);
                 try {
                     checkFunctionCanBeTimestamp(m, executionContext, func, b.position);
-                    return analyzeTimestampEqualsFunction(model, node, func, b.position);
+                    return analyzeTimestampEqualsFunction(timestampDriver, model, node, func, b.position);
                 } catch (Throwable th) {
                     Misc.free(func);
                     throw th;
@@ -559,7 +567,7 @@ public final class WhereClauseParser implements Mutable {
             final Function func = functionParser.parseFunction(b, m, executionContext);
             try {
                 if (checkCursorFunctionReturnsSingleTimestamp(func)) {
-                    return analyzeTimestampEqualsFunction(model, node, func, b.position);
+                    return analyzeTimestampEqualsFunction(timestampDriver, model, node, func, b.position);
                 }
                 Misc.free(func);
             } catch (Throwable th) {
@@ -702,7 +710,7 @@ public final class WhereClauseParser implements Mutable {
                         checkFunctionCanBeTimestamp(metadata, executionContext, func, inArg.position);
                         // This is IN (TIMESTAMP) one value which is timestamp and not a STRING
                         // This is same as equals
-                        return analyzeTimestampEqualsFunction(model, in, func, inArg.position);
+                        return analyzeTimestampEqualsFunction(timestampDriver, model, in, func, inArg.position);
                     }
                 } catch (Throwable th) {
                     Misc.free(func);
@@ -753,7 +761,7 @@ public final class WhereClauseParser implements Mutable {
                     } else {
                         final Function func = moreThanOneTimestampFunc ? functionParser.parseFunction(inListItem, metadata, executionContext) : timestampFunc;
                         try {
-                            ts = getTimestampFromConstFunction(func, inListItem.position, false);
+                            ts = getTimestampFromConstFunction(timestampDriver, func, inListItem.position, false);
                             if (moreThanOneTimestampFunc) {
                                 Misc.free(func);
                             }
@@ -1027,6 +1035,7 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private boolean analyzeNotEquals(
+            TimestampDriver timestampDriver,
             AliasTranslator translator,
             IntrinsicModel model,
             ExpressionNode node,
@@ -1037,11 +1046,12 @@ public final class WhereClauseParser implements Mutable {
             TableReader reader
     ) throws SqlException {
         checkNodeValid(node);
-        return analyzeNotEquals0(translator, model, node, node.lhs, node.rhs, m, functionParser, executionContext, canUseIndex, reader)
-                || analyzeNotEquals0(translator, model, node, node.rhs, node.lhs, m, functionParser, executionContext, canUseIndex, reader);
+        return analyzeNotEquals0(timestampDriver, translator, model, node, node.lhs, node.rhs, m, functionParser, executionContext, canUseIndex, reader)
+                || analyzeNotEquals0(timestampDriver, translator, model, node, node.rhs, node.lhs, m, functionParser, executionContext, canUseIndex, reader);
     }
 
     private boolean analyzeNotEquals0(
+            TimestampDriver timestampDriver,
             AliasTranslator translator,
             IntrinsicModel model,
             ExpressionNode node,
@@ -1072,7 +1082,7 @@ public final class WhereClauseParser implements Mutable {
                 Function func = functionParser.parseFunction(b, m, executionContext);
                 try {
                     checkFunctionCanBeTimestamp(m, executionContext, func, b.position);
-                    return analyzeTimestampNotEqualsFunction(model, node, func, b.position);
+                    return analyzeTimestampNotEqualsFunction(timestampDriver, model, node, func, b.position);
                 } catch (Throwable th) {
                     Misc.free(func);
                     throw th;
@@ -1343,13 +1353,14 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private boolean analyzeTimestampEqualsFunction(
+            TimestampDriver timestampDriver,
             IntrinsicModel model,
             ExpressionNode node,
             Function func,
             int functionPosition
     ) throws SqlException {
         if (func.isConstant()) {
-            long value = getTimestampFromConstFunction(func, functionPosition, true);
+            long value = getTimestampFromConstFunction(timestampDriver, func, functionPosition, true);
             if (value == Numbers.LONG_NULL) {
                 // make it empty set
                 model.intersectEmpty();
@@ -1401,7 +1412,7 @@ public final class WhereClauseParser implements Mutable {
             try {
                 checkFunctionCanBeTimestamp(metadata, executionContext, func, compareWithNode.position);
                 if (func.isConstant()) {
-                    lo = getTimestampFromConstFunction(func, compareWithNode.position, false);
+                    lo = getTimestampFromConstFunction(timestampDriver, func, compareWithNode.position, false);
                     if (lo == Numbers.LONG_NULL) {
                         // make it empty set
                         model.intersectEmpty();
@@ -1467,7 +1478,7 @@ public final class WhereClauseParser implements Mutable {
             try {
                 checkFunctionCanBeTimestamp(metadata, executionContext, func, compareWithNode.position);
                 if (func.isConstant()) {
-                    long hi = getTimestampFromConstFunction(func, compareWithNode.position, false);
+                    long hi = getTimestampFromConstFunction(timestampDriver, func, compareWithNode.position, false);
                     if (hi == Numbers.LONG_NULL) {
                         model.intersectEmpty();
                     } else {
@@ -1505,13 +1516,14 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private boolean analyzeTimestampNotEqualsFunction(
+            TimestampDriver timestampDriver,
             IntrinsicModel model,
             ExpressionNode node,
             Function function,
             int functionPosition
     ) throws SqlException {
         if (function.isConstant()) {
-            long value = getTimestampFromConstFunction(function, functionPosition, true);
+            long value = getTimestampFromConstFunction(timestampDriver, function, functionPosition, true);
             model.subtractIntervals(value, value);
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
@@ -2020,9 +2032,9 @@ public final class WhereClauseParser implements Mutable {
             case INTRINSIC_OP_LESS:
                 return analyzeLess(timestampDriver, model, node, false, functionParser, metadata, executionContext);
             case INTRINSIC_OP_EQUAL:
-                return analyzeEquals(translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
+                return analyzeEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
             case INTRINSIC_OP_NOT_EQ:
-                return analyzeNotEquals(translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
+                return analyzeNotEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
             case INTRINSIC_OP_NOT:
                 return (
                         isInKeyword(node.rhs.token) && analyzeNotIn(
@@ -2157,7 +2169,7 @@ public final class WhereClauseParser implements Mutable {
             try {
                 checkFunctionCanBeTimestamp(metadata, executionContext, func, node.position);
                 if (func.isConstant()) {
-                    long timestamp = getTimestampFromConstFunction(func, node.position, false);
+                    long timestamp = getTimestampFromConstFunction(timestampDriver, func, node.position, false);
                     model.setBetweenBoundary(timestamp);
                     Misc.free(func);
                     return true;

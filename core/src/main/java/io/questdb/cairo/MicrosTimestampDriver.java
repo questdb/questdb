@@ -266,6 +266,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long parseFloorLiteral(CharSequence timestampLiteral) throws NumericException {
+        return TimestampUtils.parseFloorPartialTimestamp(timestampLiteral);
+    }
+
+    @Override
     public long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi) {
         CharSequence fmtStr;
         try {

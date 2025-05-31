@@ -69,6 +69,8 @@ public interface TimestampDriver {
 
     long parseFloorConstant(CharSequence quotedTimestampStr) throws NumericException;
 
+    long parseFloorLiteral(CharSequence quotedTimestampStr) throws NumericException;
+
     long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi);
 
     @FunctionalInterface
