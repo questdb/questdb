@@ -35,6 +35,11 @@ import org.jetbrains.annotations.NotNull;
 public interface MetadataServiceStub extends MetadataService {
 
     @Override
+    default void addFilter(@NotNull CharSequence columnName, int filterCapacity) {
+        throw CairoException.critical(0).put("add filter does not update sequencer metadata");
+    }
+
+    @Override
     default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize) {
         throw CairoException.critical(0).put("add index does not update sequencer metadata");
     }

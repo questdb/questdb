@@ -36,6 +36,8 @@ public class TableModel implements TableStructure {
     private static final long COLUMN_FLAG_CACHED = 1L;
     private static final long COLUMN_FLAG_INDEXED = COLUMN_FLAG_CACHED << 1;
     private static final long COLUMN_FLAG_DEDUP_KEY = COLUMN_FLAG_INDEXED << 1;
+    private static final long COLUMN_FLAG_FILTERED = COLUMN_FLAG_DEDUP_KEY << 1;
+
     private final LongList columnBits = new LongList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final CairoConfiguration configuration;
@@ -88,6 +90,11 @@ public class TableModel implements TableStructure {
 
     public CairoConfiguration getConfiguration() {
         return configuration;
+    }
+
+    @Override
+    public int getFilterCapacity(int columnIndex) {
+        return configuration.getFilterCapacity();
     }
 
     @Override
@@ -155,6 +162,11 @@ public class TableModel implements TableStructure {
     @Override
     public boolean isDedupKey(int index) {
         return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_DEDUP_KEY) == COLUMN_FLAG_DEDUP_KEY;
+    }
+
+    @Override
+    public boolean isFiltered(int columnIndex) {
+        return (columnBits.getQuick(columnIndex * 2 + 1) & COLUMN_FLAG_FILTERED) == COLUMN_FLAG_FILTERED;
     }
 
     @Override

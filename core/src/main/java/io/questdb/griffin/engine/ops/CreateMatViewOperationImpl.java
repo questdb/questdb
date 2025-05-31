@@ -157,6 +157,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public int getFilterCapacity(int columnIndex) {
+        return createTableOperation.getFilterCapacity(columnIndex);
+    }
+
+    @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return createTableOperation.getIndexBlockCapacity(columnIndex);
     }
@@ -281,6 +286,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public boolean isFiltered(int index) {
+        return createTableOperation.isFiltered(index);
+    }
+
+    @Override
     public boolean isIndexed(int index) {
         return createTableOperation.isIndexed(index);
     }
@@ -331,6 +341,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             TableColumnMetadata augColumnMetadata = augColumnMetadataMap.get(columnName);
             if (augColumnMetadata != null && augColumnMetadata.isSymbolIndexFlag()) {
                 model.setIndexed(true, qc.getAst().position, augColumnMetadata.getIndexValueBlockCapacity());
+            }
+            if (augColumnMetadata != null && augColumnMetadata.isFilteredFlag()) {
+                model.setFiltered(true, qc.getAst().position, augColumnMetadata.getFilterCapacity());
             }
             createColumnModelMap.put(columnName, model);
         }

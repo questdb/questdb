@@ -46,6 +46,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectString;
 import io.questdb.tasks.TableWriterTask;
 
+import static io.questdb.cairo.filter.SkipFilterUtils.DEFAULT_FILTER_CAPACITY;
+
 public class AlterOperation extends AbstractOperation implements Mutable {
     public final static String CMD_NAME = "ALTER TABLE";
     public final static short DO_NOTHING = 0;
@@ -73,8 +75,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short CHANGE_SYMBOL_CAPACITY = SET_TTL + 1; // 22
     public final static short SET_MAT_VIEW_REFRESH_LIMIT = CHANGE_SYMBOL_CAPACITY + 1; // 23
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
+    public final static short ADD_FILTER = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
+    private static final long BIT_FILTERED = BIT_DEDUP_KEY << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
     private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
     // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
@@ -178,6 +182,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 case ADD_INDEX:
                     applyAddIndex(svc);
+                    break;
+                case ADD_FILTER:
+                    applyAddFilter(svc);
                     break;
                 case DROP_INDEX:
                     applyDropIndex(svc);
@@ -462,6 +469,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             assert !isDedupKey; // adding column as dedup key is not supported in SQL yet.
             int indexValueBlockCapacity = (int) extraInfo.get(lParam++);
             int columnNamePosition = (int) extraInfo.get(lParam++);
+            boolean isFiltered = (flags & BIT_FILTERED) == BIT_FILTERED;
+            int filterCapacity = DEFAULT_FILTER_CAPACITY; // todo
             try {
                 svc.addColumn(
                         columnName,
@@ -472,12 +481,25 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         indexValueBlockCapacity,
                         false,
                         isDedupKey,
+                        isFiltered,
+                        filterCapacity,
                         securityContext
                 );
             } catch (CairoException e) {
                 e.position(columnNamePosition);
                 throw e;
             }
+        }
+    }
+
+    private void applyAddFilter(MetadataService svc) {
+        final CharSequence columnName = activeExtraStrInfo.getStrA(0);
+        try {
+            svc.addFilter(columnName, (int) extraInfo.get(0));
+        } catch (CairoException e) {
+            // augment exception with table position
+            e.position(tableNamePosition);
+            throw e;
         }
     }
 
@@ -680,6 +702,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         assert !isDedupKey; // adding column as dedup key is not supported in SQL yet.
         int indexValueBlockCapacity = (int) extraInfo.get(lParam++);
         int columnNamePosition = (int) extraInfo.get(lParam);
+        boolean isFiltered = (flags & BIT_FILTERED) == BIT_FILTERED;
+        int filterCapacity = DEFAULT_FILTER_CAPACITY; // todo
 
         try {
             svc.changeColumnType(
@@ -690,6 +714,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     isIndexed,
                     indexValueBlockCapacity,
                     false,
+                    isFiltered,
+                    filterCapacity,
                     securityContext
             );
         } catch (CairoException e) {

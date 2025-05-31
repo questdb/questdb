@@ -33,15 +33,19 @@ public interface TypeAdapter {
 
     int getType();
 
+    default boolean isFiltered() {
+        return false;
+    }
+
     default boolean isIndexed() {
         return false;
     }
 
     boolean probe(DirectUtf8Sequence text);
 
-    void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception;
-
     default void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink) throws Exception {
         write(row, column, value);
     }
+
+    void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception;
 }

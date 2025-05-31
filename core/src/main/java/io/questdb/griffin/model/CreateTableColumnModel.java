@@ -35,6 +35,9 @@ public class CreateTableColumnModel implements Mutable {
     private int columnTypePos;
     private int dedupColumnPos;
     private boolean dedupKeyFlag;
+    private int filterCapacity;
+    private int filteredColumnPos;
+    private boolean filteredFlag;
     private int indexColumnPos;
     private int indexValueBlockSize;
     private boolean indexedFlag;
@@ -54,8 +57,11 @@ public class CreateTableColumnModel implements Mutable {
         dedupKeyFlag = false;
         dedupColumnPos = -1;
         indexColumnPos = -1;
+        filteredColumnPos = -1;
         indexValueBlockSize = 0;
+        filterCapacity = 0;
         indexedFlag = false;
+        filteredFlag = false;
         isCast = false;
         symbolCacheFlag = false;
         symbolCapacity = -1;
@@ -75,6 +81,18 @@ public class CreateTableColumnModel implements Mutable {
 
     public int getDedupColumnPos() {
         return dedupColumnPos;
+    }
+
+    public int getFilterCapacity() {
+        return filterCapacity;
+    }
+
+    public int getFilteredColumnPos() {
+        return filteredColumnPos;
+    }
+
+    public boolean getFilteredFlag() {
+        return filteredFlag;
     }
 
     public int getIndexColumnPos() {
@@ -101,6 +119,10 @@ public class CreateTableColumnModel implements Mutable {
         return dedupKeyFlag;
     }
 
+    public boolean isFiltered() {
+        return filteredFlag;
+    }
+
     public boolean isIndexed() {
         return indexedFlag;
     }
@@ -117,6 +139,12 @@ public class CreateTableColumnModel implements Mutable {
 
     public void setColumnType(int columnType) {
         this.columnType = columnType;
+    }
+
+    public void setFiltered(boolean filteredFlag, int filteredColumnPos, int filterCapacity) {
+        this.filteredFlag = filteredFlag;
+        this.filteredColumnPos = filteredColumnPos;
+        this.filterCapacity = filterCapacity;
     }
 
     public void setIndexed(boolean indexedFlag, int indexColumnPosition, int indexValueBlockSize) {
@@ -136,4 +164,5 @@ public class CreateTableColumnModel implements Mutable {
     public void setSymbolCapacity(int symbolCapacity) {
         this.symbolCapacity = symbolCapacity;
     }
+
 }

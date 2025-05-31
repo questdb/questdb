@@ -57,6 +57,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public int getFilterCapacity(int columnIndex) {
+        return getColumnMetadata(columnIndex).getFilterCapacity(); //todo:
+    }
+
+    @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
     }
@@ -136,6 +141,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public boolean isFiltered(int columnIndex) {
+        return getColumnMetadata(columnIndex).isFilteredFlag();
+    }
+
+    @Override
     public boolean isIndexed(int columnIndex) {
         return getColumnMetadata(columnIndex).isSymbolIndexFlag();
     }
@@ -184,7 +194,9 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                             TableUtils.getSymbolCapacity(metaMem, i),
                             TableUtils.isColumnDedupKey(metaMem, i),
                             TableUtils.getReplacingColumnIndex(metaMem, i),
-                            TableUtils.isSymbolCached(metaMem, i)
+                            TableUtils.isSymbolCached(metaMem, i),
+                            TableUtils.isColumnFiltered(metaMem, i),
+                            TableUtils.getFilterCapacity(metaMem, i)
                     )
             );
             if (type > -1) {
@@ -242,7 +254,9 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             int symbolCapacity,
             boolean isDedupKey,
             int replacingIndex,
-            boolean isSymbolCached
+            boolean isSymbolCached,
+            boolean isFiltered,
+            int filterCapacity
     ) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
@@ -258,7 +272,9 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                         symbolCapacity,
                         isDedupKey,
                         replacingIndex,
-                        isSymbolCached
+                        isSymbolCached,
+                        isFiltered,
+                        filterCapacity
                 )
         );
         columnCount++;
@@ -304,7 +320,9 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 newSymbolCapacity,
                 oldMeta.isDedupKeyFlag(),
                 oldMeta.getReplacingIndex(),
-                oldMeta.isSymbolCacheFlag()
+                oldMeta.isSymbolCacheFlag(),
+                oldMeta.isFilteredFlag(),
+                oldMeta.getColumnType()
         );
         columnMetadata.set(columnIndex, newColumnMetadata);
     }
@@ -322,7 +340,9 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 int symbolCapacity,
                 boolean isDedupKey,
                 int replacingIndex,
-                boolean symbolCached
+                boolean symbolCached,
+                boolean isFiltered,
+                int filterCapacity
         ) {
             super(
                     nameStr,
@@ -335,7 +355,9 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                     isDedupKey,
                     replacingIndex,
                     symbolCached,
-                    symbolCapacity
+                    symbolCapacity,
+                    isFiltered,
+                    filterCapacity
             );
         }
     }

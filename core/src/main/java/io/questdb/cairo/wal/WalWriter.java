@@ -1829,6 +1829,8 @@ public class WalWriter implements TableWriterAPI {
                 int indexValueBlockCapacity,
                 boolean isSequential,
                 boolean isDedupKey,
+                boolean isFiltered,
+                int filterCapacity,
                 SecurityContext securityContext
         ) {
             validateNewColumnName(columnName);
@@ -1837,7 +1839,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void changeColumnType(CharSequence columnName, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
+        public void changeColumnType(CharSequence columnName, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, boolean isFiltered, int filterCapacity, SecurityContext securityContext) {
             int columnIndex = validateExistingColumnName(columnName, "cannot change type");
             validateNewColumnType(newType);
             int existingType = metadata.getColumnType(columnIndex);
@@ -1952,6 +1954,8 @@ public class WalWriter implements TableWriterAPI {
                 int indexValueBlockCapacity,
                 boolean isSequential,
                 boolean isDedupKey,
+                boolean isFiltered,
+                int filterCapacity,
                 SecurityContext securityContext
         ) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
@@ -2023,6 +2027,8 @@ public class WalWriter implements TableWriterAPI {
                 boolean isIndexed,
                 int indexValueBlockCapacity,
                 boolean isSequential,
+                boolean isFiltered,
+                int filterCapacity,
                 SecurityContext securityContext
         ) {
             final int existingColumnIndex = metadata.getColumnIndexQuiet(columnNameSeq);
@@ -2050,7 +2056,9 @@ public class WalWriter implements TableWriterAPI {
                                     symbolCapacity,
                                     symbolCacheFlag,
                                     isIndexed,
-                                    indexValueBlockCapacity
+                                    indexValueBlockCapacity,
+                                    isFiltered,
+                                    filterCapacity
                             );
                             path.trimTo(pathSize).slash().put(segmentId);
 

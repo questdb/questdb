@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.filter.SkipFilterUtils;
 import io.questdb.log.Log;
 import io.questdb.mp.Sequence;
 import io.questdb.std.FilesFacade;
@@ -67,12 +68,14 @@ public final class PurgingOperator {
             boolean isIndexed,
             long columnVersion,
             long partitionTimestamp,
-            long partitionNameTxn
+            long partitionNameTxn,
+            boolean isFiltered
     ) {
         updateColumnIndexes.add(columnIndex);
         updateColumnIndexes.add(columnType);
         updateColumnIndexes.add(isIndexed ? 1 : 0);
         updateColumnIndexes.add(columnNames.size());
+        updateColumnIndexes.add(isFiltered ? 1 : 0);
         columnNames.add(columnName);
         cleanupColumnVersions.add(columnIndex, columnVersion, partitionTimestamp, partitionNameTxn);
     }
@@ -109,6 +112,7 @@ public final class PurgingOperator {
                 int columnType = updateColumnIndexes.getQuick(updatedCol + 1);
                 boolean isIndexed = updateColumnIndexes.getQuick(updatedCol + 2) == 1;
                 int colNameIndex = updateColumnIndexes.getQuick(updatedCol + 3);
+                boolean isFiltered = updateColumnIndexes.getQuick(updatedCol + 4) == 1;
                 String columnName = columnNames.getQuick(colNameIndex);
 
                 for (int i = 0; i < cleanupVersionSize; i += 4) {
@@ -139,6 +143,11 @@ public final class PurgingOperator {
                                     BitmapIndexUtils.keyFileName(path.trimTo(pathPartitionLen), columnName, columnVersion);
                                     columnPurged &= ff.removeQuiet(path.$());
                                 }
+
+                                if (isFiltered) {
+                                    SkipFilterUtils.bucketFileName(path.trimTo(pathPartitionLen), columnName, columnVersion);
+                                    columnPurged &= ff.removeQuiet(path.$());
+                                }
                             } else {
                                 // This is removal of symbol files from the table root directory
                                 TableUtils.charFileName(path.trimTo(rootLen), columnName, columnVersion);
@@ -148,6 +157,8 @@ public final class PurgingOperator {
                                 BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName, columnVersion);
                                 columnPurged &= ff.removeQuiet(path.$());
                                 BitmapIndexUtils.valueFileName(path.trimTo(rootLen), columnName, columnVersion);
+                                columnPurged &= ff.removeQuiet(path.$());
+                                SkipFilterUtils.bucketFileName(path.trimTo(rootLen), columnName, columnVersion);
                                 columnPurged &= ff.removeQuiet(path.$());
                             }
                         }

@@ -209,6 +209,14 @@ public interface CairoConfiguration {
     @NotNull
     FilesFacade getFilesFacade();
 
+    int getFilterBucketSize();
+
+    int getFilterCapacity();
+
+    int getFilterMaxCuckooKicks();
+
+    int getFilterTagSize();
+
     long getGroupByAllocatorDefaultChunkSize();
 
     long getGroupByAllocatorMaxChunkSize();

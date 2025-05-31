@@ -36,6 +36,7 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SPSequence;
+import io.questdb.tasks.ColumnFiltererTask;
 import io.questdb.tasks.ColumnIndexerTask;
 import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.tasks.ColumnTask;
@@ -68,6 +69,12 @@ public interface MessageBus extends Closeable {
     CairoConfiguration getConfiguration();
 
     MPSequence getCopyRequestPubSeq();
+
+    MPSequence getFiltererPubSequence();
+
+    RingQueue<ColumnFiltererTask> getFiltererQueue();
+
+    MCSequence getFiltererSubSequence();
 
     MPSequence getGroupByMergeShardPubSeq();
 

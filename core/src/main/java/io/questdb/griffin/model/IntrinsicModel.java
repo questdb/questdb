@@ -43,6 +43,7 @@ public class IntrinsicModel implements Mutable {
     private static final LongList INFINITE_INTERVAL;
     public final ObjList<Function> keyExcludedValueFuncs = new ObjList<>();
     public final ObjList<Function> keyValueFuncs = new ObjList<>();
+    public final ObjList<CharSequence> otherKeyValueFuncs = new ObjList<>();
     private final RuntimeIntervalModelBuilder runtimeIntervalBuilder = new RuntimeIntervalModelBuilder();
     public ExpressionNode filter;
     public int intrinsicValue = UNDEFINED;
@@ -50,6 +51,8 @@ public class IntrinsicModel implements Mutable {
     public CharSequence keyColumn;
     public ObjList<ExpressionNode> keyExcludedNodes = new ObjList<>();
     public QueryModel keySubQuery;
+    // Skip filtered
+    public CharSequence otherKeyColumn;
 
     public RuntimeIntrinsicIntervalModel buildIntervalModel() {
         return runtimeIntervalBuilder.build();
@@ -65,6 +68,8 @@ public class IntrinsicModel implements Mutable {
         intrinsicValue = UNDEFINED;
         keySubQuery = null;
         keyExcludedNodes.clear();
+        otherKeyColumn = null;
+        otherKeyValueFuncs.clear();
     }
 
     public void clearBetweenTempParsing() {

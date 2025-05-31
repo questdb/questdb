@@ -1607,6 +1607,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
+        public int getFilterCapacity(int columnIndex) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public int getIndexBlockCapacity(int columnIndex) {
             return configuration.getIndexValueBlockSize();
         }
@@ -1663,6 +1668,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         @Override
         public boolean isDedupKey(int columnIndex) {
             return false;
+        }
+
+        @Override
+        public boolean isFiltered(int columnIndex) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

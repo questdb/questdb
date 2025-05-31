@@ -291,4 +291,11 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     default boolean usesIndex() {
         return false;
     }
+
+    /**
+     * Returns true if the factory checks the skip filter
+     */
+    default boolean usesSkipFilter() {
+        return false;
+    }
 }

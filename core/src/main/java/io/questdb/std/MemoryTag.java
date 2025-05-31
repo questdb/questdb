@@ -43,6 +43,8 @@ public final class MemoryTag {
     public static final int MMAP_UPDATE = MMAP_TX_LOG_CURSOR + 1;
     public static final int MMAP_PARQUET_PARTITION_CONVERTER = MMAP_UPDATE + 1;
     public static final int MMAP_PARQUET_PARTITION_DECODER = MMAP_PARQUET_PARTITION_CONVERTER + 1;
+    public static final int MMAP_FILTER_WRITER = MMAP_PARQUET_PARTITION_DECODER + 1;
+    public static final int MMAP_FILTER_READER = MMAP_FILTER_WRITER + 1;
 
     // All malloc calls should use NATIVE_* tags
     public static final int NATIVE_PATH = MMAP_PARQUET_PARTITION_DECODER + 1;
@@ -94,7 +96,8 @@ public final class MemoryTag {
     public static final int NATIVE_BIT_SET = NATIVE_METADATA_READER + 1;
     public static final int NATIVE_PARQUET_PARTITION_DECODER = NATIVE_BIT_SET + 1;
     public static final int NATIVE_PARQUET_PARTITION_UPDATER = NATIVE_PARQUET_PARTITION_DECODER + 1;
-    public static final int SIZE = NATIVE_PARQUET_PARTITION_UPDATER + 1;
+    public static final int NATIVE_FILTER_READER = NATIVE_PARQUET_PARTITION_UPDATER + 1;
+    public static final int SIZE = NATIVE_FILTER_READER + 1;
 
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 

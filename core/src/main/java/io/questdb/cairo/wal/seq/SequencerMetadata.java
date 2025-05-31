@@ -85,9 +85,11 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isDedupKey
+            boolean isDedupKey,
+            boolean isFiltered,
+            int filterCapacity
     ) {
-        addColumn0(columnName, columnType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isDedupKey);
+        addColumn0(columnName, columnType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isDedupKey, isFiltered, filterCapacity);
         readColumnOrder.add(columnMetadata.size() - 1);
         structureVersion.incrementAndGet();
     }
@@ -98,7 +100,9 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             int symbolCapacity,
             boolean symbolCacheFlag,
             boolean isIndexed,
-            int indexValueBlockCapacity
+            int indexValueBlockCapacity,
+            boolean isFiltered,
+            int filterCapacity
     ) {
         int existingColumnIndex = TableUtils.changeColumnTypeInMetadata(
                 columnName,
@@ -107,6 +111,8 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 symbolCacheFlag,
                 isIndexed,
                 indexValueBlockCapacity,
+                isFiltered,
+                filterCapacity,
                 columnNameIndexMap, columnMetadata
         );
         int readIndex = readColumnOrder.get(existingColumnIndex);
@@ -257,7 +263,9 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isDedupKey
+            boolean isDedupKey,
+            boolean isFiltered,
+            int filterCapacity
     ) {
         final String name = columnName.toString();
         if (columnType > 0) {
@@ -275,7 +283,9 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                         isDedupKey,
                         0,
                         symbolCacheFlag,
-                        symbolCapacity
+                        symbolCapacity,
+                        isFiltered,
+                        filterCapacity
                 )
         );
         columnCount++;
@@ -296,7 +306,9 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     tableStruct.getSymbolCacheFlag(i),
                     tableStruct.isIndexed(i),
                     tableStruct.getIndexBlockCapacity(i),
-                    tableStruct.isDedupKey(i)
+                    tableStruct.isDedupKey(i),
+                    tableStruct.isFiltered(i),
+                    tableStruct.getFilterCapacity(i)
             );
             readColumnOrder.add(i);
         }

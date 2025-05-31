@@ -123,7 +123,9 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int writerIndex,
             boolean isDedupKey,
             boolean symbolIsCached,
-            int symbolCapacity
+            int symbolCapacity,
+            boolean isFiltered,
+            int filterCapacity
     ) {
         addColumn0(
                 columnName,
@@ -157,7 +159,9 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int symbolCapacity,
             boolean symbolCacheFlag,
             boolean isIndexed,
-            int indexValueBlockCapacity
+            int indexValueBlockCapacity,
+            boolean isFilered,
+            int filterCapacity
     ) {
         TableUtils.changeColumnTypeInMetadata(
                 columnName,
@@ -166,6 +170,8 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                 symbolCacheFlag,
                 isIndexed,
                 indexValueBlockCapacity,
+                isFilered,
+                filterCapacity,
                 columnNameIndexMap,
                 columnMetadata
         );
@@ -283,7 +289,9 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                         isDedupKey,
                         0,
                         symbolCacheFlag,
-                        symbolCapacity
+                        symbolCapacity,
+                        false,
+                        0
                 )
         );
         columnCount++;

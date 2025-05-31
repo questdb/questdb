@@ -629,21 +629,21 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             createX();
 
             try (TableWriter writer = getWriter("x")) {
-                writer.changeColumnType("timestamp", ColumnType.INT, 0, false, false, 0, false, null);
+                writer.changeColumnType("timestamp", ColumnType.INT, 0, false, false, 0, false, false, 0, null);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cannot change column type, column is the designated timestamp");
             }
 
             try (TableWriter writer = getWriter("x")) {
-                writer.changeColumnType("d", ColumnType.DOUBLE, 0, false, false, 0, false, null);
+                writer.changeColumnType("d", ColumnType.DOUBLE, 0, false, false, 0, false, false, 0, null);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cannot change column type, new type is the same as existing");
             }
 
             try (TableWriter writer = getWriter("x")) {
-                writer.changeColumnType("ik", ColumnType.GEOBYTE, 0, false, false, 0, false, null);
+                writer.changeColumnType("ik", ColumnType.GEOBYTE, 0, false, false, 0, false, false, 0, null);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "column conversion failed, see logs for details");
@@ -696,7 +696,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             createX();
 
             try (TableWriter writer = getWriter("x")) {
-                writer.changeColumnType("non_existing", ColumnType.INT, 0, false, false, 0, false, null);
+                writer.changeColumnType("non_existing", ColumnType.INT, 0, false, false, 0, false, false, 0, null);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cannot change column type, column does not exist");

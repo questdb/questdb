@@ -314,7 +314,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                 writer.addColumn("bool2", ColumnType.BOOLEAN);
                                 columnsAdded = true;
                             } else if (prob >= 85 && columnsAdded && !columnTypeChanged) {
-                                writer.changeColumnType("sym2", ColumnType.STRING, 0, false, false, 0, false, null);
+                                writer.changeColumnType("sym2", ColumnType.STRING, 0, false, false, 0, false, false, 0, null);
                                 columnTypeChanged = true;
                             } else if (prob >= 80 && columnsAdded && !columnRenamed) {
                                 writer.renameColumn("bool2", "bool3");

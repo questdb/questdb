@@ -109,10 +109,10 @@ public class ConvertOperatorImpl implements Closeable {
     public void close() {
     }
 
-    public void convertColumn(@NotNull String columnName, int existingColIndex, int existingType, boolean existingIndexed, int columnIndex, int newType) {
+    public void convertColumn(@NotNull String columnName, int existingColIndex, int existingType, boolean existingIndexed, int columnIndex, int newType, boolean existingFiltered) {
         clear();
         partitionUpdated = 0;
-        convertColumn0(columnName, existingColIndex, existingType, existingIndexed, columnIndex, newType);
+        convertColumn0(columnName, existingColIndex, existingType, existingIndexed, columnIndex, newType, existingFiltered);
     }
 
     public void finishColumnConversion() {
@@ -164,7 +164,7 @@ public class ConvertOperatorImpl implements Closeable {
         }
     }
 
-    private void convertColumn0(@NotNull String columnName, int existingColIndex, int existingType, boolean existingIndexed, int columnIndex, int newType) {
+    private void convertColumn0(@NotNull String columnName, int existingColIndex, int existingType, boolean existingIndexed, int columnIndex, int newType, boolean existingFiltered) {
         try {
             this.columnName = columnName;
             if (ColumnType.isSymbol(newType)) {
@@ -233,7 +233,7 @@ public class ConvertOperatorImpl implements Closeable {
                             }
 
                             long existingColTxnVer = tableWriter.getColumnNameTxn(partitionTimestamp, existingColIndex);
-                            purgingOperator.add(existingColIndex, columnName, existingType, existingIndexed, existingColTxnVer, partitionTimestamp, partitionNameTxn);
+                            purgingOperator.add(existingColIndex, columnName, existingType, existingIndexed, existingColTxnVer, partitionTimestamp, partitionNameTxn, existingFiltered);
                             partitionUpdated++;
                         }
                         if (columnTop != tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1)) {

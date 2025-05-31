@@ -74,6 +74,8 @@ public interface MetadataService {
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
+            boolean isFiltered,
+            int filterCapacity,
             SecurityContext securityContext
     );
 
@@ -85,7 +87,9 @@ public interface MetadataService {
             boolean isIndexed,
             int indexValueBlockCapacity,
             boolean isSequential,
-            boolean isDedupKey
+            boolean isDedupKey,
+            boolean isFiltered,
+            int filterCapacity
     ) {
         addColumn(
                 columnName,
@@ -96,9 +100,13 @@ public interface MetadataService {
                 indexValueBlockCapacity,
                 isSequential,
                 isDedupKey,
+                isFiltered,
+                filterCapacity,
                 null
         );
     }
+
+    void addFilter(@NotNull CharSequence columnName, int filterCapacity);
 
     void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize);
 
@@ -107,13 +115,15 @@ public interface MetadataService {
     void changeCacheFlag(int columnIndex, boolean isCacheOn);
 
     void changeColumnType(
-            CharSequence columnName,
+            CharSequence name,
             int newType,
             int symbolCapacity,
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
             boolean isSequential,
+            boolean isFiltered,
+            int filterCapacity,
             SecurityContext securityContext
     );
 

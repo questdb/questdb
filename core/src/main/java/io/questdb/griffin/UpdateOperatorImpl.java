@@ -24,9 +24,22 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.IndexBuilder;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.UpdateOperator;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCM;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -34,7 +47,13 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Rows;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.ColumnType.isVarSize;
@@ -635,6 +654,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 String columnName = metadata.getColumnName(columnIndex);
                 int columnType = metadata.getColumnType(columnIndex);
                 boolean isIndexed = ColumnType.isSymbol(columnType) && metadata.isColumnIndexed(columnIndex);
+                boolean isFiltered = metadata.isColumnFiltered(columnIndex);
 
                 final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1L);
                 long rowCount = columnTop > -1 ? partitionSize - columnTop : 0;
@@ -644,7 +664,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);
                     if (rowCount > 0) {
                         // columnTop == -1 means column did not exist at the partition
-                        purgingOperator.add(columnIndex, columnName, columnType, isIndexed, existingVersion, partitionTimestamp, partitionNameTxn);
+                        purgingOperator.add(columnIndex, columnName, columnType, isIndexed, existingVersion, partitionTimestamp, partitionNameTxn, isFiltered);
                     }
                 }
 

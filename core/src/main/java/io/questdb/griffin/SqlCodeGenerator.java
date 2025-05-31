@@ -35,6 +35,7 @@ import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.FilteredFullFwdPartitionFrameCursorFactory;
 import io.questdb.cairo.FullBwdPartitionFrameCursorFactory;
 import io.questdb.cairo.FullFwdPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -296,7 +297,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 import java.util.ArrayDeque;
 
-import static io.questdb.cairo.ColumnType.getGeoHashBits;
+import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
@@ -606,7 +607,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (idx != timestampIdx) {
                         return false;
                     }
-                } else if (columnType == ColumnType.SYMBOL) {
+                } else if (columnType == SYMBOL) {
                     if (symbolToken == null) {
                         symbolToken = node.token;
                     } else if (!Chars.equalsIgnoreCase(symbolToken, node.token)) {
@@ -632,18 +633,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private static int castToType(int typeA, int typeB) {
-        return (typeA == typeB && typeA != ColumnType.SYMBOL) ? typeA
+        return (typeA == typeB && typeA != SYMBOL) ? typeA
                 : (isStringyType(typeA) && isStringyType(typeB)) ? ColumnType.STRING
                 : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
                 : (isStringyType(typeB) && isParseableType(typeA)) ? typeB
 
                 // NULL casts to any other nullable type, except for symbols which can't cross symbol tables.
-                : ((typeA == ColumnType.NULL) && (typeB != ColumnType.CHAR) && (typeB != ColumnType.SYMBOL)) ? typeB
-                : ((typeB == ColumnType.NULL) && (typeA != ColumnType.CHAR) && (typeA != ColumnType.SYMBOL)) ? typeA
+                : ((typeA == ColumnType.NULL) && (typeB != ColumnType.CHAR) && (typeB != SYMBOL)) ? typeB
+                : ((typeB == ColumnType.NULL) && (typeA != ColumnType.CHAR) && (typeA != SYMBOL)) ? typeA
 
                 // cast long and timestamp to timestamp in unions instead of longs.
-                : ((typeA == ColumnType.TIMESTAMP) && (typeB == ColumnType.LONG)) ? ColumnType.TIMESTAMP
-                : ((typeA == ColumnType.LONG) && (typeB == ColumnType.TIMESTAMP)) ? ColumnType.TIMESTAMP
+                : ((typeA == ColumnType.TIMESTAMP) && (typeB == LONG)) ? ColumnType.TIMESTAMP
+                : ((typeA == LONG) && (typeB == ColumnType.TIMESTAMP)) ? ColumnType.TIMESTAMP
 
                 // Varchars take priority over strings, but strings over most types.
                 : (typeA == ColumnType.VARCHAR || typeB == ColumnType.VARCHAR) ? ColumnType.VARCHAR
@@ -652,8 +653,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // cast booleans vs anything other than varchars to strings.
                 : ((typeA == ColumnType.BOOLEAN) || (typeB == ColumnType.BOOLEAN)) ? ColumnType.STRING
 
-                : (ColumnType.isToSameOrWider(typeB, typeA) && typeA != ColumnType.SYMBOL && typeA != ColumnType.CHAR) ? typeA
-                : (ColumnType.isToSameOrWider(typeA, typeB) && typeB != ColumnType.SYMBOL && typeB != ColumnType.CHAR) ? typeB
+                : (ColumnType.isToSameOrWider(typeB, typeA) && typeA != SYMBOL && typeA != ColumnType.CHAR) ? typeA
+                : (ColumnType.isToSameOrWider(typeA, typeB) && typeB != SYMBOL && typeB != ColumnType.CHAR) ? typeB
                 : ColumnType.STRING;
     }
 
@@ -837,7 +838,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         tempKeyIndexesInBase.add(columnIndex);
                         tempKeyIndex.add(i);
                         tempSymbolSkewIndexes.extendAndSet(i, columnIndex);
-                        arrayColumnTypes.add(ColumnType.SYMBOL);
+                        arrayColumnTypes.add(SYMBOL);
                         tempKeyKinds.add(GKK_VANILLA_INT);
                     } else {
                         return false;
@@ -889,7 +890,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0; i < columnCount; i++) {
             int typeA = metadataA.getColumnType(i);
             int typeB = metadataB.getColumnType(i);
-            if (typeA != typeB || (typeA == ColumnType.SYMBOL && symbolDisallowed)) {
+            if (typeA != typeB || (typeA == SYMBOL && symbolDisallowed)) {
                 return true;
             }
         }
@@ -1005,8 +1006,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             JoinContext joinContext
     ) {
         valueTypes.clear();
-        valueTypes.add(ColumnType.LONG);
-        valueTypes.add(ColumnType.LONG);
+        valueTypes.add(LONG);
+        valueTypes.add(LONG);
 
         return new AsOfJoinLightRecordCursorFactory(
                 configuration,
@@ -1241,9 +1242,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         valueTypes.clear();
-        valueTypes.add(ColumnType.LONG); // chain head offset
-        valueTypes.add(ColumnType.LONG); // chain tail offset
-        valueTypes.add(ColumnType.LONG); // record count for the key
+        valueTypes.add(LONG); // chain head offset
+        valueTypes.add(LONG); // chain tail offset
+        valueTypes.add(LONG); // record count for the key
 
         entityColumnFilter.of(slaveMetadata.getColumnCount());
         RecordSink slaveSink = RecordSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter);
@@ -1350,8 +1351,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             JoinContext joinContext
     ) {
         valueTypes.clear();
-        valueTypes.add(ColumnType.LONG);
-        valueTypes.add(ColumnType.LONG);
+        valueTypes.add(LONG);
+        valueTypes.add(LONG);
 
         return new LtJoinLightRecordCursorFactory(
                 configuration,
@@ -1377,10 +1378,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             JoinContext context
     ) {
         valueTypes.clear();
-        valueTypes.add(ColumnType.LONG); // master previous
-        valueTypes.add(ColumnType.LONG); // master current
-        valueTypes.add(ColumnType.LONG); // slave previous
-        valueTypes.add(ColumnType.LONG); // slave current
+        valueTypes.add(LONG); // master previous
+        valueTypes.add(LONG); // master current
+        valueTypes.add(LONG); // slave previous
+        valueTypes.add(LONG); // slave current
 
         return new SpliceJoinLightRecordCursorFactory(
                 configuration,
@@ -1488,7 +1489,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                         }
                         break;
-                    case ColumnType.LONG:
+                    case LONG:
                         switch (fromTag) {
                             // BOOLEAN will not be cast to LONG
                             // in cast of BOOLEAN -> LONG combination both will be cast to STRING
@@ -1504,7 +1505,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.INT:
                                 castFunctions.add(new IntColumn(i));
                                 break;
-                            case ColumnType.LONG:
+                            case LONG:
                                 castFunctions.add(new LongColumn(i));
                                 break;
                             default:
@@ -1564,7 +1565,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.INT:
                                 castFunctions.add(new IntColumn(i));
                                 break;
-                            case ColumnType.LONG:
+                            case LONG:
                                 castFunctions.add(new LongColumn(i));
                                 break;
                             case ColumnType.FLOAT:
@@ -1590,7 +1591,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.INT:
                                 castFunctions.add(new IntColumn(i));
                                 break;
-                            case ColumnType.LONG:
+                            case LONG:
                                 castFunctions.add(new LongColumn(i));
                                 break;
                             case ColumnType.FLOAT:
@@ -1626,7 +1627,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.INT:
                                 castFunctions.add(new CastIntToStrFunctionFactory.Func(new IntColumn(i)));
                                 break;
-                            case ColumnType.LONG:
+                            case LONG:
                                 castFunctions.add(new CastLongToStrFunctionFactory.Func(new LongColumn(i)));
                                 break;
                             case ColumnType.DATE:
@@ -1651,7 +1652,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.UUID:
                                 castFunctions.add(new CastUuidToStrFunctionFactory.Func(new UuidColumn(i)));
                                 break;
-                            case ColumnType.SYMBOL:
+                            case SYMBOL:
                                 castFunctions.add(
                                         new CastSymbolToStrFunctionFactory.Func(
                                                 new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i))
@@ -1712,7 +1713,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                         }
                         break;
-                    case ColumnType.SYMBOL:
+                    case SYMBOL:
                         castFunctions.add(new CastSymbolToStrFunctionFactory.Func(
                                 new SymbolColumn(
                                         i,
@@ -1932,7 +1933,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.INT:
                                 castFunctions.add(new CastIntToVarcharFunctionFactory.Func(new IntColumn(i)));
                                 break;
-                            case ColumnType.LONG:
+                            case LONG:
                                 castFunctions.add(new CastLongToVarcharFunctionFactory.Func(new LongColumn(i)));
                                 break;
                             case ColumnType.DATE:
@@ -1960,7 +1961,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.IPv4:
                                 castFunctions.add(new CastIPv4ToVarcharFunctionFactory.Func(new IPv4Column(i)));
                                 break;
-                            case ColumnType.SYMBOL:
+                            case SYMBOL:
                                 castFunctions.add(
                                         new CastSymbolToVarcharFunctionFactory.Func(
                                                 new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i))
@@ -3284,7 +3285,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             final long lo = loFunc.getLong(null);
                             final int index = listColumnFilterA.getQuick(0);
                             final int columnIndex = (index > 0 ? index : -index) - 1;
-                            if (lo > 0 && lo <= Integer.MAX_VALUE && metadata.getColumnType(columnIndex) == ColumnType.LONG) {
+                            if (lo > 0 && lo <= Integer.MAX_VALUE && metadata.getColumnType(columnIndex) == LONG) {
                                 return new LongTopKRecordCursorFactory(
                                         orderedMetadata,
                                         recordCursorFactory,
@@ -3476,7 +3477,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         EmptyRecordMetadata.INSTANCE,
                         executionContext
                 );
-                if (!sampleByPeriod.isConstant() || (sampleByPeriod.getType() != ColumnType.LONG && sampleByPeriod.getType() != ColumnType.INT)) {
+                if (!sampleByPeriod.isConstant() || (sampleByPeriod.getType() != LONG && sampleByPeriod.getType() != ColumnType.INT)) {
                     Misc.free(sampleByPeriod);
                     throw SqlException.$(sampleByNode.position, "sample by period must be a constant expression of INT or LONG type");
                 }
@@ -4106,7 +4107,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (columnExpr.type == FUNCTION && columnExpr.paramCount == 0 && isCountKeyword(columnExpr.token)) {
                     // check if count() was not aliased, if it was, we need to generate new metadata, bummer
                     final RecordMetadata metadata = isCountKeyword(columnName) ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA :
-                            new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), ColumnType.LONG));
+                            new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), LONG));
                     return new CountRecordCursorFactory(metadata, generateSubQuery(model, executionContext));
                 }
             }
@@ -4575,7 +4576,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 functions.add(function);
 
-                if (columnType == ColumnType.SYMBOL) {
+                if (columnType == SYMBOL) {
                     if (function instanceof SymbolFunction) {
                         virtualMetadata.add(
                                 new TableColumnMetadata(
@@ -4591,7 +4592,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         virtualMetadata.add(
                                 new TableColumnMetadata(
                                         Chars.toString(column.getAlias()),
-                                        ColumnType.SYMBOL,
+                                        SYMBOL,
                                         false,
                                         0,
                                         false,
@@ -5355,7 +5356,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             false,
                             0,
                             metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
-                            metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
+                            metadata.getColumnMetadata(columnIndex).getSymbolCapacity(),
+                            metadata.getColumnMetadata(columnIndex).isFilteredFlag(),
+                            metadata.getColumnMetadata(columnIndex).getFilterCapacity()
                     ));
 
                     if (columnIndex == readerTimestampIndex) {
@@ -5503,7 +5506,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            // below code block generates index-based filter
+
             final boolean intervalHitsOnlyOnePartition;
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
@@ -5525,6 +5528,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 }
                 intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
+            } else if (intrinsicModel.otherKeyColumn != null && myMeta.getColumnType(intrinsicModel.otherKeyColumn) != SYMBOL) {
+                // temporary
+//                Function f = intrinsicModel.keyValueFuncs.getQuick(0);
+//                if (!(f instanceof LongFunction)) {
+//                    long l = f.getLong(null);
+//                    f = new LongConstant(l);
+//                }
+                Function f;
+                try {
+                    f = new LongConstant(Numbers.parseLong(intrinsicModel.otherKeyValueFuncs.getQuick(0)));
+                } catch (Throwable th) {
+                    f = new LongConstant(0);
+                }
+                ;
+                dfcFactory = new FilteredFullFwdPartitionFrameCursorFactory(tableToken,
+                        model.getMetadataVersion(),
+                        dfcFactoryMeta,
+                        dfcFactoryMeta.getColumnIndex(intrinsicModel.otherKeyColumn),
+                        f);
+                intervalHitsOnlyOnePartition = reader.getPartitionedBy() == PartitionBy.NONE;
             } else {
                 if (model.isForceBackwardScan()) {
                     dfcFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
@@ -5534,7 +5557,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 intervalHitsOnlyOnePartition = reader.getPartitionedBy() == PartitionBy.NONE;
             }
 
-            if (intrinsicModel.keyColumn != null) {
+            // below code block generates index-based filter
+            if (intrinsicModel.keyColumn != null && myMeta.getColumnType(intrinsicModel.keyColumn) == SYMBOL) {
                 // existence of column would have been already validated
                 final int keyColumnIndex = myMeta.getColumnIndexQuiet(intrinsicModel.keyColumn);
                 final int nKeyValues = intrinsicModel.keyValueFuncs.size();
@@ -5794,6 +5818,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
             }
+
 
             if (intervalHitsOnlyOnePartition && intrinsicModel.filter == null) {
                 final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
@@ -6062,7 +6087,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int idx = metadata.getColumnIndex(node.token);
                 int columnType = metadata.getColumnType(idx);
 
-                if (columnType == ColumnType.SYMBOL) {
+                if (columnType == SYMBOL) {
                     return idx;
                 }
             }
@@ -6224,7 +6249,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     case ColumnType.SHORT:
                     case ColumnType.INT:
                     case ColumnType.IPv4:
-                    case ColumnType.LONG:
+                    case LONG:
                     case ColumnType.DATE:
                     case ColumnType.TIMESTAMP:
                     case ColumnType.FLOAT:
@@ -6232,7 +6257,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     case ColumnType.LONG256:
                     case ColumnType.STRING:
                     case ColumnType.VARCHAR:
-                    case ColumnType.SYMBOL:
+                    case SYMBOL:
                     case ColumnType.UUID:
                     case ColumnType.GEOBYTE:
                     case ColumnType.GEOSHORT:
@@ -6300,9 +6325,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 writeSymbolAsString.set(columnIndexA);
                 writeSymbolAsString.set(columnIndexB);
-            } else if (columnTypeB == ColumnType.SYMBOL) {
+            } else if (columnTypeB == SYMBOL) {
                 if (selfJoin && Chars.equalsIgnoreCase(columnNameA, columnNameB)) {
-                    keyTypes.add(ColumnType.SYMBOL);
+                    keyTypes.add(SYMBOL);
                 } else {
                     keyTypes.add(ColumnType.STRING);
                     writeSymbolAsString.set(columnIndexA);
@@ -6357,7 +6382,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final Function limitFunc = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
 
         // coerce to a convertible type
-        coerceRuntimeConstantType(limitFunc, ColumnType.LONG, executionContext, "LIMIT expressions must be convertible to INT", limit.position);
+        coerceRuntimeConstantType(limitFunc, LONG, executionContext, "LIMIT expressions must be convertible to INT", limit.position);
 
         // also rule out string, varchar etc.
         int limitFuncType = limitFunc.getType();
@@ -6399,7 +6424,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         switch (columnType) {
             case ColumnType.STRING:
                 return Record.GET_STR;
-            case ColumnType.SYMBOL:
+            case SYMBOL:
                 return Record.GET_SYM;
             case ColumnType.VARCHAR:
                 return Record.GET_VARCHAR;
@@ -6507,7 +6532,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     static {
-        limitTypes.add(ColumnType.LONG);
+        limitTypes.add(LONG);
         limitTypes.add(ColumnType.BYTE);
         limitTypes.add(ColumnType.SHORT);
         limitTypes.add(ColumnType.INT);
@@ -6517,13 +6542,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     static {
         countConstructors.put(ColumnType.DOUBLE, CountDoubleVectorAggregateFunction::new);
         countConstructors.put(ColumnType.INT, CountIntVectorAggregateFunction::new);
-        countConstructors.put(ColumnType.LONG, CountLongVectorAggregateFunction::new);
+        countConstructors.put(LONG, CountLongVectorAggregateFunction::new);
         countConstructors.put(ColumnType.DATE, CountLongVectorAggregateFunction::new);
         countConstructors.put(ColumnType.TIMESTAMP, CountLongVectorAggregateFunction::new);
 
         sumConstructors.put(ColumnType.DOUBLE, SumDoubleVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.INT, SumIntVectorAggregateFunction::new);
-        sumConstructors.put(ColumnType.LONG, SumLongVectorAggregateFunction::new);
+        sumConstructors.put(LONG, SumLongVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.LONG256, SumLong256VectorAggregateFunction::new);
         sumConstructors.put(ColumnType.SHORT, SumShortVectorAggregateFunction::new);
 
@@ -6531,19 +6556,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         nsumConstructors.put(ColumnType.DOUBLE, NSumDoubleVectorAggregateFunction::new);
 
         avgConstructors.put(ColumnType.DOUBLE, AvgDoubleVectorAggregateFunction::new);
-        avgConstructors.put(ColumnType.LONG, AvgLongVectorAggregateFunction::new);
+        avgConstructors.put(LONG, AvgLongVectorAggregateFunction::new);
         avgConstructors.put(ColumnType.INT, AvgIntVectorAggregateFunction::new);
         avgConstructors.put(ColumnType.SHORT, AvgShortVectorAggregateFunction::new);
 
         minConstructors.put(ColumnType.DOUBLE, MinDoubleVectorAggregateFunction::new);
-        minConstructors.put(ColumnType.LONG, MinLongVectorAggregateFunction::new);
+        minConstructors.put(LONG, MinLongVectorAggregateFunction::new);
         minConstructors.put(ColumnType.DATE, MinDateVectorAggregateFunction::new);
         minConstructors.put(ColumnType.TIMESTAMP, MinTimestampVectorAggregateFunction::new);
         minConstructors.put(ColumnType.INT, MinIntVectorAggregateFunction::new);
         minConstructors.put(ColumnType.SHORT, MinShortVectorAggregateFunction::new);
 
         maxConstructors.put(ColumnType.DOUBLE, MaxDoubleVectorAggregateFunction::new);
-        maxConstructors.put(ColumnType.LONG, MaxLongVectorAggregateFunction::new);
+        maxConstructors.put(LONG, MaxLongVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.DATE, MaxDateVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.TIMESTAMP, MaxTimestampVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.INT, MaxIntVectorAggregateFunction::new);

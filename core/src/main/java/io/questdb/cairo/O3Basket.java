@@ -24,30 +24,40 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.filter.SkipFilterWriter;
+import io.questdb.cairo.filter.SkipFilterWriterImpl;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3Basket implements Mutable {
+    private final ObjList<SkipFilterWriter> filterers = new ObjList<>();
     private final ObjList<BitmapIndexWriter> indexers = new ObjList<>();
     private final ObjList<AtomicInteger> partCounters = new ObjList<>();
     private int columnCount;
+    private int filterCount;
+    private int filtererPointer;
     private int indexCount;
     private int indexerPointer;
     private int partCounterPointer;
 
-    public void checkCapacity(CairoConfiguration configuration, int columnCount, int indexCount) {
-        if (this.columnCount == columnCount && this.indexCount == indexCount) {
+    public void checkCapacity(CairoConfiguration configuration, int columnCount, int indexCount, int filterCount) {
+        if (this.columnCount == columnCount && this.indexCount == indexCount && this.filterCount == filterCount) {
             return;
         }
-        checkCapacity0(configuration, columnCount, indexCount);
+        checkCapacity0(configuration, columnCount, indexCount, filterCount);
     }
 
     @Override
     public void clear() {
         indexerPointer = 0;
         partCounterPointer = 0;
+        filtererPointer = 0;
+    }
+
+    public SkipFilterWriter nextFilterer() {
+        return filterers.getQuick(filtererPointer++);
     }
 
     public BitmapIndexWriter nextIndexer() {
@@ -58,7 +68,7 @@ public class O3Basket implements Mutable {
         return partCounters.getQuick(partCounterPointer++);
     }
 
-    private void checkCapacity0(CairoConfiguration configuration, int columnCount, int indexCount) {
+    private void checkCapacity0(CairoConfiguration configuration, int columnCount, int indexCount, int filterCount) {
         if (this.columnCount < columnCount) {
             for (int i = this.columnCount; i < columnCount; i++) {
                 partCounters.add(new O3MutableAtomicInteger());
@@ -82,5 +92,17 @@ public class O3Basket implements Mutable {
             indexers.setPos(indexCount);
         }
         this.indexCount = indexCount;
+
+        if (this.filterCount < filterCount) {
+            for (int i = this.filterCount; i < filterCount; i++) {
+                filterers.add(new SkipFilterWriterImpl(configuration));
+            }
+        } else {
+            for (int i = indexCount; i < this.indexCount; i++) {
+                filterers.setQuick(i, null);
+            }
+            filterers.setPos(indexCount);
+        }
+        this.filterCount = filterCount;
     }
 }

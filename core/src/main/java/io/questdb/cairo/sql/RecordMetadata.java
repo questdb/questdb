@@ -113,6 +113,15 @@ public interface RecordMetadata extends ColumnTypes, Plannable {
     }
 
     /**
+     * The returned value defines how many distinct entries you aim to store in the filter for
+     * a particular partition.
+     *
+     * @param columnIndex numeric index of the column
+     * @return number of unique keys per partition
+     */
+    int getFilterCapacity(int columnIndex);
+
+    /**
      * The returned value defines how many row IDs to store in a single storage block on disk
      * for an indexed column. Fewer blocks used to store row IDs achieves better performance.
      *
@@ -160,6 +169,12 @@ public interface RecordMetadata extends ColumnTypes, Plannable {
      * @return true if the column with the given column index is present, otherwise false.
      */
     boolean hasColumn(int columnIndex);
+
+    /**
+     * @param columnIndex numeric index of the column
+     * @return true if column is filtered, otherwise false.
+     */
+    boolean isColumnFiltered(int columnIndex);
 
     /**
      * @param columnIndex numeric index of the column

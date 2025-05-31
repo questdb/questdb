@@ -26,6 +26,7 @@ package io.questdb.tasks;
 
 import io.questdb.cairo.BitmapIndexWriter;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.filter.SkipFilterWriter;
 import io.questdb.std.str.Path;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -38,6 +39,8 @@ public class O3OpenColumnTask {
     private CharSequence columnName;
     private long columnNameTxn;
     private int columnType;
+    private int filterCapacity;
+    private SkipFilterWriter filterWriter;
     private int indexBlockCapacity;
     private BitmapIndexWriter indexWriter;
     private long mergeDataHi;
@@ -103,6 +106,14 @@ public class O3OpenColumnTask {
 
     public int getColumnType() {
         return columnType;
+    }
+
+    public int getFilterCapacity() {
+        return filterCapacity;
+    }
+
+    public SkipFilterWriter getFilterWriter() {
+        return filterWriter;
     }
 
     public int getIndexBlockCapacity() {
@@ -302,7 +313,9 @@ public class O3OpenColumnTask {
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn
+            long columnNameTxn,
+            SkipFilterWriter filterWriter,
+            int filterCapacity
     ) {
         this.openColumnMode = openColumnMode;
         this.pathToTable = pathToTable;
@@ -349,5 +362,7 @@ public class O3OpenColumnTask {
         this.srcDataNewPartitionSize = srcDataNewPartitionSize;
         this.srcDataOldPartitionSize = srcDataOldPartitionSize;
         this.o3SplitPartitionSize = o3NewPartitionSize;
+        this.filterWriter = filterWriter;
+        this.filterCapacity = filterCapacity;
     }
 }

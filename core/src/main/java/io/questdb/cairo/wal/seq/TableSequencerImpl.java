@@ -244,7 +244,9 @@ public class TableSequencerImpl implements TableSequencer {
                     i,
                     metadata.isDedupKey(i),
                     metadata.getColumnMetadata(i).isSymbolCacheFlag(),
-                    metadata.getColumnMetadata(i).getSymbolCapacity()
+                    metadata.getColumnMetadata(i).getSymbolCapacity(),
+                    metadata.getColumnMetadata(i).isFilteredFlag(),
+                    metadata.getColumnMetadata(i).getFilterCapacity()
             );
             if (columnType > -1) {
                 reorderNeeded |= lastOrder > columnOrder;
