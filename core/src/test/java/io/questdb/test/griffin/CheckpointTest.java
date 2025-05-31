@@ -1518,7 +1518,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             // Assert _txn contents.
                             path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
                             try (TxReader txReader0 = tableReader.getTxFile()) {
-                                try (TxReader txReader1 = new TxReader(ff).ofRO(path.$(), metadata.getPartitionBy())) {
+                                try (TxReader txReader1 = new TxReader(ff).ofRO(path.$(), metadata.getTimestampType(), metadata.getPartitionBy())) {
                                     TableUtils.safeReadTxn(txReader1, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
                                     Assert.assertEquals(txReader0.getTxn(), txReader1.getTxn());
@@ -1545,7 +1545,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             // Assert _cv contents.
                             path.trimTo(tableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
                             try (ColumnVersionReader cvReader0 = tableReader.getColumnVersionReader()) {
-                                try (ColumnVersionReader cvReader1 = new ColumnVersionReader().ofRO(ff, path.$())) {
+                                try (ColumnVersionReader cvReader1 = new ColumnVersionReader().ofRO(ff, path.$(), ColumnType.TIMESTAMP)) {
                                     cvReader1.readSafe(configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
                                     Assert.assertEquals(cvReader0.getVersion(), cvReader1.getVersion());

@@ -57,9 +57,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private boolean betweenBoundarySet;
     private boolean betweenNegated;
     private boolean intervalApplied = false;
+    private int partitionBy;
+    private int timestampType;
 
     public RuntimeIntrinsicIntervalModel build() {
-        return new RuntimeIntervalModel(new LongList(staticIntervals), new ObjList<>(dynamicRangeList));
+        return new RuntimeIntervalModel(timestampType, partitionBy, new LongList(staticIntervals), new ObjList<>(dynamicRangeList));
     }
 
     @Override
@@ -85,7 +87,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        IntervalUtils.addHiLoInterval(lo, 0, adjustment, IntervalDynamicIndicator.IS_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
+        IntervalUtils.encodeInterval(lo, 0, adjustment, IntervalDynamicIndicator.IS_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
         dynamicRangeList.add(hi);
         intervalApplied = true;
     }
@@ -95,7 +97,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        IntervalUtils.addHiLoInterval(0, hi, adjustment, IntervalDynamicIndicator.IS_LO_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
+        IntervalUtils.encodeInterval(0, hi, adjustment, IntervalDynamicIndicator.IS_LO_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
         dynamicRangeList.add(lo);
         intervalApplied = true;
     }
@@ -111,7 +113,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 IntervalUtils.intersectInPlace(staticIntervals, staticIntervals.size() - 2);
             }
         } else {
-            IntervalUtils.addHiLoInterval(lo, hi, IntervalOperation.INTERSECT, staticIntervals);
+            IntervalUtils.encodeInterval(lo, hi, IntervalOperation.INTERSECT, staticIntervals);
             dynamicRangeList.add(null);
         }
         intervalApplied = true;
@@ -128,9 +130,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         int size = staticIntervals.size();
-        IntervalUtils.parseIntervalEx(seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
+        TimestampUtils.parseIntervalEx(seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
         if (dynamicRangeList.size() == 0) {
-            IntervalUtils.applyLastEncodedIntervalEx(staticIntervals);
+            IntervalUtils.applyLastEncodedIntervalEx(timestampType, staticIntervals);
             if (intervalApplied) {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
             }
@@ -146,7 +148,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        IntervalUtils.addHiLoInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
+        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
         dynamicRangeList.add(intervalFunction);
         intervalApplied = true;
     }
@@ -156,7 +158,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
+        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
         dynamicRangeList.add(function);
         intervalApplied = true;
     }
@@ -167,9 +169,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         int size = staticIntervals.size();
-        IntervalUtils.parseSingleTimestamp(seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
+        TimestampUtils.parseSingleTimestamp(seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
         if (dynamicRangeList.size() == 0) {
-            IntervalUtils.applyLastEncodedIntervalEx(staticIntervals);
+            IntervalUtils.applyLastEncodedIntervalEx(timestampType, staticIntervals);
             if (intervalApplied) {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
             }
@@ -182,6 +184,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public boolean isEmptySet() {
         return intervalApplied && staticIntervals.size() == 0;
+    }
+
+    public void of(int timestampType, int partitionBy) {
+        this.timestampType = timestampType;
+        this.partitionBy = partitionBy;
     }
 
     public void setBetweenBoundary(long timestamp) {
@@ -239,7 +246,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.SUBTRACT, staticIntervals);
+        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.SUBTRACT, staticIntervals);
         dynamicRangeList.add(function);
         intervalApplied = true;
     }
@@ -257,7 +264,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
             }
         } else {
-            IntervalUtils.addHiLoInterval(lo, hi, IntervalOperation.SUBTRACT, staticIntervals);
+            IntervalUtils.encodeInterval(lo, hi, IntervalOperation.SUBTRACT, staticIntervals);
             dynamicRangeList.add(null);
         }
         intervalApplied = true;
@@ -269,9 +276,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         int size = staticIntervals.size();
-        IntervalUtils.parseIntervalEx(seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT);
+        TimestampUtils.parseIntervalEx(seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT);
         if (dynamicRangeList.size() == 0) {
-            IntervalUtils.applyLastEncodedIntervalEx(staticIntervals);
+            IntervalUtils.applyLastEncodedIntervalEx(timestampType, staticIntervals);
             IntervalUtils.invert(staticIntervals, size);
             if (intervalApplied) {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
@@ -288,7 +295,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        IntervalUtils.addHiLoInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
+        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
         dynamicRangeList.add(intervalFunction);
         intervalApplied = true;
     }
@@ -315,8 +322,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
-        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
-        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
+        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
+        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
         dynamicRangeList.add(funcValue1);
         dynamicRangeList.add(funcValue2);
         intervalApplied = true;
@@ -340,7 +347,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
-        IntervalUtils.addHiLoInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);
+        IntervalUtils.encodeInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);
         dynamicRangeList.add(funcValue);
         intervalApplied = true;
     }

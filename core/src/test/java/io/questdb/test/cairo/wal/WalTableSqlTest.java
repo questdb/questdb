@@ -27,7 +27,6 @@ package io.questdb.test.cairo.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -36,6 +35,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -47,7 +47,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.mp.Job;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -442,9 +442,16 @@ public class WalTableSqlTest extends AbstractCairoTest {
         drainWalQueue();
 
         TableToken tt = engine.verifyTableName(tableName);
+        int timestampType;
+        int partitionBy;
+        try (TableMetadata m = engine.getTableMetadata(tt)) {
+            timestampType = m.getTimestampType();
+            partitionBy = m.getPartitionBy();
+        }
+
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
             Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt).concat(TXN_FILE_NAME);
-            tw.ofRW(p.$(), PartitionBy.DAY);
+            tw.ofRW(p.$(), timestampType, partitionBy);
             tw.setLagTxnCount(1);
             tw.setLagRowCount(1000);
             tw.setLagMinTimestamp(1_000_000L);
@@ -452,13 +459,13 @@ public class WalTableSqlTest extends AbstractCairoTest {
             tw.commit(new ObjList<>());
         }
 
-        execute("alter table " + tableName + " set type bypass wal", sqlExecutionContext);
+        execute("alter table " + tableName + " set type bypass wal");
         engine.releaseInactive();
         engine.load();
 
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
             Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt).concat(TXN_FILE_NAME);
-            tw.ofRW(p.$(), PartitionBy.DAY);
+            tw.ofRW(p.$(), timestampType, partitionBy);
             Assert.assertEquals(0, tw.getLagRowCount());
             Assert.assertEquals(0, tw.getLagTxnCount());
             Assert.assertEquals(Long.MAX_VALUE, tw.getLagMinTimestamp());
@@ -478,7 +485,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
             Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt).concat(TXN_FILE_NAME);
-            tw.ofRW(p.$(), PartitionBy.DAY);
+            tw.ofRW(p.$(), timestampType, partitionBy);
             Assert.assertEquals(0, tw.getLagRowCount());
             Assert.assertEquals(0, tw.getLagTxnCount());
             Assert.assertEquals(Long.MAX_VALUE, tw.getLagMinTimestamp());
@@ -685,7 +692,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "able does not exist");
                 }
 
-                TableWriter.Row row = walWriter1.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-24T01"));
+                TableWriter.Row row = walWriter1.newRow(TimestampUtils.parseFloorPartialTimestamp("2022-02-24T01"));
                 row.putLong(1, 1);
                 row.append();
 
@@ -709,7 +716,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 // Nonstructural change
                 try {
                     AlterOperationBuilder dropPartition = new AlterOperationBuilder().ofDropPartition(0, tableToken, 1);
-                    dropPartition.addPartitionToList(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"), 0);
+                    dropPartition.addPartitionToList(TimestampUtils.parseFloorPartialTimestamp("2022-02-24"), 0);
                     AlterOperation dropAlter = dropPartition.build();
                     dropAlter.withContext(sqlExecutionContext);
                     dropAlter.withSqlStatement("alter table " + tableName + " drop partition list '2022-02-24'");
@@ -1459,8 +1466,16 @@ public class WalTableSqlTest extends AbstractCairoTest {
             TableToken token = engine.verifyTableName(tableName);
             runApplyOnce(token);
 
+            int timestampType;
+            int partitionBy;
+
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                timestampType = m.getTimestampType();
+                partitionBy = m.getPartitionBy();
+            }
+
             try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade())) {
-                txReader.ofRO(Path.getThreadLocal(root).concat(token).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
+                txReader.ofRO(Path.getThreadLocal(root).concat(token).concat(TXN_FILE_NAME).$(), timestampType, partitionBy);
                 txReader.unsafeLoadAll();
 
                 Assert.assertEquals(0, txReader.getLagTxnCount());
@@ -1924,9 +1939,16 @@ public class WalTableSqlTest extends AbstractCairoTest {
             TableToken token = engine.verifyTableName(tableName);
             runApplyOnce(token);
 
+            int timestampType;
+            int partitionBy;
+
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                timestampType = m.getTimestampType();
+                partitionBy = m.getPartitionBy();
+            }
 
             try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade())) {
-                txReader.ofRO(Path.getThreadLocal(root).concat(token).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
+                txReader.ofRO(Path.getThreadLocal(root).concat(token).concat(TXN_FILE_NAME).$(), timestampType, partitionBy);
                 txReader.unsafeLoadAll();
 
                 Assert.assertEquals(1, txReader.getLagTxnCount());
@@ -1941,8 +1963,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 Assert.assertEquals(2, txReader.getLagTxnCount());
                 Assert.assertEquals(2, txReader.getLagRowCount());
                 Assert.assertFalse(txReader.isLagOrdered());
-                Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2022-02-24T00"), txReader.getLagMinTimestamp());
-                Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2022-02-24T01"), txReader.getLagMaxTimestamp());
+                Assert.assertEquals(TimestampUtils.parseFloorPartialTimestamp("2022-02-24T00"), txReader.getLagMinTimestamp());
+                Assert.assertEquals(TimestampUtils.parseFloorPartialTimestamp("2022-02-24T01"), txReader.getLagMaxTimestamp());
 
                 runApplyOnce(token);
                 txReader.unsafeLoadAll();

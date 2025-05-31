@@ -39,7 +39,7 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
+import static io.questdb.griffin.model.TimestampUtils.parseFloorPartialTimestamp;
 
 public class WriterPoolTableFunctionTest extends AbstractCairoTest {
 

@@ -32,7 +32,8 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
+
+import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
 
 public class DefaultPGWireConfiguration extends DefaultIODispatcherConfiguration implements PGWireConfiguration {
     private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
@@ -74,7 +75,7 @@ public class DefaultPGWireConfiguration extends DefaultIODispatcherConfiguration
 
     @Override
     public DateLocale getDefaultDateLocale() {
-        return DateFormatUtils.EN_LOCALE;
+        return EN_LOCALE;
     }
 
     @Override

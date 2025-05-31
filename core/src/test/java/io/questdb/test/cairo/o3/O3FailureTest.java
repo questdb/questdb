@@ -38,7 +38,7 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -648,7 +648,7 @@ public class O3FailureTest extends AbstractO3Test {
                             sqlExecutionContext
                     );
 
-                    long maxTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24") + records * 1000L;
+                    long maxTimestamp = TimestampUtils.parseFloorPartialTimestamp("2022-02-24") + records * 1000L;
                     CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
 
                     try {
@@ -1005,7 +1005,7 @@ public class O3FailureTest extends AbstractO3Test {
                             sqlExecutionContext
                     );
 
-                    long maxTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24") + records * 1000L;
+                    long maxTimestamp = TimestampUtils.parseFloorPartialTimestamp("2022-02-24") + records * 1000L;
                     CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
 
                     try {

@@ -24,9 +24,11 @@
 
 package io.questdb.test.griffin.model;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -320,8 +322,8 @@ public class IntrinsicModelTest {
     public void testInvert() throws SqlException {
         final String intervalStr = "2018-01-10T10:30:00.000Z;30m;2d;2";
         LongList out = new LongList();
-        IntervalUtils.parseIntervalEx(intervalStr, 0, intervalStr.length(), 0, out, IntervalOperation.INTERSECT);
-        IntervalUtils.applyLastEncodedIntervalEx(out);
+        TimestampUtils.parseIntervalEx(intervalStr, 0, intervalStr.length(), 0, out, IntervalOperation.INTERSECT);
+        IntervalUtils.applyLastEncodedIntervalEx(ColumnType.TIMESTAMP, out);
         IntervalUtils.invert(out);
         TestUtils.assertEquals(
                 "[{lo=, hi=2018-01-10T10:29:59.999999Z},{lo=2018-01-10T11:00:00.000001Z, hi=2018-01-12T10:29:59.999999Z},{lo=2018-01-12T11:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
@@ -475,21 +477,21 @@ public class IntrinsicModelTest {
 
     private static void assertShortInterval(String expected, String interval) throws SqlException {
         LongList out = new LongList();
-        IntervalUtils.parseIntervalEx(interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        IntervalUtils.applyLastEncodedIntervalEx(out);
+        TimestampUtils.parseIntervalEx(interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        IntervalUtils.applyLastEncodedIntervalEx(ColumnType.TIMESTAMP, out);
         TestUtils.assertEquals(expected, intervalToString(out));
     }
 
     private void assertDateCeil(String expected, String value) throws NumericException {
         sink.clear();
-        long t = IntervalUtils.parseCCPartialDate(value);
+        long t = TimestampUtils.parseCCPartialDate(value);
         TimestampFormatUtils.appendDateTimeUSec(sink, t);
         TestUtils.assertEquals(expected, sink);
     }
 
     private void assertDateFloor(String expected, String value) throws NumericException {
         sink.clear();
-        long t = IntervalUtils.parseFloorPartialTimestamp(value);
+        long t = TimestampUtils.parseFloorPartialTimestamp(value);
         TimestampFormatUtils.appendDateTimeUSec(sink, t);
         TestUtils.assertEquals(expected, sink);
     }
@@ -503,8 +505,8 @@ public class IntrinsicModelTest {
 
     private void assertIntervalError(String interval) {
         try {
-            IntervalUtils.parseIntervalEx(interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-            IntervalUtils.applyLastEncodedIntervalEx(out);
+            TimestampUtils.parseIntervalEx(interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            IntervalUtils.applyLastEncodedIntervalEx(ColumnType.TIMESTAMP, out);
             Assert.fail();
         } catch (SqlException ignore) {
         }

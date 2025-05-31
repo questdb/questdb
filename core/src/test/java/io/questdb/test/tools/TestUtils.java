@@ -43,6 +43,7 @@ import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -63,7 +64,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
@@ -1045,14 +1046,28 @@ public final class TestUtils {
     }
 
     public static String createPopulateTableStmt(
-            CharSequence tableName, TableModel tableModel,
-            int totalRows, String startDate, int partitionCount
+            CharSequence tableName,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
     ) throws NumericException {
-        long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
-        long increment = partitionIncrement(tableModel.getPartitionBy(), fromTimestamp, totalRows, partitionCount);
-        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
-            final PartitionBy.PartitionAddMethod partitionAddMethod =
-                    PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
+        long fromTimestamp = TimestampUtils.parseFloorPartialTimestamp(startDate);
+        int timestampType = TableUtils.getTimestampType(tableModel);
+        int partitionBy = tableModel.getPartitionBy();
+        long increment = partitionIncrement(
+                timestampType,
+                partitionBy,
+                fromTimestamp,
+                totalRows,
+                partitionCount
+        );
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            final TimestampDriver.PartitionAddMethod partitionAddMethod =
+                    PartitionBy.getPartitionAddMethod(
+                            timestampType,
+                            partitionBy
+                    );
             assert partitionAddMethod != null;
             long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
             increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
@@ -1455,10 +1470,19 @@ public final class TestUtils {
     }
 
     public static String insertFromSelectPopulateTableStmt(
-            TableModel tableModel, int totalRows, String startDate, int partitionCount
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
     ) throws NumericException {
-        long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
-        long increment = partitionIncrement(tableModel.getPartitionBy(), fromTimestamp, totalRows, partitionCount);
+        long fromTimestamp = TimestampUtils.parseFloorPartialTimestamp(startDate);
+        long increment = partitionIncrement(
+                TableUtils.getTimestampType(tableModel),
+                tableModel.getPartitionBy(),
+                fromTimestamp,
+                totalRows,
+                partitionCount
+        );
 
         StringBuilder insertFromSelect = new StringBuilder();
         insertFromSelect.append("INSERT ATOMIC INTO ")
@@ -2100,10 +2124,10 @@ public final class TestUtils {
         return ss;
     }
 
-    private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
+    private static long partitionIncrement(int timestampType, int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
         long increment = 0;
         if (PartitionBy.isPartitioned(partitionBy)) {
-            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(partitionBy);
+            final TimestampDriver.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(timestampType, partitionBy);
             assert partitionAddMethod != null;
             long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
             increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;

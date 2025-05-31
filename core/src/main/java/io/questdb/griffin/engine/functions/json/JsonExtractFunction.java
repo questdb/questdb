@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.json.SimdJsonNumberType;
@@ -345,7 +345,7 @@ public class JsonExtractFunction implements ScalarFunction {
             case SimdJsonType.STRING:
                 assert stateA.destUtf8Sink != null;
                 try {
-                    return IntervalUtils.parseFloorPartialTimestamp(stateA.destUtf8Sink.asAsciiCharSequence());
+                    return TimestampUtils.parseFloorPartialTimestamp(stateA.destUtf8Sink.asAsciiCharSequence());
                 } catch (NumericException e) {
                     return Numbers.LONG_NULL;
                 }

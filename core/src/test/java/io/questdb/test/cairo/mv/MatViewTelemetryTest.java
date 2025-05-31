@@ -36,7 +36,7 @@ import org.junit.Test;
 
 import static io.questdb.PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT;
 import static io.questdb.PropertyKey.DEV_MODE_ENABLED;
-import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
+import static io.questdb.griffin.model.TimestampUtils.parseFloorPartialTimestamp;
 import static org.junit.Assert.assertNull;
 
 public class MatViewTelemetryTest extends AbstractCairoTest {

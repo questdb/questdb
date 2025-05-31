@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.text;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.CsvFileIndexer;
@@ -201,6 +202,7 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
                         fileName,
                         inputWorkRoot,
                         0,
+                        ColumnType.TIMESTAMP,
                         PartitionBy.DAY,
                         (byte) ',',
                         timestampIndex,

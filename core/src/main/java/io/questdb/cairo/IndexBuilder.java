@@ -128,11 +128,12 @@ public class IndexBuilder extends RebuildColumnBase {
             long partitionNameTxn,
             long partitionSize,
             long partitionTimestamp,
+            int timestampType,
             int partitionBy,
             int indexValueBlockCapacity
     ) {
         final int trimTo = path.size();
-        TableUtils.setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
+        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         try {
             final int plen = path.size();
 

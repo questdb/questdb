@@ -379,7 +379,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                     path.of(engine.getConfiguration().getDbRoot()).concat(tableToken);
                     int len = path.size();
                     int partitionBy = PartitionBy.DAY;
-                    txReader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy);
+                    txReader.ofRO(path.concat(TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, partitionBy);
                     txReader.unsafeLoadAll();
 
                     Assert.assertEquals(2, txReader.getPartitionCount());
@@ -389,7 +389,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
                         for (int v = 0; v < partitionNameVersion + 5; v++) {
                             path.trimTo(len);
-                            TableUtils.setPathForNativePartition(path, partitionBy, partitionTs, v);
+                            TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, partitionBy, partitionTs, v);
                             path.concat("x.d").$();
                             Assert.assertEquals(Utf8s.toString(path), v == partitionNameVersion, Files.exists(path.$()));
                         }

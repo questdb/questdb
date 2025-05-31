@@ -31,7 +31,7 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -93,8 +93,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testAlterCommandDropAllPartitions() throws Exception {
-        long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000;
-        long day2 = IntervalUtils.parseFloorPartialTimestamp("2023-02-28") * 1000;
+        long day1 = TimestampUtils.parseFloorPartialTimestamp("2023-02-27") * 1000;
+        long day2 = TimestampUtils.parseFloorPartialTimestamp("2023-02-28") * 1000;
         runInContext((server) -> {
             final AtomicLong ilpProducerWatts = new AtomicLong(0L);
             final AtomicBoolean keepSending = new AtomicBoolean(true);
@@ -156,7 +156,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testAlterCommandDropLastPartition() throws Exception {
         runInContext((server) -> {
-            long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000; // <-- last partition
+            long day1 = TimestampUtils.parseFloorPartialTimestamp("2023-02-27") * 1000; // <-- last partition
 
             TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY);
             tm.col("room", ColumnType.SYMBOL);
@@ -194,8 +194,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testAlterCommandDropPartition() throws Exception {
         long day1 = 0;
-        long day2 = IntervalUtils.parseFloorPartialTimestamp("1970-02-02") * 1000;
-        long day3 = IntervalUtils.parseFloorPartialTimestamp("1970-03-03") * 1000;
+        long day2 = TimestampUtils.parseFloorPartialTimestamp("1970-02-02") * 1000;
+        long day3 = TimestampUtils.parseFloorPartialTimestamp("1970-03-03") * 1000;
         runInContext((server) -> {
             String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
             send(lineData);
@@ -263,7 +263,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testAlterCommandSequenceReleased() throws Exception {
         long day1 = 0;
-        long day2 = IntervalUtils.parseFloorPartialTimestamp("1970-02-02") * 1000;
+        long day2 = TimestampUtils.parseFloorPartialTimestamp("1970-02-02") * 1000;
         runInContext((server) -> {
             String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
             send(lineData);

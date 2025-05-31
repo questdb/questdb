@@ -37,7 +37,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPoolUtils;
@@ -652,7 +652,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     private long parseFloorPartialTimestamp(String from) {
         try {
-            return IntervalUtils.parseFloorPartialTimestamp(from);
+            return TimestampUtils.parseFloorPartialTimestamp(from);
         } catch (NumericException e) {
             throw new RuntimeException(e);
         }
@@ -756,7 +756,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 chooseUpsertKeys(readerMetadata, dedupKeys, rnd, upsertKeyIndexes);
                 timestampColumnName = readerMetadata.getColumnName(readerMetadata.getTimestampIndex());
 
-                long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T23:59:59");
+                long start = TimestampUtils.parseFloorPartialTimestamp("2022-02-24T23:59:59");
                 long end = start + 2 * Timestamps.SECOND_MICROS;
                 transactions = generateSet(rnd, sequencerMetadata, readerMetadata, start, end, tableNameWalNoDedup);
                 comaSeparatedUpsertCols = toCommaSeparatedString(readerMetadata, upsertKeyIndexes);
@@ -812,7 +812,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 timestampColumnName = meta.getColumnName(meta.getTimestampIndex());
             }
 
-            long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
+            long start = TimestampUtils.parseFloorPartialTimestamp("2022-02-24T17");
             long end = start + fuzzer.partitionCount * Timestamps.DAY_MICROS;
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameDedup, rnd, start, end);
 

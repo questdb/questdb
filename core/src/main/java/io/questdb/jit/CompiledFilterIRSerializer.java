@@ -27,9 +27,18 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.griffin.*;
+import io.questdb.griffin.GeoHashUtil;
+import io.questdb.griffin.PostOrderTreeTraversalAlgo;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
@@ -37,11 +46,20 @@ import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.*;
+import io.questdb.griffin.model.TimestampUtils;
+import io.questdb.std.Chars;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.IntStack;
+import io.questdb.std.LongList;
+import io.questdb.std.LongObjHashMap;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 
-import java.util.ArrayDeque;
 import java.util.Arrays;
 
 /**
@@ -99,6 +117,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final PostOrderTreeTraversalAlgo inPredicateTraverseAlgo = new PostOrderTreeTraversalAlgo();
     private final PredicateContext predicateContext = new PredicateContext();
     private final StringSink sink = new StringSink();
+    private final IntStack typeStack = new IntStack();
     private ObjList<Function> bindVarFunctions;
     private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
     private SqlExecutionContext executionContext;
@@ -338,6 +357,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return Chars.equals(token, "/");
     }
 
+    private static boolean isGeoHash(int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOINT:
+            case ColumnType.GEOLONG:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     // Stands for PredicateType.NUMERIC
     private static boolean isNumeric(int columnTypeTag) {
         switch (columnTypeTag) {
@@ -455,7 +486,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void ensureOnlyVarSizeHeaderChecks() throws SqlException {
-        final ArrayDeque<Integer> typeStack = new ArrayDeque<>();
+        typeStack.clear();
         for (long offset = 0; offset < memory.size(); offset += INSTRUCTION_SIZE) {
             int opCode = memory.getInt(offset);
             int typeCode = memory.getInt(offset + Integer.BYTES);
@@ -548,7 +579,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         predicateContext.onNodeVisited(predicateContext.inOperationNode.lhs);
 
         // check predicate type is timestamp
-        return predicateContext.type == PredicateType.TIMESTAMP;
+        return ColumnType.isTimestamp(predicateContext.columnType);
     }
 
     private boolean isTopLevelBooleanColumn(ExpressionNode node) {
@@ -598,10 +629,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void rejectSymbol(final CharSequence token, int position) throws SqlException {
-        PredicateType typeCode = predicateContext.type;
         // >, >=, < and <= for symbols should use string and not int value comparison
         // since string is not supported in JIT, we reject it here and allow code generator to fall back to non-JIT implementation
-        if (typeCode == PredicateType.SYMBOL) {
+        if (predicateContext.columnType == ColumnType.SYMBOL) {
             throw SqlException.position(position)
                     .put("operator: ").put(token).put(" is not supported for SYMBOL type");
         }
@@ -682,41 +712,45 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (SqlKeywords.isNullKeyword(token)) {
-            serializeNull(offset, position, typeCode, predicateContext.type);
+            serializeNull(offset, position, typeCode, predicateContext.columnType);
             return;
         }
 
-        if (predicateContext.type == PredicateType.SYMBOL) {
+        if (predicateContext.columnType == ColumnType.SYMBOL) {
             serializeSymbolConstant(offset, position, token);
             return;
         }
 
         if (Chars.isQuoted(token)) {
-            if (predicateContext.type == PredicateType.TIMESTAMP) {
+            if (ColumnType.isTimestamp(predicateContext.columnType)) {
                 try {
-                    long ts = IntervalUtils.parseFloorPartialTimestamp(token, 1, len - 1);
-                    putOperand(offset, IMM, I8_TYPE, ts);
+                    putOperand(
+                            offset,
+                            IMM,
+                            I8_TYPE,
+                            ColumnType.getTimestampDriver(predicateContext.columnType).parseFloorConstant(token)
+                    );
                 } catch (NumericException e) {
                     throw SqlException.invalidDate(token, position);
                 }
                 return;
-            } else if (predicateContext.type == PredicateType.DATE) {
+            } else if (predicateContext.columnType == ColumnType.DATE) {
                 try {
-                    long date = IntervalUtils.parseFloorPartialTimestamp(token, 1, len - 1) / Timestamps.MILLI_MICROS;
+                    long date = TimestampUtils.parseFloorPartialTimestamp(token, 1, len - 1) / Timestamps.MILLI_MICROS;
                     putOperand(offset, IMM, I8_TYPE, date);
                 } catch (NumericException e) {
                     throw SqlException.invalidDate(token, position);
                 }
                 return;
             } else if (len == 3) {
-                if (predicateContext.type != PredicateType.CHAR) {
+                if (predicateContext.columnType != ColumnType.CHAR) {
                     throw SqlException.position(position).put("char constant in non-char expression: ").put(token);
                 }
                 // this is 'x' - char
                 putOperand(offset, IMM, I2_TYPE, token.charAt(1));
                 return;
             } else if (len == 2 + Uuid.UUID_LENGTH) {
-                if (predicateContext.type != PredicateType.UUID) {
+                if (predicateContext.columnType != ColumnType.UUID) {
                     throw SqlException.position(position).put("uuid constant in non-uuid expression: ").put(token);
                 }
                 try {
@@ -732,7 +766,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (SqlKeywords.isTrueKeyword(token)) {
-            if (predicateContext.type != PredicateType.BOOLEAN) {
+            if (predicateContext.columnType != ColumnType.BOOLEAN) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
             putOperand(offset, IMM, I1_TYPE, 1);
@@ -740,7 +774,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (SqlKeywords.isFalseKeyword(token)) {
-            if (predicateContext.type != PredicateType.BOOLEAN) {
+            if (predicateContext.columnType != ColumnType.BOOLEAN) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
             putOperand(offset, IMM, I1_TYPE, 0);
@@ -748,17 +782,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (len > 1 && token.charAt(0) == '#') {
-            if (predicateContext.type != PredicateType.GEO_HASH) {
+            if (isGeoHash(predicateContext.columnType)) {
+                ConstantFunction geoConstant = GeoHashUtil.parseGeoHashConstant(position, token, len);
+                if (geoConstant != null) {
+                    serializeGeoHash(offset, position, geoConstant, typeCode);
+                    return;
+                }
+            } else {
                 throw SqlException.position(position).put("geo hash constant in non-geo hash expression: ").put(token);
-            }
-            ConstantFunction geoConstant = GeoHashUtil.parseGeoHashConstant(position, token, len);
-            if (geoConstant != null) {
-                serializeGeoHash(offset, position, geoConstant, typeCode);
-                return;
             }
         }
 
-        if (predicateContext.type != PredicateType.NUMERIC && predicateContext.type != PredicateType.TIMESTAMP) {
+        if (!isNumeric(predicateContext.columnType) && !ColumnType.isTimestamp(predicateContext.columnType)) {
             throw SqlException.position(position).put("numeric constant in non-numeric expression: ").put(token);
         }
         if (predicateContext.localTypesObserver.hasMixedSizes()) {
@@ -834,14 +869,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
 
         final LongList intervals = predicateContext.inIntervals;
-        IntervalUtils.parseAndApplyIntervalEx(intervalEx, intervals, position);
+        TimestampUtils.parseAndApplyIntervalEx(intervalEx, intervals, position);
 
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
 
         int orCount = -1;
         for (int i = 0, n = intervals.size(); i < n; i += 2) {
-            long lo = IntervalUtils.getEncodedPeriodLo(intervals, i);
-            long hi = IntervalUtils.getEncodedPeriodHi(intervals, i);
+            long lo = IntervalUtils.decodeIntervalLo(intervals, i);
+            long hi = IntervalUtils.decodeIntervalHi(intervals, i);
             putOperand(IMM, I8_TYPE, lo);
             inPredicateTraverseAlgo.traverse(lhs, this);
             putOperator(GE);
@@ -857,26 +892,30 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeNull(long offset, int position, int typeCode, PredicateType predicateType) throws SqlException {
+    private void serializeNull(long offset, int position, int typeCode, int columnType) throws SqlException {
         switch (typeCode) {
             case I1_TYPE:
-                if (predicateType != PredicateType.GEO_HASH) {
+                if (!isGeoHash(columnType)) {
                     throw SqlException.position(position).put("byte type is not nullable");
                 }
                 putOperand(offset, IMM, typeCode, GeoHashes.BYTE_NULL);
                 break;
             case I2_TYPE:
-                if (predicateType != PredicateType.GEO_HASH) {
+                if (!isGeoHash(columnType)) {
                     throw SqlException.position(position).put("short type is not nullable");
                 }
                 putOperand(offset, IMM, typeCode, GeoHashes.SHORT_NULL);
                 break;
             case I4_TYPE:
-                switch (predicateType) {
-                    case GEO_HASH:
+                switch (ColumnType.tagOf(columnType)) {
+                    case ColumnType.GEOBYTE:
+                    case ColumnType.GEOSHORT:
+                    case ColumnType.GEOINT:
+                    case ColumnType.GEOLONG:
+                    case ColumnType.GEOHASH:
                         putOperand(offset, IMM, typeCode, GeoHashes.INT_NULL);
                         break;
-                    case IPv4:
+                    case ColumnType.IPv4:
                         putOperand(offset, IMM, typeCode, Numbers.IPv4_NULL);
                         break;
                     default:
@@ -885,7 +924,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 }
                 break;
             case I8_TYPE:
-                putOperand(offset, IMM, typeCode, predicateType == PredicateType.GEO_HASH ? GeoHashes.NULL : Numbers.LONG_NULL);
+                putOperand(offset, IMM, typeCode, isGeoHash(columnType) ? GeoHashes.NULL : Numbers.LONG_NULL);
                 break;
             case F4_TYPE:
                 putDoubleOperand(offset, typeCode, Float.NaN);
@@ -1101,10 +1140,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         throw SqlException.position(position).put("unexpected non-numeric constant: ").put(token);
     }
 
-    private enum PredicateType {
-        NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH, UUID, IPv4, TIMESTAMP, DATE
-    }
-
     private static class SqlWrapperException extends RuntimeException {
 
         final SqlException wrappedException;
@@ -1268,11 +1303,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final TypesObserver globalTypesObserver = new TypesObserver();
         final TypesObserver localTypesObserver = new TypesObserver();
         private final LongList inIntervals = new LongList();
+        int columnType;
         boolean hasArithmeticOperations;
         boolean singleBooleanColumn;
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
         StaticSymbolTable symbolTable; // used for known symbol constant lookups
-        PredicateType type;
         private boolean currentInSerialization = false;
         private ExpressionNode inOperationNode = null;
         private ExpressionNode rootNode;
@@ -1297,7 +1332,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     rootNode = node;
                 }
                 if (topLevelBooleanColumn) {
-                    type = PredicateType.BOOLEAN;
+                    columnType = ColumnType.BOOLEAN;
                     singleBooleanColumn = true;
                 }
             }
@@ -1345,8 +1380,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 columnTypeTag = ColumnType.SYMBOL;
             }
 
-            updateType(node.position, columnTypeTag);
-
+            updateType(node.position, columnType == ColumnType.STRING ? ColumnType.SYMBOL : columnType);
             int code = columnTypeCode(columnTypeTag);
             localTypesObserver.observe(code);
             globalTypesObserver.observe(code);
@@ -1364,7 +1398,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 symbolColumnIndex = columnIndex;
             }
 
-            updateType(node.position, columnTypeTag);
+            updateType(node.position, columnType);
 
             int typeCode = columnTypeCode(columnTypeTag);
             localTypesObserver.observe(typeCode);
@@ -1377,7 +1411,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         private void reset() {
             rootNode = null;
-            type = null;
+            columnType = ColumnType.UNDEFINED;
             symbolTable = null;
             symbolColumnIndex = -1;
             singleBooleanColumn = false;
@@ -1388,83 +1422,83 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             inIntervals.clear();
         }
 
-        private void updateType(int position, int columnTypeTag) throws SqlException {
-            switch (columnTypeTag) {
+        private void updateType(int position, int columnType0) throws SqlException {
+            switch (ColumnType.tagOf(columnType0)) {
                 case ColumnType.BOOLEAN:
-                    if (type != null && type != PredicateType.BOOLEAN) {
+                    if (this.columnType != ColumnType.UNDEFINED && this.columnType != columnType0) {
                         throw SqlException.position(position)
                                 .put("non-boolean column in boolean expression: ")
-                                .put(ColumnType.nameOf(columnTypeTag));
+                                .put(ColumnType.nameOf(columnType0));
                     }
-                    type = PredicateType.BOOLEAN;
+                    columnType = columnType0;
                     break;
                 case ColumnType.GEOBYTE:
                 case ColumnType.GEOSHORT:
                 case ColumnType.GEOINT:
                 case ColumnType.GEOLONG:
-                    if (type != null && type != PredicateType.GEO_HASH) {
+                    if (columnType != ColumnType.UNDEFINED && !isGeoHash(columnType)) {
                         throw SqlException.position(position)
                                 .put("non-geohash column in geohash expression: ")
-                                .put(ColumnType.nameOf(columnTypeTag));
+                                .put(ColumnType.nameOf(columnType0));
                     }
-                    type = PredicateType.GEO_HASH;
+                    columnType = columnType0;
                     break;
                 case ColumnType.IPv4:
-                    if (type != null && type != PredicateType.IPv4) {
+                    if (columnType != ColumnType.UNDEFINED && columnType != columnType0) {
                         throw SqlException.position(position)
                                 .put("non-ipv4 column in ipv4 expression: ")
-                                .put(ColumnType.nameOf(columnTypeTag));
+                                .put(ColumnType.nameOf(columnType0));
                     }
-                    type = PredicateType.IPv4;
+                    columnType = columnType0;
                     break;
                 case ColumnType.CHAR:
-                    if (type != null && type != PredicateType.CHAR) {
+                    if (columnType != ColumnType.UNDEFINED && columnType != columnType0) {
                         throw SqlException.position(position)
                                 .put("non-char column in char expression: ")
-                                .put(ColumnType.nameOf(columnTypeTag));
+                                .put(ColumnType.nameOf(columnType0));
                     }
-                    type = PredicateType.CHAR;
+                    columnType = columnType0;
                     break;
                 case ColumnType.SYMBOL:
-                    if (type != null && type != PredicateType.SYMBOL) {
+                    if (columnType != ColumnType.UNDEFINED && columnType != columnType0) {
                         throw SqlException.position(position)
                                 .put("non-symbol column in symbol expression: ")
-                                .put(ColumnType.nameOf(columnTypeTag));
+                                .put(ColumnType.nameOf(columnType0));
                     }
-                    type = PredicateType.SYMBOL;
+                    columnType = columnType0;
                     break;
                 case ColumnType.UUID:
-                    if (type != null && type != PredicateType.UUID) {
+                    if (columnType != ColumnType.UNDEFINED && columnType != columnType0) {
                         throw SqlException.position(position)
                                 .put("non-uuid column in uuid expression: ")
-                                .put(ColumnType.nameOf(columnTypeTag));
+                                .put(ColumnType.nameOf(columnType0));
                     }
-                    type = PredicateType.UUID;
+                    columnType = columnType0;
                     break;
                 case ColumnType.TIMESTAMP:
-                    if (type != null && type != PredicateType.TIMESTAMP) {
+                    if (columnType != ColumnType.UNDEFINED && columnType != columnType0) {
                         throw SqlException.position(position)
                                 .put("non-timestamp column in timestamp expression: ")
-                                .put(ColumnType.nameOf(columnTypeTag));
+                                .put(ColumnType.nameOf(columnType0));
                     }
-                    type = PredicateType.TIMESTAMP;
+                    columnType = columnType0;
                     break;
                 case ColumnType.DATE:
-                    if (type != null && type != PredicateType.DATE) {
+                    if (columnType != ColumnType.UNDEFINED && columnType != columnType0) {
                         throw SqlException.position(position)
                                 .put("non-date column in date expression: ")
-                                .put(ColumnType.nameOf(columnTypeTag));
+                                .put(ColumnType.nameOf(columnType0));
                     }
-                    type = PredicateType.DATE;
+                    columnType = columnType0;
                     break;
                 default:
-                    if ((type != null && type != PredicateType.NUMERIC)
-                            || (!isNumeric(columnTypeTag) && type == PredicateType.NUMERIC)) {
+                    boolean numeric = isNumeric(columnType);
+                    if ((columnType != ColumnType.UNDEFINED && !numeric) || (!isNumeric(columnType0) && numeric)) {
                         throw SqlException.position(position)
                                 .put("non-numeric column in numeric expression: ")
-                                .put(ColumnType.nameOf(columnTypeTag));
+                                .put(ColumnType.nameOf(columnType0));
                     }
-                    type = PredicateType.NUMERIC;
+                    columnType = columnType0;
                     break;
             }
         }

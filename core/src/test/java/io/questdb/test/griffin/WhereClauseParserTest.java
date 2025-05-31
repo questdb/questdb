@@ -37,10 +37,10 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.WhereClauseParser;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -544,7 +544,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testBetweenINowAndOneDayBefore() throws SqlException, NumericException {
-        setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2014-01-03T12:30:00.000000Z"));
+        setCurrentMicros(TimestampUtils.parseFloorPartialTimestamp("2014-01-03T12:30:00.000000Z"));
         runWhereTest("timestamp between now() and dateadd('d', -1, now())",
                 "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-03T12:30:00.000000Z}]");
     }
@@ -3743,11 +3743,11 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             }
             sink.clear(sink.length() - separator.length());
             String expression = sink.toString();
-            try (RuntimeIntrinsicIntervalModel intervalModel = modelOf(expression).buildIntervalModel()) {
+            try (RuntimeIntrinsicIntervalModel ignore = modelOf(expression).buildIntervalModel()) {
                 Assert.assertEquals(
                         "shuffled expression '" + expression + "' has unexpected result",
                         expected,
-                        intervalModel.calculateIntervals(sqlExecutionContext).toString()
+                        ignore.calculateIntervals(sqlExecutionContext).toString()
                 );
             }
         }

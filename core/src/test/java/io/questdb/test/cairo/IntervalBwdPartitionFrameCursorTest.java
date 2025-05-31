@@ -213,7 +213,13 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             TableReader reader = newOffPoolReader(configuration, "x");
             IntervalBwdPartitionFrameCursor cursor = new IntervalBwdPartitionFrameCursor(
-                    new RuntimeIntervalModel(intervals), reader.getMetadata().getTimestampIndex());
+                    new RuntimeIntervalModel(
+                            reader.getMetadata().getTimestampType(),
+                            reader.getPartitionedBy(),
+                            intervals
+                    ),
+                    reader.getMetadata().getTimestampIndex()
+            );
             cursor.of(reader, null);
             cursor.close();
             Assert.assertFalse(reader.isOpen());
@@ -416,7 +422,11 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                     final IntervalBwdPartitionFrameCursorFactory factory = new IntervalBwdPartitionFrameCursorFactory(
                             tableToken,
                             0,
-                            new RuntimeIntervalModel(intervals),
+                            new RuntimeIntervalModel(
+                                    metadata.getTimestampType(),
+                                    partitionBy,
+                                    intervals
+                            ),
                             timestampIndex,
                             metadata
                     );
@@ -693,7 +703,11 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
             try (
                     TableReader reader = newOffPoolReader(configuration, "x");
                     IntervalBwdPartitionFrameCursor cursor = new IntervalBwdPartitionFrameCursor(
-                            new RuntimeIntervalModel(intervals),
+                            new RuntimeIntervalModel(
+                                    reader.getMetadata().getTimestampType(),
+                                    reader.getPartitionedBy(),
+                                    intervals
+                            ),
                             reader.getMetadata().getTimestampIndex()
                     )
             ) {

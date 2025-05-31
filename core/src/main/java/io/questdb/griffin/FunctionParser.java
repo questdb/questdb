@@ -97,7 +97,7 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -1239,7 +1239,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private long parseTimestamp(CharSequence str, int position) throws SqlException {
         try {
-            return IntervalUtils.parseFloorPartialTimestamp(str);
+            return TimestampUtils.parseFloorPartialTimestamp(str);
         } catch (NumericException e) {
             throw SqlException.invalidDate(str, position);
         }
