@@ -49,6 +49,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
+import io.questdb.std.IntStack;
 import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Mutable;
@@ -59,7 +60,6 @@ import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 
-import java.util.ArrayDeque;
 import java.util.Arrays;
 
 /**
@@ -117,6 +117,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final PostOrderTreeTraversalAlgo inPredicateTraverseAlgo = new PostOrderTreeTraversalAlgo();
     private final PredicateContext predicateContext = new PredicateContext();
     private final StringSink sink = new StringSink();
+    private final IntStack typeStack = new IntStack();
     private ObjList<Function> bindVarFunctions;
     private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
     private SqlExecutionContext executionContext;
@@ -356,6 +357,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return Chars.equals(token, "/");
     }
 
+    private static boolean isGeoHash(int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOINT:
+            case ColumnType.GEOLONG:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     // Stands for PredicateType.NUMERIC
     private static boolean isNumeric(int columnTypeTag) {
         switch (columnTypeTag) {
@@ -473,7 +486,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void ensureOnlyVarSizeHeaderChecks() throws SqlException {
-        final ArrayDeque<Integer> typeStack = new ArrayDeque<>();
+        typeStack.clear();
         for (long offset = 0; offset < memory.size(); offset += INSTRUCTION_SIZE) {
             int opCode = memory.getInt(offset);
             int typeCode = memory.getInt(offset + Integer.BYTES);
@@ -769,13 +782,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (len > 1 && token.charAt(0) == '#') {
-            if (!ColumnType.isGeoHash(predicateContext.columnType)) {
+            if (isGeoHash(predicateContext.columnType)) {
+                ConstantFunction geoConstant = GeoHashUtil.parseGeoHashConstant(position, token, len);
+                if (geoConstant != null) {
+                    serializeGeoHash(offset, position, geoConstant, typeCode);
+                    return;
+                }
+            } else {
                 throw SqlException.position(position).put("geo hash constant in non-geo hash expression: ").put(token);
-            }
-            ConstantFunction geoConstant = GeoHashUtil.parseGeoHashConstant(position, token, len);
-            if (geoConstant != null) {
-                serializeGeoHash(offset, position, geoConstant, typeCode);
-                return;
             }
         }
 
@@ -881,13 +895,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private void serializeNull(long offset, int position, int typeCode, int columnType) throws SqlException {
         switch (typeCode) {
             case I1_TYPE:
-                if (!ColumnType.isGeoHash(columnType)) {
+                if (!isGeoHash(columnType)) {
                     throw SqlException.position(position).put("byte type is not nullable");
                 }
                 putOperand(offset, IMM, typeCode, GeoHashes.BYTE_NULL);
                 break;
             case I2_TYPE:
-                if (!ColumnType.isGeoHash(columnType)) {
+                if (!isGeoHash(columnType)) {
                     throw SqlException.position(position).put("short type is not nullable");
                 }
                 putOperand(offset, IMM, typeCode, GeoHashes.SHORT_NULL);
@@ -910,7 +924,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 }
                 break;
             case I8_TYPE:
-                putOperand(offset, IMM, typeCode, ColumnType.isGeoHash(columnType) ? GeoHashes.NULL : Numbers.LONG_NULL);
+                putOperand(offset, IMM, typeCode, isGeoHash(columnType) ? GeoHashes.NULL : Numbers.LONG_NULL);
                 break;
             case F4_TYPE:
                 putDoubleOperand(offset, typeCode, Float.NaN);
@@ -1422,7 +1436,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case ColumnType.GEOSHORT:
                 case ColumnType.GEOINT:
                 case ColumnType.GEOLONG:
-                    if (columnType != ColumnType.UNDEFINED && columnType != columnType0) {
+                    if (columnType != ColumnType.UNDEFINED && !isGeoHash(columnType)) {
                         throw SqlException.position(position)
                                 .put("non-geohash column in geohash expression: ")
                                 .put(ColumnType.nameOf(columnType0));
