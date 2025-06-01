@@ -26,6 +26,7 @@ package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
+import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOOperation;
@@ -463,6 +464,7 @@ public abstract class HttpClient implements QuietCloseable {
             sendHeaderAndContent(maxContentLen, timeout);
         }
 
+        @SuppressWarnings("unused")
         public Request setCookie(CharSequence name, CharSequence value) {
             beforeHeader();
             put(HEADER_COOKIE).putAscii(": ").put(name);
@@ -804,7 +806,7 @@ public abstract class HttpClient implements QuietCloseable {
             if (isIncomplete()) {
                 throw new HttpClientException("http response headers not yet received");
             }
-            return Utf8s.equalsNcAscii("chunked", getHeader(HEADER_TRANSFER_ENCODING));
+            return HttpKeywords.isChunked(getHeader(HEADER_TRANSFER_ENCODING));
         }
 
         private void free() {

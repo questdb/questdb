@@ -30,6 +30,7 @@ import io.questdb.HttpClientConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.HttpConstants;
+import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
@@ -324,7 +325,7 @@ public final class LineHttpSender implements Sender {
 
     private static boolean keepAliveDisabled(HttpClient.ResponseHeaders response) {
         DirectUtf8Sequence connectionHeader = response.getHeader(HttpConstants.HEADER_CONNECTION);
-        return connectionHeader != null && Utf8s.equalsIgnoreCaseAscii("close", connectionHeader);
+        return HttpKeywords.isClose(connectionHeader);
     }
 
     private int backoff(int retryBackoff) {
@@ -339,6 +340,7 @@ public final class LineHttpSender implements Sender {
             return;
         }
         Response chunkedRsp = response.getResponse();
+        //noinspection StatementWithEmptyBody
         while ((chunkedRsp.recv()) != null) {
             // we don't care about the response, just consume it, so it won't stay in the socket receive buffer
         }
