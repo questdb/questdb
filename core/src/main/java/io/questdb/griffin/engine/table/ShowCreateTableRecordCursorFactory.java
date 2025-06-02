@@ -62,7 +62,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     public static void inVolumeToSink(CairoConfiguration configuration, CairoTable table, CharSink<?> sink) {
-        if (table.getIsSoftLink()) {
+        if (table.isSoftLink()) {
             sink.putAscii(", IN VOLUME ");
 
             Path.clearThreadLocals();
@@ -250,9 +250,9 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 }
 
                 sink.putAscii(" CAPACITY ").put(symbolCapacity);
-                sink.putAscii(column.getSymbolCached() ? " CACHE" : " NOCACHE");
+                sink.putAscii(column.isSymbolCached() ? " CACHE" : " NOCACHE");
 
-                if (column.getIsIndexed()) {
+                if (column.isIndexed()) {
                     // INDEX CAPACITY value
                     sink.putAscii(" INDEX CAPACITY ").put(column.getIndexBlockCapacity());
                 }
@@ -278,13 +278,13 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         protected void putDedup() {
-            if (table.getIsDedup()) {
+            if (table.hasDedup()) {
                 boolean afterFirst = false;
                 sink.putAscii('\n');
                 sink.putAscii("DEDUP UPSERT KEYS(");
                 for (int i = 0, n = table.getColumnCount(); i < n; i++) {
                     final CairoColumn column = table.getColumnQuiet(i);
-                    if (column.getIsDedupKey()) {
+                    if (column.isDedupKey()) {
                         if (afterFirst) {
                             sink.putAscii(',');
                         } else {
@@ -312,7 +312,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         protected void putWal() {
-            if (!table.getWalEnabled()) {
+            if (!table.isWalEnabled()) {
                 sink.putAscii(" BYPASS");
             }
             sink.putAscii(" WAL");

@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -167,11 +168,12 @@ public class ServerMain implements Closeable {
         } else {
             PGWireConfiguration pgWireConfiguration = configuration.getPGWireConfiguration();
             HttpContextConfiguration httpContextConfiguration = configuration.getHttpServerConfiguration().getHttpContextConfiguration();
+            boolean settingsReadOnly = configuration.getHttpServerConfiguration().isSettingsReadOnly();
             boolean pgWireReadOnlyContext = pgWireConfiguration.readOnlySecurityContext();
             boolean pgWireReadOnlyUserEnabled = pgWireConfiguration.isReadOnlyUserEnabled();
             String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgWireConfiguration.getReadOnlyUsername() : null;
             boolean httpReadOnly = httpContextConfiguration.readOnlySecurityContext();
-            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly);
+            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly, settingsReadOnly);
         }
     }
 
@@ -366,7 +368,7 @@ public class ServerMain implements Closeable {
                         }
 
                         if (matViewEnabled && !config.getMatViewRefreshPoolConfiguration().isEnabled()) {
-                            setupMatViewRefreshJob(sharedPool, engine, sharedPool.getWorkerCount());
+                            setupMatViewJobs(sharedPool, engine, sharedPool.getWorkerCount());
                         }
                     }
 
@@ -393,7 +395,7 @@ public class ServerMain implements Closeable {
                     config.getMatViewRefreshPoolConfiguration(),
                     WorkerPoolManager.Requester.MAT_VIEW_REFRESH
             );
-            setupMatViewRefreshJob(matViewRefreshWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
+            setupMatViewJobs(matViewRefreshWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
         }
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
@@ -458,7 +460,7 @@ public class ServerMain implements Closeable {
         return Services.INSTANCE;
     }
 
-    protected void setupMatViewRefreshJob(
+    protected void setupMatViewJobs(
             WorkerPool workerPool,
             CairoEngine engine,
             int sharedWorkerCount
@@ -469,6 +471,8 @@ public class ServerMain implements Closeable {
             workerPool.assign(i, matViewRefreshJob);
             workerPool.freeOnExit(matViewRefreshJob);
         }
+        final MatViewTimerJob matViewTimerJob = new MatViewTimerJob(engine);
+        workerPool.assign(matViewTimerJob);
     }
 
     protected void setupWalApplyJob(

@@ -41,8 +41,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class InsertOperationImpl implements InsertOperation {
-
-    // type inference fails on java 8 if <CharSequence> is removed
     private final InsertOperationFuture doneFuture = new InsertOperationFuture();
     private final CairoEngine engine;
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
@@ -59,6 +57,11 @@ public class InsertOperationImpl implements InsertOperation {
     @Override
     public void addInsertRow(InsertRowImpl row) {
         insertRows.add(row);
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjList(insertRows);
     }
 
     @Override
@@ -94,7 +97,7 @@ public class InsertOperationImpl implements InsertOperation {
     @Override
     public OperationFuture execute(SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (InsertMethod insertMethod = createMethod(sqlExecutionContext)) {
-            insertMethod.execute();
+            insertMethod.execute(sqlExecutionContext);
             insertMethod.commit();
             return doneFuture;
         }
@@ -121,12 +124,17 @@ public class InsertOperationImpl implements InsertOperation {
         }
 
         @Override
-        public long execute() {
+        public long execute(SqlExecutionContext executionContext) {
             for (int i = 0, n = insertRows.size(); i < n; i++) {
                 InsertRowImpl row = insertRows.get(i);
                 row.append(writer);
             }
             return insertRows.size();
+        }
+
+        @Override
+        public TableWriterAPI getWriter() {
+            return writer;
         }
 
         @Override

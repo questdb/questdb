@@ -3526,6 +3526,56 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeoHashToStr() throws Exception {
+        assertQuery(
+                "a\n",
+                "tab",
+                "create table tab (a geohash(12c))",
+                null,
+                "insert into tab select cast(rnd_geohash(60) as varchar) as a from long_sequence(10)",
+                "a\n" +
+                        "9v1s8hm7wpks\n" +
+                        "46swgj10r88k\n" +
+                        "jnw97u4yuquw\n" +
+                        "zfuqd3bf8hbu\n" +
+                        "hp4muv5tgg3q\n" +
+                        "wh4b6vntdq1c\n" +
+                        "s2z2fydsjq5n\n" +
+                        "1cjjwk6r9jfe\n" +
+                        "mmt89425bhff\n" +
+                        "71ftmpy5v1uy\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testGeoHashToVarchar() throws Exception {
+        assertQuery(
+                "a\n",
+                "tab",
+                "create table tab (a geohash(12c))",
+                null,
+                "insert into tab select cast(rnd_geohash(60) as string) as a from long_sequence(10)",
+                "a\n" +
+                        "9v1s8hm7wpks\n" +
+                        "46swgj10r88k\n" +
+                        "jnw97u4yuquw\n" +
+                        "zfuqd3bf8hbu\n" +
+                        "hp4muv5tgg3q\n" +
+                        "wh4b6vntdq1c\n" +
+                        "s2z2fydsjq5n\n" +
+                        "1cjjwk6r9jfe\n" +
+                        "mmt89425bhff\n" +
+                        "71ftmpy5v1uy\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testIPv4ToVarchar() throws Exception {
         assertQuery(
                 "a\n",

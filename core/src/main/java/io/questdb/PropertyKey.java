@@ -285,6 +285,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_PESSIMISTIC_HEALTH_CHECK("http.pessimistic.health.check.enabled"),
     HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED("http.health.check.authentication.required"),
     HTTP_SECURITY_READONLY("http.security.readonly"),
+    HTTP_SETTINGS_READONLY("http.settings.readonly"),
     HTTP_SECURITY_MAX_RESPONSE_ROWS("http.security.max.response.rows"),
     HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION("http.security.interrupt.on.closed.connection"),
     HTTP_BIND_TO("http.bind.to"),
@@ -436,6 +437,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE("debug.http.force.recv.fragmentation.chunk.size", false, true),
     QUERY_TIMEOUT_SEC("query.timeout.sec"),
     QUERY_TIMEOUT("query.timeout"),
+    QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED("query.within.latest.by.optimisation.enabled"),
     SHARED_WORKER_COUNT("shared.worker.count"),
     SHARED_WORKER_AFFINITY("shared.worker.affinity"),
     SHARED_WORKER_HALT_ON_ERROR("shared.worker.haltOnError"),
@@ -470,6 +472,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WAL_SEQUENCER_CHECK_INTERVAL("cairo.wal.sequencer.check.interval"),
     CAIRO_SYSTEM_WAL_WRITER_DATA_APPEND_PAGE_SIZE("cairo.system.wal.writer.data.append.page.size"),
     CAIRO_SYSTEM_WAL_WRITER_EVENT_APPEND_PAGE_SIZE("cairo.system.wal.writer.event.append.page.size"),
+    CAIRO_PREFERENCES_STRING_POOL_CAPACITY("cairo.preferences.string.pool.capacity"),
     WAL_APPLY_WORKER_COUNT("wal.apply.worker.count"),
     WAL_APPLY_WORKER_AFFINITY("wal.apply.worker.affinity"),
     WAL_APPLY_WORKER_HALT_ON_ERROR("wal.apply.worker.haltOnError"),
@@ -550,6 +553,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD("mat.view.refresh.worker.sleep.threshold"),
     MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT("mat.view.refresh.worker.sleep.timeout"),
     MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD("mat.view.refresh.worker.yield.threshold"),
+    CAIRO_TXN_SCOREBOARD_FORMAT("cairo.txn.scoreboard.format"),
     DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY("debug.wal.apply.block.failure.no.retry", false, true);
 
     private static final Map<String, PropertyKey> nameMapping;

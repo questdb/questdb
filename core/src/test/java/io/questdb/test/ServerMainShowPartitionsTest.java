@@ -26,7 +26,12 @@ package io.questdb.test;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -212,7 +217,9 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
                 .timestamp("ts");
         CharSequence insert = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
-        compiler.compile(insert, context);
+        try (InsertOperation op = compiler.compile(insert, context).popInsertOperation()) {
+            op.execute(context);
+        }
         return engine.verifyTableName(tableName);
     }
 

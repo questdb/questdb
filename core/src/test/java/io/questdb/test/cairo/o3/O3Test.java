@@ -31,6 +31,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxnScoreboard;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -85,6 +86,7 @@ import static io.questdb.cairo.vm.Vm.getStorageLength;
 public class O3Test extends AbstractO3Test {
     private final StringBuilder tstData = new StringBuilder();
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -93,6 +95,7 @@ public class O3Test extends AbstractO3Test {
         LOG.info().$("partitionO3SplitThreshold = ").$(partitionO3SplitThreshold).$();
     }
 
+    @Override
     @After
     public void tearDown() throws Exception {
         int count = Vect.getPerformanceCountersCount();
@@ -143,7 +146,7 @@ public class O3Test extends AbstractO3Test {
                             try {
                                 int i = 0;
                                 ObjList<CharSequence> newCols = new ObjList<>();
-                                // number of iterations here (70) is critical to reproduce O3 crash
+                                // the number of iterations here (70) is critical to reproduce O3 crash
                                 // also row counts (1000) at every iteration, do not wind these down please
                                 // to high values make for a long-running unit test
                                 while (i < 70) {
@@ -201,7 +204,7 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testBench() throws Exception {
-        // On OSX it's not trivial to increase open file limit per process
+        // On OSX, it's not trivial to increase the open file limit per process
         if (Os.type != Os.DARWIN) {
             executeVanilla(O3Test::testBench0);
         }
@@ -209,7 +212,7 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testBenchContended() throws Exception {
-        // On OSX it's not trivial to increase open file limit per process
+        // On OSX, it's not trivial to increase the open file limit per process
         if (Os.type != Os.DARWIN) {
             executeWithPool(0, O3Test::testBench0);
         }
@@ -217,7 +220,7 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testBenchParallel() throws Exception {
-        // On OSX it's not trivial to increase open file limit per process
+        // On OSX, it's not trivial to increase the open file limit per process
         if (Os.type != Os.DARWIN) {
             executeWithPool(4, O3Test::testBench0);
         }
@@ -2014,9 +2017,9 @@ public class O3Test extends AbstractO3Test {
                 ts += step;
 
                 long txn = w.getTxn();
-                txnScoreboard.acquireTxn(txn);
+                txnScoreboard.acquireTxn(0, txn);
                 w.commit();
-                txnScoreboard.releaseTxn(txn);
+                txnScoreboard.releaseTxn(0, txn);
             }
         }
     }
@@ -7996,7 +7999,9 @@ public class O3Test extends AbstractO3Test {
                                 try {
                                     toRun = false;
                                     barrier.await();
-                                    compiler2.compile("insert into x1 select * from y1", executionContext2);
+                                    try (InsertOperation op = compiler2.compile("insert into x1 select * from y1", executionContext2).popInsertOperation()) {
+                                        op.execute(executionContext2);
+                                    }
                                 } catch (Throwable e) {
                                     //noinspection CallToPrintStackTrace
                                     e.printStackTrace();

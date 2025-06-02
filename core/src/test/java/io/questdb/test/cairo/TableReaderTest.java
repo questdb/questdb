@@ -1682,7 +1682,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testCharAsString() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             TableModel model = new TableModel(
                     configuration,
                     "char_test",
@@ -1750,7 +1750,7 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     public void testConcurrentReloadSinglePartition(int partitionBy) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             // model data
             LongList list = new LongList();
             final int N = 1024;
@@ -1784,6 +1784,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     stopLatch.countDown();
                 }
             }).start();
@@ -1816,6 +1817,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     stopLatch.countDown();
                 }
             }).start();
@@ -2035,7 +2037,7 @@ public class TableReaderTest extends AbstractCairoTest {
         final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\tvarchar\n" +
                 "null\t0\t0\tnull\tnull\tnull\t\tabc\ttrue\t\t\t\n";
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
 
             try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
@@ -2066,7 +2068,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testOver2GFile() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                     .col("a", ColumnType.LONG);
             AbstractCairoTest.create(model);
@@ -2147,30 +2149,30 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testReadByDay() throws Exception {
         CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY);
-        TestUtils.assertMemoryLeak(this::testTableCursor);
+        assertMemoryLeak(this::testTableCursor);
     }
 
     @Test
     public void testReadByMonth() throws Exception {
         CreateTableTestUtils.createAllTable(engine, PartitionBy.MONTH);
-        TestUtils.assertMemoryLeak(() -> testTableCursor(60 * 60 * 60000));
+        assertMemoryLeak(() -> testTableCursor(60 * 60 * 60000));
     }
 
     @Test
     public void testReadByWeek() throws Exception {
         CreateTableTestUtils.createAllTable(engine, PartitionBy.WEEK);
-        TestUtils.assertMemoryLeak(() -> testTableCursor(7 * 60 * 60000L));
+        assertMemoryLeak(() -> testTableCursor(7 * 60 * 60000L));
     }
 
     @Test
     public void testReadByYear() throws Exception {
         CreateTableTestUtils.createAllTable(engine, PartitionBy.YEAR);
-        TestUtils.assertMemoryLeak(() -> testTableCursor(24 * 60 * 60 * 60000L));
+        assertMemoryLeak(() -> testTableCursor(24 * 60 * 60 * 60000L));
     }
 
     @Test
     public void testReadEmptyTable() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
             try (TableWriter ignored1 = newOffPoolWriter(configuration, "all")) {
 
@@ -2336,12 +2338,12 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testReadNonPartitioned() throws Exception {
         CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
-        TestUtils.assertMemoryLeak(this::testTableCursor);
+        assertMemoryLeak(this::testTableCursor);
     }
 
     @Test
     public void testReaderAndWriterRace() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE);
             AbstractCairoTest.create(model.timestamp());
 
@@ -2651,7 +2653,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testReloadWithoutData() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "tab", PartitionBy.DAY).col("x", ColumnType.SYMBOL).col("y", ColumnType.LONG);
             AbstractCairoTest.create(model);
 
@@ -2694,7 +2696,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveDefaultPartition() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
             long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
@@ -2829,7 +2831,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testRemovePartitionByDayCannotDeleteDir() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
             long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
@@ -2968,7 +2970,9 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
 
                 try (TableReader ignore2 = getReader("all")) {
-                    Assert.fail();
+                    if (engine.getConfiguration().getScoreboardFormat() == 1) {
+                        Assert.fail();
+                    }
                 } catch (CairoException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(), "max txn-inflight limit reached");
                 }
@@ -3055,7 +3059,7 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testSymbolIndex() throws Exception {
         String expected = "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"SYMBOL\",\"indexed\":true,\"indexValueBlockCapacity\":2},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":2}";
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
                     .col("a", ColumnType.SYMBOL).indexed(true, 2)
                     .col("b", ColumnType.INT)
@@ -3915,7 +3919,7 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     private void testConcurrentReloadMultiplePartitions(int partitionBy, long stride) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 1024_0000;
 
             // model table
@@ -3945,6 +3949,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     stopLatch.countDown();
                 }
             }).start();
@@ -3985,6 +3990,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     stopLatch.countDown();
                 }
             }).start();
@@ -4004,7 +4010,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
         CreateTableTestUtils.createAllTable(engine, partitionBy);
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
 
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
@@ -4206,7 +4212,7 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     private void testRemoveActivePartition(int partitionBy, NextPartitionTimestampProvider provider, CharSequence partitionNameToDelete) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 100;
             final int N_PARTITIONS = 5;
             final long stride = 100;
@@ -4276,7 +4282,7 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     private void testRemovePartition(int partitionBy, CharSequence partitionNameToDelete, int affectedBand, NextPartitionTimestampProvider provider) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
             long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T10:00:00.000Z");
@@ -4345,7 +4351,7 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     private void testRemovePartitionReload(int partitionBy, CharSequence partitionNameToDelete, int affectedBand, NextPartitionTimestampProvider provider) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
             long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");

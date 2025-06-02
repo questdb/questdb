@@ -24,15 +24,21 @@
 
 package io.questdb;
 
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.str.CharSink;
 
 public interface PublicPassthroughConfiguration {
+
+    /**
+     * Exports subset of configuration parameters into a sink. Configuration
+     * parameters are exported in JSON format
+     *
+     * @return true if anything was exported
+     */
+    default boolean exportConfiguration(CharSink<?> sink) {
+        return false;
+    }
 
     String getPosthogApiKey();
 
     boolean isPosthogEnabled();
-
-    default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-        // no-op
-    }
 }
