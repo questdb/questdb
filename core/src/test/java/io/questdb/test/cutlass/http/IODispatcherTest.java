@@ -7154,10 +7154,25 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextExportDisconnectOnDataUnavailableEventNeverFired() throws Exception {
-        testDisconnectOnDataUnavailableEventNeverFired(
-                "GET /exp?query=" + urlEncodeQuery("select * from test_data_unavailable(1, 10)") + "&count=true HTTP/1.1\r\n"
-                        + SendAndReceiveRequestBuilder.RequestHeaders
-        );
+        getSimpleTester()
+                .withWorkerCount(2)
+                .withQueryTimeout(100)
+                .run((engine, sqlExecutionContext) -> {
+                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+                    try {
+                        testHttpClient.assertGetRegexp(
+                                "/query",
+                                ".*timeout, query aborted.*",
+                                "select * from test_data_unavailable(1, 10)",
+                                null,
+                                null,
+                                "400"
+                        );
+                    } finally {
+                        Misc.free(eventRef.get());
+                    }
+                });
     }
 
     @Test
@@ -9183,49 +9198,6 @@ public class IODispatcherTest extends AbstractTest {
             CursorPrinter.printColumn(record, metadata, 2, sink, false);
             sink.put('\n');
         }
-    }
-
-    private void testDisconnectOnDataUnavailableEventNeverFired(String request) throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(2)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .withQueryTimeout(100)
-                .run((engine, sqlExecutionContext) -> {
-                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-
-                    final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-                    long fd = nf.socketTcp(true);
-                    try {
-                        long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
-                        assert sockAddrInfo != -1;
-                        try {
-                            TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
-                            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-                            nf.configureNonBlocking(fd);
-
-                            long bufLen = request.length();
-                            long ptr = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
-                            try {
-                                new SendAndReceiveRequestBuilder()
-                                        .withNetworkFacade(nf)
-                                        .withPauseBetweenSendAndReceive(0)
-                                        .withPrintOnly(false)
-                                        .executeUntilDisconnect(request, fd, 400, ptr, null);
-                            } finally {
-                                Unsafe.free(ptr, bufLen, MemoryTag.NATIVE_DEFAULT);
-                            }
-                        } finally {
-                            nf.freeAddrInfo(sockAddrInfo);
-                        }
-                    } finally {
-                        nf.close(fd);
-                        // Make sure to close the event on the producer side.
-                        Misc.free(eventRef.get());
-                    }
-                });
     }
 
     private void testExceptionAfterHeader(int numOfRows, String rows) throws Exception {
