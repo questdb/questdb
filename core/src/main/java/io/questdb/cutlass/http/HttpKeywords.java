@@ -58,6 +58,13 @@ public class HttpKeywords {
                 && (tok.byteAt(4) | 32) == 'e';
     }
 
+    public static boolean isCon(@Nullable Utf8Sequence tok) {
+        return tok != null && tok.size() == 3
+                && (tok.byteAt(0) | 32) == 'c'
+                && (tok.byteAt(1) | 32) == 'o'
+                && (tok.byteAt(2) | 32) == 'n';
+    }
+
     public static boolean isContentTypeMultipartFormData(@Nullable Utf8Sequence tok) {
         return tok != null && tok.size() == 19
                 && (tok.byteAt(0) | 32) == 'm'
@@ -99,7 +106,7 @@ public class HttpKeywords {
                 && (tok.byteAt(13) | 32) == 'e'
                 && (tok.byteAt(14) | 32) == 'd';
     }
-    
+
     public static boolean isFalse(@Nullable Utf8Sequence tok) {
         return tok != null && tok.size() == 5
                 && (tok.byteAt(0) | 32) == 'f'

@@ -221,7 +221,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         timings = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_TIMINGS));
         explain = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_EXPLAIN));
         quoteLargeNum = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_QUOTE_LARGE_NUM))
-                || HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_SRC));
+                || HttpKeywords.isCon(request.getUrlParam(URL_PARAM_SRC));
         apiVersion = parseApiVersion(request);
     }
 

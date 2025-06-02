@@ -36,7 +36,7 @@ public class TextImportRequestHeaderProcessorImpl implements TextImportRequestHe
         }
 
         assert name != null;
-        
+
         Utf8Sequence partitionedBy = rh.getUrlParam(URL_PARAM_PARTITION_BY);
         if (partitionedBy == null) {
             partitionedBy = PARTITION_BY_NONE;
