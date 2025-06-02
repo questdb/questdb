@@ -5952,6 +5952,34 @@ nodejs code:
     }
 
     @Test
+    public void testInsertNoMemLeak() throws Exception {
+        Assume.assumeFalse(legacyMode);
+        skipOnWalRun(); // non-partitioned table
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE TABLE test(id LONG);");
+            }
+
+            try (PreparedStatement insert = connection.prepareStatement("INSERT INTO test values(alloc(42));")) {
+                insert.execute();
+                // execute insert multiple times to verify cache interaction
+                insert.execute();
+            }
+
+            try (Statement statement = connection.createStatement()) {
+                ResultSet rs = statement.executeQuery("test;");
+                assertResultSet(
+                        "id[BIGINT]\n" +
+                                "42\n" +
+                                "42\n",
+                        sink,
+                        rs
+                );
+            }
+        });
+    }
+
+    @Test
     public void testInsertPreparedRenameInsert() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
@@ -5959,6 +5987,11 @@ nodejs code:
             try (PreparedStatement insert = connection.prepareStatement("INSERT INTO ts VALUES(?, ?)")) {
                 insert.setInt(1, 0);
                 insert.setTimestamp(2, new Timestamp(1632761103202L));
+                insert.execute();
+                connection.commit();
+
+                insert.setInt(1, 1);
+                insert.setTimestamp(2, new Timestamp(1632761103203L));
                 insert.execute();
                 connection.commit();
 
@@ -5981,7 +6014,8 @@ nodejs code:
             ) {
                 assertResultSet(
                         "id[INTEGER],ts[TIMESTAMP]\n" +
-                                "0,2021-09-27 16:45:03.202\n",
+                                "0,2021-09-27 16:45:03.202\n" +
+                                "1,2021-09-27 16:45:03.203\n",
                         sink,
                         rs
                 );

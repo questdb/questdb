@@ -39,9 +39,9 @@ public final class InsertRowImpl implements QuietCloseable {
     private final RecordToRowCopier copier;
     private final RowFactory rowFactory;
     private final Function timestampFunction;
+    private final int timestampFunctionPosition;
     private final int tupleIndex;
     private final VirtualRecord virtualRecord;
-    private final int timestampFunctionPosition;
 
     public InsertRowImpl(
             VirtualRecord virtualRecord,
