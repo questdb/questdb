@@ -868,7 +868,6 @@ public class WalWriter implements TableWriterAPI {
                     .$(", segmentTxn=").$(lastSegmentTxn)
                     .$(", seqTxn=").$(txn)
                     .I$();
-
         } catch (Throwable th) {
             LOG.critical().$("Exception during alter [ex=").$(th).I$();
             distressed = true;

@@ -489,6 +489,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewTimerStartEpsilon() {
+        return Timestamps.MINUTE_MICROS;
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return 1;
     }
