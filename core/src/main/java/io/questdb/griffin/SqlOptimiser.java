@@ -5476,6 +5476,7 @@ public class SqlOptimiser implements Mutable {
                 tsFloorIntervalParam.token = characterStoreEntry.toImmutable();
                 tsFloorIntervalParam.paramCount = 0;
                 tsFloorIntervalParam.type = CONSTANT;
+                tsFloorIntervalParam.position = sampleBy.position;
 
                 final ExpressionNode tsFloorTsParam = expressionNodePool.next();
                 tsFloorTsParam.token = timestampColumn;
@@ -6535,7 +6536,7 @@ public class SqlOptimiser implements Mutable {
             // type 1: add order by clause and changing model type (last/max)
             // type 2: only by change model type to erase group by (first/min)
             int optimisationType = 0;
-            if (rhs != null && ast.type == 8 && Chars.equals(timestampColumn, rhs)) {
+            if (rhs != null && ast.type == FUNCTION && Chars.equals(timestampColumn, rhs)) {
                 if (Chars.equalsIgnoreCase("last", token) || Chars.equalsIgnoreCase("max", token)) {
                     optimisationType = 1;
                 } else if (Chars.equalsIgnoreCase("first", token) || Chars.equalsIgnoreCase("min", token)) {

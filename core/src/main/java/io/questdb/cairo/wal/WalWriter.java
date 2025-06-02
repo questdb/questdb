@@ -46,6 +46,8 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -866,7 +868,6 @@ public class WalWriter implements TableWriterAPI {
                     .$(", segmentTxn=").$(lastSegmentTxn)
                     .$(", seqTxn=").$(txn)
                     .I$();
-
         } catch (Throwable th) {
             LOG.critical().$("Exception during alter [ex=").$(th).I$();
             distressed = true;
@@ -1557,7 +1558,7 @@ public class WalWriter implements TableWriterAPI {
         if (isCommittingData) {
             // When current transaction is not a data transaction but a column add transaction
             // there is no need to add a record about it to the new segment event file.
-            lastSegmentTxn = events.appendData(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+            lastSegmentTxn = events.appendData(uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
         }
         events.sync();
     }
@@ -1600,7 +1601,7 @@ public class WalWriter implements TableWriterAPI {
             final long dataMemOffset;
             if (ColumnType.isVarSize(columnType)) {
                 assert auxMem != null;
-                dataMemOffset = ColumnType.getDriver(columnType).setAppendAuxMemAppendPosition(auxMem, rowCount);
+                dataMemOffset = ColumnType.getDriver(columnType).setAppendAuxMemAppendPosition(auxMem, dataMem, columnType, rowCount);
             } else {
                 dataMemOffset = rowCount << ColumnType.getWalDataColumnShl(columnType, columnIndex == metadata.getTimestampIndex());
             }
@@ -2229,6 +2230,16 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public void cancel() {
             setAppendPosition(segmentRowCount);
+        }
+
+        @Override
+        public void putArray(int columnIndex, @NotNull ArrayView arrayView) {
+            ArrayTypeDriver.appendValue(
+                    getSecondaryColumn(columnIndex),
+                    getPrimaryColumn(columnIndex),
+                    arrayView
+            );
+            setRowValueNotNull(columnIndex);
         }
 
         @Override

@@ -22,16 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.metadata;
+package io.questdb.cutlass.line.array;
 
-public class InstanceRGBFunctionFactory extends AbstrtactEnvVariableValueFunctionFactory {
-    @Override
-    public String getSignature() {
-        return "instance_rgb()";
-    }
-
-    @Override
-    protected String getEnvVariableName() {
-        return "QDB_INSTANCE_RGB";
-    }
+@FunctionalInterface
+public interface ArrayDataAppender<T> {
+    void append(ArrayBufferAppender mem, T values);
 }

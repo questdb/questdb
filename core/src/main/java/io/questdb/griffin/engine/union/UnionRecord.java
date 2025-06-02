@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.union;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -31,6 +32,14 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
 public class UnionRecord extends AbstractUnionRecord {
+
+    @Override
+    public ArrayView getArray(int col, int columnType) {
+        if (useA) {
+            return recordA.getArray(col, columnType);
+        }
+        return recordB.getArray(col, columnType);
+    }
 
     @Override
     public BinarySequence getBin(int col) {

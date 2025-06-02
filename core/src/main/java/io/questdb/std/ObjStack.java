@@ -29,6 +29,7 @@ import java.util.Arrays;
 public class ObjStack<T> implements Mutable {
     public static final int DEFAULT_INITIAL_CAPACITY = 16;
     private final int initialCapacity;
+    private int bottom;
     private T[] elements;
     private int head;
     private int mask;
@@ -47,7 +48,12 @@ public class ObjStack<T> implements Mutable {
         if (head != tail) {
             head = tail = 0;
             Arrays.fill(elements, null);
+            bottom = 0;
         }
+    }
+
+    public int getBottom() {
+        return bottom;
     }
 
     public int getCapacity() {
@@ -55,18 +61,21 @@ public class ObjStack<T> implements Mutable {
     }
 
     public boolean notEmpty() {
-        return head != tail;
+        return size() > 0;
     }
 
     public T peek() {
-        return elements[head];
+        return peek(0);
     }
 
     public T peek(int n) {
-        return elements[(head + n) & mask];
+        return n < size() ? elements[(head + n) & mask] : null;
     }
 
     public T pop() {
+        if (size() == 0) {
+            return null;
+        }
         final int h = head;
         final T result = elements[h];
         if (result == null) {
@@ -118,12 +127,31 @@ public class ObjStack<T> implements Mutable {
         }
     }
 
+    public void setBottom(int bottom) {
+        if (bottom <= sizeRaw()) {
+            this.bottom = bottom;
+        } else {
+            throw new IllegalStateException("Tried to set bottom beyond the top of the stack");
+        }
+    }
+
     public int size() {
+        return sizeRaw() - bottom;
+    }
+
+    public int sizeRaw() {
         return (tail - head) & mask;
     }
 
     public void update(T e) {
-        elements[head] = e;
+        update(0, e);
+    }
+
+    public void update(int n, T e) {
+        if (n >= size()) {
+            throw new IllegalStateException("Tried to update under the bottom");
+        }
+        elements[(head + n) & mask] = e;
     }
 
     @SuppressWarnings("unchecked")

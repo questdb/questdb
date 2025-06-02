@@ -75,6 +75,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " rnd_str(5,16,2) as str," +
                             " rnd_varchar(1,40,5) as varc1," +
                             " rnd_varchar(1, 1,5) as varc2," +
+                            " rnd_double_array(1,1) arr," +
                             " cast(" + start + " + (x / 800) * 60 * 60 * 1000000L  as timestamp) ts" +
                             " from long_sequence(1000)" +
                             ") timestamp (ts) partition by DAY"
@@ -91,6 +92,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " rnd_str(5,16,2) as str," +
                             " rnd_varchar(1,40,5) as varc1," +
                             " rnd_varchar(1, 1,5) as varc2," +
+                            " rnd_double_array(1,1) arr," +
                             " cast('2020-02-03' as timestamp) ts" +
                             " from long_sequence(10)"
             );
@@ -110,6 +112,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " rnd_str(5,16,2) as str," +
                             " rnd_varchar(1,40,5) as varc1," +
                             " rnd_varchar(1, 1,5) as varc2," +
+                            " rnd_double_array(1,1) arr," +
                             " cast('2020-02-03T00:30' as timestamp) ts" +
                             " from long_sequence(10)"
             );
@@ -139,6 +142,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " rnd_str(5,16,2) as str," +
                             " rnd_varchar(1,40,5) as varc1," +
                             " rnd_varchar(1, 1,5) as varc2," +
+                            " rnd_double_array(1,1) arr," +
                             " timestamp_sequence('2020-02-04T00', 60*1000000L) ts" +
                             " from long_sequence(60*(23*2-24))" +
                             ") timestamp (ts) partition by DAY",
@@ -153,7 +157,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     " -x - 1000000L as j," +
                     " rnd_str(5,16,2) as str," +
                     " rnd_varchar(1,40,5) as varc1," +
-                    " rnd_varchar(1, 1,5) as varc2,";
+                    " rnd_varchar(1, 1,5) as varc2," +
+                    " rnd_double_array(1,1) arr,";
             execute(
                     sqlPrefix +
                             " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
@@ -247,6 +252,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " rnd_str(5,16,2) as str," +
                             " rnd_varchar(1,40,5) as varc1," +
                             " rnd_varchar(1, 1,5) as varc2," +
+                            " rnd_double_array(1,1) arr," +
                             " timestamp_sequence('2020-02-04T00', 60*1000000L) ts" +
                             " from long_sequence(60*(23*2-24))" +
                             ") timestamp (ts) partition by DAY"
@@ -261,7 +267,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     " -x - 1000000L as j," +
                     " rnd_str(5,16,2) as str," +
                     " rnd_varchar(1,40,5) as varc1," +
-                    " rnd_varchar(1, 1,5) as varc2,";
+                    " rnd_varchar(1, 1,5) as varc2," +
+                    " rnd_double_array(1,1) arr,";
             execute(
                     sqlPrefix +
                             " timestamp_sequence('2020-02-04T20:01', 1000000L) ts," +
@@ -308,6 +315,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " rnd_str(5,16,2) as str," +
                             " rnd_varchar(1,40,5) as varc1," +
                             " rnd_varchar(1, 1,5) as varc2," +
+                            " rnd_double_array(1,1) arr," +
                             " cast(" + start + " + (x / 2) * 60 * 60 * 1000000L  as timestamp) ts" +
                             " from long_sequence(2*24)" +
                             ") timestamp (ts) partition by DAY"
@@ -320,11 +328,11 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             ) {
                 // Check that the originally open reader does not see these changes
                 println(cursorFactory, cursor);
-                String expected = "i\tj\tstr\tvarc1\tvarc2\tts\n" +
-                        "34\t-34\tDREQTBTWILHTEI\t_oW4ˣ!۱ݥ0;\uE373춑J͗Eתᅕ\t鏡\t2020-02-03T17:00:00.000000Z\n" +
-                        "35\t-35\tZEYDNMIOCCVVWMT\tZ㝣ƣ獍\uDAA7\uDDBCκ+\uDB97\uDFEB\uE607媑⻞ Vi慎ش۩\uEBCC\uD9F3\uDE4C\uDB0F\uDFC8EÖԓ髍\uDBAC\uDCF9슣ẾŰӤ0\uD98D\uDEAB?\uDBCB\uDE78\t诐\t2020-02-03T17:00:00.000000Z\n" +
-                        "36\t-36\tSRNFKFZJKOJRB\tgMo!y3R6yL1Z\t\uDB53\uDE63\t2020-02-03T18:00:00.000000Z\n" +
-                        "37\t-37\tZMFYLBV\tlpfUUkA \"K}GN&!vxk5[>=lDUFVJ\t~\t2020-02-03T18:00:00.000000Z\n";
+                String expected = "i\tj\tstr\tvarc1\tvarc2\tarr\tts\n" +
+                        "34\t-34\tMIMYSPTX\t{?_j5kz#BD5QYH(%i]?W;(CaZ?$Z:\tƪ\t[null,0.46024072785165726,0.9718081383618143,null,0.5469257570499296,0.20869523440218085,0.47046214502342254]\t2020-02-03T17:00:00.000000Z\n" +
+                        "35\t-35\t\tnF0q;i`\\[\"&!~8!GQhuDo*i5W\t\uDA6C\uDFCD\t[0.19751729781600535,null]\t2020-02-03T17:00:00.000000Z\n" +
+                        "36\t-36\tDVBWZRJWEYD\tVqQprKh`~.\tK\t[0.8248328494453144,null,0.8333148314271164,0.6354790267464765,0.526469565507781]\t2020-02-03T18:00:00.000000Z\n" +
+                        "37\t-37\tNZVHXQBMKECS\tBhڱʢ\uEF54Պ츼Ꭵ\t\u05CC\t[null,0.6933103859471981,0.41876634576982885,0.7437656766929067,0.32010882429399834,0.4288965848487438,null,null,null,null,null,0.08320499697553518,0.15721123459015562,null,null]\t2020-02-03T18:00:00.000000Z\n";
                 TestUtils.assertEquals(expected, sink);
 
                 // Split at 17:30
@@ -336,6 +344,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                                 " rnd_str(5,16,2) as str," +
                                 " rnd_varchar(1,40,5) as varc1," +
                                 " rnd_varchar(1, 1,5) as varc2," +
+                                " rnd_double_array(1,1) arr," +
                                 " timestamp_sequence('2020-02-03T17', 60*1000000L) ts" +
                                 " from long_sequence(1)"
                 );
@@ -354,6 +363,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                                 " rnd_str(5,16,2) as str," +
                                 " rnd_varchar(1,40,5) as varc1," +
                                 " rnd_varchar(1, 1,5) as varc2," +
+                                " rnd_double_array(1,1) arr," +
                                 " timestamp_sequence('2020-02-03T17', 60*1000000L) ts" +
                                 " from long_sequence(1)"
                 );
@@ -363,13 +373,13 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 println(cursorFactory, cursor);
                 TestUtils.assertEquals(expected, sink);
             }
-            assertSql("i\tj\tstr\tvarc1\tvarc2\tts\n" +
-                            "34\t-34\tDREQTBTWILHTEI\t_oW4ˣ!۱ݥ0;\uE373춑J͗Eתᅕ\t鏡\t2020-02-03T17:00:00.000000Z\n" +
-                            "35\t-35\tZEYDNMIOCCVVWMT\tZ㝣ƣ獍\uDAA7\uDDBCκ+\uDB97\uDFEB\uE607媑⻞ Vi慎ش۩\uEBCC\uD9F3\uDE4C\uDB0F\uDFC8EÖԓ髍\uDBAC\uDCF9슣ẾŰӤ0\uD98D\uDEAB?\uDBCB\uDE78\t诐\t2020-02-03T17:00:00.000000Z\n" +
-                            "1000000\t-1000001\tDNWOSNHLFUNJ\t\uD908\uDF4Dͦ\uF82B\uD955\uDDC8>7\uDA70\uDD45\uECF9J9漫\uDBDB\uDDDB1fÄ}o輖N\t0\t2020-02-03T17:00:00.000000Z\n" +
-                            "1000000\t-1000001\t\t\uD9CA\uDD37Ϫ\uDA9B\uDDF3둪#\uEEE6\uDBA3\uDF27MZ#J遦҇Cn>\t(\t2020-02-03T17:00:00.000000Z\n" +
-                            "36\t-36\tSRNFKFZJKOJRB\tgMo!y3R6yL1Z\t\uDB53\uDE63\t2020-02-03T18:00:00.000000Z\n" +
-                            "37\t-37\tZMFYLBV\tlpfUUkA \"K}GN&!vxk5[>=lDUFVJ\t~\t2020-02-03T18:00:00.000000Z\n",
+            assertSql("i\tj\tstr\tvarc1\tvarc2\tarr\tts\n" +
+                            "34\t-34\tMIMYSPTX\t{?_j5kz#BD5QYH(%i]?W;(CaZ?$Z:\tƪ\t[null,0.46024072785165726,0.9718081383618143,null,0.5469257570499296,0.20869523440218085,0.47046214502342254]\t2020-02-03T17:00:00.000000Z\n" +
+                            "35\t-35\t\tnF0q;i`\\[\"&!~8!GQhuDo*i5W\t\uDA6C\uDFCD\t[0.19751729781600535,null]\t2020-02-03T17:00:00.000000Z\n" +
+                            "1000000\t-1000001\t\tktW'1VR1]fJyeg}\\oi}MQuNNI0>\tS\t[null,0.3325188127890215,0.09516627780136833,0.1123646581158636,0.4176259531501725,null]\t2020-02-03T17:00:00.000000Z\n" +
+                            "1000000\t-1000001\tDUQCOUZBRTJQZFHP\tGfꤤ#J遦҇Cn>z欳\uE6D5^\uDA18\uDD8Ei\uD956\uDEE0㥒 l˪H\uD9CF\uDC53⢷뤺m~剴R\uDAE3\uDF065Gh\uDA1D\uDC84\uD9AA\uDC85*uﳠ\t\t[0.051315826073391246,0.6647261895217424]\t2020-02-03T17:00:00.000000Z\n" +
+                            "36\t-36\tDVBWZRJWEYD\tVqQprKh`~.\tK\t[0.8248328494453144,null,0.8333148314271164,0.6354790267464765,0.526469565507781]\t2020-02-03T18:00:00.000000Z\n" +
+                            "37\t-37\tNZVHXQBMKECS\tBhڱʢ\uEF54Պ츼Ꭵ\t\u05CC\t[null,0.6933103859471981,0.41876634576982885,0.7437656766929067,0.32010882429399834,0.4288965848487438,null,null,null,null,null,0.08320499697553518,0.15721123459015562,null,null]\t2020-02-03T18:00:00.000000Z\n",
                     "select * from x where ts between '2020-02-03T17' and '2020-02-03T18'");
         });
     }
@@ -392,6 +402,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " rnd_str(5,16,2) as str," +
                             " rnd_varchar(1,40,5) as varc1," +
                             " rnd_varchar(1, 1,5) as varc2," +
+                            " rnd_double_array(1,1) arr," +
                             " cast(" + start + " + (x / 2) * 60 * 60 * 1000000L  as timestamp) ts" +
                             " from long_sequence(2*24)" +
                             ") timestamp (ts) partition by DAY"
@@ -405,11 +416,11 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 // Check that the originally open reader does not see these changes
                 sink.clear();
                 println(cursorFactory, cursor);
-                String expected = "i\tj\tstr\tvarc1\tvarc2\tts\n" +
-                        "34\t-34\tDREQTBTWILHTEI\t_oW4ˣ!۱ݥ0;\uE373춑J͗Eתᅕ\t鏡\t2020-02-03T17:00:00.000000Z\n" +
-                        "35\t-35\tZEYDNMIOCCVVWMT\tZ㝣ƣ獍\uDAA7\uDDBCκ+\uDB97\uDFEB\uE607媑⻞ Vi慎ش۩\uEBCC\uD9F3\uDE4C\uDB0F\uDFC8EÖԓ髍\uDBAC\uDCF9슣ẾŰӤ0\uD98D\uDEAB?\uDBCB\uDE78\t诐\t2020-02-03T17:00:00.000000Z\n" +
-                        "36\t-36\tSRNFKFZJKOJRB\tgMo!y3R6yL1Z\t\uDB53\uDE63\t2020-02-03T18:00:00.000000Z\n" +
-                        "37\t-37\tZMFYLBV\tlpfUUkA \"K}GN&!vxk5[>=lDUFVJ\t~\t2020-02-03T18:00:00.000000Z\n";
+                String expected = "i\tj\tstr\tvarc1\tvarc2\tarr\tts\n" +
+                        "34\t-34\tMIMYSPTX\t{?_j5kz#BD5QYH(%i]?W;(CaZ?$Z:\tƪ\t[null,0.46024072785165726,0.9718081383618143,null,0.5469257570499296,0.20869523440218085,0.47046214502342254]\t2020-02-03T17:00:00.000000Z\n" +
+                        "35\t-35\t\tnF0q;i`\\[\"&!~8!GQhuDo*i5W\t\uDA6C\uDFCD\t[0.19751729781600535,null]\t2020-02-03T17:00:00.000000Z\n" +
+                        "36\t-36\tDVBWZRJWEYD\tVqQprKh`~.\tK\t[0.8248328494453144,null,0.8333148314271164,0.6354790267464765,0.526469565507781]\t2020-02-03T18:00:00.000000Z\n" +
+                        "37\t-37\tNZVHXQBMKECS\tBhڱʢ\uEF54Պ츼Ꭵ\t\u05CC\t[null,0.6933103859471981,0.41876634576982885,0.7437656766929067,0.32010882429399834,0.4288965848487438,null,null,null,null,null,0.08320499697553518,0.15721123459015562,null,null]\t2020-02-03T18:00:00.000000Z\n";
                 TestUtils.assertEquals(expected, sink);
 
                 // Split at 17:30
@@ -421,6 +432,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                                 " rnd_str(5,16,2) as str," +
                                 " rnd_varchar(1,40,5) as varc1," +
                                 " rnd_varchar(1, 1,5) as varc2," +
+                                " rnd_double_array(1,1) arr," +
                                 " timestamp_sequence('2020-02-03T17:30', 60*1000000L) ts" +
                                 " from long_sequence(1)"
                 );
@@ -439,6 +451,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                                 " rnd_str(5,16,2) as str," +
                                 " rnd_varchar(1,40,5) as varc1," +
                                 " rnd_varchar(1, 1,5) as varc2," +
+                                " rnd_double_array(1,1) arr," +
                                 " timestamp_sequence('2020-02-03T17:15', 60*1000000L) ts" +
                                 " from long_sequence(1)"
                 );
@@ -460,6 +473,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " cast(x as int) i," +
                             " -x j," +
                             " rnd_symbol(null,'5','16','2') as sym," +
+                            " rnd_double_array(1,1) arr," +
                             " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                             " from long_sequence(60*24*2)" +
                             "), index(sym) timestamp (ts) partition by DAY",
@@ -472,6 +486,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " cast(x as int) * 1000000 i," +
                             " -x - 1000000L as j," +
                             " rnd_symbol(null,'5','16','2') as sym," +
+                            " rnd_double_array(1,1) arr," +
                             " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
                             " from long_sequence(50))",
                     sqlExecutionContext
@@ -482,6 +497,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             "i int," +
                             "j long," +
                             "sym symbol," +
+                            "arr double[]," +
                             "ts timestamp)",
                     sqlExecutionContext
             );
@@ -531,6 +547,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " rnd_str(5,16,2) as str," +
                             " rnd_varchar(1,40,5) as varc1," +
                             " rnd_varchar(1, 1,5) as varc2," +
+                            " rnd_double_array(1,1) arr," +
                             " timestamp_sequence('2020-02-04T00', 60*1000000L) ts" +
                             " from long_sequence(60*36)" +
                             ") timestamp (ts) partition by DAY"
@@ -544,7 +561,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     " -x - 1000000L as j," +
                     " rnd_str(5,16,2) as str," +
                     " rnd_varchar(1,40,5) as varc1," +
-                    " rnd_varchar(1, 1,5) as varc2,";
+                    " rnd_varchar(1, 1,5) as varc2," +
+                    " rnd_double_array(1,1) arr,";
 
             try {
                 // fail squashing fix len column.
@@ -610,6 +628,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " cast(x as int) i," +
                             " -x j," +
                             " rnd_symbol(null,'5','16','2') as sym," +
+                            " rnd_double_array(1,1) arr," +
                             " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                             " from long_sequence(60*24*2)" +
                             "), index(sym) timestamp (ts) partition by DAY",
@@ -622,6 +641,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " cast(x as int) * 1000000 i," +
                             " -x - 1000000L as j," +
                             " rnd_symbol(null,'5','16','2') as sym," +
+                            " rnd_double_array(1,1) arr," +
                             " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
                             " from long_sequence(50))",
                     sqlExecutionContext
@@ -632,6 +652,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             "i int," +
                             "j long," +
                             "sym symbol," +
+                            "arr double[]," +
                             "ts timestamp)",
                     sqlExecutionContext
             );
@@ -689,6 +710,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " rnd_str(5,16,2) as str," +
                             " rnd_varchar(1,40,5) as varc1," +
                             " rnd_varchar(1, 1,5) as varc2," +
+                            " rnd_double_array(1,1) arr," +
                             " timestamp_sequence('2020-02-04T00', 60*1000000L) ts" +
                             " from long_sequence(60*(23*2-24))" +
                             ") timestamp (ts) partition by DAY"
@@ -700,7 +722,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     " -x - 1000000L as j," +
                     " rnd_str(5,16,2) as str," +
                     " rnd_varchar(1,40,5) as varc1," +
-                    " rnd_varchar(1, 1,5) as varc2,";
+                    " rnd_varchar(1, 1,5) as varc2," +
+                    " rnd_double_array(1,1) arr,";
             String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
 
             // Prevent squashing
@@ -779,6 +802,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " str string," +
                             " varc1 varchar," +
                             " varc2 varchar," +
+                            " arr double[]," +
                             " ts timestamp" +
                             ") timestamp (ts) partition by DAY " + wal,
                     sqlExecutionContext
@@ -795,7 +819,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     " -x - 1000000L as j," +
                     " rnd_str(5,16,2) as str," +
                     " rnd_varchar(1,40,5) as varc1," +
-                    " rnd_varchar(1, 1,5) as varc2,";
+                    " rnd_varchar(1, 1,5) as varc2," +
+                    " rnd_double_array(1,1) arr,";
             execute(
                     sqlPrefix +
                             " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +

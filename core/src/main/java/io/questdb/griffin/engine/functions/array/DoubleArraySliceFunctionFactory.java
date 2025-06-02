@@ -22,39 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.functions.array;
 
-import io.questdb.std.Interval;
-import org.jetbrains.annotations.NotNull;
-
-public interface ScalarFunction extends Function {
+public class DoubleArraySliceFunctionFactory extends DoubleArrayAccessFunctionFactory {
     @Override
-    default int getArrayLength() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default @NotNull Interval getInterval(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default Record getRecord(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default CharSequence getStrA(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default CharSequence getStrB(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default int getStrLen(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
+    public String getSignature() {
+        return "[](D[]ΔV)";
     }
 }

@@ -9,6 +9,7 @@ tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 regex = "1.5"
-serde_json = "1.0"
 chrono = "0.4"
 thiserror = "1.0.64"
+postgres-protocol = "0.6.8"
+fallible-iterator = "0.2.0"

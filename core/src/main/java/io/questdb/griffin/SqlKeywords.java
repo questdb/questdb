@@ -31,7 +31,7 @@ import org.jetbrains.annotations.NotNull;
 
 @SuppressWarnings("BooleanMethodIsAlwaysInverted")
 public class SqlKeywords {
-    public static final int CASE_KEYWORD_LENGTH = 4;
+    public static final int CAST_KEYWORD_LENGTH = 4;
     public static final String CONCAT_FUNC_NAME = "concat";
     public static final int GEOHASH_KEYWORD_LENGTH = 7;
     protected static final LowerCaseCharSequenceHashSet KEYWORDS = new LowerCaseCharSequenceHashSet();
@@ -74,6 +74,15 @@ public class SqlKeywords {
                 && (tok.charAt(0) | 32) == 'a'
                 && (tok.charAt(1) | 32) == 'n'
                 && (tok.charAt(2) | 32) == 'd';
+    }
+
+    public static boolean isArrayKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'a'
+                && (tok.charAt(1) | 32) == 'r'
+                && (tok.charAt(2) | 32) == 'r'
+                && (tok.charAt(3) | 32) == 'a'
+                && (tok.charAt(4) | 32) == 'y';
     }
 
     public static boolean isAsKeyword(CharSequence tok) {
@@ -2188,7 +2197,7 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 'h';
     }
 
-    static void assertTableNameIsQuotedOrNotAKeyword(CharSequence keyword, int position) throws SqlException {
+    static void assertNameIsQuotedOrNotAKeyword(CharSequence keyword, int position) throws SqlException {
         final boolean quoted = Chars.isQuoted(keyword);
         if (!quoted && SqlKeywords.isKeyword(keyword)) {
             throw SqlException.$(position, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"").put(keyword).put('"');

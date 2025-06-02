@@ -25,27 +25,16 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.VarcharFunction;
-import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 
-import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
-
-public class VarcharColumn extends VarcharFunction implements ScalarFunction {
-    private static final ObjList<VarcharColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
+public class VarcharColumn extends VarcharFunction implements Function {
     private final int columnIndex;
 
     public VarcharColumn(int columnIndex) {
         this.columnIndex = columnIndex;
-    }
-
-    public static VarcharColumn newInstance(int columnIndex) {
-        if (columnIndex < STATIC_COLUMN_COUNT) {
-            return COLUMNS.getQuick(columnIndex);
-        }
-        return new VarcharColumn(columnIndex);
     }
 
     @Override
@@ -66,12 +55,5 @@ public class VarcharColumn extends VarcharFunction implements ScalarFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.putColumnName(columnIndex);
-    }
-
-    static {
-        COLUMNS.setPos(STATIC_COLUMN_COUNT);
-        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new VarcharColumn(i));
-        }
     }
 }

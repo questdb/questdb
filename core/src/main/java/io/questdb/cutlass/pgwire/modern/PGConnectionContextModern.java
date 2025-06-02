@@ -591,8 +591,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         for (int i = 0, n = names.size(); i < n; i++) {
             PGPipelineEntry pe = cache.get(names.getQuick(i));
             pe.setStateClosed(true, isStatementClose);
-            // return the factory back to global cache in case of a select
-            pe.cacheIfPossible(tasCache, null);
+            pe.cacheIfPossible(tasCache, taiCache);
             releaseToPool(pe);
         }
         cache.clear();
@@ -956,7 +955,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         transactionState = pipelineCurrentEntry.msgExecute(
                 sqlExecutionContext,
                 transactionState,
-                taiCache,
                 taiPool,
                 pendingWriters,
                 this,
@@ -1070,15 +1068,13 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // will have the supplied parameter types.
 
         int cachedStatus = CACHE_MISS;
-        int taiKeyIndex = taiCache.keyIndex(utf16SqlText);
-        final TypesAndInsertModern tai = taiCache.peek(taiKeyIndex);
+        final TypesAndInsertModern tai = taiCache.poll(utf16SqlText);
         if (tai != null) {
             if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
                 pipelineCurrentEntry.ofCachedInsert(utf16SqlText, tai);
                 cachedStatus = CACHE_HIT_INSERT_VALID;
             } else {
-                TypesAndInsertModern tai2 = taiCache.poll(taiKeyIndex);
-                assert tai2 == tai;
+                // Cache miss, get rid of this entry.
                 tai.close();
                 cachedStatus = CACHE_HIT_INSERT_INVALID;
             }
@@ -1263,6 +1259,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // Message types in the order they usually come over the wire. All "msg" methods
         // are called only from here and are responsible for handling individual messages.
         // Please do not create other methods that start with "msg".
+
         switch (type) {
             case 'P': // parse
                 msgParse(address, msgLo, msgLimit);
@@ -1415,7 +1412,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             boolean isError = pipelineCurrentEntry.isError();
             boolean isClosed = pipelineCurrentEntry.isStateClosed();
             // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
-            do {
+            while (true) {
                 try {
                     pipelineCurrentEntry.msgSync(
                             sqlExecutionContext,
@@ -1440,7 +1437,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                         break;
                     }
                 }
-            } while (true);
+            }
 
             // we want the pipelineCurrentEntry to retain the last entry of the pipeline
             // unless this entry was already executed, closed and is an error
@@ -1558,7 +1555,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             transactionState = pipelineCurrentEntry.msgExecute(
                     sqlExecutionContext,
                     transactionState,
-                    taiCache,
                     taiPool,
                     pendingWriters,
                     PGConnectionContextModern.this,

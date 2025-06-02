@@ -35,7 +35,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.http.processors.LineHttpProcessorState;
-import io.questdb.cutlass.line.http.LineHttpSender;
+import io.questdb.cutlass.line.http.AbstractLineHttpSender;
+import io.questdb.cutlass.line.http.LineHttpSenderV2;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.test.AbstractBootstrapTest;
@@ -139,8 +140,19 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
         try (final TestServerMain serverMain = new TestServerMain(bootstrap)) {
             serverMain.start();
 
-            try (LineHttpSender sender = new LineHttpSender("localhost", serverMain.getHttpServerPort(),
-                    DefaultHttpClientConfiguration.INSTANCE, null, 1000, null, null, null, 0, 0, Long.MAX_VALUE
+            try (AbstractLineHttpSender sender = new LineHttpSenderV2(
+                    "localhost",
+                    serverMain.getHttpServerPort(),
+                    DefaultHttpClientConfiguration.INSTANCE,
+                    null,
+                    1000,
+                    null,
+                    null,
+                    null,
+                    127,
+                    0,
+                    0,
+                    Long.MAX_VALUE
             )) {
                 sender.table("accounts").symbol("balance", "BOOOO").atNow();
                 sender.flush();
