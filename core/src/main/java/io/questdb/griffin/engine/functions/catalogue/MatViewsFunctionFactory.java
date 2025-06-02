@@ -60,6 +60,25 @@ import io.questdb.std.str.StringSink;
 public class MatViewsFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(MatViewsFunctionFactory.class);
 
+    public static String getTimerIntervalUnit(char unit) {
+        switch (unit) {
+            case 'm':
+                return "MINUTE";
+            case 'h':
+                return "HOUR";
+            case 'd':
+                return "DAY";
+            case 'w':
+                return "WEEK";
+            case 'y':
+                return "YEAR";
+            case 'M':
+                return "MONTH";
+            default:
+                return null;
+        }
+    }
+
     @Override
     public String getSignature() {
         return "materialized_views()";
@@ -79,25 +98,6 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 return true;
             }
         };
-    }
-
-    private static String getTimerIntervalUnit(char unit) {
-        switch (unit) {
-            case 'm':
-                return "MINUTE";
-            case 'h':
-                return "HOUR";
-            case 'd':
-                return "DAY";
-            case 'w':
-                return "WEEK";
-            case 'y':
-                return "YEAR";
-            case 'M':
-                return "MONTH";
-            default:
-                return null;
-        }
     }
 
     private static class MatViewsCursorFactory implements RecordCursorFactory {

@@ -38,13 +38,16 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.catalogue.MatViewsFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -3490,17 +3493,60 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testTimerMatViewBigJumpsClockAfterTickBoundary() throws Exception {
-        testTimerMatViewBigJumps("2024-12-12T12:00:01.000000Z", "2024-12-12T13:00:01.000000Z", 2 * Timestamps.HOUR_MICROS);
+        testTimerMatViewBigJumps(
+                null,
+                "2024-12-12T12:00:01.000000Z",
+                "2024-12-12T13:00:01.000000Z",
+                2 * Timestamps.HOUR_MICROS
+        );
+    }
+
+    @Test
+    public void testTimerMatViewBigJumpsClockAfterTickBoundaryWithTz() throws Exception {
+        testTimerMatViewBigJumps(
+                "Europe/London",
+                "2024-12-12T12:00:01.000000Z",
+                "2024-12-12T13:00:01.000000Z",
+                2 * Timestamps.HOUR_MICROS
+        );
     }
 
     @Test
     public void testTimerMatViewBigJumpsClockAtTickBoundary() throws Exception {
-        testTimerMatViewBigJumps("2024-12-12T12:00:00.000000Z", "2024-12-12T12:00:00.000000Z", Timestamps.HOUR_MICROS);
+        testTimerMatViewBigJumps(
+                null,
+                "2024-12-12T12:00:00.000000Z",
+                "2024-12-12T12:00:00.000000Z",
+                Timestamps.HOUR_MICROS
+        );
+    }
+
+    @Test
+    public void testTimerMatViewBigJumpsClockAtTickBoundaryWithTz() throws Exception {
+        testTimerMatViewBigJumps(
+                "Europe/London",
+                "2024-12-12T12:00:00.000000Z",
+                "2024-12-12T12:00:00.000000Z",
+                Timestamps.HOUR_MICROS
+        );
     }
 
     @Test
     public void testTimerMatViewSmallHourJumps() throws Exception {
         testTimerMatViewSmallJumps(
+                null,
+                "2024-12-12T00:00:00.000000Z",
+                "2d",
+                "2024-12-11T00:00:00.000000Z",
+                Timestamps.HOUR_MICROS,
+                23
+        );
+    }
+
+    @Test
+    public void testTimerMatViewSmallHourJumpsWithTz() throws Exception {
+        testTimerMatViewSmallJumps(
+                "Europe/London",
                 "2024-12-12T00:00:00.000000Z",
                 "2d",
                 "2024-12-11T00:00:00.000000Z",
@@ -3512,6 +3558,7 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testTimerMatViewSmallMinuteJumps1() throws Exception {
         testTimerMatViewSmallJumps(
+                null,
                 "2024-12-12T01:30:00.000000Z",
                 "30m",
                 "2024-12-12T01:00:00.000000Z",
@@ -3523,6 +3570,31 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testTimerMatViewSmallMinuteJumps2() throws Exception {
         testTimerMatViewSmallJumps(
+                null,
+                "2024-12-12T01:30:00.000000Z",
+                "30m",
+                "2024-12-12T01:45:00.000000Z",
+                Timestamps.MINUTE_MICROS,
+                14
+        );
+    }
+
+    @Test
+    public void testTimerMatViewSmallMinuteJumpsWithTz1() throws Exception {
+        testTimerMatViewSmallJumps(
+                "Europe/London",
+                "2024-12-12T01:30:00.000000Z",
+                "30m",
+                "2024-12-12T01:00:00.000000Z",
+                Timestamps.MINUTE_MICROS,
+                29
+        );
+    }
+
+    @Test
+    public void testTimerMatViewSmallMinuteJumpsWithTz2() throws Exception {
+        testTimerMatViewSmallJumps(
+                "Europe/London",
                 "2024-12-12T01:30:00.000000Z",
                 "30m",
                 "2024-12-12T01:45:00.000000Z",
@@ -3939,18 +4011,29 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
-    private void testTimerMatViewBigJumps(String start, String initialClock, long clockJump) throws Exception {
+    private void testTimerMatViewBigJumps(String timeZone, String start, String initialClock, long clockJump) throws Exception {
         assertMemoryLeak(() -> {
+            final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timeZone) : null;
+
             execute(
                     "create table base_price (" +
                             "sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
-            execute(
-                    "create materialized view price_1h refresh start '" + start + "' every 1h as (" +
-                            "select sym, last(price) as price, ts from base_price sample by 1h" +
-                            ") partition by day"
-            );
+
+            if (timeZone != null) {
+                execute(
+                        "create materialized view price_1h refresh start '" + start + "' time zone '" + timeZone + "' every h as (" +
+                                "select sym, last(price) as price, ts from base_price sample by 1h" +
+                                ") partition by day"
+                );
+            } else {
+                execute(
+                        "create materialized view price_1h refresh start '" + start + "' every 1h as (" +
+                                "select sym, last(price) as price, ts from base_price sample by 1h" +
+                                ") partition by day"
+                );
+            }
 
             execute(
                     "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
@@ -3959,7 +4042,11 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            currentMicros = parseFloorPartialTimestamp(initialClock);
+            long initialMicros = parseFloorPartialTimestamp(initialClock);
+            if (tzRules != null) {
+                initialMicros += tzRules.getOffset(initialMicros);
+            }
+            currentMicros = initialMicros;
             final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
             drainMatViewTimerQueue(timerJob);
             drainQueues();
@@ -3971,9 +4058,11 @@ public class MatViewTest extends AbstractCairoTest {
                             "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
                     "price_1h order by sym"
             );
+            final StringSink tsSink = new StringSink();
+            TimestampFormatUtils.appendDateTimeUSec(tsSink, currentMicros);
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval_value\ttimer_interval_unit\n" +
-                            "price_1h\ttimer\tbase_price\t" + initialClock + "\t" + initialClock + "\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t1\t1\t\t" + start + "\t1\tHOUR\n",
+                            "price_1h\ttimer\tbase_price\t" + tsSink + "\t" + tsSink + "\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t1\t1\t" + (timeZone != null ? timeZone : "") + "\t" + start + "\t1\tHOUR\n",
                     "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
                             "view_sql, view_status, refresh_base_table_txn, base_table_txn, " +
                             "timer_time_zone, timer_start, timer_interval_value, timer_interval_unit " +
@@ -3998,18 +4087,32 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
-    private void testTimerMatViewSmallJumps(String start, String every, String initialClock, long clockJump, int ticksBeforeRefresh) throws Exception {
+    private void testTimerMatViewSmallJumps(String timeZone, String start, String every, String initialClock, long clockJump, int ticksBeforeRefresh) throws Exception {
         assertMemoryLeak(() -> {
+            final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timeZone) : null;
+            final int interval = Timestamps.getStrideMultiple(every);
+            final char unit = Timestamps.getStrideUnit(every);
+            final String unitStr = MatViewsFunctionFactory.getTimerIntervalUnit(unit);
+
             execute(
                     "create table base_price (" +
                             "sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
-            execute(
-                    "create materialized view price_1h refresh start '" + start + "' every " + every + " as (" +
-                            "select sym, last(price) as price, ts from base_price sample by 1h" +
-                            ") partition by day"
-            );
+
+            if (timeZone != null) {
+                execute(
+                        "create materialized view price_1h refresh start '" + start + "' time zone '" + timeZone + "' every " + every + " as (" +
+                                "select sym, last(price) as price, ts from base_price sample by 1h" +
+                                ") partition by day"
+                );
+            } else {
+                execute(
+                        "create materialized view price_1h refresh start '" + start + "' every " + every + " as (" +
+                                "select sym, last(price) as price, ts from base_price sample by 1h" +
+                                ") partition by day"
+                );
+            }
 
             execute(
                     "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
@@ -4018,7 +4121,11 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            currentMicros = parseFloorPartialTimestamp(initialClock);
+            long initialMicros = parseFloorPartialTimestamp(initialClock);
+            if (tzRules != null) {
+                initialMicros += tzRules.getOffset(initialMicros);
+            }
+            currentMicros = initialMicros;
             final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
 
             for (int i = 0; i < ticksBeforeRefresh; i++) {
@@ -4050,10 +4157,15 @@ public class MatViewTest extends AbstractCairoTest {
                             "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
                     "price_1h order by sym"
             );
+            final StringSink tsSink = new StringSink();
+            TimestampFormatUtils.appendDateTimeUSec(tsSink, currentMicros);
             assertQueryNoLeakCheck(
-                    "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
-                            "price_1h\tbase_price\tvalid\t\n",
-                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval_value\ttimer_interval_unit\n" +
+                            "price_1h\ttimer\tbase_price\t" + tsSink + "\t" + tsSink + "\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t1\t1\t" + (timeZone != null ? timeZone : "") + "\t" + start + "\t" + interval + "\t" + unitStr + "\n",
+                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "view_sql, view_status, refresh_base_table_txn, base_table_txn, " +
+                            "timer_time_zone, timer_start, timer_interval_value, timer_interval_unit " +
+                            "from materialized_views",
                     null
             );
         });
