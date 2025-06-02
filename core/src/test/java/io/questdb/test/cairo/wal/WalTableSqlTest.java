@@ -102,16 +102,16 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
                         " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
                 try (
-                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertOperation insertOperation = compiledQuery.popInsertOperation();
                         InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
                 ) {
-                    insertMethod.execute();
+                    insertMethod.execute(sqlExecutionContext);
 
                     CompiledQuery compiledQuery2 = compiler.compile("insert into " + tableName +
                             " values (102, 'bbb', '2022-02-24T02', 'ccc')", sqlExecutionContext);
-                    try (InsertOperation insertOperation2 = compiledQuery2.getInsertOperation();
+                    try (InsertOperation insertOperation2 = compiledQuery2.popInsertOperation();
                          InsertMethod insertMethod2 = insertOperation2.createMethod(sqlExecutionContext)) {
-                        insertMethod2.execute();
+                        insertMethod2.execute(sqlExecutionContext);
                         insertMethod2.commit();
                     }
                     insertMethod.commit();
@@ -152,14 +152,14 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
                         " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
                 try (
-                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertOperation insertOperation = compiledQuery.popInsertOperation();
                         InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
                 ) {
-                    insertMethod.execute();
-                    insertMethod.execute();
+                    insertMethod.execute(sqlExecutionContext);
+                    insertMethod.execute(sqlExecutionContext);
                     insertMethod.commit();
 
-                    insertMethod.execute();
+                    insertMethod.execute(sqlExecutionContext);
                     execute("alter table " + tableName + " add column new_column int");
                     insertMethod.commit();
                 }
@@ -197,11 +197,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
                         " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
                 try (
-                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertOperation insertOperation = compiledQuery.popInsertOperation();
                         InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
                 ) {
 
-                    insertMethod.execute();
+                    insertMethod.execute(sqlExecutionContext);
                     execute("alter table " + tableName + " add column jjj int");
                     insertMethod.commit();
                 }
@@ -237,11 +237,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
                         " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
                 try (
-                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertOperation insertOperation = compiledQuery.popInsertOperation();
                         InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
                 ) {
 
-                    insertMethod.execute();
+                    insertMethod.execute(sqlExecutionContext);
                     execute("alter table " + tableName + " add column jjj int");
                     execute("alter table " + tableName + " add column col_str string");
                     execute("alter table " + tableName + " add column col_var varchar");
@@ -279,10 +279,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
                         " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
                 try (
-                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertOperation insertOperation = compiledQuery.popInsertOperation();
                         InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
                 ) {
-                    insertMethod.execute();
+                    insertMethod.execute(sqlExecutionContext);
                     insertMethod.commit();
                     execute("alter table " + tableName + " add column jjj int");
                 }
@@ -389,12 +389,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
                         " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
                 try (
-                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertOperation insertOperation = compiledQuery.popInsertOperation();
                         InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
                 ) {
                     // 3 transactions
                     for (int i = 0; i < 3; i++) {
-                        insertMethod.execute();
+                        insertMethod.execute(sqlExecutionContext);
                         insertMethod.commit();
                     }
                 }
@@ -607,45 +607,43 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     true
             );
 
-            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                execute("drop table " + tableName);
-                SharedRandom.RANDOM.get().reset();
-                execute(createSql + " WAL");
-                drainWalQueue(walApplyJob);
-                assertQueryNoLeakCheck(
-                        "x\tsym\tsym2\tts\n" +
-                                "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n",
-                        tableName,
-                        "ts",
-                        true,
-                        true
-                );
+            execute("drop table " + tableName);
+            SharedRandom.RANDOM.get().reset();
+            execute(createSql + " WAL");
+            drainWalQueue();
+            assertQueryNoLeakCheck(
+                    "x\tsym\tsym2\tts\n" +
+                            "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n",
+                    tableName,
+                    "ts",
+                    true,
+                    true
+            );
 
-                execute("drop table " + tableName);
-                SharedRandom.RANDOM.get().reset();
-                execute(createSql);
-                assertQueryNoLeakCheck(
-                        "x\tsym\tsym2\tts\n" +
-                                "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n",
-                        tableName,
-                        "ts",
-                        true,
-                        true
-                );
+            execute("drop table " + tableName);
+            SharedRandom.RANDOM.get().reset();
+            execute(createSql);
+            assertQueryNoLeakCheck(
+                    "x\tsym\tsym2\tts\n" +
+                            "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n",
+                    tableName,
+                    "ts",
+                    true,
+                    true
+            );
 
-                execute("drop table " + tableName);
-                SharedRandom.RANDOM.get().reset();
-                execute(createSql + " WAL");
-                drainWalQueue(walApplyJob);
-                assertQueryNoLeakCheck(
-                        "x\tsym\tsym2\tts\n" +
-                                "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n",
-                        tableName,
-                        "ts",
-                        true,
-                        true
-                );
-            }
+            execute("drop table " + tableName);
+            SharedRandom.RANDOM.get().reset();
+            execute(createSql + " WAL");
+            drainWalQueue();
+            assertQueryNoLeakCheck(
+                    "x\tsym\tsym2\tts\n" +
+                            "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n",
+                    tableName,
+                    "ts",
+                    true,
+                    true
+            );
         });
     }
 
@@ -1070,25 +1068,23 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                drainWalQueue(walApplyJob);
-                TableToken sysTableName1 = engine.verifyTableName(tableName);
+            drainWalQueue();
+            TableToken sysTableName1 = engine.verifyTableName(tableName);
 
-                try (TableReader ignore = sqlExecutionContext.getReader(sysTableName1)) {
-                    execute("drop table " + tableName);
-                    drainWalQueue(walApplyJob);
-                    checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", true);
-                }
-
-                if (Os.type == Os.WINDOWS) {
-                    // Release WAL writers
-                    engine.releaseInactive();
-                }
-                drainWalQueue(walApplyJob);
-
-                checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
-                checkWalFilesRemoved(sysTableName1);
+            try (TableReader ignore = sqlExecutionContext.getReader(sysTableName1)) {
+                execute("drop table " + tableName);
+                drainWalQueue();
+                checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", true);
             }
+
+            if (Os.type == Os.WINDOWS) {
+                // Release WAL writers
+                engine.releaseInactive();
+            }
+            drainWalQueue();
+
+            checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
+            checkWalFilesRemoved(sysTableName1);
         });
     }
 
@@ -1164,12 +1160,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
             engine.reloadTableNames(convertedTables);
 
             drainWalQueue();
-            runWalPurgeJob();
+            drainPurgeJob();
 
             engine.releaseInactive();
 
             drainWalQueue();
-            runWalPurgeJob();
+            drainPurgeJob();
 
             checkTableFilesExist(sysTableName1, "2022-02-24", "sym.d", false);
         });
@@ -1205,12 +1201,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
             pretendNotExist.set(Path.getThreadLocal(root).concat(sysTableName1).toString());
             engine.reloadTableNames();
 
-            runWalPurgeJob();
+            drainPurgeJob();
 
             engine.reloadTableNames();
 
             drainWalQueue();
-            runWalPurgeJob();
+            drainPurgeJob();
 
             checkTableFilesExist(sysTableName1, "2022-02-24", "sym.d", false);
         });
@@ -1247,10 +1243,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
             pretendNotExist.set(Path.getThreadLocal(root).concat(sysTableName1).slash$().toString());
             engine.reloadTableNames();
 
-            runWalPurgeJob();
+            drainPurgeJob();
 
             drainWalQueue();
-            runWalPurgeJob();
+            drainPurgeJob();
 
             checkTableFilesExist(sysTableName1, "2022-02-24", "sym.d", false);
         });
@@ -1275,20 +1271,18 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                drainWalQueue(walApplyJob);
+            drainWalQueue();
 
-                for (int i = 0; i < configuration.getWalTxnNotificationQueueCapacity(); i++) {
-                    execute("insert into " + tableName + "1 values (101, 'a1a1', '2022-02-24T01')");
-                }
-
-                TableToken table2directoryName = engine.verifyTableName(tableName + "2");
-                execute("drop table " + tableName + "2");
-
-                drainWalQueue(walApplyJob);
-
-                checkTableFilesExist(table2directoryName, "2022-02-24", "x.d", false);
+            for (int i = 0; i < configuration.getWalTxnNotificationQueueCapacity(); i++) {
+                execute("insert into " + tableName + "1 values (101, 'a1a1', '2022-02-24T01')");
             }
+
+            TableToken table2directoryName = engine.verifyTableName(tableName + "2");
+            execute("drop table " + tableName + "2");
+
+            drainWalQueue();
+
+            checkTableFilesExist(table2directoryName, "2022-02-24", "x.d", false);
         });
     }
 
@@ -1315,18 +1309,16 @@ public class WalTableSqlTest extends AbstractCairoTest {
             );
             TableToken sysTableName1 = engine.verifyTableName(tableName);
 
-            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                drainWalQueue(walApplyJob);
+            drainWalQueue();
 
-                if (Os.type == Os.WINDOWS) {
-                    // Release WAL writers
-                    engine.releaseInactive();
-                    drainWalQueue(walApplyJob);
-                }
-
-                checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
-                checkWalFilesRemoved(sysTableName1);
+            if (Os.type == Os.WINDOWS) {
+                // Release WAL writers
+                engine.releaseInactive();
+                drainWalQueue();
             }
+
+            checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
+            checkWalFilesRemoved(sysTableName1);
         });
     }
 
@@ -1561,14 +1553,14 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
                         " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
                 try (
-                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertOperation insertOperation = compiledQuery.popInsertOperation();
                         InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
                 ) {
-                    insertMethod.execute();
-                    insertMethod.execute();
+                    insertMethod.execute(sqlExecutionContext);
+                    insertMethod.execute(sqlExecutionContext);
                     insertMethod.commit();
 
-                    insertMethod.execute();
+                    insertMethod.execute(sqlExecutionContext);
                     execute("alter table " + tableName + " drop column sym");
                     insertMethod.commit();
                 }
@@ -1967,6 +1959,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testSuspendedTablesTriedOnceOnStart() throws Exception {
         FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
             public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, "fail.d")) {
                     return -1;
@@ -2019,11 +2012,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
                         " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
                 try (
-                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertOperation insertOperation = compiledQuery.popInsertOperation();
                         InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
                 ) {
 
-                    insertMethod.execute();
+                    insertMethod.execute(sqlExecutionContext);
                     execute("alter table " + tableName + " add column sss string");
                     insertMethod.commit();
                 }
@@ -2142,7 +2135,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         var control = engine.getTableSequencerAPI().getTxnTracker(token).getMemPressureControl();
         control.setMaxBlockRowCount(1);
 
-        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+        try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
             walApplyJob.run(0);
         }
     }
@@ -2172,7 +2165,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             execute("drop table " + tableName + "2");
             engine.releaseInactive();
             drainWalQueue();
-            runWalPurgeJob();
+            drainPurgeJob();
             checkTableFilesExist(sysTableName2, "2022-02-24", "sym.d", false);
 
             // Mark table1 as deleted
@@ -2195,7 +2188,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             engine.releaseInactive();
 
             drainWalQueue();
-            runWalPurgeJob();
+            drainPurgeJob();
 
             checkTableFilesExist(sysTableName1, "2022-02-24", "sym.d", false);
         });
@@ -2223,28 +2216,26 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                drainWalQueue();
+            drainWalQueue();
 
-                TableToken sysTableName1 = engine.verifyTableName(tableName);
-                execute("drop table " + tableName);
+            TableToken sysTableName1 = engine.verifyTableName(tableName);
+            execute("drop table " + tableName);
 
-                latch.set(true);
-                drainWalQueue(walApplyJob);
+            latch.set(true);
+            drainWalQueue();
 
-                latch.set(false);
-                if (Os.type == Os.WINDOWS) {
-                    // Release WAL writers
-                    engine.releaseInactive();
-                }
-
-                drainWalQueue(walApplyJob);
-
-                checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
-                checkWalFilesRemoved(sysTableName1);
-
-                assertException(tableName, 0, "does not exist");
+            latch.set(false);
+            if (Os.type == Os.WINDOWS) {
+                // Release WAL writers
+                engine.releaseInactive();
             }
+
+            drainWalQueue();
+
+            checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
+            checkWalFilesRemoved(sysTableName1);
+
+            assertException(tableName, 0, "does not exist");
         });
     }
 

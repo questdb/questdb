@@ -30,7 +30,11 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
@@ -53,20 +57,18 @@ public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
         Function floatFunc = args.getQuick(0);
         if (floatFunc.isConstant()) {
             final StringSink sink = Misc.getThreadLocalSink();
-            sink.put(floatFunc.getFloat(null), configuration.getFloatToStrCastScale());
+            sink.put(floatFunc.getFloat(null));
             return new VarcharConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0), configuration.getFloatToStrCastScale());
+        return new Func(args.getQuick(0));
     }
 
     public static class Func extends AbstractCastToVarcharFunction {
-        private final int scale;
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
 
-        public Func(Function arg, int scale) {
+        public Func(Function arg) {
             super(arg);
-            this.scale = scale;
         }
 
         @Override
@@ -74,7 +76,7 @@ public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
             final float value = arg.getFloat(rec);
             if (!Numbers.isNull(value)) {
                 sinkA.clear();
-                sinkA.put(value, scale);
+                sinkA.put(value);
                 return sinkA;
             }
             return null;
@@ -85,7 +87,7 @@ public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
             final float value = arg.getFloat(rec);
             if (!Numbers.isNull(value)) {
                 sinkB.clear();
-                sinkB.put(value, scale);
+                sinkB.put(value);
                 return sinkB;
             }
             return null;

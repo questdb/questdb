@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
@@ -129,6 +130,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return null;
     }
 
+    default IntList getColumnCrossIndex() {
+        return null;
+    }
+
     @Nullable
     default CompiledFilter getCompiledFilter() {
         return null;
@@ -205,6 +210,21 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * by re-applying limit logic).
      */
     default boolean implementsLimit() {
+        return false;
+    }
+
+    /**
+     * Returns true if the factory stands for nothing more but a projection, so that
+     * the above factory (e.g. a parallel GROUP BY one) can steal the projection.
+     * <p>
+     * Projection consist of cross-indexes and metadata columns.
+     * <p>
+     *
+     * @return true if the factory stands for nothing more but a projection
+     * @see #getColumnCrossIndex()
+     * @see #getBaseColumnName(int)
+     */
+    default boolean isProjection() {
         return false;
     }
 

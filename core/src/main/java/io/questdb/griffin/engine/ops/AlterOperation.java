@@ -69,8 +69,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short CONVERT_PARTITION_TO_PARQUET = CHANGE_COLUMN_TYPE + 1; // 18
     public final static short CONVERT_PARTITION_TO_NATIVE = CONVERT_PARTITION_TO_PARQUET + 1; // 19
     public final static short FORCE_DROP_PARTITION = CONVERT_PARTITION_TO_NATIVE + 1; // 20
-    public final static short SET_TTL_HOURS_OR_MONTHS = FORCE_DROP_PARTITION + 1; // 21
-    public final static short CHANGE_SYMBOL_CAPACITY = SET_TTL_HOURS_OR_MONTHS + 1; // 22
+    public final static short SET_TTL = FORCE_DROP_PARTITION + 1; // 21
+    public final static short CHANGE_SYMBOL_CAPACITY = SET_TTL + 1; // 22
+    public final static short SET_MAT_VIEW_REFRESH_LIMIT = CHANGE_SYMBOL_CAPACITY + 1; // 23
+    public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -88,9 +90,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         this(new LongList(), new ObjList<>());
     }
 
-    public AlterOperation(LongList extraInfo, ObjList<CharSequence> charSequenceObjList) {
+    public AlterOperation(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
         this.extraInfo = extraInfo;
-        this.extraStrInfo = new ObjCharSequenceList(charSequenceObjList);
+        this.extraStrInfo = new ObjCharSequenceList(extraStrInfo);
         this.command = DO_NOTHING;
     }
 
@@ -192,8 +194,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 case SET_PARAM_COMMIT_LAG:
                     applyParamO3MaxLag(svc);
                     break;
-                case SET_TTL_HOURS_OR_MONTHS:
-                    applyTtlHoursOrMonths(svc);
+                case SET_TTL:
+                    applyTtl(svc);
                     break;
                 case RENAME_TABLE:
                     applyRenameTable(svc);
@@ -215,6 +217,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 case CHANGE_SYMBOL_CAPACITY:
                     changeSymbolCapacity(svc);
+                    break;
+                case SET_MAT_VIEW_REFRESH_LIMIT:
+                    applyMatViewRefreshLimit(svc);
+                    break;
+                case SET_MAT_VIEW_REFRESH_TIMER:
+                    applyMatViewRefreshTimer(svc);
                     break;
                 default:
                     LOG.error()
@@ -576,6 +584,28 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         svc.forceRemovePartitions(extraInfo);
     }
 
+    private void applyMatViewRefreshLimit(MetadataService svc) {
+        final int limitHoursOrMonths = (int) extraInfo.get(0);
+        try {
+            svc.setMetaMatViewRefreshLimit(limitHoursOrMonths);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
+    }
+
+    private void applyMatViewRefreshTimer(MetadataService svc) {
+        final long start = extraInfo.get(0);
+        final int interval = (int) extraInfo.get(1);
+        final char unit = (char) extraInfo.get(2);
+        try {
+            svc.setMetaMatViewRefreshTimer(start, interval, unit);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
+    }
+
     private void applyParamO3MaxLag(MetadataService svc) {
         long o3MaxLag = extraInfo.get(0);
         try {
@@ -622,10 +652,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         );
     }
 
-    private void applyTtlHoursOrMonths(MetadataService svc) {
-        int ttlHoursOrMonths = (int) extraInfo.get(0);
+    private void applyTtl(MetadataService svc) {
+        final int ttlHoursOrMonths = (int) extraInfo.get(0);
         try {
-            svc.setMetaTtlHoursOrMonths(ttlHoursOrMonths);
+            svc.setMetaTtl(ttlHoursOrMonths);
             if (svc instanceof TableWriter) {
                 ((TableWriter) svc).enforceTtl();
             }

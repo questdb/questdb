@@ -255,6 +255,11 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     }
 
     @Override
+    public int getPipelineCapacity() {
+        return getDelegate().getPipelineCapacity();
+    }
+
+    @Override
     public String getPoolName() {
         return getDelegate().getPoolName();
     }

@@ -32,6 +32,7 @@ import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpCookieHandler;
 import io.questdb.cutlass.http.HttpHeaderParserFactory;
 import io.questdb.cutlass.http.RejectProcessorFactory;
+import io.questdb.cutlass.http.processors.TextImportRequestHeaderProcessor;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
 import io.questdb.network.SocketFactory;
 import io.questdb.std.QuietCloseable;
@@ -77,6 +78,11 @@ public interface FactoryProvider extends QuietCloseable {
 
     @NotNull
     SecurityContextFactory getSecurityContextFactory();
+
+    @NotNull
+    default TextImportRequestHeaderProcessor getTextImportRequestHeaderProcessor() {
+        return TextImportRequestHeaderProcessor.DEFAULT;
+    }
 
     @NotNull
     WalJobFactory getWalJobFactory();

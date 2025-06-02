@@ -40,6 +40,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxnScoreboardPoolFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -53,9 +54,10 @@ import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.http.HttpRequestProcessorFactory;
 import io.questdb.cutlass.http.HttpRequestProcessorSelector;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.RescheduleContext;
@@ -120,7 +122,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -161,7 +162,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 import static io.questdb.test.cutlass.http.HttpUtils.urlEncodeQuery;
-import static io.questdb.test.tools.TestUtils.*;
+import static io.questdb.test.tools.TestUtils.assertEventually;
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.assertTrue;
 
 public class IODispatcherTest extends AbstractTest {
@@ -486,7 +488,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(DirectUtf8String url) {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
                 };
@@ -656,7 +658,8 @@ public class IODispatcherTest extends AbstractTest {
                                 "\"timestamp\":-1," +
                                 "\"dataset\":[" + sink + "]," +
                                 "\"count\":" + (numOfRows + 1) + "," +
-                                "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
+                                "\"error\":\"simulated cairo exception\", " +
+                                "\"errorPos\":222" +
                                 "}",
                         "select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")"
                 )
@@ -680,7 +683,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[[]]," +
                             "\"count\":1," +
-                            "\"error\":\"HTTP 403 (Forbidden), simulated authorization exception\"" +
+                            "\"error\":\"simulated authorization exception\", " +
+                            "\"errorPos\":0" +
                             "}",
                     "select simulate_crash('A') from long_sequence(5)"
             );
@@ -1653,7 +1657,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportBadRequestGet() throws Exception {
         testImport(
-                "HTTP/1.1 404 Not Found\r\n" +
+                "HTTP/1.1 405 Method Not Allowed\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -2557,14 +2561,14 @@ public class IODispatcherTest extends AbstractTest {
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjList<String> getUrls() {
                         return new ObjList<>("/upload");
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
                     }
                 });
@@ -3000,6 +3004,18 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testInsertNoMemLeak() throws Exception {
+        getSimpleTester().run((engine, sqlExecutionContext) -> {
+            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE test(id LONG);");
+            testHttpClient.assertGet("{\"dml\":\"OK\"}", "INSERT INTO test values(alloc(42));");
+            testHttpClient.assertGet(
+                    "{\"query\":\"test;\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[42]],\"count\":1}",
+                    "test;"
+            );
+        });
+    }
+
+    @Test
     public void testInterval() throws Exception {
         testJsonQuery(
                 0,
@@ -3053,12 +3069,32 @@ public class IODispatcherTest extends AbstractTest {
                                     "Transfer-Encoding: chunked\r\n" +
                                     "Content-Type: text/plain; charset=utf-8\r\n" +
                                     "\r\n" +
-                                    "16\r\n" +
-                                    "Method not supported\r\n" +
+                                    "23\r\n" +
+                                    "Method is not set in HTTP request\r\n" +
                                     "\r\n" +
                                     "00\r\n"
                     );
                 });
+    }
+
+    @Test
+    public void testJsonFloatClipping() throws Exception {
+        getSimpleTester().run((engine, sqlExecutionContext) -> {
+            testHttpClient.assertGet(
+                    "{\"ddl\":\"OK\"}",
+                    "CREATE TABLE t0(f FLOAT, d DOUBLE);"
+            );
+
+            testHttpClient.assertGet(
+                    "{\"dml\":\"OK\"}",
+                    "INSERT INTO t0 VALUES (54321, 54321);"
+            );
+
+            testHttpClient.assertGet(
+                    "{\"query\":\"SELECT * FROM t0;\",\"columns\":[{\"name\":\"f\",\"type\":\"FLOAT\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[54321.0,54321.0]],\"count\":1}",
+                    "SELECT * FROM t0;"
+            );
+        });
     }
 
     @Test
@@ -3989,7 +4025,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withQueryTimeout(100)
                 .run((engine, sqlExecutionContext) -> testHttpClient.assertGetRegexp(
                         "/query",
-                        "\\{\"query\":\"select \\* from test_data_unavailable\\(1, 10\\)\",\"error\":\"timeout, query aborted \\[fd=\\d+, runtime=\\d+us, timeout=\\d+us\\]\",\"position\":0\\}",
+                        "\\{\"query\":\"select \\* from test_data_unavailable\\(1, 10\\)\",\"error\":\"timeout, query aborted \\[fd=\\d+, runtime=\\d+ms, timeout=\\d+ms\\]\",\"position\":0\\}",
                         "select * from test_data_unavailable(1, 10)",
                         null, null, null, null,
                         "400" // Request Timeout
@@ -5126,7 +5162,7 @@ public class IODispatcherTest extends AbstractTest {
                         // we use regexp, because the fd is different every time
                         testHttpClient.assertGetRegexp(
                                 "/query",
-                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"timeout, query aborted \\[fd=\\d+, runtime=\\d+us, timeout=-100us\\]\",\"position\":0\\}",
+                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"timeout, query aborted \\[fd=\\d+, runtime=\\d+ms, timeout=-100ms\\]\",\"position\":0\\}",
                                 "select i, avg(l), max(l) from t group by i order by i asc limit 3",
                                 null, null, null, null,
                                 "400"
@@ -5137,7 +5173,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryTimeoutResetOnEachQuery() throws Exception {
-        final int timeout = 200;
+        final int timeout = 500;
         final int iterations = 3;
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
@@ -5722,7 +5758,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(DirectUtf8String url) {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
                 }) {
@@ -6035,14 +6071,14 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testPostRequestToGetProcessor() throws Exception {
         testImport(
-                "HTTP/1.1 404 Not Found\r\n" +
+                "HTTP/1.1 405 Method Not Allowed\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "27\r\n" +
-                        "Method (multipart POST) not supported\r\n" +
+                        "1b\r\n" +
+                        "Method POST not supported\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",
@@ -6400,8 +6436,6 @@ public class IODispatcherTest extends AbstractTest {
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt")) {
                     try {
                         Rnd rnd = new Rnd();
-                        final int diskBufferLen = 1024 * 1024;
-
                         writeRandomFile(path, rnd, 122299092L);
 
                         long fd = Net.socketTcp(true);
@@ -6414,18 +6448,6 @@ public class IODispatcherTest extends AbstractTest {
                                 long buffer = Unsafe.calloc(netBufferLen, MemoryTag.NATIVE_DEFAULT);
                                 try {
 
-                                    // send request to server to download file we just created
-                                    final String request = "GET /questdb-temp.txt HTTP/1.1\r\n" +
-                                            "Host: localhost:9000\r\n" +
-                                            "Connection: keep-alive\r\n" +
-                                            "Cache-Control: max-age=0\r\n" +
-                                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
-                                            "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
-                                            "Accept-Encoding: gzip,deflate,sdch\r\n" +
-                                            "Accept-Language: en-US,en;q=0.8\r\n" +
-                                            "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
-                                            "\r\n";
-
                                     String expectedResponseHeader = "HTTP/1.1 200 OK\r\n" +
                                             "Server: questDB/1.0\r\n" +
                                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -6435,8 +6457,8 @@ public class IODispatcherTest extends AbstractTest {
                                             "\r\n";
 
                                     for (int j = 0; j < 10; j++) {
-                                        sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971667);
+                                        sendRequest(fd, buffer);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, expectedResponseHeader);
                                     }
 
                                     // send few requests to receive 304
@@ -6463,8 +6485,8 @@ public class IODispatcherTest extends AbstractTest {
 
                                     // couple more full downloads after 304
                                     for (int j = 0; j < 2; j++) {
-                                        sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971667);
+                                        sendRequest(fd, buffer);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, expectedResponseHeader);
                                     }
 
                                     // get a 404 now
@@ -6717,7 +6739,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(DirectUtf8String url) {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
                             public void onHeadersReady(HttpConnectionContext context) {
@@ -6908,7 +6930,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(DirectUtf8String url) {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
                 };
@@ -7063,7 +7085,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(DirectUtf8String url) {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
                 };
@@ -7893,7 +7915,7 @@ public class IODispatcherTest extends AbstractTest {
                         engine.execute(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         testHttpClient.assertGetRegexp(
                                 "/exp",
-                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"\\[-1\\] timeout, query aborted \\[fd=\\d+, runtime=\\d+us, timeout=-100us\\]\",\"position\":0\\}",
+                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"\\[-1\\] timeout, query aborted \\[fd=\\d+, runtime=\\d+ms, timeout=-100ms\\]\",\"position\":0\\}",
                                 QUERY_TIMEOUT_SELECT,
                                 null, null, null, null,
                                 "400"
@@ -8069,7 +8091,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[[]]," +
                             "\"count\":1," +
-                            "\"error\":\"HTTP 500 (Internal server error), simulated cairo error\"" +
+                            "\"error\":\"simulated cairo error\", " +
+                            "\"errorPos\":0" +
                             "}",
                     "select simulate_crash('E')"
             );
@@ -8087,7 +8110,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[[]]," +
                             "\"count\":1," +
-                            "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
+                            "\"error\":\"simulated cairo exception\", " +
+                            "\"errorPos\":222" +
                             "}",
                     "select simulate_crash('0')"
             );
@@ -8105,7 +8129,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[[]]," +
                             "\"count\":1," +
-                            "\"error\":\"HTTP 500 (Internal server error)\"" +
+                            "\"error\":\"Internal server error\", " +
+                            "\"errorPos\":0" +
                             "}",
                     "select npe()"
             );
@@ -8228,7 +8253,7 @@ public class IODispatcherTest extends AbstractTest {
                                 }
 
                                 @Override
-                                public HttpRequestProcessor select(DirectUtf8String url) {
+                                public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                                     return null;
                                 }
                             }) {
@@ -8368,7 +8393,7 @@ public class IODispatcherTest extends AbstractTest {
                                 () -> {
                                     started.countDown();
 
-                                    try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                                    try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
                                         while (queryError.get() == null) {
                                             walApplyJob.drain(0);
                                             new CheckWalTransactionsJob(engine).run(0);
@@ -8513,7 +8538,7 @@ public class IODispatcherTest extends AbstractTest {
                             () -> {
                                 started.countDown();
 
-                                try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                                try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
                                     while (queryError.get() == null) {
                                         walApplyJob.drain(0);
                                         new CheckWalTransactionsJob(engine).run(0);
@@ -8615,15 +8640,13 @@ public class IODispatcherTest extends AbstractTest {
             Rnd rnd,
             long buffer,
             int len,
-            int nonRepeatedContentLength,
-            String expectedResponseHeader,
-            long expectedResponseLen
+            String expectedResponseHeader
     ) {
         int expectedHeaderLen = expectedResponseHeader.length();
         int headerCheckRemaining = expectedResponseHeader.length();
         long downloadedSoFar = 0;
         int contentRemaining = 0;
-        while (downloadedSoFar < expectedResponseLen) {
+        while (downloadedSoFar < 20971667) {
             int contentOffset = 0;
             int n = Net.recv(fd, buffer, len);
             assertTrue(n > -1);
@@ -8641,7 +8664,7 @@ public class IODispatcherTest extends AbstractTest {
                 if (headerCheckRemaining == 0) {
                     for (int i = contentOffset; i < n; i++) {
                         if (contentRemaining == 0) {
-                            contentRemaining = nonRepeatedContentLength;
+                            contentRemaining = 1048576;
                             rnd.reset();
                         }
                         Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
@@ -8676,6 +8699,7 @@ public class IODispatcherTest extends AbstractTest {
         delayThread.start();
         return delayThread;
     }
+
 
     private static HttpServer createHttpServer(
             ServerConfiguration serverConfiguration,
@@ -8762,7 +8786,17 @@ public class IODispatcherTest extends AbstractTest {
                 .execute(request, response);
     }
 
-    private static void sendRequest(String request, long fd, long buffer) {
+    private static void sendRequest(long fd, long buffer) {
+        final String request = "GET /questdb-temp.txt HTTP/1.1\r\n" +
+                "Host: localhost:9000\r\n" +
+                "Connection: keep-alive\r\n" +
+                "Cache-Control: max-age=0\r\n" +
+                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                "Accept-Encoding: gzip,deflate,sdch\r\n" +
+                "Accept-Language: en-US,en;q=0.8\r\n" +
+                "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                "\r\n";
         final int requestLen = request.length();
         Utf8s.strCpyAscii(request, requestLen, buffer);
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
@@ -8818,7 +8852,7 @@ public class IODispatcherTest extends AbstractTest {
         String dirName = TableUtils.getTableDir(mangleTableDirNames, tableName, 1, false);
         TableToken tableToken = new TableToken(tableName, dirName, 1, false, false, false);
         try (
-                TableReader reader = new TableReader(configuration, tableToken);
+                TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, tableToken, TxnScoreboardPoolFactory.createPool(configuration));
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
         ) {
             cursor.of(reader);
@@ -8838,7 +8872,7 @@ public class IODispatcherTest extends AbstractTest {
         String telemetry = TelemetryTask.TABLE_NAME;
         TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false, false, true);
         try (
-                TableReader reader = new TableReader(configuration, telemetryTableName);
+                TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, telemetryTableName, TxnScoreboardPoolFactory.createPool(configuration));
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
         ) {
             cursor.of(reader);
@@ -9203,7 +9237,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[" + rows + "]," +
                             "\"count\":" + (numOfRows + 1) + "," +
-                            "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
+                            "\"error\":\"simulated cairo exception\", " +
+                            "\"errorPos\":222" +
                             "}",
                     "select simulate_crash('" + numOfRows + "') from long_sequence(5)"
             );
@@ -9227,7 +9262,6 @@ public class IODispatcherTest extends AbstractTest {
         String select1 = "select 1 from long_sequence(1) where sleep(120000)";
         String select2 = "select sleep(120000) from long_sequence(1)";
         String selectWithJoin = "select 1 from long_sequence(1) ls1 join long_sequence(1) on sleep(120000)";
-        String insert = "insert into tab values (sleep(120000), 100000000000000L::timestamp, 'A' )";
         String insertAsSelect1 = "insert into tab select true, 100000000000000L::timestamp, 'B' from long_sequence(1) where sleep(120000)";
         String insertAsSelect2 = "insert into tab select sleep(120000), 100000000000000L::timestamp, 'B' from long_sequence(1)";
         String insertAsSelectBatched = "insert batch 100 into tab select true, 100000000000000L::timestamp, 'B' from long_sequence(1) where sleep(120000)";
@@ -9247,7 +9281,6 @@ public class IODispatcherTest extends AbstractTest {
                     select1,
                     select2,
                     selectWithJoin,
-                    insert,
                     insertAsSelect1,
                     insertAsSelect2,
                     insertAsSelectBatched,
@@ -9945,7 +9978,7 @@ public class IODispatcherTest extends AbstractTest {
         boolean valid;
     }
 
-    private static class TestJsonQueryProcessorFactory implements HttpRequestProcessorFactory {
+    private static class TestJsonQueryProcessorFactory implements HttpRequestHandlerFactory {
         private final CairoEngine engine;
         private final HttpFullFatServerConfiguration httpConfiguration;
         private final int workerCount;
@@ -9962,7 +9995,7 @@ public class IODispatcherTest extends AbstractTest {
         }
 
         @Override
-        public HttpRequestProcessor newInstance() {
+        public HttpRequestHandler newInstance() {
             return new JsonQueryProcessor(
                     httpConfiguration.getJsonQueryProcessorConfiguration(),
                     engine,

@@ -1059,7 +1059,7 @@ public class ColumnTypeConverter {
     private static boolean stringFromFloat(long srcAddr, CharSink<?> sink) {
         float value = Unsafe.getUnsafe().getFloat(srcAddr);
         if (!Numbers.isNull(value)) {
-            sink.put(value, 4);
+            sink.put(value);
             return true;
         }
         return false;

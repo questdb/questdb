@@ -26,6 +26,13 @@ package io.questdb.test;
 
 import io.questdb.Bootstrap;
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.mv.MatViewTimerJob;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Zip;
@@ -40,11 +47,15 @@ import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
 import org.junit.runner.OrderWith;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
+@SuppressWarnings("ClassEscapesDefinedScope")
 @OrderWith(RandomOrder.class)
 public class AbstractTest {
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
     protected static final Log LOG = LogFactory.getLog(AbstractTest.class);
+    protected static final AtomicInteger OFF_POOL_READER_ID = new AtomicInteger();
     protected static String root;
     @Rule
     public final TestName testName = new TestName();
@@ -77,9 +88,68 @@ public class AbstractTest {
     public void tearDown() throws Exception {
         LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         TestUtils.removeTestPath(root);
+        OFF_POOL_READER_ID.set(0);
+    }
+
+    protected static MatViewRefreshJob createMatViewRefreshJob(CairoEngine engine) {
+        return new MatViewRefreshJob(0, engine);
+    }
+
+    protected static ApplyWal2TableJob createWalApplyJob(CairoEngine engine) {
+        return new ApplyWal2TableJob(engine, 1, 1);
+    }
+
+    @SuppressWarnings("StatementWithEmptyBody")
+    protected static void drainMatViewQueue(MatViewRefreshJob refreshJob) {
+        while (refreshJob.run(0)) {
+        }
+    }
+
+    protected static void drainMatViewQueue(CairoEngine engine) {
+        try (var refreshJob = createMatViewRefreshJob(engine)) {
+            drainMatViewQueue(refreshJob);
+        }
+    }
+
+    @SuppressWarnings("StatementWithEmptyBody")
+    protected static void drainMatViewTimerQueue(MatViewTimerJob timerJob) {
+        while (timerJob.run(0)) {
+        }
+    }
+
+    protected static void drainWalAndMatViewQueues(CairoEngine engine) {
+        drainWalQueue(engine);
+        drainMatViewQueue(engine);
+        drainWalQueue(engine);
+    }
+
+    protected static void drainWalAndMatViewQueues(MatViewRefreshJob refreshJob, CairoEngine engine) {
+        drainWalQueue(engine);
+        drainMatViewQueue(refreshJob);
+        drainWalQueue(engine);
+    }
+
+    protected static void drainWalQueue(CairoEngine engine) {
+        try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
+            drainWalQueue(walApplyJob, engine);
+        }
+    }
+
+    protected static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
+        var checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+        //noinspection StatementWithEmptyBody
+        while (walApplyJob.run(0)) ;
+        if (checkWalTransactionsJob.run(0)) {
+            //noinspection StatementWithEmptyBody
+            while (walApplyJob.run(0)) ;
+        }
     }
 
     protected static String[] getServerMainArgs() {
         return Bootstrap.getServerMainArgs(root);
+    }
+
+    protected static TableReader newOffPoolReader(CairoConfiguration configuration, CharSequence tableName, CairoEngine engine) {
+        return new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, engine.verifyTableName(tableName), engine.getTxnScoreboardPool());
     }
 }

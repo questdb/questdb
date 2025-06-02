@@ -34,7 +34,7 @@ stages:
               imageName: "ubuntu-latest"
               poolName: "Azure Pipelines"
               os: Linux
-              jdk: "1.11"
+              jdk: "1.17"
               testset: "all"
               includeTests: "%regex[.*Fuzz.*class]"
               javadoc_step: ""

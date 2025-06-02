@@ -32,25 +32,17 @@ import io.questdb.std.NumericException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
-import static io.questdb.PropertyKey.*;
+import static io.questdb.PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT;
+import static io.questdb.PropertyKey.DEV_MODE_ENABLED;
 import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 import static org.junit.Assert.assertNull;
 
 public class MatViewTelemetryTest extends AbstractCairoTest {
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        // needed for static engine instance
-        setProperty(CAIRO_MAT_VIEW_ENABLED, "true");
-        AbstractCairoTest.setUpStatic();
-    }
-
     @Before
     public void setUp() {
-        setProperty(CAIRO_MAT_VIEW_ENABLED, "true");
         setProperty(DEV_MODE_ENABLED, "true");
         setProperty(CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
         super.setUp();
@@ -87,9 +79,9 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
 
                 assertSql(
                         "created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n" +
-                                "2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0000\n" +
-                                "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0000\n" +
-                                "2024-10-24T17:00:33.000000Z\t201\t6\tnull\t\t0.0000\n",
+                                "2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0\n" +
+                                "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0\n" +
+                                "2024-10-24T17:00:33.000000Z\t201\t6\tnull\t\t0.0\n",
                         "sys.telemetry_mat_view"
                 );
             }
@@ -127,9 +119,9 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
 
                 assertSql(
                         "created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n" +
-                                "2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0000\n" +
-                                "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0000\n" +
-                                "2024-10-24T17:00:41.000000Z\t202\t6\tnull\ttruncate operation\t0.0000\n",
+                                "2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0\n" +
+                                "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0\n" +
+                                "2024-10-24T17:00:41.000000Z\t202\t6\tnull\ttruncate operation\t0.0\n",
                         "sys.telemetry_mat_view"
                 );
             }
@@ -167,10 +159,10 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
 
                 assertSql(
                         "created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n" +
-                                "2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0000\n" +
-                                "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0000\n" +
-                                "2024-10-24T17:00:33.000000Z\t202\t6\tnull\t[-105] table does not exist [table=base_price]\t0.0000\n" +
-                                "2024-10-24T17:00:33.000000Z\t203\t6\tnull\t[-105] table does not exist [table=base_price]\t0.0000\n",
+                                "2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0\n" +
+                                "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0\n" +
+                                "2024-10-24T17:00:33.000000Z\t202\t6\tnull\t[-105]: table does not exist [table=base_price]\t0.0\n" +
+                                "2024-10-24T17:00:33.000000Z\t203\t6\tnull\t[-105]: table does not exist [table=base_price]\t0.0\n",
                         "sys.telemetry_mat_view"
                 );
             }
@@ -214,9 +206,9 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
 
                 assertSql(
                         "created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n" +
-                                "2024-10-24T17:00:20.000000Z\t200\t6\tnull\t\t0.0000\n" +
-                                "2024-10-24T17:01:00.000000Z\t204\t6\t1\t\t40000.0000\n" +
-                                "2024-10-24T17:01:30.000000Z\t204\t6\t2\t\t30000.0000\n",
+                                "2024-10-24T17:00:20.000000Z\t200\t6\tnull\t\t0.0\n" +
+                                "2024-10-24T17:01:00.000000Z\t204\t6\t1\t\t40000.0\n" +
+                                "2024-10-24T17:01:30.000000Z\t204\t6\t2\t\t30000.0\n",
                         "sys.telemetry_mat_view"
                 );
             }
@@ -258,7 +250,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
         }
         drainWalQueue();
         currentMicros = parseFloorPartialTimestamp(currentTime);
-        refreshJob.run(0);
+        drainMatViewQueue(refreshJob);
         drainWalQueue();
         telemetryJob.runSerially();
     }

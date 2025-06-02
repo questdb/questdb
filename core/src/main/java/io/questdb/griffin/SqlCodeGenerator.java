@@ -134,6 +134,7 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctIntKeyRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
@@ -191,6 +192,7 @@ import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFactory;
@@ -1634,16 +1636,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastTimestampToStrFunctionFactory.Func(new TimestampColumn(i)));
                                 break;
                             case ColumnType.FLOAT:
-                                castFunctions.add(new CastFloatToStrFunctionFactory.Func(
-                                        new FloatColumn(i),
-                                        configuration.getFloatToStrCastScale()
-                                ));
+                                castFunctions.add(new CastFloatToStrFunctionFactory.Func(new FloatColumn(i)));
                                 break;
                             case ColumnType.DOUBLE:
-                                castFunctions.add(new CastDoubleToStrFunctionFactory.Func(
-                                        new DoubleColumn(i),
-                                        configuration.getDoubleToStrCastScale()
-                                ));
+                                castFunctions.add(new CastDoubleToStrFunctionFactory.Func(new DoubleColumn(i)));
                                 break;
                             case ColumnType.STRING:
                                 castFunctions.add(new StrColumn(i));
@@ -1946,16 +1942,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastTimestampToVarcharFunctionFactory.Func(new TimestampColumn(i)));
                                 break;
                             case ColumnType.FLOAT:
-                                castFunctions.add(new CastFloatToVarcharFunctionFactory.Func(
-                                        new FloatColumn(i),
-                                        configuration.getFloatToStrCastScale()
-                                ));
+                                castFunctions.add(new CastFloatToVarcharFunctionFactory.Func(new FloatColumn(i)));
                                 break;
                             case ColumnType.DOUBLE:
-                                castFunctions.add(new CastDoubleToVarcharFunctionFactory.Func(
-                                        new DoubleColumn(i),
-                                        configuration.getDoubleToStrCastScale()
-                                ));
+                                castFunctions.add(new CastDoubleToVarcharFunctionFactory.Func(new DoubleColumn(i)));
                                 break;
                             case ColumnType.STRING:
                                 // StrFunction has built-in cast to varchar
@@ -2110,9 +2100,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
                 final QueryColumn col = model.getColumns().getQuick(i);
                 final ExpressionNode ast = col.getAst();
-                if (Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
-                    final CharSequence ts = ast.paramCount == 3 ? ast.args.getQuick(1).token : ast.rhs.token;
-                    if (Chars.equals(ts, currTimestamp)) {
+                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase(TimestampFloorFunctionFactory.NAME, ast.token)) {
+                    final CharSequence ts;
+                    // there are three timestamp_floor() overloads, so check all of them
+                    if (ast.paramCount == 3 || ast.paramCount == 5) {
+                        final int idx = ast.paramCount - 2;
+                        ts = ast.args.getQuick(idx).token;
+                    } else {
+                        ts = ast.rhs.token;
+                    }
+                    if (Chars.equalsIgnoreCase(ts, currTimestamp)) {
                         alias = col.getAlias();
                     }
                 }
@@ -2456,15 +2453,102 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             );
                                         }
                                     } else {
-                                        if (slave.supportsTimeFrameCursor()) {
-                                            master = new AsOfJoinNoKeyFastRecordCursorFactory(
-                                                    configuration,
-                                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                    master,
-                                                    slave,
-                                                    masterMetadata.getColumnCount()
-                                            );
-                                        } else {
+                                        boolean binarySearchHinted = SqlHints.hasAsOfJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
+                                        boolean created = false;
+                                        if (fastAsOfJoins || binarySearchHinted) {
+                                            // when slave directly supports time frame cursor then it's strictly better to use it, even without any hint
+                                            if (slave.supportsTimeFrameCursor()) {
+                                                master = new AsOfJoinNoKeyFastRecordCursorFactory(
+                                                        configuration,
+                                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                        master,
+                                                        slave,
+                                                        masterMetadata.getColumnCount()
+                                                );
+                                                created = true;
+                                            }
+
+                                            // if we have a hint, we can try to steal the filter from the slave.
+                                            // this downgrades to single-threaded Java-level filtering so it's only worth it if
+                                            // the filter selectivity is low. we don't have statistics to tell selectivity, so
+                                            // we rely on the user to provide an explicit hint.
+                                            if (binarySearchHinted && !created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                                                RecordCursorFactory slaveBase = slave.getBaseFactory();
+                                                int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
+
+                                                // slave.supportsFilterStealing() means slave is nothing but a filter.
+                                                // if slave is just a filter then it must have the same metadata as its base,
+                                                // that includes the timestamp index.
+                                                assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
+
+
+                                                Function stolenFilter = slave.getFilter();
+                                                assert stolenFilter != null;
+
+                                                Misc.free(slave.getCompiledFilter());
+                                                Misc.free(slave.getBindVarMemory());
+                                                Misc.freeObjList(slave.getBindVarFunctions());
+                                                slave.halfClose();
+
+
+                                                master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
+                                                        configuration,
+                                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                        master,
+                                                        slaveBase,
+                                                        stolenFilter,
+                                                        masterMetadata.getColumnCount(),
+                                                        NullRecordFactory.getInstance(slaveMetadata),
+                                                        null,
+                                                        slaveTimestampIndex
+                                                );
+                                                created = true;
+                                            }
+
+                                            if (binarySearchHinted && !created && slave.isProjection()) {
+                                                RecordCursorFactory projectionBase = slave.getBaseFactory();
+                                                // We know projectionBase does not support supportsTimeFrameCursor, because
+                                                // Projections forward this call to its base factory and if we are in this branch
+                                                // then slave.supportsTimeFrameCursor() returned false in one the previous branches.
+                                                // There is still chance that projectionBase is just a filter
+                                                // and its own base supports timeFrameCursor. let's see.
+                                                if (projectionBase.supportsFilterStealing()) {
+                                                    // ok, cool, is used only as a filter.
+                                                    RecordCursorFactory filterStealingBase = projectionBase.getBaseFactory();
+                                                    if (filterStealingBase.supportsTimeFrameCursor()) {
+                                                        IntList stolenCrossIndex = slave.getColumnCrossIndex();
+                                                        assert stolenCrossIndex != null;
+                                                        Function stolenFilter = projectionBase.getFilter();
+                                                        assert stolenFilter != null;
+
+                                                        // index *after* applying the projection
+                                                        int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
+                                                        assert stolenCrossIndex.get(slaveTimestampIndex) == filterStealingBase.getMetadata().getTimestampIndex();
+
+                                                        Misc.free(projectionBase.getCompiledFilter());
+                                                        Misc.free(projectionBase.getBindVarMemory());
+                                                        Misc.freeObjList(projectionBase.getBindVarFunctions());
+                                                        projectionBase.halfClose();
+
+                                                        master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
+                                                                configuration,
+                                                                createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                                master,
+                                                                filterStealingBase,
+                                                                stolenFilter,
+                                                                masterMetadata.getColumnCount(),
+                                                                NullRecordFactory.getInstance(slaveMetadata),
+                                                                stolenCrossIndex,
+                                                                slaveTimestampIndex
+                                                        );
+                                                        created = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // slow path: this always works, but can be quite slow, especially with large slave tables
+                                        if (!created) {
                                             master = new AsOfJoinNoKeyRecordCursorFactory(
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                                     master,
@@ -3030,7 +3114,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         assert intrinsicModel.keyValueFuncs.size() == 0;
         // get the latest rows for all values of "latest by" column
 
-        if (indexed && filter == null) {
+        if (indexed && filter == null && configuration.useWithinLatestByOptimisation()) {
             return new LatestByAllIndexedRecordCursorFactory(
                     configuration,
                     metadata,
@@ -3370,7 +3454,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             factory = generateSubQuery(model, executionContext);
             timestampIndex = getTimestampIndex(model, factory);
             if (timestampIndex == -1 || factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
-                throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over dedicated TIMESTAMP column");
+                throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over designated TIMESTAMP column");
             }
         } catch (Throwable e) {
             Misc.free(factory);
@@ -3864,7 +3948,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
             TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
-            int dot = Chars.indexOf(colMetadata.getColumnName(), '.');
+            int dot = Chars.indexOfLastUnquoted(colMetadata.getColumnName(), '.');
             if (dot > -1) { // remove inner table alias
                 selectMetadata.add(
                         new TableColumnMetadata(
@@ -5317,34 +5401,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.deepCopyOf(metadata);
         final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, myMeta);
         final TableToken tableToken = metadata.getTableToken();
+        ExpressionNode withinExtracted;
 
-        final ExpressionNode withinExtracted = whereClauseParser.extractWithin(
-                model,
-                model.getWhereClause(),
-                myMeta,
-                functionParser,
-                executionContext,
-                prefixes
-        );
+        if (latestByColumnCount > 0 && configuration.useWithinLatestByOptimisation()) {
+            withinExtracted = whereClauseParser.extractWithin(
+                    model,
+                    model.getWhereClause(),
+                    myMeta,
+                    functionParser,
+                    executionContext,
+                    prefixes
+            );
 
-        if (prefixes.size() > 0) {
-            if (latestByColumnCount < 1) {
-                throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause requires LATEST BY clause");
-            } else {
+            boolean allSymbolsAreIndexed = true;
+            if (prefixes.size() > 0) {
                 for (int i = 0; i < latestByColumnCount; i++) {
                     int idx = listColumnFilterA.getColumnIndexFactored(i);
                     if (!ColumnType.isSymbol(myMeta.getColumnType(idx)) || !myMeta.isColumnIndexed(idx)) {
-                        throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause requires LATEST BY using only indexed symbol columns");
+                        allSymbolsAreIndexed = false;
                     }
                 }
             }
+
+            if (allSymbolsAreIndexed) {
+                model.setWhereClause(withinExtracted);
+            }
         }
 
-        model.setWhereClause(withinExtracted);
+        ExpressionNode whereClause = model.getWhereClause();
 
-        if (withinExtracted != null || executionContext.isOverriddenIntrinsics(reader.getTableToken())) {
+        if (whereClause != null || executionContext.isOverriddenIntrinsics(reader.getTableToken())) {
             final IntrinsicModel intrinsicModel;
-            if (withinExtracted != null) {
+            if (whereClause != null) {
                 CharSequence preferredKeyColumn = null;
                 if (latestByColumnCount == 1) {
                     final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
@@ -5355,7 +5443,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 intrinsicModel = whereClauseParser.extract(
                         model,
-                        withinExtracted,
+                        whereClause,
                         metadata,
                         preferredKeyColumn,
                         readerTimestampIndex,
@@ -5394,10 +5482,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     model.getLatestBy().clear();
                     Misc.free(filter);
                     return new EmptyTableRecordCursorFactory(myMeta);
-                }
-
-                if (prefixes.size() > 0 && filter != null) {
-                    throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause doesn't work with filters");
                 }
 
                 // a sub-query present in the filter may have used the latest by
@@ -6092,7 +6176,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (columnIndex > -1) {
                 filter.add(columnIndex + 1);
             } else {
-                int dot = Chars.indexOf(columnName, '.');
+                int dot = Chars.indexOfLastUnquoted(columnName, '.');
                 if (dot > -1) {
                     columnIndex = metadata.getColumnIndexQuiet(columnName, dot + 1, columnName.length());
                     if (columnIndex > -1) {

@@ -7,3 +7,6 @@
 [submodule "core/rust/qdbr/parquet2/testing/parquet-testing"]
 	path = core/rust/qdbr/parquet2/testing/parquet-testing
 	url = https://github.com/apache/parquet-testing/
+[submodule "core/src/main/c/share/zlib"]
+	path = core/src/main/c/share/zlib
+	url = https://github.com/madler/zlib/

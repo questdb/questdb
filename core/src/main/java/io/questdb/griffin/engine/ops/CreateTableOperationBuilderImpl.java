@@ -58,16 +58,22 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private int defaultSymbolCapacity;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableNameExpr;
+    private int matViewTimerInterval;
+    private char matViewTimerIntervalUnit;
+    private long matViewTimerStart;
     private int maxUncommittedRows;
     private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
     // transient field, unoptimized AS SELECT model, used in toSink()
     private QueryModel selectModel;
     private CharSequence selectText;
+    private int selectTextPosition;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
     private int ttlHoursOrMonths;
+    private int ttlPosition;
     private CharSequence volumeAlias;
+    private int volumePosition;
     private boolean walEnabled;
 
     public void addColumnModel(CharSequence columnName, CreateTableColumnModel model) throws SqlException {
@@ -85,20 +91,27 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
-                    Chars.toString(selectText),
                     tableNameExpr.position,
+                    Chars.toString(selectText),
+                    selectTextPosition,
                     ignoreIfExists,
                     getPartitionByFromExpr(),
                     timestampExpr != null ? Chars.toString(timestampExpr.token) : null,
-                    timestampExpr != null ? timestampExpr.position : 0, Chars.toString(volumeAlias),
+                    timestampExpr != null ? timestampExpr.position : 0,
+                    Chars.toString(volumeAlias),
+                    volumePosition,
                     ttlHoursOrMonths,
+                    ttlPosition,
                     walEnabled,
                     defaultSymbolCapacity,
                     maxUncommittedRows,
                     o3MaxLag,
                     columnModels,
                     batchSize,
-                    batchO3MaxLag
+                    batchO3MaxLag,
+                    matViewTimerStart,
+                    matViewTimerInterval,
+                    matViewTimerIntervalUnit
             );
         }
 
@@ -113,6 +126,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     tableNameExpr.position,
                     getPartitionByFromExpr(),
                     Chars.toString(volumeAlias),
+                    volumePosition,
                     likeTableNameToken.getTableName(),
                     likeTableNameExpr.position,
                     ignoreIfExists
@@ -125,6 +139,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 tableNameExpr.position,
                 getPartitionByFromExpr(),
                 Chars.toString(volumeAlias),
+                volumePosition,
                 ignoreIfExists,
                 columnNames,
                 columnModels,
@@ -132,6 +147,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 o3MaxLag,
                 maxUncommittedRows,
                 ttlHoursOrMonths,
+                ttlPosition,
                 walEnabled
         );
     }
@@ -152,10 +168,16 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         tableNameExpr = null;
         timestampExpr = null;
         selectText = null;
+        selectTextPosition = 0;
         selectModel = null;
         volumeAlias = null;
+        volumePosition = 0;
         ttlHoursOrMonths = 0;
+        ttlPosition = 0;
         walEnabled = false;
+        matViewTimerStart = 0;
+        matViewTimerInterval = 0;
+        matViewTimerIntervalUnit = 0;
     }
 
     public int getColumnCount() {
@@ -172,6 +194,18 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public CharSequence getColumnName(int index) {
         return columnNames.get(index);
+    }
+
+    public int getMatViewTimerInterval() {
+        return matViewTimerInterval;
+    }
+
+    public char getMatViewTimerIntervalUnit() {
+        return matViewTimerIntervalUnit;
+    }
+
+    public long getMatViewTimerStart() {
+        return matViewTimerStart;
     }
 
     public int getPartitionByFromExpr() {
@@ -241,6 +275,12 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.likeTableNameExpr = expr;
     }
 
+    public void setMatViewTimer(long start, int interval, char unit) {
+        this.matViewTimerStart = start;
+        this.matViewTimerInterval = interval;
+        this.matViewTimerIntervalUnit = unit;
+    }
+
     public void setMaxUncommittedRows(int maxUncommittedRows) {
         this.maxUncommittedRows = maxUncommittedRows;
     }
@@ -258,8 +298,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.selectModel = selectModel;
     }
 
-    public void setSelectText(CharSequence selectText) {
+    public void setSelectText(CharSequence selectText, int selectTextPosition) {
         this.selectText = selectText;
+        this.selectTextPosition = selectTextPosition;
     }
 
     public void setTableNameExpr(ExpressionNode expr) {
@@ -274,10 +315,15 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.ttlHoursOrMonths = ttlHoursOrMonths;
     }
 
-    public void setVolumeAlias(CharSequence volumeAlias) {
+    public void setTtlPosition(int ttlPosition) {
+        this.ttlPosition = ttlPosition;
+    }
+
+    public void setVolumeAlias(CharSequence volumeAlias, int volumePosition) {
         // set if the "create table" statement contains IN VOLUME 'volumeAlias'.
         // volumePath will be resolved by the compiler
         this.volumeAlias = Chars.toString(volumeAlias);
+        this.volumePosition = volumePosition;
     }
 
     public void setWalEnabled(boolean walEnabled) {

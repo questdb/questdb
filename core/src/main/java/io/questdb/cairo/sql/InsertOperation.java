@@ -28,20 +28,15 @@ import io.questdb.cairo.pool.WriterSource;
 import io.questdb.griffin.InsertRowImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.QuietCloseable;
 
-import java.io.Closeable;
+public interface InsertOperation extends QuietCloseable {
 
-public interface InsertOperation extends Closeable {
     void addInsertRow(InsertRowImpl row);
-
-    default void close() {
-    }
 
     InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException;
 
     InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException;
 
     OperationFuture execute(SqlExecutionContext sqlExecutionContext) throws SqlException;
-
-    void setInsertSql(CharSequence query);
 }

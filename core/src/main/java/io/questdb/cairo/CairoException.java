@@ -63,6 +63,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private boolean interruption; // used when a query times out
     private int messagePosition;
     private boolean outOfMemory;
+    private boolean preferencesOutOfDateError = false;
 
     public static CairoException authorization() {
         return nonCritical().setAuthorizationError();
@@ -131,6 +132,15 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return instance(PARTITION_MANIPULATION_RECOVERABLE);
     }
 
+    public static CairoException preferencesOutOfDate(long currentVersion, long expectedVersion) {
+        return nonCritical().setPreferencesOutOfDateError()
+                .put("preferences view is out of date [currentVersion=")
+                .put(currentVersion)
+                .put(", expectedVersion=")
+                .put(expectedVersion)
+                .put(']');
+    }
+
     public static CairoException queryCancelled(long fd) {
         CairoException exception = nonCritical().put("cancelled by user").setInterruption(true).setCancellation(true);
         if (fd > -1) {
@@ -146,8 +156,8 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static CairoException queryTimedOut(long fd, long runtime, long timeout) {
         return nonCritical()
                 .put("timeout, query aborted [fd=").put(fd)
-                .put(", runtime=").put(runtime).put("us")
-                .put(", timeout=").put(timeout).put("us")
+                .put(", runtime=").put(runtime).put("ms")
+                .put(", timeout=").put(timeout).put("ms")
                 .put(']').setInterruption(true);
     }
 
@@ -230,7 +240,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public boolean isCritical() {
-        return errno != NON_CRITICAL && errno != PARTITION_MANIPULATION_RECOVERABLE && errno != METADATA_VALIDATION_RECOVERABLE;
+        return errno != NON_CRITICAL
+                && errno != PARTITION_MANIPULATION_RECOVERABLE
+                && errno != METADATA_VALIDATION_RECOVERABLE
+                && errno != TABLE_DROPPED
+                && errno != MAT_VIEW_DOES_NOT_EXIST
+                && errno != TABLE_DOES_NOT_EXIST;
     }
 
     public boolean isHousekeeping() {
@@ -247,6 +262,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public boolean isOutOfMemory() {
         return outOfMemory;
+    }
+
+    public boolean isPreferencesOutOfDateError() {
+        return preferencesOutOfDateError;
     }
 
     public boolean isTableDoesNotExist() {
@@ -304,11 +323,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public CairoException putAsPrintable(CharSequence nonPrintable) {
         message.putAsPrintable(nonPrintable);
-        return this;
-    }
-
-    public CairoException setAuthorizationError() {
-        this.authorizationError = true;
         return this;
     }
 
@@ -372,6 +386,16 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put(message);
         ex.nativeBacktrace.put(nativeBacktrace);
         return ex;
+    }
+
+    private CairoException setAuthorizationError() {
+        this.authorizationError = true;
+        return this;
+    }
+
+    private CairoException setPreferencesOutOfDateError() {
+        this.preferencesOutOfDateError = true;
+        return this;
     }
 
     protected void clear(int errno) {

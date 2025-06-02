@@ -37,7 +37,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.Zip;
@@ -48,7 +47,7 @@ import io.questdb.std.ex.ZLibException;
 import io.questdb.std.str.StdoutSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
-import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -63,8 +62,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private static final int HTTP_RANGE_NOT_SATISFIABLE = 416;
     private static final int HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE = 431;
     private static final Log LOG = LogFactory.getLog(HttpResponseSink.class);
-    private static final IntObjHashMap<String> httpStatusMap = new IntObjHashMap<>();
-    private static final ThreadLocal<Utf8StringSink> tlSink = new ThreadLocal<>(Utf8StringSink::new);
+    private static final IntObjHashMap<Utf8Sequence> httpStatusMap = new IntObjHashMap<>();
     private final ChunkUtf8Sink buffer;
     private final ChunkedResponseImpl chunkedResponse = new ChunkedResponseImpl();
     private final ChunkUtf8Sink compressOutBuffer;
@@ -102,10 +100,6 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.connectionCloseHeader = !contextConfiguration.getServerKeepAlive();
         this.cookiesEnabled = contextConfiguration.areCookiesEnabled();
         this.forceSendFragmentationChunkSize = contextConfiguration.getForceSendFragmentationChunkSize();
-    }
-
-    public static String getStatusMessage(int code) {
-        return httpStatusMap.get(code);
     }
 
     @Override
@@ -610,14 +604,14 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public String status(CharSequence httpProtocolVersion, int code, CharSequence contentType, long contentLength) {
+        public void status(CharSequence httpProtocolVersion, int code, CharSequence contentType, long contentLength) {
             this.code = code;
-            String status = httpStatusMap.get(code);
+            Utf8Sequence status = httpStatusMap.get(code);
             if (status == null) {
                 throw new IllegalArgumentException("Illegal status code: " + code);
             }
             buffer.clearAndPrepareToWriteToBuffer();
-            putAscii(httpProtocolVersion).put(code).put(' ').putAscii(status).putEOL();
+            putAscii(httpProtocolVersion).put(code).put(' ').put(status).putEOL();
             putAscii("Server: ").putAscii("questDB/1.0").putEOL();
             putAscii("Date: ");
             DateFormatUtils.formatHTTP(this, clock.getTicks());
@@ -635,8 +629,6 @@ public class HttpResponseSink implements Closeable, Mutable {
             if (connectionCloseHeader) {
                 putAscii("Connection: close").putEOL();
             }
-
-            return status;
         }
 
         private void prepareToSend() {
@@ -661,21 +653,21 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public Utf8Sink put(float value, int scale) {
+        public Utf8Sink put(double value) {
             if (Numbers.isNull(value)) {
                 putAscii("null");
                 return this;
             }
-            return Utf8Sink.super.put(value, scale);
+            return Utf8Sink.super.put(value);
         }
 
         @Override
-        public Utf8Sink put(double value, int scale) {
+        public Utf8Sink put(float value) {
             if (Numbers.isNull(value)) {
                 putAscii("null");
                 return this;
             }
-            return Utf8Sink.super.put(value, scale);
+            return Utf8Sink.super.put(value);
         }
 
         @Override
@@ -703,25 +695,34 @@ public class HttpResponseSink implements Closeable, Mutable {
         public void sendStatusJsonContent(
                 int code
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusJsonContent(code, null, null, null, null);
+            sendStatusJsonContent(code, null, null, null, null, -1L, true);
         }
 
-        @SuppressWarnings("unused")
         public void sendStatusJsonContent(
                 int code,
-                @Nullable CharSequence message
+                @Nullable Utf8Sequence message
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusJsonContent(code, message, null, null, null);
+            sendStatusJsonContent(code, message, true);
         }
 
         public void sendStatusJsonContent(
                 int code,
-                @Nullable CharSequence message,
+                @Nullable Utf8Sequence message,
+                boolean appendEOL
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatusJsonContent(code, message, null, null, null, message != null ? message.size() : -1L, appendEOL);
+        }
+
+        public void sendStatusJsonContent(
+                int code,
+                @Nullable Utf8Sequence message,
                 @Nullable CharSequence header,
                 @Nullable CharSequence cookieName,
-                @Nullable CharSequence cookieValue
+                @Nullable CharSequence cookieValue,
+                long contentLength,
+                boolean appendEOL
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusWithContent(CONTENT_TYPE_JSON, code, message, header, cookieName, cookieValue, message != null ? message.length() : -1);
+            sendStatusWithContent(CONTENT_TYPE_JSON, code, message, header, cookieName, cookieValue, contentLength, appendEOL);
         }
 
         public void sendStatusNoContent(int code, @Nullable CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -766,17 +767,17 @@ public class HttpResponseSink implements Closeable, Mutable {
          */
         public void sendStatusTextContent(
                 int code,
-                @Nullable CharSequence message,
+                @Nullable Utf8Sequence message,
                 @Nullable CharSequence header,
                 @Nullable CharSequence cookieName,
                 @Nullable CharSequence cookieValue
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusWithContent(CONTENT_TYPE_TEXT, code, message, header, cookieName, cookieValue, -1);
+            sendStatusWithContent(CONTENT_TYPE_TEXT, code, message, header, cookieName, cookieValue, -1L, true);
         }
 
         public void sendStatusTextContent(
                 int code,
-                CharSequence message,
+                Utf8Sequence message,
                 CharSequence header
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
             sendStatusTextContent(code, message, header, null, null);
@@ -790,7 +791,7 @@ public class HttpResponseSink implements Closeable, Mutable {
             sendStatusTextContent(code, null, header);
         }
 
-        public void sendStatusWithCookie(int code, CharSequence message, CharSequence cookieName, CharSequence cookieValue) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        public void sendStatusWithCookie(int code, Utf8Sequence message, CharSequence cookieName, CharSequence cookieValue) throws PeerDisconnectedException, PeerIsSlowToReadException {
             sendStatusTextContent(code, message, null, cookieName, cookieValue);
         }
 
@@ -801,11 +802,12 @@ public class HttpResponseSink implements Closeable, Mutable {
         private void sendStatusWithContent(
                 String contentType,
                 int code,
-                @Nullable CharSequence message,
+                @Nullable Utf8Sequence message,
                 @Nullable CharSequence header,
                 @Nullable CharSequence cookieName,
                 @Nullable CharSequence cookieValue,
-                long contentLength
+                long contentLength,
+                boolean appendEOL
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
             if (!headerSent) {
                 buffer.clearAndPrepareToWriteToBuffer();
@@ -823,14 +825,9 @@ public class HttpResponseSink implements Closeable, Mutable {
             if (!contentSent) {
                 flushSingle();
                 buffer.clearAndPrepareToWriteToBuffer();
-                if (message == null) {
-                    sink.put(httpStatusMap.get(code)).putEOL();
-                } else {
-                    // this is ugly, add a putUtf16() method to the response sink?
-                    final Utf8StringSink utf8Sink = tlSink.get();
-                    utf8Sink.clear();
-                    utf8Sink.put(message);
-                    sink.put(utf8Sink).putEOL();
+                sink.put(message == null ? httpStatusMap.get(code) : message);
+                if (appendEOL) {
+                    sink.putEOL();
                 }
                 final boolean chunked = headerImpl.isChunked();
                 buffer.prepareToReadFromBuffer(chunked, chunked);
@@ -847,22 +844,24 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     static {
-        httpStatusMap.put(HTTP_OK, "OK");
-        httpStatusMap.put(HTTP_NO_CONTENT, "OK");
-        httpStatusMap.put(HTTP_PARTIAL, "Partial content");
-        httpStatusMap.put(HTTP_MOVED_PERM, "Moved Permanently");
-        httpStatusMap.put(HTTP_MOVED_TEMP, "Temporarily Moved");
-        httpStatusMap.put(HTTP_NOT_MODIFIED, "Not Modified");
-        httpStatusMap.put(HTTP_BAD_REQUEST, "Bad request");
-        httpStatusMap.put(HTTP_UNAUTHORIZED, "Unauthorized");
-        httpStatusMap.put(HTTP_FORBIDDEN, "Forbidden");
-        httpStatusMap.put(HTTP_NOT_FOUND, "Not Found");
-        httpStatusMap.put(HTTP_CLIENT_TIMEOUT, "Request Timeout");
-        httpStatusMap.put(HTTP_LENGTH_REQUIRED, "Length Required");
-        httpStatusMap.put(HTTP_ENTITY_TOO_LARGE, "Content Too Large");
-        httpStatusMap.put(HTTP_UNSUPPORTED_TYPE, "Bad request");
-        httpStatusMap.put(HTTP_RANGE_NOT_SATISFIABLE, "Request range not satisfiable");
-        httpStatusMap.put(HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE, "Headers too large");
-        httpStatusMap.put(HTTP_INTERNAL_ERROR, "Internal server error");
+        httpStatusMap.put(HTTP_OK, new Utf8String("OK"));
+        httpStatusMap.put(HTTP_NO_CONTENT, new Utf8String("OK"));
+        httpStatusMap.put(HTTP_PARTIAL, new Utf8String("Partial content"));
+        httpStatusMap.put(HTTP_MOVED_PERM, new Utf8String("Moved Permanently"));
+        httpStatusMap.put(HTTP_MOVED_TEMP, new Utf8String("Temporarily Moved"));
+        httpStatusMap.put(HTTP_NOT_MODIFIED, new Utf8String("Not Modified"));
+        httpStatusMap.put(HTTP_BAD_REQUEST, new Utf8String("Bad request"));
+        httpStatusMap.put(HTTP_UNAUTHORIZED, new Utf8String("Unauthorized"));
+        httpStatusMap.put(HTTP_FORBIDDEN, new Utf8String("Forbidden"));
+        httpStatusMap.put(HTTP_NOT_FOUND, new Utf8String("Not Found"));
+        httpStatusMap.put(HTTP_BAD_METHOD, new Utf8String("Method Not Allowed"));
+        httpStatusMap.put(HTTP_CONFLICT, new Utf8String("Conflict"));
+        httpStatusMap.put(HTTP_CLIENT_TIMEOUT, new Utf8String("Request Timeout"));
+        httpStatusMap.put(HTTP_LENGTH_REQUIRED, new Utf8String("Length Required"));
+        httpStatusMap.put(HTTP_ENTITY_TOO_LARGE, new Utf8String("Content Too Large"));
+        httpStatusMap.put(HTTP_UNSUPPORTED_TYPE, new Utf8String("Bad request"));
+        httpStatusMap.put(HTTP_RANGE_NOT_SATISFIABLE, new Utf8String("Request range not satisfiable"));
+        httpStatusMap.put(HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE, new Utf8String("Headers too large"));
+        httpStatusMap.put(HTTP_INTERNAL_ERROR, new Utf8String("Internal server error"));
     }
 }

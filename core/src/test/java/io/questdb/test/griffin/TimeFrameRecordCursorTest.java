@@ -329,7 +329,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                 new TestCase(
                         "time_filtered_t",
                         "create table time_filtered_t (ts timestamp) timestamp(ts) partition by day",
-                        "time_filtered_t where ts in '1970-01-13'"
+                        "time_filtered_t where ts in '1970-01-13' or ts = '1970-05-14T16:00:02.000000Z'"
                 ),
                 new TestCase(
                         "desc_ordered_t",
@@ -428,7 +428,11 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                     "create table y as (select * from x union all select * from z)",
                     executionContext
             );
-            compiler.compile("insert into x select * from z", executionContext);
+            execute(
+                    compiler,
+                    "insert into x select * from z",
+                    executionContext
+            );
 
             try (RecordCursorFactory factory = engine.select("x", executionContext)) {
                 Assert.assertTrue(factory.supportsTimeFrameCursor());

@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class TelemetryMatViewTask implements AbstractTelemetryTask {
     public static final String NAME = "MAT VIEW TELEMETRY";
@@ -48,7 +49,7 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
                                 "created TIMESTAMP, " +
                                 "event SHORT, " +
                                 "view_table_id INT, " +
-                                "base_table_txn LONG, " +
+                                "base_table_txn LONG, " + // -1 stands for range refresh
                                 "invalidation_reason VARCHAR, " +
                                 "latency FLOAT " +
                                 ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
@@ -87,7 +88,7 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
             short event,
             int viewTableId,
             long baseTableTxn,
-            CharSequence errorMessage,
+            @Nullable CharSequence errorMessage,
             long latencyUs
     ) {
         final TelemetryMatViewTask task = telemetry.nextTask();

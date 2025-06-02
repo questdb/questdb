@@ -39,7 +39,6 @@ import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NanosecondClock;
-import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -190,56 +189,13 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     }
 
     @Override
-    public boolean preAllocateBuffers() {
+    public boolean isSettingsReadOnly() {
         return false;
     }
 
-    public class DefaultJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
-
-        @Override
-        public int getConnectionCheckFrequency() {
-            return 1_000_000;
-        }
-
-        @Override
-        public int getDoubleScale() {
-            return Numbers.MAX_DOUBLE_SCALE;
-        }
-
-        @Override
-        public FactoryProvider getFactoryProvider() {
-            return DefaultFactoryProvider.INSTANCE;
-        }
-
-        @Override
-        public FilesFacade getFilesFacade() {
-            return FilesFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public int getFloatScale() {
-            return Numbers.MAX_FLOAT_SCALE;
-        }
-
-        @Override
-        public CharSequence getKeepAliveHeader() {
-            return "Keep-Alive: timeout=5, max=10000\r\n";
-        }
-
-        @Override
-        public long getMaxQueryResponseRowLimit() {
-            return Long.MAX_VALUE;
-        }
-
-        @Override
-        public MillisecondClock getMillisecondClock() {
-            return httpContextConfiguration.getMillisecondClock();
-        }
-
-        @Override
-        public NanosecondClock getNanosecondClock() {
-            return httpContextConfiguration.getNanosecondClock();
-        }
+    @Override
+    public boolean preAllocateBuffers() {
+        return false;
     }
 
     public static class DefaultLineHttpProcessorConfiguration implements LineHttpProcessorConfiguration {
@@ -307,6 +263,44 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         @Override
         public boolean logMessageOnError() {
             return true;
+        }
+    }
+
+    public class DefaultJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
+
+        @Override
+        public int getConnectionCheckFrequency() {
+            return 1_000_000;
+        }
+
+        @Override
+        public FactoryProvider getFactoryProvider() {
+            return DefaultFactoryProvider.INSTANCE;
+        }
+
+        @Override
+        public FilesFacade getFilesFacade() {
+            return FilesFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public CharSequence getKeepAliveHeader() {
+            return "Keep-Alive: timeout=5, max=10000\r\n";
+        }
+
+        @Override
+        public long getMaxQueryResponseRowLimit() {
+            return Long.MAX_VALUE;
+        }
+
+        @Override
+        public MillisecondClock getMillisecondClock() {
+            return httpContextConfiguration.getMillisecondClock();
+        }
+
+        @Override
+        public NanosecondClock getNanosecondClock() {
+            return httpContextConfiguration.getNanosecondClock();
         }
     }
 }

@@ -515,10 +515,10 @@ public final class LineHttpSender implements Sender {
         request = newRequest();
 
         CharSequence statusAscii = statusCode.asAsciiCharSequence();
-        if (Chars.equals("404", statusAscii)) {
+        if (Chars.equals("405", statusAscii)) {
             consumeChunkedResponse(response);
             client.disconnect();
-            throw new LineSenderException("Could not flush buffer: HTTP endpoint does not support ILP. [http-status=404]");
+            throw new LineSenderException("Could not flush buffer: HTTP endpoint does not support ILP. [http-status=405]");
         }
         if (Chars.equals("401", statusAscii) || Chars.equals("403", statusAscii)) {
             sink.clear();

@@ -521,6 +521,15 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'h';
     }
 
+    public static boolean isEveryKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'e'
+                && (tok.charAt(1) | 32) == 'v'
+                && (tok.charAt(2) | 32) == 'e'
+                && (tok.charAt(3) | 32) == 'r'
+                && (tok.charAt(4) | 32) == 'y';
+    }
+
     public static boolean isExceptKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'e'
@@ -1772,6 +1781,15 @@ public class SqlKeywords {
                 && (tok.charAt(26) | 32) == 's';
     }
 
+    public static boolean isStartKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 's'
+                && (tok.charAt(1) | 32) == 't'
+                && (tok.charAt(2) | 32) == 'a'
+                && (tok.charAt(3) | 32) == 'r'
+                && (tok.charAt(4) | 32) == 't';
+    }
+
     public static boolean isSumKeyword(CharSequence tok) {
         return tok.length() == 3
                 && (tok.charAt(0) | 32) == 's'
@@ -1941,13 +1959,12 @@ public class SqlKeywords {
     }
 
     public static boolean isUTC(CharSequence tok) {
-        return
-                tok.length() == 5
-                        && (tok.charAt(0)) == '\''
-                        && (tok.charAt(1) | 32) == 'u'
-                        && (tok.charAt(2) | 32) == 't'
-                        && (tok.charAt(3) | 32) == 'c'
-                        && (tok.charAt(4)) == '\'';
+        return tok.length() == 5
+                && (tok.charAt(0)) == '\''
+                && (tok.charAt(1) | 32) == 'u'
+                && (tok.charAt(2) | 32) == 't'
+                && (tok.charAt(3) | 32) == 'c'
+                && (tok.charAt(4)) == '\'';
     }
 
     public static boolean isUnboundedKeyword(CharSequence tok) {
