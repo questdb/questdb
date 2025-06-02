@@ -435,6 +435,7 @@ public class TableUpdateDetails implements Closeable {
         // maps column names to their indexes
         // keys are mangled strings created from the utf-8 encoded byte representations of the column names
         private final Utf8StringIntHashMap columnIndexByNameUtf8 = new Utf8StringIntHashMap();
+        private final IntList columnIndices = new IntList();
         // maps column names to their types
         // will be populated for dynamically added columns only
         private final Utf8StringIntHashMap columnTypeByNameUtf8 = new Utf8StringIntHashMap();
@@ -628,7 +629,8 @@ public class TableUpdateDetails implements Closeable {
         }
 
         void addColumnType(int columnWriterIndex, int colType) {
-            columnTypes.add(Numbers.encodeLowHighShorts((short) colType, (short) columnWriterIndex));
+            columnIndices.add(columnWriterIndex);
+            columnTypes.add(colType);
         }
 
         void clear() {
@@ -643,6 +645,7 @@ public class TableUpdateDetails implements Closeable {
             }
             symbolCacheByColumnIndex.clear();
             columnTypes.clear();
+            columnIndices.clear();
             columnTypeMeta.clear();
             columnTypeMeta.add(0);
             if (txReader != null) {
@@ -653,6 +656,7 @@ public class TableUpdateDetails implements Closeable {
 
         void clearColumnTypes() {
             columnTypes.clear();
+            columnIndices.clear();
         }
 
         void clearProcessedColumns() {
@@ -672,14 +676,21 @@ public class TableUpdateDetails implements Closeable {
             return colNameUtf8;
         }
 
+        int getColumnIndex(int colIndex) {
+            return columnIndices.getQuick(colIndex);
+        }
+
         int getColumnType(int colIndex) {
             return columnTypes.getQuick(colIndex);
         }
 
-        int getColumnType(Utf8String colName, byte entityType) {
+        int getColumnType(Utf8String colName, LineTcpParser.ProtoEntity entity) {
             int colType = columnTypeByNameUtf8.get(colName);
             if (colType < 0) {
-                colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
+                colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entity.getType()];
+                if (colType == ColumnType.ARRAY) {
+                    colType = entity.getArray().getType();
+                }
                 columnTypeByNameUtf8.put(colName, colType);
             }
             return colType;

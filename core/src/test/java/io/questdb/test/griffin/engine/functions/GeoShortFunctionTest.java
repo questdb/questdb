@@ -52,6 +52,11 @@ public class GeoShortFunctionTest extends AbstractCairoTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetArray() {
+        function.getArray(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetGeoInt() {
         function.getGeoInt(null);
     }

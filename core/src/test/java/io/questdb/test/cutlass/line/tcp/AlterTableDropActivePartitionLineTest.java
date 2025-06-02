@@ -29,7 +29,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.cutlass.line.AbstractLineTcpSender;
+import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -136,7 +137,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
 
                 final Thread ilpAgent = new Thread(() -> {
                     final Rnd rnd = new Rnd();
-                    try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
+                    try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
                         while (ilpAgentKeepSending.get()) {
                             for (int i = 0; i < 100; i++) {
                                 addLine(sender, uniqueId, timestampNano, rnd);
@@ -230,7 +231,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
         return array[rnd.nextPositiveInt() % array.length];
     }
 
-    private LineTcpSender addLine(LineTcpSender sender, AtomicLong uniqueId, AtomicLong timestampNano, Rnd rnd) {
+    private AbstractLineTcpSender addLine(AbstractLineTcpSender sender, AtomicLong uniqueId, AtomicLong timestampNano, Rnd rnd) {
         sender.metric(tableName)
                 .tag("favourite_colour", rndOf(rnd, colour))
                 .tag("country", rndOf(rnd, country))

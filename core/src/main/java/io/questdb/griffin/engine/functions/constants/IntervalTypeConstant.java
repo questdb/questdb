@@ -24,17 +24,48 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.std.Interval;
 import org.jetbrains.annotations.NotNull;
 
-public class IntervalTypeConstant extends IntervalFunction implements TypeConstant {
+public class IntervalTypeConstant extends IntervalFunction implements TypeConstant, FunctionExtension {
     public static final IntervalTypeConstant INSTANCE = new IntervalTypeConstant();
+
+    @Override
+    public FunctionExtension extendedOps() {
+        return this;
+    }
+
+    @Override
+    public int getArrayLength() {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public @NotNull Interval getInterval(Record rec) {
         return Interval.NULL;
+    }
+
+    @Override
+    public Record getRecord(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CharSequence getStrA(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getStrLen(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
     }
 }

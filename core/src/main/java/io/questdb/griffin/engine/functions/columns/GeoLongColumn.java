@@ -37,7 +37,7 @@ public class GeoLongColumn extends GeoLongFunction {
 
     private final int columnIndex;
 
-    public GeoLongColumn(int columnIndex, int columnType) {
+    private GeoLongColumn(int columnIndex, int columnType) {
         super(columnType);
         this.columnIndex = columnIndex;
     }

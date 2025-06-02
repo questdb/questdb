@@ -33,6 +33,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -176,6 +177,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                             }
                         }
                     }
+                    state.metadata = state.recordCursorFactory.getMetadata();
                     doResumeSend(context);
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
@@ -406,10 +408,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                         // fall through
                     case JsonQueryProcessorState.QUERY_RECORD:
                         while (state.columnIndex < columnCount) {
-                            if (state.columnIndex > 0) {
+                            if (state.columnIndex > 0 && state.columnValueFullySent) {
                                 response.putAscii(state.delimiter);
                             }
-                            putValue(response, metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
+                            putValue(response, state);
                             state.columnIndex++;
                             response.bookmark();
                         }
@@ -574,58 +576,79 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         return true;
     }
 
-    private void putValue(HttpChunkedResponse response, int type, Record rec, int col) {
+    private void putArrayValue(HttpChunkedResponse response, TextQueryProcessorState state, Record record, int columnIdx, int columnType) {
+        state.arrayState.of(response);
+        var arrayView = state.arrayState.getArrayView() == null ? record.getArray(columnIdx, columnType) : state.arrayState.getArrayView();
+        try {
+            state.arrayState.putCharIfNew(response, '"');
+            ArrayTypeDriver.arrayToJson(arrayView, response, state.arrayState);
+            state.arrayState.putCharIfNew(response, '"');
+            state.arrayState.clear();
+            state.columnValueFullySent = true;
+        } catch (Throwable e) {
+            // we have to disambiguate here if this is the first attempt to send the value, which failed,
+            // and we have any partial value we can send to the clint, or our state did not bookmark anything?
+            state.columnValueFullySent = state.arrayState.isNothingWritten();
+            state.arrayState.reset(arrayView);
+            throw e;
+        }
+    }
+
+    private void putValue(HttpChunkedResponse response, TextQueryProcessorState state) {
         long l;
-        switch (ColumnType.tagOf(type)) {
+        final int columnType = state.metadata.getColumnType(state.columnIndex);
+        final int columnIndex = state.columnIndex;
+        final Record rec = state.record;
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
-                response.put(rec.getBool(col));
+                response.put(rec.getBool(columnIndex));
                 break;
             case ColumnType.BYTE:
-                response.put((int) rec.getByte(col));
+                response.put((int) rec.getByte(columnIndex));
                 break;
             case ColumnType.DOUBLE:
-                double d = rec.getDouble(col);
+                double d = rec.getDouble(columnIndex);
                 //noinspection ExpressionComparedToItself
                 if (d == d) {
                     response.put(d);
                 }
                 break;
             case ColumnType.FLOAT:
-                float f = rec.getFloat(col);
+                float f = rec.getFloat(columnIndex);
                 //noinspection ExpressionComparedToItself
                 if (f == f) {
                     response.put(f);
                 }
                 break;
             case ColumnType.INT:
-                final int i = rec.getInt(col);
-                if (i > Integer.MIN_VALUE) {
+                final int i = rec.getInt(columnIndex);
+                if (i != Numbers.INT_NULL) {
                     response.put(i);
                 }
                 break;
             case ColumnType.LONG:
-                l = rec.getLong(col);
-                if (l > Long.MIN_VALUE) {
+                l = rec.getLong(columnIndex);
+                if (l != Numbers.LONG_NULL) {
                     response.put(l);
                 }
                 break;
             case ColumnType.DATE:
-                l = rec.getDate(col);
-                if (l > Long.MIN_VALUE) {
+                l = rec.getDate(columnIndex);
+                if (l != Numbers.LONG_NULL) {
                     response.putAscii('"').putISODateMillis(l).putAscii('"');
                 }
                 break;
             case ColumnType.TIMESTAMP:
-                l = rec.getTimestamp(col);
-                if (l > Long.MIN_VALUE) {
+                l = rec.getTimestamp(columnIndex);
+                if (l != Numbers.LONG_NULL) {
                     response.putAscii('"').putISODate(l).putAscii('"');
                 }
                 break;
             case ColumnType.SHORT:
-                response.put(rec.getShort(col));
+                response.put(rec.getShort(columnIndex));
                 break;
             case ColumnType.CHAR:
-                char c = rec.getChar(col);
+                char c = rec.getChar(columnIndex);
                 if (c > 0) {
                     response.put(c);
                 }
@@ -635,39 +658,42 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             case ColumnType.RECORD:
                 break;
             case ColumnType.STRING:
-                putStringOrNull(response, rec.getStrA(col));
+                putStringOrNull(response, rec.getStrA(columnIndex));
                 break;
             case ColumnType.VARCHAR:
-                putVarcharOrNull(response, rec.getVarcharA(col));
+                putVarcharOrNull(response, rec.getVarcharA(columnIndex));
                 break;
             case ColumnType.SYMBOL:
-                putStringOrNull(response, rec.getSymA(col));
+                putStringOrNull(response, rec.getSymA(columnIndex));
                 break;
             case ColumnType.LONG256:
-                rec.getLong256(col, response);
+                rec.getLong256(columnIndex, response);
                 break;
             case ColumnType.GEOBYTE:
-                putGeoHashStringValue(response, rec.getGeoByte(col), type);
+                putGeoHashStringValue(response, rec.getGeoByte(columnIndex), columnType);
                 break;
             case ColumnType.GEOSHORT:
-                putGeoHashStringValue(response, rec.getGeoShort(col), type);
+                putGeoHashStringValue(response, rec.getGeoShort(columnIndex), columnType);
                 break;
             case ColumnType.GEOINT:
-                putGeoHashStringValue(response, rec.getGeoInt(col), type);
+                putGeoHashStringValue(response, rec.getGeoInt(columnIndex), columnType);
                 break;
             case ColumnType.GEOLONG:
-                putGeoHashStringValue(response, rec.getGeoLong(col), type);
+                putGeoHashStringValue(response, rec.getGeoLong(columnIndex), columnType);
                 break;
             case ColumnType.UUID:
-                putUuidOrNull(response, rec.getLong128Lo(col), rec.getLong128Hi(col));
+                putUuidOrNull(response, rec.getLong128Lo(columnIndex), rec.getLong128Hi(columnIndex));
                 break;
             case ColumnType.LONG128:
                 throw new UnsupportedOperationException();
             case ColumnType.IPv4:
-                putIPv4Value(response, rec, col);
+                putIPv4Value(response, rec, columnIndex);
                 break;
             case ColumnType.INTERVAL:
-                putInterval(response, rec, col);
+                putInterval(response, rec, columnIndex);
+                break;
+            case ColumnType.ARRAY:
+                putArrayValue(response, state, rec, columnIndex, columnType);
                 break;
             default:
                 assert false;

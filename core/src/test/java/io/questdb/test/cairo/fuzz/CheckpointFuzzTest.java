@@ -371,54 +371,58 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
             }
 
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameNonWal, rnd);
-            int snapshotIndex = 1 + rnd.nextInt(transactions.size() - 1);
+            try {
+                int snapshotIndex = 1 + rnd.nextInt(transactions.size() - 1);
 
-            ObjList<FuzzTransaction> beforeSnapshot = new ObjList<>();
-            beforeSnapshot.addAll(transactions, 0, snapshotIndex);
-            ObjList<FuzzTransaction> afterSnapshot = new ObjList<>();
-            afterSnapshot.addAll(transactions, snapshotIndex, transactions.size());
+                ObjList<FuzzTransaction> beforeSnapshot = new ObjList<>();
+                beforeSnapshot.addAll(transactions, 0, snapshotIndex);
+                ObjList<FuzzTransaction> afterSnapshot = new ObjList<>();
+                afterSnapshot.addAll(transactions, snapshotIndex, transactions.size());
 
-            fuzzer.applyToWal(beforeSnapshot, tableNameWal, rnd.nextInt(2) + 1, rnd);
+                fuzzer.applyToWal(beforeSnapshot, tableNameWal, rnd.nextInt(2) + 1, rnd);
 
-            AtomicReference<Throwable> ex = new AtomicReference<>();
-            Thread asyncWalApply = new Thread(() -> {
-                try {
-                    drainWalQueue();
-                } catch (Throwable th) {
-                    ex.set(th);
-                } finally {
-                    Path.clearThreadLocals();
+                AtomicReference<Throwable> ex = new AtomicReference<>();
+                Thread asyncWalApply = new Thread(() -> {
+                    try {
+                        drainWalQueue();
+                    } catch (Throwable th) {
+                        ex.set(th);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                });
+                asyncWalApply.start();
+
+                Os.sleep(rnd.nextLong(snapshotIndex * 50L));
+                // Make snapshot here
+                checkpointCreate((rnd.nextInt() >> 30) == 1, testHardLinkCheckpoint);
+
+                asyncWalApply.join();
+
+                if (ex.get() != null) {
+                    throw new RuntimeException(ex.get());
                 }
-            });
-            asyncWalApply.start();
 
-            Os.sleep(rnd.nextLong(snapshotIndex * 50L));
-            // Make snapshot here
-            checkpointCreate((rnd.nextInt() >> 30) == 1, testHardLinkCheckpoint);
+                // Restore snapshot here
+                checkpointRecover();
+                engine.notifyWalTxnRepublisher(engine.verifyTableName(tableNameWal));
+                if (afterSnapshot.size() > 0) {
+                    fuzzer.applyWal(afterSnapshot, tableNameWal, rnd.nextInt(2) + 1, rnd);
+                } else {
+                    drainWalQueue();
+                }
 
-            asyncWalApply.join();
+                Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(walTable));
 
-            if (ex.get() != null) {
-                throw new RuntimeException(ex.get());
+                // Write same data to non-wal table
+                fuzzer.applyNonWal(transactions, tableNameNonWal, rnd);
+
+                String limit = "";
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableNameNonWal + limit, tableNameWal + limit, LOG);
+                fuzzer.assertRandomIndexes(tableNameNonWal, tableNameWal, rnd);
+            } finally {
+                Misc.freeObjListAndClear(transactions);
             }
-
-            // Restore snapshot here
-            checkpointRecover();
-            engine.notifyWalTxnRepublisher(engine.verifyTableName(tableNameWal));
-            if (afterSnapshot.size() > 0) {
-                fuzzer.applyWal(afterSnapshot, tableNameWal, rnd.nextInt(2) + 1, rnd);
-            } else {
-                drainWalQueue();
-            }
-
-            Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(walTable));
-
-            // Write same data to non-wal table
-            fuzzer.applyNonWal(transactions, tableNameNonWal, rnd);
-
-            String limit = "";
-            TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableNameNonWal + limit, tableNameWal + limit, LOG);
-            fuzzer.assertRandomIndexes(tableNameNonWal, tableNameWal, rnd);
         });
     }
 }

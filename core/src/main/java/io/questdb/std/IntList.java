@@ -32,8 +32,9 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Arrays;
 
 public class IntList implements Mutable, Sinkable {
+    public static final int NO_ENTRY_VALUE = -1;
     private static final int DEFAULT_ARRAY_SIZE = 16;
-    private static final int NO_ENTRY_VALUE = -1;
+    private static final int[] EMPTY_ARRAY = new int[0];
     private final int initialCapacity;
     private int[] data;
     private int pos = 0;
@@ -44,7 +45,12 @@ public class IntList implements Mutable, Sinkable {
 
     public IntList(int capacity) {
         this.initialCapacity = capacity;
-        this.data = new int[initialCapacity];
+        this.data = capacity == 0 ? EMPTY_ARRAY : new int[initialCapacity];
+    }
+
+    public IntList(IntList source) {
+        this(source.size());
+        addAll(source);
     }
 
     public void add(int value) {
@@ -93,12 +99,16 @@ public class IntList implements Mutable, Sinkable {
         int l = data.length;
         if (capacity > l) {
             int newCap = Math.max(l << 1, capacity);
-            int[] buf = new int[newCap];
-            System.arraycopy(data, 0, buf, 0, l);
-            this.data = buf;
+            this.data = Arrays.copyOf(data, newCap);
         }
     }
 
+    /**
+     * Resets the size of this list to zero.
+     * <p>
+     * <strong>Does not overwrite the underlying array with empty values.</strong>
+     * Use <code>clear(0)</code> to overwrite it.
+     */
     public void clear() {
         pos = 0;
     }
@@ -121,6 +131,13 @@ public class IntList implements Mutable, Sinkable {
         return this == that || that instanceof IntList && equals((IntList) that);
     }
 
+    /**
+     * Sets the value at index, extending the backing array if needed.
+     * <p>
+     * <strong>WARNING:</strong> does not initialize the newly revealed portion of
+     * the backing array! This may reveal values that were never set, or were set
+     * before calling <code>clear()</code>.
+     */
     public void extendAndSet(int index, int value) {
         checkCapacity(index + 1);
         if (index >= pos) {
@@ -150,7 +167,8 @@ public class IntList implements Mutable, Sinkable {
      * @return element at the specified position.
      */
     public int getQuick(int index) {
-        assert index < pos;
+        assert index >= 0 : "negative index";
+        assert index < pos : String.format("index %,d out of bounds for list size %,d", index, pos);
         return data[index];
     }
 
@@ -225,6 +243,43 @@ public class IntList implements Mutable, Sinkable {
     public void restoreInitialCapacity() {
         data = new int[initialCapacity];
         pos = 0;
+    }
+
+    public void reverse() {
+        final int len = size();
+        for (int index = 0, mid = len / 2; index < mid; ++index) {
+            final int temp = get(index);
+            set(index, get(len - index - 1));
+            set(len - index - 1, temp);
+        }
+    }
+
+    /**
+     * Shifts all elements in the list to the right by the specified number of positions.
+     * This creates empty spaces at the beginning of the list which are filled with {@link #NO_ENTRY_VALUE}.
+     * The size of the list is increased by the shift amount.
+     *
+     * <p>For example, if the list contains [1,2,3] and rshift(2) is called, the result would be
+     * [-1,-1,1,2,3] (assuming NO_ENTRY_VALUE is -1).</p>
+     *
+     * @param level the number of positions to shift elements to the right
+     */
+    public void rshift(int level) {
+        if (level == 0) {
+            return;
+        }
+        assert level > 0;
+
+        int newCapacityRequired = pos + level;
+        if (newCapacityRequired > data.length) {
+            int[] buf = new int[newCapacityRequired];
+            System.arraycopy(data, 0, buf, level, pos);
+            data = buf;
+        } else {
+            System.arraycopy(data, 0, data, level, pos);
+        }
+        Arrays.fill(data, 0, level, NO_ENTRY_VALUE);
+        pos += level;
     }
 
     public void set(int index, int element) {

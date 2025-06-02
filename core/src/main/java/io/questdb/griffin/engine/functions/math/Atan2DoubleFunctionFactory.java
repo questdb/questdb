@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.math;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
@@ -52,7 +51,7 @@ public class Atan2DoubleFunctionFactory implements FunctionFactory {
         return new Atan2Function(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Atan2Function extends DoubleFunction implements ScalarFunction {
+    private static class Atan2Function extends DoubleFunction implements Function {
         final Function x;
         final Function y;
 

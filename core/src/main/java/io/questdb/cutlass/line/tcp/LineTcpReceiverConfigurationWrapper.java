@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
@@ -72,6 +73,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public int getBindPort() {
         return getDelegate().getBindPort();
+    }
+
+    @Override
+    public CairoConfiguration getCairoConfiguration() {
+        return getDelegate().getCairoConfiguration();
     }
 
     @Override
@@ -207,6 +213,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public int getMaxMeasurementSize() {
         return getDelegate().getMaxMeasurementSize();
+    }
+
+    @Override
+    public long getMaxRecvBufferSize() {
+        return getDelegate().getMaxRecvBufferSize();
     }
 
     @Override
