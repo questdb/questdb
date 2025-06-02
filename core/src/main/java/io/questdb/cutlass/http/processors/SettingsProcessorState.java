@@ -24,28 +24,21 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.preferences.SettingsStore;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
 class SettingsProcessorState implements Mutable, Closeable {
-    final StringSink utf16Sink;
     final DirectUtf8Sink utf8Sink;
-    SettingsStore.Mode mode;
 
     SettingsProcessorState(int size) {
         utf8Sink = new DirectUtf8Sink(size);
-        utf16Sink = new StringSink();
     }
 
     @Override
     public void clear() {
         utf8Sink.clear();
-        utf16Sink.clear();
-        mode = null;
     }
 
     @Override

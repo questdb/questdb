@@ -32,36 +32,67 @@ import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.InsertRowImpl;
+import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 
-public class InsertOperationImpl implements InsertOperation {
-    private final InsertOperationFuture doneFuture = new InsertOperationFuture();
+public class InsertAsSelectOperationImpl implements InsertOperation {
+    private static final Log LOG = LogFactory.getLog(InsertAsSelectOperationImpl.class);
+    private final long batchSize;
+    private final RecordToRowCopier copier;
+    private final InsertSelectOperationFuture doneFuture = new InsertSelectOperationFuture();
     private final CairoEngine engine;
-    private final InsertMethodImpl insertMethod = new InsertMethodImpl();
-    private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
+    private final RecordCursorFactory factory;
+    private final InsertSelectMethodImpl insertMethod = new InsertSelectMethodImpl();
     private final long metadataVersion;
+    private final long o3MaxLag;
     private final TableToken tableToken;
+    private final int timestampIndex;
+    private long rowCount;
 
-    public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long metadataVersion) {
+    public InsertAsSelectOperationImpl(
+            CairoEngine engine,
+            TableToken tableToken,
+            RecordCursorFactory cursorFactory,
+            RecordToRowCopier copier,
+            long metadataVersion,
+            int timestampIndex,
+            long batchSize,
+            long o3MaxLag
+    ) {
+        this.batchSize = batchSize;
+        this.copier = copier;
         this.engine = engine;
+        this.o3MaxLag = o3MaxLag;
         this.tableToken = tableToken;
         this.metadataVersion = metadataVersion;
+        this.factory = cursorFactory;
+        this.timestampIndex = timestampIndex;
     }
 
     @Override
     public void addInsertRow(InsertRowImpl row) {
-        insertRows.add(row);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void close() {
-        Misc.freeObjList(insertRows);
+        Misc.free(factory);
+    }
+
+    @Override
+    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
+        return createMethod(executionContext, engine);
     }
 
     @Override
@@ -69,9 +100,8 @@ public class InsertOperationImpl implements InsertOperation {
         SecurityContext securityContext = executionContext.getSecurityContext();
         securityContext.authorizeInsert(tableToken);
 
-        initContext(executionContext);
         if (insertMethod.writer == null) {
-            final TableWriterAPI writer = writerSource.getTableWriterAPI(tableToken, "insert");
+            final TableWriterAPI writer = writerSource.getTableWriterAPI(tableToken, "insertAsSelect");
             if (
                 // when metadata changes the compiled insert may no longer be valid, we have to
                 // recompile SQL text to ensure column indexes are correct
@@ -90,11 +120,6 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
-        return createMethod(executionContext, engine);
-    }
-
-    @Override
     public OperationFuture execute(SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (InsertMethod insertMethod = createMethod(sqlExecutionContext)) {
             insertMethod.execute(sqlExecutionContext);
@@ -103,14 +128,7 @@ public class InsertOperationImpl implements InsertOperation {
         }
     }
 
-    private void initContext(SqlExecutionContext executionContext) throws SqlException {
-        for (int i = 0, n = insertRows.size(); i < n; i++) {
-            InsertRowImpl row = insertRows.get(i);
-            row.initContext(executionContext);
-        }
-    }
-
-    private class InsertMethodImpl implements InsertMethod {
+    private class InsertSelectMethodImpl implements InsertMethod {
         private TableWriterAPI writer = null;
 
         @Override
@@ -124,12 +142,43 @@ public class InsertOperationImpl implements InsertOperation {
         }
 
         @Override
-        public long execute(SqlExecutionContext executionContext) {
-            for (int i = 0, n = insertRows.size(); i < n; i++) {
-                InsertRowImpl row = insertRows.get(i);
-                row.append(writer);
+        public long execute(SqlExecutionContext executionContext) throws SqlException {
+            executionContext.setUseSimpleCircuitBreaker(true);
+            SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                try {
+                    if (timestampIndex == -1) {
+                        rowCount = SqlCompilerImpl.copyUnordered(cursor, writer, copier, circuitBreaker);
+                    } else {
+                        if (batchSize != -1) {
+                            rowCount = SqlCompilerImpl.copyOrderedBatched(
+                                    writer,
+                                    factory.getMetadata(),
+                                    cursor,
+                                    copier,
+                                    timestampIndex,
+                                    batchSize,
+                                    o3MaxLag,
+                                    circuitBreaker
+                            );
+                        } else {
+                            rowCount = SqlCompilerImpl.copyOrdered(writer, factory.getMetadata(), cursor, copier, timestampIndex, circuitBreaker);
+                        }
+                    }
+                } catch (Throwable e) {
+                    // rollback data when system error occurs
+                    try {
+                        writer.rollback();
+                    } catch (Throwable e2) {
+                        // Writer is distressed, exception already logged, the pool will handle it when writer is returned
+                        LOG.error().$("could not rollback, writer must be distressed [table=").$(tableToken.getTableName()).I$();
+                    }
+                    throw e;
+                } finally {
+                    executionContext.setUseSimpleCircuitBreaker(false);
+                }
             }
-            return insertRows.size();
+            return rowCount;
         }
 
         @Override
@@ -145,10 +194,10 @@ public class InsertOperationImpl implements InsertOperation {
         }
     }
 
-    private class InsertOperationFuture extends DoneOperationFuture {
+    private class InsertSelectOperationFuture extends DoneOperationFuture {
         @Override
         public long getAffectedRowsCount() {
-            return insertRows.size();
+            return rowCount;
         }
     }
 }

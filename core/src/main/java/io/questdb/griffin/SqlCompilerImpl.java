@@ -92,6 +92,7 @@ import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.DropAllOperation;
 import io.questdb.griffin.engine.ops.GenericDropOperation;
 import io.questdb.griffin.engine.ops.GenericDropOperationBuilder;
+import io.questdb.griffin.engine.ops.InsertAsSelectOperationImpl;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -194,7 +195,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
     protected CharSequence sqlText;
-    private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
@@ -268,6 +268,59 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    public static long copyOrdered(
+            TableWriterAPI writer,
+            RecordMetadata metadata,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        long rowCount;
+
+        if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
+            rowCount = copyOrderedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, circuitBreaker);
+        } else {
+            rowCount = copyOrdered0(writer, cursor, copier, cursorTimestampIndex, circuitBreaker);
+        }
+        return rowCount;
+    }
+
+    public static long copyOrderedBatched(
+            TableWriterAPI writer,
+            RecordMetadata metadata,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            long batchSize,
+            long o3MaxLag,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        long rowCount;
+        if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
+            rowCount = copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker);
+        } else {
+            rowCount = copyOrderedBatched0(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker);
+        }
+        return rowCount;
+    }
+
+    /**
+     * Returns number of copied rows.
+     */
+    public static long copyUnordered(RecordCursor cursor, TableWriterAPI writer, RecordToRowCopier copier, SqlExecutionCircuitBreaker circuitBreaker) {
+        long rowCount = 0;
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            TableWriter.Row row = writer.newRow();
+            copier.copy(record, row);
+            row.append();
+            rowCount++;
+        }
+        return rowCount;
+    }
+
     // public for testing
     public static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
@@ -279,6 +332,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    @Override
     public void clear() {
         clearExceptSqlText();
         sqlText = null;
@@ -300,6 +354,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         Misc.free(blockFileWriter);
     }
 
+    @Override
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) throws SqlException {
         clear();
@@ -451,6 +506,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return functionParser.getFunctionFactoryCache();
     }
 
+    @Override
     public QueryBuilder query() {
         queryBuilder.clear();
         return queryBuilder;
@@ -513,6 +569,104 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 lexer.defineSymbol(op.operator.token);
             }
         }
+    }
+
+    private static long copyOrdered0(
+            TableWriterAPI writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        long rowCount = 0;
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
+            copier.copy(record, row);
+            row.append();
+            rowCount++;
+        }
+
+        return rowCount;
+    }
+
+    // returns number of copied rows
+    private static long copyOrderedBatched0(
+            TableWriterAPI writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            long batchSize,
+            long o3MaxLag,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        long commitTarget = batchSize;
+        long rowCount = 0;
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
+            copier.copy(record, row);
+            row.append();
+            if (++rowCount >= commitTarget) {
+                writer.ic(o3MaxLag);
+                commitTarget = rowCount + batchSize;
+            }
+        }
+        return rowCount;
+    }
+
+    // returns number of copied rows
+    private static long copyOrderedBatchedStrTimestamp(
+            TableWriterAPI writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            long batchSize,
+            long o3MaxLag,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        long commitTarget = batchSize;
+        long rowCount = 0;
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            CharSequence str = record.getStrA(cursorTimestampIndex);
+            // It's allowed to insert ISO formatted string to timestamp column
+            TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, -1, ColumnType.STRING, ColumnType.TIMESTAMP));
+            copier.copy(record, row);
+            row.append();
+            if (++rowCount >= commitTarget) {
+                writer.ic(o3MaxLag);
+                commitTarget = rowCount + batchSize;
+            }
+        }
+
+        return rowCount;
+    }
+
+    //returns number of copied rows
+    private static long copyOrderedStrTimestamp(
+            TableWriterAPI writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        long rowCount = 0;
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final CharSequence str = record.getStrA(cursorTimestampIndex);
+            // It's allowed to insert ISO formatted string to timestamp column
+            TableWriter.Row row = writer.newRow(SqlUtil.implicitCastStrAsTimestamp(str));
+            copier.copy(record, row);
+            row.append();
+            rowCount++;
+        }
+
+        return rowCount;
     }
 
     private static boolean isIPv4UpdateCast(int from, int to) {
@@ -2140,18 +2294,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private InsertOperation compileInsert(InsertModel insertModel, SqlExecutionContext executionContext) throws SqlException {
         // todo: consider moving this method to InsertModel
         final ExpressionNode tableNameExpr = insertModel.getTableNameExpr();
+        InsertOperationImpl insertOperation = null;
+        Function timestampFunction = null;
         ObjList<Function> valueFunctions = null;
         TableToken token = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
 
         try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(token)) {
             final long metadataVersion = metadata.getMetadataVersion();
-            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
+            insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
             final int metadataTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = insertModel.getColumnNameList();
             final int columnSetSize = columnNameList.size();
             int designatedTimestampPosition = 0;
             for (int tupleIndex = 0, n = insertModel.getRowTupleCount(); tupleIndex < n; tupleIndex++) {
-                Function timestampFunction = null;
+                timestampFunction = null;
                 listColumnFilter.clear();
                 if (columnSetSize > 0) {
                     valueFunctions = new ObjList<>(columnSetSize);
@@ -2232,14 +2388,140 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
 
-
                 VirtualRecord record = new VirtualRecord(valueFunctions);
                 RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter);
                 insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction, designatedTimestampPosition, tupleIndex));
             }
             return insertOperation;
-        } catch (SqlException e) {
+        } catch (Throwable th) {
+            Misc.free(insertOperation);
+            Misc.free(timestampFunction);
             Misc.freeObjList(valueFunctions);
+            throw th;
+        }
+    }
+
+    private InsertOperation compileInsertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+        final InsertModel model = (InsertModel) executionModel;
+        final ExpressionNode tableNameExpr = model.getTableNameExpr();
+        TableToken tableToken = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
+        RecordCursorFactory factory = null;
+
+        try (TableRecordMetadata writerMetadata = executionContext.getMetadataForWrite(tableToken)) {
+            QueryModel queryModel = model.getQueryModel();
+            final long metadataVersion = writerMetadata.getMetadataVersion();
+            factory = generateSelectWithRetries(queryModel, executionContext, true);
+            final RecordMetadata cursorMetadata = factory.getMetadata();
+            // Convert sparse writer metadata into dense
+            final int writerTimestampIndex = writerMetadata.getTimestampIndex();
+            final int cursorTimestampIndex = cursorMetadata.getTimestampIndex();
+            final int cursorColumnCount = cursorMetadata.getColumnCount();
+
+            final RecordToRowCopier copier;
+            final ObjList<CharSequence> columnNameList = model.getColumnNameList();
+            final int columnSetSize = columnNameList.size();
+            int timestampIndexFound = -1;
+            if (columnSetSize > 0) {
+                // validate type cast
+                // clear list column filter to re-populate it again
+                listColumnFilter.clear();
+
+                for (int i = 0; i < columnSetSize; i++) {
+                    CharSequence columnName = columnNameList.get(i);
+                    int index = writerMetadata.getColumnIndexQuiet(columnName);
+                    if (index == -1) {
+                        throw SqlException.invalidColumn(model.getColumnPosition(i), columnName);
+                    }
+
+                    int fromType = cursorMetadata.getColumnType(i);
+                    int toType = writerMetadata.getColumnType(index);
+                    if (ColumnType.isAssignableFrom(fromType, toType)) {
+                        listColumnFilter.add(index + 1);
+                    } else {
+                        throw SqlException.inconvertibleTypes(
+                                model.getColumnPosition(i),
+                                fromType,
+                                cursorMetadata.getColumnName(i),
+                                toType,
+                                writerMetadata.getColumnName(i)
+                        );
+                    }
+
+                    if (index == writerTimestampIndex) {
+                        timestampIndexFound = i;
+                        if (fromType != ColumnType.TIMESTAMP && fromType != ColumnType.STRING) {
+                            throw SqlException.$(tableNameExpr.position, "expected timestamp column but type is ").put(ColumnType.nameOf(fromType));
+                        }
+                    }
+                }
+
+                // fail when target table requires chronological data and cursor cannot provide it
+                if (timestampIndexFound < 0 && writerTimestampIndex >= 0) {
+                    throw SqlException.$(tableNameExpr.position, "select clause must provide timestamp column");
+                }
+
+                copier = RecordToRowCopierUtils.generateCopier(asm, cursorMetadata, writerMetadata, listColumnFilter);
+            } else {
+                // fail when target table requires chronological data and cursor cannot provide it
+                if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
+                    if (cursorColumnCount <= writerTimestampIndex) {
+                        throw SqlException.$(tableNameExpr.position, "select clause must provide timestamp column");
+                    } else {
+                        int columnType = ColumnType.tagOf(cursorMetadata.getColumnType(writerTimestampIndex));
+                        if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING && columnType != ColumnType.VARCHAR && columnType != ColumnType.NULL) {
+                            throw SqlException.$(tableNameExpr.position, "expected timestamp column but type is ").put(ColumnType.nameOf(columnType));
+                        }
+                    }
+                }
+
+                if (writerTimestampIndex > -1 && cursorTimestampIndex > -1 && writerTimestampIndex != cursorTimestampIndex) {
+                    throw SqlException
+                            .$(tableNameExpr.position, "designated timestamp of existing table (").put(writerTimestampIndex)
+                            .put(") does not match designated timestamp in select query (")
+                            .put(cursorTimestampIndex)
+                            .put(')');
+                }
+                timestampIndexFound = writerTimestampIndex;
+
+                final int n = writerMetadata.getColumnCount();
+                if (n > cursorMetadata.getColumnCount()) {
+                    throw SqlException.$(model.getSelectKeywordPosition(), "not enough columns selected");
+                }
+
+                for (int i = 0; i < n; i++) {
+                    int fromType = cursorMetadata.getColumnType(i);
+                    int toType = writerMetadata.getColumnType(i);
+                    if (ColumnType.isAssignableFrom(fromType, toType)) {
+                        continue;
+                    }
+
+                    // We are going on a limp here. There is nowhere to position this error in our model.
+                    // We will try to position on column (i) inside cursor's query model. Assumption is that
+                    // it will always have a column, e.g. has been processed by optimiser
+                    assert i < model.getQueryModel().getBottomUpColumns().size();
+                    throw SqlException.inconvertibleTypes(
+                            model.getQueryModel().getBottomUpColumns().getQuick(i).getAst().position,
+                            fromType,
+                            cursorMetadata.getColumnName(i),
+                            toType,
+                            writerMetadata.getColumnName(i)
+                    );
+                }
+
+                entityColumnFilter.of(writerMetadata.getColumnCount());
+
+                copier = RecordToRowCopierUtils.generateCopier(
+                        asm,
+                        cursorMetadata,
+                        writerMetadata,
+                        entityColumnFilter
+                );
+            }
+
+            return new InsertAsSelectOperationImpl(engine, tableToken, factory, copier,
+                    metadataVersion, timestampIndexFound, model.getBatchSize(), model.getO3MaxLag());
+        } catch (Throwable e) {
+            Misc.free(factory);
             throw e;
         }
     }
@@ -2639,30 +2921,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
                 default:
-                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     checkMatViewModification(executionModel);
                     final InsertModel insertModel = (InsertModel) executionModel;
+                    // we use SQL Compiler state (reusing objects) to generate InsertOperation
                     if (insertModel.getQueryModel() != null) {
-                        sqlId = queryRegistry.register(sqlText, executionContext);
-                        executeWithRetries(
-                                insertAsSelectMethod,
-                                executionModel,
-                                configuration.getCreateAsSelectRetryCount(),
-                                executionContext
-                        );
+                        // InsertSelect progress will be recorded during the execute phase, to accurately reflect its real select progress.
+                        compiledQuery.ofInsert(compileInsertAsSelect(insertModel, executionContext), true);
                     } else {
-                        // we use SQL Compiler state (reusing objects) to generate InsertOperation
-                        compiledQuery.ofInsert(compileInsert(insertModel, executionContext));
+                        QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                        compiledQuery.ofInsert(compileInsert(insertModel, executionContext), false);
+                        QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     }
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+
                     break;
             }
 
             short type = compiledQuery.getType();
-            if (
-                    type == CompiledQuery.INSERT_AS_SELECT // insert as select is immediate, simple insert is not!
-                            || type == CompiledQuery.EXPLAIN
-                            || type == CompiledQuery.RENAME_TABLE  // non-wal rename table is complete at this point
+            if (type == CompiledQuery.EXPLAIN
+                    || type == CompiledQuery.RENAME_TABLE  // non-wal rename table is complete at this point
             ) {
                 queryRegistry.unregister(sqlId, executionContext);
             }
@@ -2732,145 +3008,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private long copyOrdered(
-            TableWriterAPI writer,
-            RecordMetadata metadata,
-            RecordCursor cursor,
-            RecordToRowCopier copier,
-            int cursorTimestampIndex,
-            SqlExecutionCircuitBreaker circuitBreaker
-    ) {
-        long rowCount;
-
-        if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
-            rowCount = copyOrderedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, circuitBreaker);
-        } else {
-            rowCount = copyOrdered0(writer, cursor, copier, cursorTimestampIndex, circuitBreaker);
-        }
-        writer.commit();
-
-        return rowCount;
-    }
-
-    private long copyOrdered0(
-            TableWriterAPI writer,
-            RecordCursor cursor,
-            RecordToRowCopier copier,
-            int cursorTimestampIndex,
-            SqlExecutionCircuitBreaker circuitBreaker
-    ) {
-        long rowCount = 0;
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
-            copier.copy(record, row);
-            row.append();
-            rowCount++;
-        }
-
-        return rowCount;
-    }
-
-    private long copyOrderedBatched(
-            TableWriterAPI writer,
-            RecordMetadata metadata,
-            RecordCursor cursor,
-            RecordToRowCopier copier,
-            int cursorTimestampIndex,
-            long batchSize,
-            long o3MaxLag,
-            SqlExecutionCircuitBreaker circuitBreaker
-    ) {
-        long rowCount;
-        if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
-            rowCount = copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker);
-        } else {
-            rowCount = copyOrderedBatched0(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker);
-        }
-        writer.commit();
-
-        return rowCount;
-    }
-
-    // returns number of copied rows
-    private long copyOrderedBatched0(
-            TableWriterAPI writer,
-            RecordCursor cursor,
-            RecordToRowCopier copier,
-            int cursorTimestampIndex,
-            long batchSize,
-            long o3MaxLag,
-            SqlExecutionCircuitBreaker circuitBreaker
-    ) {
-        long commitTarget = batchSize;
-        long rowCount = 0;
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
-            copier.copy(record, row);
-            row.append();
-            if (++rowCount >= commitTarget) {
-                writer.ic(o3MaxLag);
-                commitTarget = rowCount + batchSize;
-            }
-        }
-        return rowCount;
-    }
-
-    // returns number of copied rows
-    private long copyOrderedBatchedStrTimestamp(
-            TableWriterAPI writer,
-            RecordCursor cursor,
-            RecordToRowCopier copier,
-            int cursorTimestampIndex,
-            long batchSize,
-            long o3MaxLag,
-            SqlExecutionCircuitBreaker circuitBreaker
-    ) {
-        long commitTarget = batchSize;
-        long rowCount = 0;
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            CharSequence str = record.getStrA(cursorTimestampIndex);
-            // It's allowed to insert ISO formatted string to timestamp column
-            TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, -1, ColumnType.STRING, ColumnType.TIMESTAMP));
-            copier.copy(record, row);
-            row.append();
-            if (++rowCount >= commitTarget) {
-                writer.ic(o3MaxLag);
-                commitTarget = rowCount + batchSize;
-            }
-        }
-
-        return rowCount;
-    }
-
-    //returns number of copied rows
-    private long copyOrderedStrTimestamp(
-            TableWriterAPI writer,
-            RecordCursor cursor,
-            RecordToRowCopier copier,
-            int cursorTimestampIndex,
-            SqlExecutionCircuitBreaker circuitBreaker
-    ) {
-        long rowCount = 0;
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            final CharSequence str = record.getStrA(cursorTimestampIndex);
-            // It's allowed to insert ISO formatted string to timestamp column
-            TableWriter.Row row = writer.newRow(SqlUtil.implicitCastStrAsTimestamp(str));
-            copier.copy(record, row);
-            row.append();
-            rowCount++;
-        }
-
-        return rowCount;
-    }
-
     // returns number of copied rows
     private long copyTableData(
             RecordCursor cursor,
@@ -2883,13 +3020,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         int timestampIndex = writerMetadata.getTimestampIndex();
+        long rowCount;
         if (timestampIndex == -1) {
-            return copyUnordered(cursor, writer, recordToRowCopier, circuitBreaker);
+            rowCount = copyUnordered(cursor, writer, recordToRowCopier, circuitBreaker);
         } else if (batchSize != -1) {
-            return copyOrderedBatched(writer, metadata, cursor, recordToRowCopier, timestampIndex, batchSize, o3MaxLag, circuitBreaker);
+            rowCount = copyOrderedBatched(writer, metadata, cursor, recordToRowCopier, timestampIndex, batchSize, o3MaxLag, circuitBreaker);
         } else {
-            return copyOrdered(writer, metadata, cursor, recordToRowCopier, timestampIndex, circuitBreaker);
+            rowCount = copyOrdered(writer, metadata, cursor, recordToRowCopier, timestampIndex, circuitBreaker);
         }
+        writer.commit();
+        return rowCount;
     }
 
     /**
@@ -2955,24 +3095,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 engine.unlock(securityContext, tableToken, writer, false);
             }
         }
-    }
-
-    /**
-     * Returns number of copied rows.
-     */
-    private long copyUnordered(RecordCursor cursor, TableWriterAPI writer, RecordToRowCopier copier, SqlExecutionCircuitBreaker circuitBreaker) {
-        long rowCount = 0;
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            TableWriter.Row row = writer.newRow();
-            copier.copy(record, row);
-            row.append();
-            rowCount++;
-        }
-        writer.commit();
-
-        return rowCount;
     }
 
     private void executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
@@ -3564,170 +3686,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         return lexer.getPosition();
-    }
-
-    private void insertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
-        final InsertModel model = (InsertModel) executionModel;
-        final ExpressionNode tableNameExpr = model.getTableNameExpr();
-
-        TableToken tableToken = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
-        long insertCount;
-
-        try (TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "insertAsSelect")) {
-            executionContext.setUseSimpleCircuitBreaker(true);
-
-            QueryModel queryModel = model.getQueryModel();
-            try (
-                    RecordCursorFactory factory = generateSelectOneShot(queryModel, executionContext, false);
-                    TableRecordMetadata writerMetadata = executionContext.getMetadataForWrite(tableToken)
-            ) {
-                final RecordMetadata cursorMetadata = factory.getMetadata();
-                // Convert sparse writer metadata into dense
-                final int writerTimestampIndex = writerMetadata.getTimestampIndex();
-                final int cursorTimestampIndex = cursorMetadata.getTimestampIndex();
-                final int cursorColumnCount = cursorMetadata.getColumnCount();
-
-                final RecordToRowCopier copier;
-                final ObjList<CharSequence> columnNameList = model.getColumnNameList();
-                final int columnSetSize = columnNameList.size();
-                int timestampIndexFound = -1;
-                if (columnSetSize > 0) {
-                    // validate type cast
-
-                    // clear list column filter to re-populate it again
-                    listColumnFilter.clear();
-
-                    for (int i = 0; i < columnSetSize; i++) {
-                        CharSequence columnName = columnNameList.get(i);
-                        int index = writerMetadata.getColumnIndexQuiet(columnName);
-                        if (index == -1) {
-                            throw SqlException.invalidColumn(model.getColumnPosition(i), columnName);
-                        }
-
-                        int fromType = cursorMetadata.getColumnType(i);
-                        int toType = writerMetadata.getColumnType(index);
-                        if (ColumnType.isAssignableFrom(fromType, toType)) {
-                            listColumnFilter.add(index + 1);
-                        } else {
-                            throw SqlException.inconvertibleTypes(
-                                    model.getColumnPosition(i),
-                                    fromType,
-                                    cursorMetadata.getColumnName(i),
-                                    toType,
-                                    writerMetadata.getColumnName(i)
-                            );
-                        }
-
-                        if (index == writerTimestampIndex) {
-                            timestampIndexFound = i;
-                            if (fromType != ColumnType.TIMESTAMP && fromType != ColumnType.STRING) {
-                                throw SqlException.$(tableNameExpr.position, "expected timestamp column but type is ").put(ColumnType.nameOf(fromType));
-                            }
-                        }
-                    }
-
-                    // fail when target table requires chronological data and cursor cannot provide it
-                    if (timestampIndexFound < 0 && writerTimestampIndex >= 0) {
-                        throw SqlException.$(tableNameExpr.position, "select clause must provide timestamp column");
-                    }
-
-                    copier = RecordToRowCopierUtils.generateCopier(asm, cursorMetadata, writerMetadata, listColumnFilter);
-                } else {
-                    // fail when target table requires chronological data and cursor cannot provide it
-                    if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
-                        if (cursorColumnCount <= writerTimestampIndex) {
-                            throw SqlException.$(tableNameExpr.position, "select clause must provide timestamp column");
-                        } else {
-                            int columnType = ColumnType.tagOf(cursorMetadata.getColumnType(writerTimestampIndex));
-                            if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING && columnType != ColumnType.VARCHAR && columnType != ColumnType.NULL) {
-                                throw SqlException.$(tableNameExpr.position, "expected timestamp column but type is ").put(ColumnType.nameOf(columnType));
-                            }
-                        }
-                    }
-
-                    if (writerTimestampIndex > -1 && cursorTimestampIndex > -1 && writerTimestampIndex != cursorTimestampIndex) {
-                        throw SqlException
-                                .$(tableNameExpr.position, "designated timestamp of existing table (").put(writerTimestampIndex)
-                                .put(") does not match designated timestamp in select query (")
-                                .put(cursorTimestampIndex)
-                                .put(')');
-                    }
-                    timestampIndexFound = writerTimestampIndex;
-
-                    final int n = writerMetadata.getColumnCount();
-                    if (n > cursorMetadata.getColumnCount()) {
-                        throw SqlException.$(model.getSelectKeywordPosition(), "not enough columns selected");
-                    }
-
-                    for (int i = 0; i < n; i++) {
-                        int fromType = cursorMetadata.getColumnType(i);
-                        int toType = writerMetadata.getColumnType(i);
-                        if (ColumnType.isAssignableFrom(fromType, toType)) {
-                            continue;
-                        }
-
-                        // We are going on a limp here. There is nowhere to position this error in our model.
-                        // We will try to position on column (i) inside cursor's query model. Assumption is that
-                        // it will always have a column, e.g. has been processed by optimiser
-                        assert i < model.getQueryModel().getBottomUpColumns().size();
-                        throw SqlException.inconvertibleTypes(
-                                model.getQueryModel().getBottomUpColumns().getQuick(i).getAst().position,
-                                fromType,
-                                cursorMetadata.getColumnName(i),
-                                toType,
-                                writerMetadata.getColumnName(i)
-                        );
-                    }
-
-                    entityColumnFilter.of(writerMetadata.getColumnCount());
-
-                    copier = RecordToRowCopierUtils.generateCopier(
-                            asm,
-                            cursorMetadata,
-                            writerMetadata,
-                            entityColumnFilter
-                    );
-                }
-
-                SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-
-                try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                    try {
-                        if (writerTimestampIndex == -1) {
-                            insertCount = copyUnordered(cursor, writer, copier, circuitBreaker);
-                        } else {
-                            if (model.getBatchSize() != -1) {
-                                insertCount = copyOrderedBatched(
-                                        writer,
-                                        factory.getMetadata(),
-                                        cursor,
-                                        copier,
-                                        timestampIndexFound,
-                                        model.getBatchSize(),
-                                        model.getO3MaxLag(),
-                                        circuitBreaker
-                                );
-                            } else {
-                                insertCount = copyOrdered(writer, factory.getMetadata(), cursor, copier, timestampIndexFound, circuitBreaker);
-                            }
-                        }
-                    } catch (Throwable e) {
-                        // rollback data when system error occurs
-                        try {
-                            writer.rollback();
-                        } catch (Throwable e2) {
-                            // Writer is distressed, exception already logged, the pool will handle it when writer is returned
-                            LOG.error().$("could not rollback, writer must be distressed [table=").$(tableNameExpr).I$();
-                        }
-                        throw e;
-                    }
-                }
-            }
-        } finally {
-            executionContext.setUseSimpleCircuitBreaker(false);
-        }
-
-        compiledQuery.ofInsertAsSelect(insertCount);
     }
 
     private void insertValidateFunctionAndAddToList(

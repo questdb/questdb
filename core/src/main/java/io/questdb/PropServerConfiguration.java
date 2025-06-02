@@ -110,6 +110,7 @@ import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -222,6 +223,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean httpPessimisticHealthCheckEnabled;
     private final int httpSendBufferSize;
     private final boolean httpServerEnabled;
+    private final boolean httpSettingsReadOnly;
     private final int httpSqlCacheBlockCount;
     private final boolean httpSqlCacheEnabled;
     private final int httpSqlCacheRowCount;
@@ -960,6 +962,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpWorkerNapThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_NAP_THRESHOLD, 7_000);
             this.httpWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_THRESHOLD, 10_000);
             this.httpWorkerSleepTimeout = getMillis(properties, env, PropertyKey.HTTP_WORKER_SLEEP_TIMEOUT, 10);
+
+            this.httpSettingsReadOnly = getBoolean(properties, env, PropertyKey.HTTP_SETTINGS_READONLY, false);
 
             // context paths
             this.httpContextWebConsole = stripTrailingSlash(getString(properties, env, PropertyKey.HTTP_CONTEXT_WEB_CONSOLE, "/"));
@@ -2186,15 +2190,15 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public static class JsonPropertyValueFormatter {
-        public static void bool(CharSequence key, boolean value, StringSink sink) {
+        public static void bool(CharSequence key, boolean value, CharSink<?> sink) {
             sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
         }
 
-        public static void integer(CharSequence key, long value, StringSink sink) {
+        public static void integer(CharSequence key, long value, CharSink<?> sink) {
             sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
         }
 
-        public static void str(CharSequence key, CharSequence value, StringSink sink) {
+        public static void str(CharSequence key, CharSequence value, CharSink<?> sink) {
             sink.putQuoted(key).putAscii(':');
             if (value != null) {
                 sink.putQuoted(value);
@@ -2550,9 +2554,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean exportConfiguration(StringSink sink) {
-            str(RELEASE_TYPE, getReleaseType(), sink);
+        public boolean exportConfiguration(CharSink<?> sink) {
+            final String releaseType = getReleaseType();
+            str(RELEASE_TYPE, releaseType, sink);
             str(RELEASE_VERSION, getBuildInformation().getSwVersion(), sink);
+            if (Chars.equalsNc(releaseType, OSS)) {
+                bool(PropertyKey.HTTP_SETTINGS_READONLY.getPropertyPath(), httpSettingsReadOnly, sink);
+            }
             if (!Chars.empty(httpUsername)) {
                 bool(ACL_ENABLED, true, sink);
             }
@@ -4278,6 +4286,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isSettingsReadOnly() {
+            return httpSettingsReadOnly;
+        }
+
+        @Override
         public Counter listenerStateChangeCounter() {
             return metrics.httpMetrics().listenerStateChangeCounter();
         }
@@ -5233,7 +5246,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     class PropPublicPassthroughConfiguration implements PublicPassthroughConfiguration {
         @Override
-        public boolean exportConfiguration(StringSink sink) {
+        public boolean exportConfiguration(CharSink<?> sink) {
             bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), isPosthogEnabled(), sink);
             str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), getPosthogApiKey(), sink);
             return true;

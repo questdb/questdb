@@ -285,6 +285,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_PESSIMISTIC_HEALTH_CHECK("http.pessimistic.health.check.enabled"),
     HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED("http.health.check.authentication.required"),
     HTTP_SECURITY_READONLY("http.security.readonly"),
+    HTTP_SETTINGS_READONLY("http.settings.readonly"),
     HTTP_SECURITY_MAX_RESPONSE_ROWS("http.security.max.response.rows"),
     HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION("http.security.interrupt.on.closed.connection"),
     HTTP_BIND_TO("http.bind.to"),

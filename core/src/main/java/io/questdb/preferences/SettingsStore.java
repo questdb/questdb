@@ -12,8 +12,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
@@ -58,7 +58,7 @@ public class SettingsStore implements Closeable {
         Misc.free(path);
     }
 
-    public synchronized void exportPreferences(StringSink settings) {
+    public synchronized void exportPreferences(Utf8StringSink settings) {
         settings.putAscii("\"preferences\":{");
         final ObjList<CharSequence> keys = preferencesMap.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
@@ -67,7 +67,7 @@ public class SettingsStore implements Closeable {
             str(key, value, settings);
         }
         if (keys.size() > 0) {
-            settings.clear(settings.length() - 1);
+            settings.clear(settings.size() - 1);
         }
         settings.putAscii('}');
     }
