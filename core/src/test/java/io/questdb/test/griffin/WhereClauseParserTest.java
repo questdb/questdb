@@ -260,7 +260,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp = '2015-02-23T10:00:55.000Z;30m;10;z'");
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals("[12] Not a date, use IN keyword with intervals", e.getMessage());
+            Assert.assertEquals("[12] not a timestamp, use IN keyword with intervals", e.getMessage());
         }
     }
 
@@ -280,7 +280,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp = '2015-02-23T10:00:55.0001110z;30m'");
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals("[12] Not a date, use IN keyword with intervals", e.getMessage());
+            Assert.assertEquals("[12] not a timestamp, use IN keyword with intervals", e.getMessage());
         }
     }
 
@@ -335,7 +335,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp = '2014-0x-01T12:30:00.000Z'");
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals("[12] Invalid date", e.getMessage());
+            Assert.assertEquals("[12] invalid timestamp", e.getMessage());
         }
     }
 
@@ -428,7 +428,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp = '1583077401000000'");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid timestamp");
             Assert.assertEquals(12, e.getPosition());
         }
     }

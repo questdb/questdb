@@ -67,9 +67,15 @@ public interface TimestampDriver {
 
     long parseAnyFormat(CharSequence token, int start, int len) throws NumericException;
 
-    long parseFloorConstant(CharSequence quotedTimestampStr) throws NumericException;
+    long parseFloor(CharSequence str, int lo, int hi) throws NumericException;
 
-    long parseFloorLiteral(CharSequence quotedTimestampStr) throws NumericException;
+    default long parseFloorConstant(CharSequence quotedTimestampStr) throws NumericException {
+        return parseFloor(quotedTimestampStr, 1, quotedTimestampStr.length() - 1);
+    }
+
+    default long parseFloorLiteral(CharSequence timestampLiteral) throws NumericException {
+        return parseFloor(timestampLiteral, 0, timestampLiteral.length());
+    }
 
     long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi);
 

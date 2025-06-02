@@ -24,11 +24,13 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 /**
@@ -168,12 +170,28 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        int size = staticIntervals.size();
-        TimestampUtils.parseSingleTimestamp(seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
+        final int intersectDividerIndex = staticIntervals.size();
+        long timestamp;
+        try {
+            timestamp = ColumnType.getTimestampDriver(timestampType).parseFloor(seq, lo, lim);
+        } catch (NumericException e) {
+            try {
+                timestamp = Numbers.parseLong(seq);
+            } catch (NumericException e2) {
+                for (int i = lo; i < lim; i++) {
+                    if (seq.charAt(i) == ';') {
+                        throw SqlException.$(position, "not a timestamp, use IN keyword with intervals");
+                    }
+                }
+                throw SqlException.$(position, "invalid timestamp");
+            }
+        }
+        IntervalUtils.encodeInterval(timestamp, timestamp, IntervalOperation.INTERSECT, staticIntervals);
+
         if (dynamicRangeList.size() == 0) {
             IntervalUtils.applyLastEncodedIntervalEx(timestampType, staticIntervals);
             if (intervalApplied) {
-                IntervalUtils.intersectInPlace(staticIntervals, size);
+                IntervalUtils.intersectInPlace(staticIntervals, intersectDividerIndex);
             }
         } else {
             // else - nothing to do, interval already encoded in staticPeriods as 4 longs

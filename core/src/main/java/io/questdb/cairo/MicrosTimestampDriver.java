@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.ptt.PartitionDateParseUtil;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -148,7 +147,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long castStr(CharSequence value, int tupleIndex, short fromType, short toType) {
-        return SqlUtil.parseFloorPartialTimestamp(value, tupleIndex, fromType, toType);
+        try {
+            return TimestampUtils.parseFloorPartialTimestamp(value);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, fromType, toType);
+        }
     }
 
     @Override
@@ -261,13 +264,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long parseFloorConstant(CharSequence token) throws NumericException {
-        return TimestampUtils.parseFloorPartialTimestamp(token, 1, token.length() - 1);
-    }
-
-    @Override
-    public long parseFloorLiteral(CharSequence timestampLiteral) throws NumericException {
-        return TimestampUtils.parseFloorPartialTimestamp(timestampLiteral);
+    public long parseFloor(CharSequence str, int lo, int hi) throws NumericException {
+        return TimestampUtils.parseFloorPartialTimestamp(str, lo, hi);
     }
 
     @Override

@@ -66,7 +66,7 @@ public class TimestampUtils {
                 int day = Numbers.parseInt(seq, p, p += 2);
                 checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
                 if (checkLen(p, lim)) {
-                    checkChar(seq, p++, lim, 'T', ' ');
+                    checkSpecialChar(seq, p++, lim);
                     int hour = Numbers.parseInt(seq, p, p += 2);
                     checkRange(hour, 0, 23);
                     if (checkLen(p, lim)) {
@@ -173,7 +173,7 @@ public class TimestampUtils {
                 int day = Numbers.parseInt(seq, p, p += 2);
                 checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
                 if (checkLen(p, lim)) {
-                    checkChar(seq, p++, lim, 'T', ' ');
+                    checkSpecialChar(seq, p++, lim);
                     int hour = Numbers.parseInt(seq, p, p += 2);
                     checkRange(hour, 0, 23);
                     if (checkLen(p, lim)) {
@@ -280,7 +280,7 @@ public class TimestampUtils {
                 int day = Numbers.parseInt(seq, p, p += 2);
                 checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
                 if (checkLen(p, lim)) {
-                    checkChar(seq, p++, lim, 'T', ' ');
+                    checkSpecialChar(seq, p++, lim);
                     int hour = Numbers.parseInt(seq, p, p += 2);
                     checkRange(hour, 0, 23);
                     if (checkLen(p, lim)) {
@@ -579,42 +579,11 @@ public class TimestampUtils {
         }
     }
 
-    public static void parseSingleTimestamp(CharSequence seq, int lo, int lim, int position, LongList out, short operation) throws SqlException {
-        try {
-            long micros = parseFloorPartialTimestamp(seq, lo, lim);
-            IntervalUtils.encodeInterval(micros, micros, operation, out);
-        } catch (NumericException e) {
-            try {
-                long micros = Numbers.parseLong(seq);
-                IntervalUtils.encodeInterval(micros, micros, operation, out);
-            } catch (NumericException e2) {
-                for (int i = lo; i < lim; i++) {
-                    if (seq.charAt(i) == ';') {
-                        throw SqlException.$(position, "Not a date, use IN keyword with intervals");
-                    }
-                }
-                throw SqlException.$(position, "Invalid date");
-            }
-        }
-    }
-
     public static long tryParseTimestamp(CharSequence seq) throws CairoException {
         try {
             return parseFloorPartialTimestamp(seq, 0, seq.length());
         } catch (NumericException e) {
             throw CairoException.nonCritical().put("Invalid timestamp: ").put(seq);
-        }
-    }
-
-    private static void checkChar(CharSequence s, int p, int lim, char c1, char c2) throws NumericException {
-        if (p >= lim || (s.charAt(p) != c1 && s.charAt(p) != c2)) {
-            throw NumericException.INSTANCE;
-        }
-    }
-
-    private static void checkChar(Utf8Sequence s, int p, int lim, char c1, char c2) throws NumericException {
-        if (p >= lim || (s.byteAt(p) != c1 && s.byteAt(p) != c2)) {
-            throw NumericException.INSTANCE;
         }
     }
 
@@ -654,6 +623,18 @@ public class TimestampUtils {
 
     private static void checkRange(int x, int min, int max) throws NumericException {
         if (x < min || x > max) {
+            throw NumericException.INSTANCE;
+        }
+    }
+
+    private static void checkSpecialChar(CharSequence s, int p, int lim) throws NumericException {
+        if (p >= lim || (s.charAt(p) != 'T' && s.charAt(p) != ' ')) {
+            throw NumericException.INSTANCE;
+        }
+    }
+
+    private static void checkSpecialChar(Utf8Sequence s, int p, int lim) throws NumericException {
+        if (p >= lim || (s.byteAt(p) != 'T' && s.byteAt(p) != ' ')) {
             throw NumericException.INSTANCE;
         }
     }

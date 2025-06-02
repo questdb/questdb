@@ -736,8 +736,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 return;
             } else if (predicateContext.columnType == ColumnType.DATE) {
                 try {
-                    long date = TimestampUtils.parseFloorPartialTimestamp(token, 1, len - 1) / Timestamps.MILLI_MICROS;
-                    putOperand(offset, IMM, I8_TYPE, date);
+                    // This is a hack for DATA column type. We use TIMESTAMP specific driver to
+                    // do the work and then derive millis
+                    putOperand(offset, IMM, I8_TYPE, ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).parseFloorConstant(token) / Timestamps.MILLI_MICROS);
                 } catch (NumericException e) {
                     throw SqlException.invalidDate(token, position);
                 }

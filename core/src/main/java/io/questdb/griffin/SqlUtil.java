@@ -881,23 +881,6 @@ public class SqlUtil {
         return pool.next().of(exprNodeType, token, 0, position);
     }
 
-    /**
-     * Parses partial representation of timestamp with time zone.
-     *
-     * @param value            the characters representing timestamp
-     * @param tupleIndex       the tuple index for insert SQL, which inserts multiple rows at once
-     * @param targetColumnType the target column type, which might be different from timestamp
-     * @return epoch offset
-     * @throws ImplicitCastException inconvertible type error.
-     */
-    public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int sourceColumnType, int targetColumnType) {
-        try {
-            return TimestampUtils.parseFloorPartialTimestamp(value);
-        } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, sourceColumnType, targetColumnType);
-        }
-    }
-
     public static short toPersistedTypeTag(CharSequence tok, int tokPosition) throws SqlException {
         final short typeTag = ColumnType.tagOf(tok);
         if (typeTag == -1) {
@@ -919,8 +902,8 @@ public class SqlUtil {
         }
     }
 
-    private static long implicitCastStrVarcharAsTimestamp0(CharSequence value, int columnType) {
-        assert columnType == ColumnType.STRING || columnType == ColumnType.VARCHAR || columnType == ColumnType.SYMBOL;
+    private static long implicitCastStrVarcharAsTimestamp0(CharSequence value, int fromColumnType) {
+        assert fromColumnType == ColumnType.STRING || fromColumnType == ColumnType.VARCHAR || fromColumnType == ColumnType.SYMBOL;
 
         if (value != null) {
             try {
@@ -943,7 +926,7 @@ public class SqlUtil {
                 }
             }
 
-            throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.TIMESTAMP);
+            throw ImplicitCastException.inconvertibleValue(value, fromColumnType, ColumnType.TIMESTAMP);
         }
         return Numbers.LONG_NULL;
     }
