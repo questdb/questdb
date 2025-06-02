@@ -1992,7 +1992,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "t TIMESTAMP, " +
                         "`bool.flag` BOOLEAN) " +
                         "timestamp(t) " +
-                        "partition by MONTH", 29, "new column name contains invalid characters"
+                        "partition by MONTH", 29, "Invalid column name: bool.flag"
         ));
     }
 

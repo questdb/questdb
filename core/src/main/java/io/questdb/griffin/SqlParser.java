@@ -1399,7 +1399,7 @@ public class SqlParser {
             final int columnType = toColumnType(lexer, notTermTok(lexer));
 
             if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
-                throw SqlException.$(columnPosition, " new column name contains invalid characters");
+                throw SqlException.invalidColumnName(columnPosition, columnName);
             }
 
             CreateTableColumnModel model = newCreateTableColumnModel(columnName, columnPosition);

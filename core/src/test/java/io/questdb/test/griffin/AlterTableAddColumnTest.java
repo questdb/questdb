@@ -121,17 +121,17 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
     @Test
     public void testAddBadColumnNameBackSlash() throws Exception {
-        assertFailure("alter table x add column \\", 25, "new column name contains invalid characters");
+        assertFailure("alter table x add column \\", 25, "Invalid column name: \\");
     }
 
     @Test
     public void testAddBadColumnNameDot() throws Exception {
-        assertFailure("alter table x add column .", 25, "new column name contains invalid characters");
+        assertFailure("alter table x add column .", 25, "Invalid column name: .");
     }
 
     @Test
     public void testAddBadColumnNameFwdSlash() throws Exception {
-        assertFailure("alter table x add column /", 25, "new column name contains invalid characters");
+        assertFailure("alter table x add column /", 25, "Invalid column name: /");
     }
 
     @Test
@@ -773,6 +773,14 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     );
                 }
         );
+    }
+
+    @Test
+    public void testCannotUse_eventName() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            assertExceptionNoLeakCheck("alter table x add _event int", 18, "Invalid column name: _event");
+        });
     }
 
     @Test
