@@ -59,6 +59,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private int defaultSymbolCapacity;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableNameExpr;
+    private int matViewTimerInterval;
+    private char matViewTimerIntervalUnit;
+    private long matViewTimerStart;
     private int maxUncommittedRows;
     private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
@@ -106,7 +109,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     o3MaxLag,
                     columnModels,
                     batchSize,
-                    batchO3MaxLag
+                    batchO3MaxLag,
+                    matViewTimerStart,
+                    matViewTimerInterval,
+                    matViewTimerIntervalUnit
             );
         }
 
@@ -170,6 +176,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         ttlHoursOrMonths = 0;
         ttlPosition = 0;
         walEnabled = false;
+        matViewTimerStart = 0;
+        matViewTimerInterval = 0;
+        matViewTimerIntervalUnit = 0;
     }
 
     public int getColumnCount() {
@@ -186,6 +195,18 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public CharSequence getColumnName(int index) {
         return columnNames.get(index);
+    }
+
+    public int getMatViewTimerInterval() {
+        return matViewTimerInterval;
+    }
+
+    public char getMatViewTimerIntervalUnit() {
+        return matViewTimerIntervalUnit;
+    }
+
+    public long getMatViewTimerStart() {
+        return matViewTimerStart;
     }
 
     public int getPartitionByFromExpr() {
@@ -253,6 +274,12 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public void setLikeTableNameExpr(ExpressionNode expr) {
         this.likeTableNameExpr = expr;
+    }
+
+    public void setMatViewTimer(long start, int interval, char unit) {
+        this.matViewTimerStart = start;
+        this.matViewTimerInterval = interval;
+        this.matViewTimerIntervalUnit = unit;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {

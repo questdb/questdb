@@ -25,8 +25,11 @@
 package io.questdb.cairo;
 
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
-public class CairoError extends Error implements FlyweightMessageContainer {
+public class CairoError extends Error implements FlyweightMessageContainer, Sinkable {
     public CairoError(Throwable cause) {
         super(cause);
     }
@@ -38,5 +41,10 @@ public class CairoError extends Error implements FlyweightMessageContainer {
     @Override
     public CharSequence getFlyweightMessage() {
         return getMessage();
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.put(getFlyweightMessage());
     }
 }

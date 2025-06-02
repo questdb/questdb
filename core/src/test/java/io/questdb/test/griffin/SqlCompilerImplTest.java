@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
@@ -105,6 +106,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         AbstractCairoTest.tearDownStatic();
     }
 
+    @Override
     @Before
     public void setUp() {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 512);
@@ -5472,6 +5474,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testListEmptyArgs() throws Exception {
+        assertException(
+                "select list() from long_sequence(1)",
+                7,
+                "no arguments provided"
+        );
+    }
+
+    @Test
     public void testNonEqualityJoinCondition() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab ( created timestamp, value long ) timestamp(created) ");
@@ -5887,7 +5898,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testRndSymbolEmptyArgs() throws Exception {
-        assertMemoryLeak(() -> assertExceptionNoLeakCheck("select rnd_symbol() from long_sequence(1)", 7, "function rnd_symbol expects arguments but has none"));
+        assertException(
+                "select rnd_symbol() from long_sequence(1)",
+                7,
+                "no arguments provided"
+        );
     }
 
     @Test
@@ -6749,7 +6764,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     try {
                         execute("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)");
                         Assert.fail();
-                    } catch (CairoException ignore) {
+                    } catch (CairoException | CairoError ignore) {
                     }
 
                     inError.set(false);

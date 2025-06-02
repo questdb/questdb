@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
@@ -33,6 +34,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -162,6 +164,21 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public MatViewDefinition getMatViewDefinition() {
         return matViewDefinition;
+    }
+
+    @Override
+    public int getMatViewTimerInterval() {
+        return createTableOperation.getMatViewTimerInterval();
+    }
+
+    @Override
+    public char getMatViewTimerIntervalUnit() {
+        return createTableOperation.getMatViewTimerIntervalUnit();
+    }
+
+    @Override
+    public long getMatViewTimerStart() {
+        return createTableOperation.getMatViewTimerStart();
     }
 
     @Override
@@ -421,24 +438,30 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         // Mark key columns as dedup keys.
         baseKeyColumnNames.clear();
         baseKeyColumnNamePositions.clear();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn column = columns.getQuick(i);
-            if (hasNoAggregates(functionFactoryCache, queryModel, i)) {
-                // SAMPLE BY/GROUP BY key, add as dedup key.
-                final CreateTableColumnModel model = createColumnModelMap.get(column.getName());
-                if (model == null) {
-                    throw SqlException.$(0, "missing column [name=").put(column.getName()).put(']');
+
+        CairoEngine engine = sqlExecutionContext.getCairoEngine();
+        try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn column = columns.getQuick(i);
+                if (hasNoAggregates(functionFactoryCache, queryModel, i)) {
+                    // SAMPLE BY/GROUP BY key, add as dedup key.
+                    final CreateTableColumnModel columnModel = createColumnModelMap.get(column.getName());
+                    if (columnModel == null) {
+                        throw SqlException.$(0, "missing column [name=").put(column.getName()).put(']');
+                    }
+                    columnModel.setIsDedupKey();
+                    // Copy column names into builder to be validated later.
+                    copyBaseTableColumnNames(
+                            column.getAst(),
+                            queryModel,
+                            baseTableName,
+                            baseKeyColumnNames,
+                            baseKeyColumnNamePositions,
+                            selectTextPosition
+                    );
+
+                    copyBaseTableSymbolColumnCapacity(column.getAst(), queryModel, columnModel, baseTableName, baseTableMetadata);
                 }
-                model.setIsDedupKey();
-                // Copy column names into builder to be validated later.
-                copyBaseTableColumnNames(
-                        column.getAst(),
-                        queryModel,
-                        baseTableName,
-                        baseKeyColumnNames,
-                        baseKeyColumnNamePositions,
-                        selectTextPosition
-                );
             }
         }
 
@@ -448,7 +471,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public void validateAndUpdateMetadataFromSelect(
-            RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata
+            RecordMetadata selectMetadata,
+            TableReaderMetadata baseTableMetadata
     ) throws SqlException {
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
         // SELECT validation
@@ -507,7 +531,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             if (node.type == ExpressionNode.LITERAL) {
                 if (model.getTableName() != null) {
                     // We've found a lowest-level model. Let's check if the column belongs to it.
-                    final int dotIndex = Chars.indexOf(node.token, '.');
+                    final int dotIndex = Chars.indexOfLastUnquoted(node.token, '.');
                     if (dotIndex > -1) {
                         if (Chars.equalsIgnoreCase(model.getName(), node.token, 0, dotIndex)) {
                             if (!Chars.equalsIgnoreCase(model.getTableName(), baseTableName)) {
@@ -563,6 +587,49 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
     }
 
+    private static void copyBaseTableSymbolColumnCapacity(
+            ExpressionNode columnNode,
+            QueryModel queryModel,
+            @NotNull CreateTableColumnModel columnModel,
+            @NotNull CharSequence baseTableName,
+            @NotNull TableMetadata baseTableMetadata
+    ) {
+        if (columnNode != null && queryModel != null) {
+            if (columnNode.type == ExpressionNode.LITERAL) {
+                if (queryModel.getTableName() != null) {
+                    if (Chars.equalsIgnoreCase(queryModel.getTableName(), baseTableName)) {
+                        final CharSequence columnName = resolveColumnName(columnNode, queryModel);
+                        if (columnName != null) {
+                            final int columnIndex = baseTableMetadata.getColumnIndexQuiet(columnName);
+                            if (columnIndex > -1) {
+                                final TableColumnMetadata baseTableColumnMetadata = baseTableMetadata.getColumnMetadata(columnIndex);
+                                if (baseTableColumnMetadata.getColumnType() == ColumnType.SYMBOL) {
+                                    columnModel.setSymbolCapacity(baseTableColumnMetadata.getSymbolCapacity());
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Check nested queryModel.
+                    final QueryColumn column = queryModel.getAliasToColumnMap().get(columnNode.token);
+                    copyBaseTableSymbolColumnCapacity(
+                            column != null ? column.getAst() : columnNode,
+                            queryModel.getNestedModel(),
+                            columnModel,
+                            baseTableName,
+                            baseTableMetadata
+                    );
+                }
+            }
+
+            for (int i = 1, n = queryModel.getJoinModels().size(); i < n; i++) {
+                copyBaseTableSymbolColumnCapacity(columnNode, queryModel.getJoinModels().getQuick(i), columnModel, baseTableName, baseTableMetadata);
+            }
+
+            copyBaseTableSymbolColumnCapacity(columnNode, queryModel.getUnionModel(), columnModel, baseTableName, baseTableMetadata);
+        }
+    }
+
     private static ExpressionNode findSampleByNode(QueryModel model) {
         while (model != null) {
             if (SqlUtil.isNotPlainSelectModel(model)) {
@@ -594,6 +661,18 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 }
             }
             model = model.getNestedModel();
+        }
+        return null;
+    }
+
+    private static @Nullable CharSequence resolveColumnName(ExpressionNode columnNode, QueryModel queryModel) {
+        final int dotIndex = Chars.indexOfLastUnquoted(columnNode.token, '.');
+        if (dotIndex > -1) {
+            if (Chars.equalsIgnoreCase(queryModel.getName(), columnNode.token, 0, dotIndex)) {
+                return columnNode.token.subSequence(dotIndex + 1, columnNode.token.length());
+            }
+        } else {
+            return columnNode.token;
         }
         return null;
     }

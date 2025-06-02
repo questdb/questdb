@@ -29,8 +29,6 @@ import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
@@ -107,22 +105,6 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         dbPath = Misc.free(dbPath);
         auxPath = Misc.free(auxPath);
         AbstractTest.tearDownStatic();
-    }
-
-    @NotNull
-    protected static Bootstrap newBootstrapWithEnvVariables(Map<String, String> envs) {
-        Map<String, String> env = new HashMap<>(System.getenv());
-
-        env.putAll(envs);
-        return new Bootstrap(
-                new PropBootstrapConfiguration() {
-                    @Override
-                    public Map<String, String> getEnv() {
-                        return env;
-                    }
-                },
-                getServerMainArgs()
-        );
     }
 
     protected static void assertQueryFails(
@@ -250,15 +232,6 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         }
     }
 
-    protected static void drainWalQueue(CairoEngine engine) {
-        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
-            walApplyJob.drain(0);
-            new CheckWalTransactionsJob(engine).run(0);
-            // run once again as there might be notifications to handle now
-            walApplyJob.drain(0);
-        }
-    }
-
     static void dropTable(SqlExecutionContext context, TableToken tableToken) throws Exception {
         CairoEngine cairoEngine = context.getCairoEngine();
         CharSequence dropSql = "DROP TABLE '" + tableToken.getTableName() + '\'';
@@ -288,6 +261,21 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
 
     protected static String getPgConnectionUri(int pgPort) {
         return "jdbc:postgresql://127.0.0.1:" + pgPort + "/qdb";
+    }
+
+    @NotNull
+    protected static Bootstrap newBootstrapWithEnvVariables(Map<String, String> envs) {
+        Map<String, String> env = new HashMap<>(System.getenv());
+        env.putAll(envs);
+        return new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public Map<String, String> getEnv() {
+                        return env;
+                    }
+                },
+                getServerMainArgs()
+        );
     }
 
     void assertFail(String message, String... args) {

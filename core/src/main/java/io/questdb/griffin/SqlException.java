@@ -111,7 +111,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     }
 
     public static SqlException nonDeterministicColumn(int position, CharSequence column) {
-        return position(position).put("Non-deterministic column: ").put(column);
+        return position(position).put("non-deterministic function cannot be used in materialized view: ").put(column);
     }
 
     public static SqlException parserErr(int position, @Nullable CharSequence tok, @NotNull CharSequence msg) {

@@ -39,6 +39,8 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.ParanoiaState.FD_PARANOIA_MODE;
+
 public final class Files {
     // The default varies across kernel versions and distros, so we use the same value as for vm.max_map_count.
     public static final long DEFAULT_FILE_LIMIT = 65536;
@@ -69,7 +71,6 @@ public final class Files {
     private static final AtomicInteger fdCounter = new AtomicInteger();
     private static final LongHashSet openFds = new LongHashSet();
     // To be set in tests to check every call for using OPEN file descriptor
-    public static boolean PARANOIA_FD_MODE = false;
     public static boolean VIRTIO_FS_DETECTED = false;
 
     private Files() {
@@ -544,7 +545,7 @@ public final class Files {
     public static native int sync();
 
     public static int toOsFd(long fd) {
-        if (PARANOIA_FD_MODE && fd != -1) {
+        if (FD_PARANOIA_MODE && fd != -1) {
             checkFdOpen(fd);
         }
         int osFd = Numbers.decodeHighInt(fd);

@@ -90,6 +90,8 @@ public interface SecurityContext extends Mutable {
 
     void authorizeSelectOnAnyColumn(TableToken tableToken);
 
+    void authorizeSettings();
+
     void authorizeSqlEngineAdmin();
 
     void authorizeSystemAdmin();

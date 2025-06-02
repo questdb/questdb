@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.TableWriterPressureControl;
@@ -35,6 +36,7 @@ public class SeqTxnTracker {
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
+    private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
     private volatile long dirtyWriterTxn;
     private volatile String errorMessage = "";
@@ -49,6 +51,8 @@ public class SeqTxnTracker {
 
     public SeqTxnTracker(CairoConfiguration configuration) {
         this.pressureControl = new TableWriterPressureControlImpl(configuration);
+        this.metrics = configuration.getMetrics();
+
     }
 
     public String getErrorMessage() {
@@ -115,6 +119,7 @@ public class SeqTxnTracker {
         long stxn = seqTxn;
         while (newSeqTxn > stxn) {
             if (Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
+                metrics.walMetrics().addSeqTxn(newSeqTxn - stxn);
                 break;
             }
             stxn = seqTxn;
@@ -133,6 +138,8 @@ public class SeqTxnTracker {
         // should be the last one to be set
         // to make sure error details are available for read when the table is suspended
         this.suspendedState = -1;
+
+        metrics.tableWriterMetrics().incSuspendedTables();
     }
 
     public void setUnsuspended() {
@@ -142,11 +149,12 @@ public class SeqTxnTracker {
 
         this.errorTag = ErrorTag.NONE;
         this.errorMessage = "";
+
+        metrics.tableWriterMetrics().decSuspendedTables();
     }
 
     /**
      * Updates writerTxn and dirtyWriterTxn and returns true if the Apply2Wal job should be notified.
-     * This method is not thread-safe and should be called under TableWriter lock.
      *
      * @param writerTxn      txn that is available for reading
      * @param dirtyWriterTxn txn that is in flight that is not yet fully written
@@ -157,9 +165,11 @@ public class SeqTxnTracker {
         long prevDirtyWriterTxn = this.dirtyWriterTxn;
         this.writerTxn = writerTxn;
         this.dirtyWriterTxn = dirtyWriterTxn;
-
         // Progress made means table is not suspended
-        if (writerTxn > prevWriterTxn || dirtyWriterTxn > prevDirtyWriterTxn) {
+        if (writerTxn > prevWriterTxn) {
+            suspendedState = 1;
+            metrics.walMetrics().addWriterTxn(writerTxn - prevWriterTxn);
+        } else if (dirtyWriterTxn > prevDirtyWriterTxn) {
             suspendedState = 1;
         }
         return writerTxn < seqTxn;

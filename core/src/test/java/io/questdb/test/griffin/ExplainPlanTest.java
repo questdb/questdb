@@ -48,6 +48,7 @@ import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampIntervalFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.WithinGeohashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
@@ -133,8 +134,14 @@ import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
 import io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LagDateFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LagLongFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LagTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LeadDateFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LeadDoubleFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LeadLongFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LeadTimestampFunctionFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
@@ -2448,9 +2455,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         sigArgType = ColumnType.DOUBLE;
                                     } else if (factory instanceof LevelTwoPriceFunctionFactory) {
                                         sigArgType = ColumnType.DOUBLE;
-                                    } else if (factory instanceof LagDoubleFunctionFactory || factory instanceof LeadDoubleFunctionFactory) {
+                                    } else if (factory instanceof LagDoubleFunctionFactory || factory instanceof LeadDoubleFunctionFactory
+                                            || factory instanceof LagLongFunctionFactory || factory instanceof LeadLongFunctionFactory
+                                            || factory instanceof LagTimestampFunctionFactory || factory instanceof LeadTimestampFunctionFactory
+                                            || factory instanceof LagDateFunctionFactory || factory instanceof LeadDateFunctionFactory) {
                                         sigArgType = ColumnType.INT;
                                         useConst = true;
+                                    } else if (factory instanceof WithinGeohashFunctionFactory) {
+                                        sigArgType = ColumnType.GEOBYTE;
                                     } else {
                                         sigArgType = ColumnType.STRING;
                                     }
@@ -3333,7 +3345,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [s]\n" +
                         "  values: [avg(l)]\n" +
                         "  filter: s in cursor \n" +
-                        "    Filter filter: s='key'\n" +
+                        "    Async JIT Filter workers: 1\n" +
+                        "      filter: s='key' [pre-touch]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a [state-shared]\n" +

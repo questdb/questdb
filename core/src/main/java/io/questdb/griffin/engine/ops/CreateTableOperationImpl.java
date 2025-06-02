@@ -75,6 +75,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private final String likeTableName;
     // position of the "like" table name in the SQL text, for error reporting
     private final int likeTableNamePosition;
+    private final int matViewTimerInterval;
+    private final char matViewTimerIntervalUnit;
+    private final long matViewTimerStart;
     private final String selectText;
     private final int selectTextPosition;
     private final String sqlText;
@@ -119,6 +122,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampColumnNamePosition = 0;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
+        this.matViewTimerStart = 0;
+        this.matViewTimerInterval = 0;
+        this.matViewTimerIntervalUnit = 0;
     }
 
     public CreateTableOperationImpl(
@@ -174,6 +180,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.likeTableNamePosition = -1;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
+        this.matViewTimerStart = 0;
+        this.matViewTimerInterval = 0;
+        this.matViewTimerIntervalUnit = 0;
     }
 
     /**
@@ -221,7 +230,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             long o3MaxLag,
             @Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap,
             long batchSize,
-            long batchO3MaxLag
+            long batchO3MaxLag,
+            long matViewTimerStart,
+            int matViewTimerInterval,
+            char matViewTimerIntervalUnit
     ) {
         this.sqlText = sqlText;
         this.tableName = tableName;
@@ -242,6 +254,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.o3MaxLag = o3MaxLag;
         this.maxUncommittedRows = maxUncommittedRows;
         this.walEnabled = walEnabled;
+        this.matViewTimerStart = matViewTimerStart;
+        this.matViewTimerInterval = matViewTimerInterval;
+        this.matViewTimerIntervalUnit = matViewTimerIntervalUnit;
 
         this.likeTableName = null;
         this.likeTableNamePosition = -1;
@@ -308,6 +323,21 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public int getLikeTableNamePosition() {
         return likeTableNamePosition;
+    }
+
+    @Override
+    public int getMatViewTimerInterval() {
+        return matViewTimerInterval;
+    }
+
+    @Override
+    public char getMatViewTimerIntervalUnit() {
+        return matViewTimerIntervalUnit;
+    }
+
+    @Override
+    public long getMatViewTimerStart() {
+        return matViewTimerStart;
     }
 
     @Override
