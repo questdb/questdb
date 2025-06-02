@@ -357,12 +357,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @Override
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) throws SqlException {
+        return compile(sqlText, executionContext, true);
+    }
+
+    @NotNull
+    public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext, boolean generateProgressLogger) throws SqlException {
         clear();
         // these are quick executions that do not require building of a model
         lexer.of(sqlText);
         isSingleQueryMode = true;
 
-        compileInner(executionContext, sqlText, true);
+        compileInner(executionContext, sqlText, generateProgressLogger);
         return compiledQuery;
     }
 
@@ -1640,7 +1645,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             }
                             tok = expectToken(lexer, "interval");
                             final int interval = Timestamps.getStrideMultiple(tok);
-                            final char unit = Timestamps.getStrideUnit(tok);
+                            final char unit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
                             SqlParser.validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
                             final AlterOperationBuilder setTimer = alterOperationBuilder.ofSetMatViewRefreshTimer(
                                     matViewNamePosition,
@@ -2268,14 +2273,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executor.execute(executionContext, sqlText);
                 // executor might decide that SQL contains secret, otherwise we're logging it
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy **" : sqlText;
-                QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
-            } catch (Throwable e) {
+                if (!generateProgressLogger) {
+                    QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
+                }
+            } catch (Throwable th) {
                 // Executor is all-in-one, it parses SQL text and executes it right away. The convention is
                 // that before parsing secrets the executor will notify the execution context. In that, even if
                 // executor fails, the secret SQL text must not be logged
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy** " : sqlText;
-                QueryProgress.logError(e, -1, this.sqlText, executionContext, beginNanos);
-                throw e;
+                QueryProgress.logError(th, -1, this.sqlText, executionContext, beginNanos);
+                throw th;
             }
         } else {
             this.sqlText = sqlText;
@@ -2294,18 +2301,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private InsertOperation compileInsert(InsertModel insertModel, SqlExecutionContext executionContext) throws SqlException {
         // todo: consider moving this method to InsertModel
         final ExpressionNode tableNameExpr = insertModel.getTableNameExpr();
+        InsertOperationImpl insertOperation = null;
+        Function timestampFunction = null;
         ObjList<Function> valueFunctions = null;
         TableToken token = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
 
         try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(token)) {
             final long metadataVersion = metadata.getMetadataVersion();
-            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
+            insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
             final int metadataTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = insertModel.getColumnNameList();
             final int columnSetSize = columnNameList.size();
             int designatedTimestampPosition = 0;
             for (int tupleIndex = 0, n = insertModel.getRowTupleCount(); tupleIndex < n; tupleIndex++) {
-                Function timestampFunction = null;
+                timestampFunction = null;
                 listColumnFilter.clear();
                 if (columnSetSize > 0) {
                     valueFunctions = new ObjList<>(columnSetSize);
@@ -2386,15 +2395,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
 
-
                 VirtualRecord record = new VirtualRecord(valueFunctions);
                 RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter);
                 insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction, designatedTimestampPosition, tupleIndex));
             }
             return insertOperation;
-        } catch (SqlException e) {
+        } catch (Throwable th) {
+            Misc.free(insertOperation);
+            Misc.free(timestampFunction);
             Misc.freeObjList(valueFunctions);
-            throw e;
+            throw th;
         }
     }
 
