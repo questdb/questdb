@@ -277,7 +277,10 @@ public final class Unsafe {
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
         try {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
-            checkAllocLimit(-oldSize + newSize, memoryTag);
+            // Check the limit unless realloc will free some memory.
+            if (newSize >= oldSize) {
+                checkAllocLimit(-oldSize + newSize, memoryTag);
+            }
             long ptr = Unsafe.getUnsafe().reallocateMemory(address, newSize);
             recordMemAlloc(-oldSize + newSize, memoryTag);
             incrReallocCount();

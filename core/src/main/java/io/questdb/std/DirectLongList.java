@@ -35,7 +35,6 @@ import java.io.Closeable;
 import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
 
 public class DirectLongList implements Mutable, Closeable, Reopenable {
-
     private static final Log LOG = LogFactory.getLog(DirectLongList.class);
     private final long initialCapacity;
     private final int memoryTag;
