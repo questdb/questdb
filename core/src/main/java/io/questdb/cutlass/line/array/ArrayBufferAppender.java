@@ -22,16 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.metadata;
+package io.questdb.cutlass.line.array;
 
-public class InstanceNameFunctionFactory extends AbstrtactEnvVariableValueFunctionFactory {
-    @Override
-    public String getSignature() {
-        return "instance_name()";
-    }
 
-    @Override
-    protected String getEnvVariableName() {
-        return "QDB_INSTANCE_NAME";
-    }
+public interface ArrayBufferAppender {
+    void putBlockOfBytes(long from, long len);
+
+    void putByte(byte b);
+
+    void putDouble(double value);
+
+    void putInt(int value);
+
+    void putLong(long value);
 }

@@ -489,6 +489,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewTimerStartEpsilon() {
+        return Timestamps.MINUTE_MICROS;
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return 1;
     }
@@ -1333,6 +1338,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean mangleTableDirNames() {
         return false;
+    }
+
+    @Override
+    public int maxArrayElementCount() {
+        return 1_000_000;
     }
 
     @Override

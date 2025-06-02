@@ -28,8 +28,10 @@ import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
@@ -91,6 +93,7 @@ public class RecordToRowCopierUtils {
         int rGetStrA = asm.poolInterfaceMethod(Record.class, "getStrA", "(I)Ljava/lang/CharSequence;");
         int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
         int rGetVarchar = asm.poolInterfaceMethod(Record.class, "getVarcharA", "(I)Lio/questdb/std/str/Utf8Sequence;");
+        int rGetArray = asm.poolInterfaceMethod(Record.class, "getArray", "(II)Lio/questdb/cairo/arr/ArrayView;");
         //
         int wPutInt = asm.poolInterfaceMethod(TableWriter.Row.class, "putInt", "(II)V");
         int wPutIPv4 = asm.poolInterfaceMethod(TableWriter.Row.class, "putIPv4", "(II)V");
@@ -114,6 +117,7 @@ public class RecordToRowCopierUtils {
         int wPutGeoStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoStr", "(ILjava/lang/CharSequence;)V");
         int wPutGeoVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
         int wPutVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
+        int wPutArray = asm.poolInterfaceMethod(TableWriter.Row.class, "putArray", "(ILio/questdb/cairo/arr/ArrayView;)V");
 
         int implicitCastCharAsByte = asm.poolMethod(SqlUtil.class, "implicitCastCharAsByte", "(CI)B");
         int implicitCastCharAsGeoHash = asm.poolMethod(SqlUtil.class, "implicitCastCharAsGeoHash", "(CI)B");
@@ -177,6 +181,7 @@ public class RecordToRowCopierUtils {
         int transferVarcharToTimestampCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToTimestampCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
         int transferVarcharToDateCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToDateCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
         int transferStrToVarcharCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferStrToVarcharCol", "(Lio/questdb/cairo/TableWriter$Row;ILjava/lang/CharSequence;)V");
+        int validateArrayDimensionsAndTransferCol = asm.poolMethod(RecordToRowCopierUtils.class, "validateArrayDimensionsAndTransferCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/cutlass/pgwire/modern/DoubleArrayParser;Ljava/lang/CharSequence;I)V");
 
         // in case of Geo Hashes column type can overflow short and asm.iconst() will not provide
         // the correct value.
@@ -196,13 +201,65 @@ public class RecordToRowCopierUtils {
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;)V");
 
+        // if we have to do implicit cast from STRING to ARRAYs then we need to create a parser
+        // the parser is instantiated in a constructor and stored in a field.
+        // if parser is not required then we do not define and field and use just default (empty) constructor
+        int parserFieldIndex = 0;
+        int parserDescIndex = 0;
+        int constructorNameIndex = 0;
+        int constructorDescIndex = 0;
+        int doubleArrayParserClassIndex = 0;
+        int doubleArrayParserCtorIndex = 0;
+        int parserFieldRef = 0;
+        int objectCtorIndex = 0;
+        boolean needsArrayParser = isArrayParserRequired(from, to, toColumnFilter, n);
+        if (needsArrayParser) {
+            parserFieldIndex = asm.poolUtf8("parser");
+            parserDescIndex = asm.poolUtf8("Lio/questdb/cutlass/pgwire/modern/DoubleArrayParser;");
+            constructorNameIndex = asm.poolUtf8("<init>");
+            constructorDescIndex = asm.poolUtf8("()V");
+            doubleArrayParserClassIndex = asm.poolClass(DoubleArrayParser.class);
+            doubleArrayParserCtorIndex = asm.poolMethod(doubleArrayParserClassIndex, "<init>", "()V");
+            int parserFieldNameAndType = asm.poolNameAndType(parserFieldIndex, parserDescIndex);
+            parserFieldRef = asm.poolField(thisClassIndex, parserFieldNameAndType);
+            objectCtorIndex = asm.poolMethod(Object.class, "<init>", "()V");
+        }
+
         asm.finishPool();
         asm.defineClass(thisClassIndex);
         asm.interfaceCount(1);
         asm.putShort(interfaceClassIndex);
-        asm.fieldCount(0);
+
+        if (needsArrayParser) {
+            asm.fieldCount(1);
+            asm.defineField(parserFieldIndex, parserDescIndex);
+        } else {
+            asm.fieldCount(0);
+        }
+
         asm.methodCount(2);
-        asm.defineDefaultConstructor();
+
+        if (needsArrayParser) {
+            asm.startMethod(constructorNameIndex, constructorDescIndex, 3, 1);
+            // call super()
+            asm.aload(0);
+            asm.invokespecial(objectCtorIndex);
+
+            // initialize parser field
+            asm.aload(0);
+            asm.new_(doubleArrayParserClassIndex);
+            asm.dup();
+            asm.invokespecial(doubleArrayParserCtorIndex);
+            asm.putfield(parserFieldRef);
+
+            asm.return_();
+            asm.endMethodCode();
+            asm.putShort(0); // exceptions
+            asm.putShort(0); // attributes
+            asm.endMethod();
+        } else {
+            asm.defineDefaultConstructor();
+        }
 
         asm.startMethod(copyNameIndex, copySigIndex, 15, 5);
 
@@ -220,18 +277,45 @@ public class RecordToRowCopierUtils {
             final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
             final int toColumnWriterIndex = to.getWriterIndex(toColumnIndex);
 
-            asm.aload(2);
-            asm.iconst(toColumnWriterIndex);
-            asm.aload(1);
-            asm.iconst(i);
+            // todo: this branch is not great, but we need parser
+            // inside the stack building block, not sure how to do it better
+            if (toColumnTypeTag == ColumnType.ARRAY &&
+                    ColumnType.tagOf(fromColumnType) == ColumnType.STRING) {
+                // Build stack with parser in the right position
+                asm.aload(2);
+                // Stack: [rowWriter]
+                asm.iconst(toColumnWriterIndex);
+                // Stack: [rowWriter, toColumnIndex]
+                asm.aload(0);
+                // Stack: [rowWriter, toColumnIndex, this]
+                asm.getfield(parserFieldRef);
+                // Stack: [rowWriter, toColumnIndex, parser]
+                asm.aload(1);
+                // Stack: [rowWriter, toColumnIndex, parser, record]
+                asm.iconst(i);
+                // Stack: [rowWriter, toColumnIndex, parser, record, fromColumnIndex]
+            } else {
+                // Original stack building
+                asm.aload(2);
+                // stack: [rowWriter]
+                asm.iconst(toColumnWriterIndex);
+                // stack: [rowWriter, toColumnIndex]
+                asm.aload(1);
+                // stack: [rowWriter, toColumnIndex, record]
+                asm.iconst(i);
+                // stack: [rowWriter, toColumnIndex, record, fromColumnIndex]
+            }
+
 
             int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
             if (fromColumnTypeTag == ColumnType.NULL) {
                 fromColumnTypeTag = toColumnTypeTag;
             }
             switch (fromColumnTypeTag) {
-                case ColumnType.INT:
+                case ColumnType.INT: // from
+                    // stack: [rowWriter, toColumnIndex, record, fromColumnIndex]
                     asm.invokeInterface(rGetInt);
+                    // stack: [rowWriter, toColumnIndex, int]
                     switch (toColumnTypeTag) {
                         case ColumnType.BYTE:
                             asm.invokeStatic(implicitCastIntAsByte);
@@ -269,12 +353,12 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
-                case ColumnType.IPv4:
+                case ColumnType.IPv4: // from
                     assert toColumnTypeTag == ColumnType.IPv4;
                     asm.invokeInterface(rGetIPv4);
                     asm.invokeInterface(wPutIPv4, 2);
                     break;
-                case ColumnType.LONG:
+                case ColumnType.LONG: // from
                     asm.invokeInterface(rGetLong);
                     switch (toColumnTypeTag) {
                         case ColumnType.BYTE:
@@ -311,7 +395,7 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
-                case ColumnType.DATE:
+                case ColumnType.DATE: // from
                     asm.invokeInterface(rGetDate);
                     switch (toColumnTypeTag) {
                         case ColumnType.BYTE:
@@ -349,7 +433,7 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
-                case ColumnType.TIMESTAMP:
+                case ColumnType.TIMESTAMP: // from
                     asm.invokeInterface(rGetTimestamp);
                     switch (toColumnTypeTag) {
                         case ColumnType.BYTE:
@@ -386,7 +470,7 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
-                case ColumnType.BYTE:
+                case ColumnType.BYTE: // from
                     asm.invokeInterface(rGetByte);
                     switch (toColumnTypeTag) {
                         case ColumnType.BOOLEAN:
@@ -425,7 +509,7 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
-                case ColumnType.SHORT:
+                case ColumnType.SHORT: // from
                     asm.invokeInterface(rGetShort);
                     switch (toColumnTypeTag) {
                         case ColumnType.BYTE:
@@ -463,12 +547,12 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
-                case ColumnType.BOOLEAN:
+                case ColumnType.BOOLEAN: // from
                     assert toColumnType == ColumnType.BOOLEAN;
                     asm.invokeInterface(rGetBool);
                     asm.invokeInterface(wPutBool, 2);
                     break;
-                case ColumnType.FLOAT:
+                case ColumnType.FLOAT: // from
                     asm.invokeInterface(rGetFloat);
                     switch (toColumnTypeTag) {
                         case ColumnType.BYTE:
@@ -507,7 +591,7 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
-                case ColumnType.DOUBLE:
+                case ColumnType.DOUBLE: // from
                     asm.invokeInterface(rGetDouble);
                     switch (toColumnTypeTag) {
                         case ColumnType.BYTE:
@@ -546,7 +630,7 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
-                case ColumnType.CHAR:
+                case ColumnType.CHAR: // from
                     asm.invokeInterface(rGetChar);
                     switch (toColumnTypeTag) {
                         case ColumnType.BYTE:
@@ -617,7 +701,7 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
-                case ColumnType.SYMBOL:
+                case ColumnType.SYMBOL: // from
                     asm.invokeInterface(rGetSym);
                     switch (toColumnTypeTag) {
                         case ColumnType.SYMBOL:
@@ -634,7 +718,7 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
-                case ColumnType.VARCHAR:
+                case ColumnType.VARCHAR: // from
                     switch (toColumnTypeTag) {
                         case ColumnType.VARCHAR:
                             asm.invokeInterface(rGetVarchar);
@@ -715,12 +799,22 @@ public class RecordToRowCopierUtils {
                             assert false;
                     }
                     break;
-                case ColumnType.STRING:
+                case ColumnType.STRING: // from
                     // This is generic code, and it acts on a record
                     // whereas Functions support string to primitive conversions, Record instances
                     // do not. This is because functions are aware of their return type but records
                     // would have to do expensive checks to decide which conversion would be required
                     switch (toColumnTypeTag) {
+                        case ColumnType.ARRAY:
+                            // Initial stack: [rowWriter, toColumnIndex, parser, record, fromColumnIndex]
+                            asm.invokeInterface(rGetStrA);
+                            // Stack: [rowWriter, toColumnIndex, parser, string]
+                            asm.iconst(toColumnType);
+                            // Stack: [rowWriter, toColumnIndex, parser, string, toColumnType]
+                            asm.invokeStatic(validateArrayDimensionsAndTransferCol);
+                            // Stack: []
+                            break;
+
                         case ColumnType.BYTE:
                             asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsByte);
@@ -804,17 +898,17 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
-                case ColumnType.BINARY:
+                case ColumnType.BINARY: // from
                     assert toColumnTypeTag == ColumnType.BINARY;
                     asm.invokeInterface(rGetBin);
                     asm.invokeInterface(wPutBin, 2);
                     break;
-                case ColumnType.LONG256:
+                case ColumnType.LONG256: // from
                     assert toColumnTypeTag == ColumnType.LONG256;
                     asm.invokeInterface(rGetLong256);
                     asm.invokeInterface(wPutLong256, 2);
                     break;
-                case ColumnType.GEOBYTE:
+                case ColumnType.GEOBYTE: // from
                     asm.invokeInterface(rGetGeoByte, 1);
                     if (fromColumnType != toColumnType && (fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOBYTE)) {
                         // truncate within the same storage type
@@ -828,7 +922,7 @@ public class RecordToRowCopierUtils {
                     }
                     asm.invokeInterface(wPutByte, 2);
                     break;
-                case ColumnType.GEOSHORT:
+                case ColumnType.GEOSHORT: // from
                     asm.invokeInterface(rGetGeoShort, 1);
                     if (ColumnType.tagOf(toColumnType) == ColumnType.GEOBYTE) {
                         asm.i2l();
@@ -850,7 +944,7 @@ public class RecordToRowCopierUtils {
                         asm.invokeInterface(wPutShort, 2);
                     }
                     break;
-                case ColumnType.GEOINT:
+                case ColumnType.GEOINT: // from
                     asm.invokeInterface(rGetGeoInt, 1);
                     switch (ColumnType.tagOf(toColumnType)) {
                         case ColumnType.GEOBYTE:
@@ -886,7 +980,7 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
-                case ColumnType.GEOLONG:
+                case ColumnType.GEOLONG: // from
                     asm.invokeInterface(rGetGeoLong, 1);
                     switch (ColumnType.tagOf(toColumnType)) {
                         case ColumnType.GEOBYTE:
@@ -925,23 +1019,22 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
-                case ColumnType.LONG128:
+                case ColumnType.LONG128: // from
                     // fall through
-                case ColumnType.UUID:
+                case ColumnType.UUID: // from
                     switch (ColumnType.tagOf(toColumnType)) {
                         case ColumnType.LONG128:
                             // fall through
                         case ColumnType.UUID:
-                            // Stack: [RowWriter, Record, columnIndex]
                             asm.invokeInterface(rGetLong128Lo, 1);
-                            // Stack: [RowWriter, lo]
-                            asm.aload(1);  // Push record to the stack.
-                            // Stack: [RowWriter, lo, Record]
+                            // Stack: [RowWriter, toColumnIndex, lo]
+                            asm.aload(1);  // Push record to the stack again
+                            // Stack: [RowWriter, toColumnIndex, lo, Record]
                             asm.iconst(i); // Push column index to a stack
-                            // Stack: [RowWriter, lo, Record, columnIndex]
+                            // Stack: [RowWriter, toColumnIndex, lo, Record, columnIndex]
                             asm.invokeInterface(rGetLong128Hi, 1);
-                            // Stack: [RowWriter, lo, hi]
-                            asm.invokeInterface(wPutLong128, 5);
+                            // Stack: [RowWriter, toColumnIndex, lo, hi]
+                            asm.invokeInterface(wPutLong128, 5); // long argument is counted as 2 stack slots
                             // invokeInterface consumes the entire stack. Including the RowWriter as invoke interface receives "this" as the first argument
                             // The stack is now empty, and we are done with this column
                             break;
@@ -954,15 +1047,15 @@ public class RecordToRowCopierUtils {
                             // complicated as JVM requires jump targets to have stack maps, etc. This would complicate things
                             // so we rely on an auxiliary method `transferUuidToStrCol()` to do branching job and javac generates
                             // the stack maps.
-                            // Stack: [RowWriter, Record, columnIndex]
+                            // Stack: [RowWriter, toColumnIndex, Record, columnIndex]
                             asm.invokeInterface(rGetLong128Lo, 1);
-                            // Stack: [RowWriter, lo]
+                            // Stack: [RowWriter, toColumnIndex, lo]
                             asm.aload(1);  // Push record to the stack.
-                            // Stack: [RowWriter, lo, Record]
+                            // Stack: [RowWriter, toColumnIndex, lo, Record]
                             asm.iconst(i); // Push column index to a stack
-                            // Stack: [RowWriter, lo, Record, columnIndex]
+                            // Stack: [RowWriter, toColumnIndex, lo, Record, columnIndex]
                             asm.invokeInterface(rGetLong128Hi, 1);
-                            // Stack: [RowWriter, lo, hi]
+                            // Stack: [RowWriter, toColumnIndex, lo, hi]
                             asm.invokeStatic(transferUuidToStrCol);
                             break;
                         case ColumnType.VARCHAR:
@@ -975,6 +1068,18 @@ public class RecordToRowCopierUtils {
                         default:
                             assert false;
                             break;
+                    }
+                    break;
+                case ColumnType.ARRAY:
+                    // we are going to assume (and prior validation is required) that the array is of the same type
+                    // as in dimensions and element type. The actual validation is not a responsibility of this code
+                    // it has to be done upstream to this call
+                    if (ColumnType.tagOf(toColumnType) == ColumnType.ARRAY) {
+                        asm.ldc(fromColumnType_0 + i * 2);
+                        asm.invokeInterface(rGetArray, 2);
+                        asm.invokeInterface(wPutArray, 2);
+                    } else {
+                        assert false;
                     }
                     break;
                 default:
@@ -1064,5 +1169,29 @@ public class RecordToRowCopierUtils {
         sink.put(seq);
         long ts = SqlUtil.implicitCastVarcharAsTimestamp(sink);
         row.putTimestamp(col, ts);
+    }
+
+    @SuppressWarnings("unused")
+    // Called from dynamically generated bytecode
+    public static void validateArrayDimensionsAndTransferCol(TableWriter.Row row, int col, DoubleArrayParser parser, CharSequence str, int expectedType) {
+        if (str == null) {
+            return;
+        }
+
+        ArrayView view = SqlUtil.implicitCastStringAsDoubleArray(str, parser, expectedType);
+        row.putArray(col, view);
+    }
+
+    private static boolean isArrayParserRequired(ColumnTypes from, RecordMetadata to, ColumnFilter toColumnFilter, int n) {
+        for (int i = 0; i < n; i++) {
+            int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);
+            int toColumnType = to.getColumnType(toColumnIndex);
+            int fromColumnType = from.getColumnType(i);
+            if (ColumnType.tagOf(toColumnType) == ColumnType.ARRAY &&
+                    ColumnType.tagOf(fromColumnType) == ColumnType.STRING) {
+                return true;
+            }
+        }
+        return false;
     }
 }

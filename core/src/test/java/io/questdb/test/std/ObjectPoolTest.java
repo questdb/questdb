@@ -115,6 +115,20 @@ public class ObjectPoolTest extends AbstractTest {
         Assert.assertTrue("Object clear should have been called", obj.wasCleared());
     }
 
+    @Test
+    public void testPeekQuick() {
+        TestObject obj0 = pool.next();
+        TestObject obj1 = pool.next();
+        TestObject obj2 = pool.next();
+
+        Assert.assertSame("Should get same object back", obj0, pool.peekQuick(0));
+        Assert.assertSame("Should get same object back", obj1, pool.peekQuick(1));
+        Assert.assertSame("Should get same object back", obj2, pool.peekQuick(2));
+
+        pool.release(obj1);
+        Assert.assertSame("Should get same object back", obj0, pool.peekQuick(0));
+        Assert.assertSame("Should get same object back", obj2, pool.peekQuick(1));
+    }
 
     @Test
     public void testReturnInDifferentOrder() {
@@ -145,7 +159,7 @@ public class ObjectPoolTest extends AbstractTest {
     }
 
     @Test
-    public void testreleaseNotFromPool() {
+    public void testReleaseNotFromPool() {
         TestObject notFromPool = new TestObject();
         try {
             pool.release(notFromPool);

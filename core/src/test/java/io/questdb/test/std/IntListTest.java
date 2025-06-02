@@ -49,6 +49,23 @@ public class IntListTest {
     }
 
     @Test
+    public void testBasicShift() {
+        IntList list = new IntList();
+        list.add(1);
+        list.add(2);
+        list.add(3);
+
+        list.rshift(2);
+
+        Assert.assertEquals(5, list.size());
+        Assert.assertEquals(IntList.NO_ENTRY_VALUE, list.get(0));
+        Assert.assertEquals(IntList.NO_ENTRY_VALUE, list.get(1));
+        Assert.assertEquals(1, list.get(2));
+        Assert.assertEquals(2, list.get(3));
+        Assert.assertEquals(3, list.get(4));
+    }
+
+    @Test
     public void testBinarySearchFuzz() {
         final int N = 997; // prime
         final int skipRate = 4;
@@ -94,7 +111,7 @@ public class IntListTest {
         Assert.assertNotEquals(list1, list5);
 
         // null
-        Assert.assertNotEquals(list1, null);
+        Assert.assertNotEquals(null, list1);
 
         // equals
         final IntList list6 = new IntList();
@@ -117,6 +134,20 @@ public class IntListTest {
     }
 
     @Test
+    public void testLargeShift() {
+        IntList list = new IntList();
+        list.add(42);
+
+        // Shift by a large number
+        list.rshift(1000);
+
+        Assert.assertEquals(1001, list.size());
+        Assert.assertEquals(IntList.NO_ENTRY_VALUE, list.get(0));
+        Assert.assertEquals(IntList.NO_ENTRY_VALUE, list.get(999));
+        Assert.assertEquals(42, list.get(1000));
+    }
+
+    @Test
     public void testRestoreInitialCapacity() {
         final int N = 1000;
         IntList list = new IntList();
@@ -132,6 +163,68 @@ public class IntListTest {
         list.restoreInitialCapacity();
         Assert.assertEquals(0, list.size());
         Assert.assertEquals(initialCapacity, list.capacity());
+    }
+
+    @Test
+    public void testShiftEmptyList() {
+        IntList list = new IntList();
+
+        list.rshift(3);
+
+        Assert.assertEquals(3, list.size());
+        Assert.assertEquals(IntList.NO_ENTRY_VALUE, list.get(0));
+        Assert.assertEquals(IntList.NO_ENTRY_VALUE, list.get(1));
+        Assert.assertEquals(IntList.NO_ENTRY_VALUE, list.get(2));
+    }
+
+    @Test
+    public void testShiftRequiringResize() {
+        // Create a list with initial capacity of 3
+        IntList list = new IntList(3);
+        list.add(1);
+        list.add(2);
+        list.add(3);
+
+        // This will require expanding the array
+        list.rshift(2);
+
+        Assert.assertEquals(5, list.size());
+        Assert.assertEquals(IntList.NO_ENTRY_VALUE, list.get(0));
+        Assert.assertEquals(IntList.NO_ENTRY_VALUE, list.get(1));
+        Assert.assertEquals(1, list.get(2));
+        Assert.assertEquals(2, list.get(3));
+        Assert.assertEquals(3, list.get(4));
+    }
+
+    @Test
+    public void testShiftWithinCapacity() {
+        // Create a list with initial capacity of 10
+        IntList list = new IntList(10);
+        list.add(1);
+        list.add(2);
+
+        // This shouldn't require expanding the array
+        list.rshift(3);
+
+        Assert.assertEquals(5, list.size());
+        Assert.assertEquals(IntList.NO_ENTRY_VALUE, list.get(0));
+        Assert.assertEquals(IntList.NO_ENTRY_VALUE, list.get(1));
+        Assert.assertEquals(IntList.NO_ENTRY_VALUE, list.get(2));
+        Assert.assertEquals(1, list.get(3));
+        Assert.assertEquals(2, list.get(4));
+    }
+
+    @Test
+    public void testShiftZero() {
+        IntList list = new IntList();
+        list.add(1);
+        list.add(2);
+
+        list.rshift(0);
+
+        Assert.assertEquals(2, list.size());
+        Assert.assertEquals(1, list.get(0));
+        Assert.assertEquals(2, list.get(1));
     }
 
     @Test

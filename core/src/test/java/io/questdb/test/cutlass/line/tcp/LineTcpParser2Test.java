@@ -24,13 +24,27 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.DirectArray;
+import io.questdb.cairo.arr.NoopArrayWriteState;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.line.LineException;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ProtoEntity;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.cairo.ArrayTest;
 import io.questdb.test.cutlass.line.udp.LineUdpLexerTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -39,13 +53,61 @@ import org.junit.Test;
 
 
 public class LineTcpParser2Test extends LineUdpLexerTest {
-    private final LineTcpParser lineTcpParser = new LineTcpParser();
+    private final LineTcpParser lineTcpParser = new LineTcpParser(new DefaultCairoConfiguration(""));
     private boolean onErrorLine;
     private long startOfLineAddr;
 
     @BeforeClass
     public static void init() {
         Os.init();
+    }
+
+    @Test
+    public void testArrayBinaryFormat() {
+        final long allocSize = 2048;
+        long mem = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
+        try (
+                DirectUtf8Sink sink = new DirectUtf8Sink(1024);
+                DirectArray array = new DirectArray(configuration)
+        ) {
+            String array1 = "[1.0,2.0]";
+            array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+            array.setDimLen(0, 2);
+            array.applyShape();
+            array.putDouble(0, 1);
+            array.putDouble(1, 2);
+            Unsafe.getUnsafe().putByte(mem, LineTcpParser.ENTITY_TYPE_ARRAY);
+            long array1Addr = mem + 1;
+            long array1Size = ArrayTest.arrayViewToBinaryFormat(array, array1Addr);
+            long array2Addr = array1Addr + array1Size;
+
+            String array2 = "[[1.1,2.1,3.1],[4.1,5.1,6.1]]";
+            array.clear();
+            array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
+            array.setDimLen(0, 2);
+            array.setDimLen(1, 3);
+            array.applyShape();
+            MemoryA memA = array.startMemoryA();
+            memA.putDouble(1.1);
+            memA.putDouble(2.1);
+            memA.putDouble(3.1);
+            memA.putDouble(4.1);
+            memA.putDouble(5.1);
+            memA.putDouble(6.1);
+            Unsafe.getUnsafe().putByte(array2Addr, LineTcpParser.ENTITY_TYPE_ARRAY);
+            sink.clear();
+            long array2Size = ArrayTest.arrayViewToBinaryFormat(array, array2Addr + 1);
+
+            assertThat(
+                    "measurement,tag=value field=" + array1 + ",field2=" + array2 + ",field3=10 100000\n",
+                    "measurement,tag=value field==,field2==,field3=10 100000\n",
+                    1,
+                    new long[]{mem, array2Addr},
+                    new long[]{array1Size + 1, array2Size + 1}
+            );
+        } finally {
+            Unsafe.free(mem, allocSize, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Override
@@ -303,6 +365,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         );
     }
 
+    @Override
     @Test
     public void testTrailingSpace() {
         assertThat("measurement,a=10\n", "measurement,a=10 \n"); // Trailing space
@@ -476,6 +539,9 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                 case LineTcpParser.ENTITY_TYPE_LONG256:
                     sink.put(entity.getValue()).put('i');
                     break;
+                case LineTcpParser.ENTITY_TYPE_ARRAY:
+                    ArrayTypeDriver.arrayToJson(entity.getArray(), sink, NoopArrayWriteState.INSTANCE);
+                    break;
                 default:
                     Utf8s.utf8ToUtf16(entity.getValue().lo(), entity.getValue().hi(), sink);
                     break;
@@ -564,18 +630,41 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     }
 
     protected void assertThat(CharSequence expected, String lineStr, int start) throws LineException {
+        assertThat(expected, lineStr, start, null, null);
+    }
+
+    protected void assertThat(CharSequence expected, String lineStr, int start, long[] binaryValuesPtr, long[] binaryValuesSize) throws LineException {
         byte[] line = lineStr.getBytes(Files.UTF_8);
-        final int len = line.length;
+        int len = line.length;
+        long binaryValueSizes = 0;
+        if (binaryValuesSize != null) {
+            for (long l : binaryValuesSize) {
+                binaryValueSizes += l;
+            }
+        }
+
         final boolean endWithEOL = line[len - 1] == '\n' || line[len - 1] == '\r';
-        int fullLen = endWithEOL ? line.length : line.length + 1;
+        int fullLen = (int) (endWithEOL ? line.length + binaryValueSizes : line.length + 1 + binaryValueSizes);
         long memFull = Unsafe.malloc(fullLen, MemoryTag.NATIVE_DEFAULT);
         long mem = Unsafe.malloc(fullLen, MemoryTag.NATIVE_DEFAULT);
-        for (int j = 0; j < len; j++) {
-            Unsafe.getUnsafe().putByte(memFull + j, line[j]);
+        int binaryValueIndex = 0;
+        long memStart = memFull;
+        byte lastByte = 0;
+        for (byte b : line) {
+            Unsafe.getUnsafe().putByte(memStart, b);
+            memStart++;
+            if (b == '=' && lastByte == '=') {
+                Assert.assertNotNull(binaryValuesSize);
+                Vect.memcpy(memStart, binaryValuesPtr[binaryValueIndex], binaryValuesSize[binaryValueIndex]);
+                memStart += binaryValuesSize[binaryValueIndex];
+                binaryValueIndex++;
+            }
+            lastByte = b;
         }
         if (!endWithEOL) {
-            Unsafe.getUnsafe().putByte(memFull + len, (byte) '\n');
+            Unsafe.getUnsafe().putByte(memStart, (byte) '\n');
         }
+        len = (int) (len + binaryValueSizes);
 
         try {
             for (int i = start; i < len; i++) {

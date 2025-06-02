@@ -187,7 +187,10 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
                     if (task.hasError()) {
                         throw CairoException.nonCritical()
                                 .position(task.getErrorMessagePosition())
-                                .put(task.getErrorMsg());
+                                .put(task.getErrorMsg())
+                                .setCancellation(task.isCancelled())
+                                .setInterruption(task.isCancelled())
+                                .setOutOfMemory(task.isOutOfMemory());
                     }
 
                     // Consider frame sequence status only if we haven't accumulated enough rows.

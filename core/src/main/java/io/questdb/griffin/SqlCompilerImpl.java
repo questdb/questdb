@@ -357,12 +357,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @Override
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) throws SqlException {
+        return compile(sqlText, executionContext, true);
+    }
+
+    @NotNull
+    public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext, boolean generateProgressLogger) throws SqlException {
         clear();
         // these are quick executions that do not require building of a model
         lexer.of(sqlText);
         isSingleQueryMode = true;
 
-        compileInner(executionContext, sqlText, true);
+        compileInner(executionContext, sqlText, generateProgressLogger);
         return compiledQuery;
     }
 
@@ -684,7 +689,31 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok;
         tok = expectToken(lexer, "column type");
 
-        int columnType = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
+        short typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
+        int typePosition = lexer.lastTokenPosition();
+
+        int dim = SqlUtil.parseArrayDimensionality(lexer);
+        int columnType;
+        if (dim > 0) {
+            if (!ColumnType.isSupportedArrayElementType(typeTag)) {
+                throw SqlException.position(typePosition)
+                        .put("unsupported array element type [type=")
+                        .put(ColumnType.nameOf(typeTag))
+                        .put(']');
+            }
+            columnType = ColumnType.encodeArrayType(typeTag, dim);
+        } else {
+            columnType = typeTag;
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+
+        // check for an unmatched bracket
+        if (tok != null && Chars.equals(tok, ']')) {
+            throw SqlException.position(typePosition).put(columnName).put(" has an unmatched `]` - were you trying to define an array?");
+        } else {
+            lexer.unparseLast();
+        }
 
         if (columnType == ColumnType.GEOHASH) {
             tok = SqlUtil.fetchNext(lexer);
@@ -1222,6 +1251,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(pos, "table is not partitioned");
             }
 
+            // Tables with ARRAYS cannot be converter to Parquet, for now
+            if (action == PartitionAction.CONVERT_TO_PARQUET) {
+                for (int i = 0, n = tableMetadata.getColumnCount(); i < n; i++) {
+                    if (ColumnType.isArray(tableMetadata.getColumnType(i))) {
+                        throw SqlException.$(pos, "tables with array columns cannot be converted to Parquet partitions yet [table=").put(tableToken.getTableName()).put(", column=").put(tableMetadata.getColumnName(i)).put(']');
+                    }
+                }
+            }
+
             final CharSequence tok = expectToken(lexer, "'list' or 'where'");
             if (isListKeyword(tok)) {
                 alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, pos, action);
@@ -1567,7 +1605,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final int matViewNamePosition = lexer.getPosition();
         tok = expectToken(lexer, "materialized view name");
-        assertTableNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
+        assertNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
         final TableToken matViewToken = tableExistsOrFail(matViewNamePosition, GenericLexer.unquote(tok), executionContext);
         final SecurityContext securityContext = executionContext.getSecurityContext();
         final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
@@ -1640,7 +1678,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             }
                             tok = expectToken(lexer, "interval");
                             final int interval = Timestamps.getStrideMultiple(tok);
-                            final char unit = Timestamps.getStrideUnit(tok);
+                            final char unit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
                             SqlParser.validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
                             final AlterOperationBuilder setTimer = alterOperationBuilder.ofSetMatViewRefreshTimer(
                                     matViewNamePosition,
@@ -1691,7 +1729,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void compileAlterTable(SqlExecutionContext executionContext) throws SqlException {
         final int tableNamePosition = lexer.getPosition();
         CharSequence tok = expectToken(lexer, "table name");
-        assertTableNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
+        assertNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
         final TableToken tableToken = tableExistsOrFail(tableNamePosition, GenericLexer.unquote(tok), executionContext);
         checkMatViewModification(tableToken);
         final SecurityContext securityContext = executionContext.getSecurityContext();
@@ -2099,7 +2137,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
 
                 tok = expectToken(lexer, "table name");
-                assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence tableName = GenericLexer.unquote(tok);
                 // define operation to make sure we generate correct errors in case
@@ -2141,7 +2179,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
 
                 tok = expectToken(lexer, "view name");
-                assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence matViewName = GenericLexer.unquote(tok);
                 // define operation to make sure we generate correct errors in case
@@ -2268,14 +2306,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executor.execute(executionContext, sqlText);
                 // executor might decide that SQL contains secret, otherwise we're logging it
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy **" : sqlText;
-                QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
-            } catch (Throwable e) {
+                if (!generateProgressLogger) {
+                    QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
+                }
+            } catch (Throwable th) {
                 // Executor is all-in-one, it parses SQL text and executes it right away. The convention is
                 // that before parsing secrets the executor will notify the execution context. In that, even if
                 // executor fails, the secret SQL text must not be logged
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy** " : sqlText;
-                QueryProgress.logError(e, -1, this.sqlText, executionContext, beginNanos);
-                throw e;
+                QueryProgress.logError(th, -1, this.sqlText, executionContext, beginNanos);
+                throw th;
             }
         } else {
             this.sqlText = sqlText;
@@ -2611,7 +2651,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected");
         }
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
         final CharSequence matViewName = GenericLexer.unquote(tok);
         final TableToken matViewToken = executionContext.getTableTokenIfExists(matViewName);
@@ -2877,10 +2917,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     );
                     break;
                 case ExecutionModel.CREATE_TABLE:
-                    compiledQuery.ofCreateTable(((CreateTableOperationBuilder) executionModel).build(this, executionContext, sqlText));
+                    compiledQuery.ofCreateTable(((CreateTableOperationBuilder) executionModel)
+                            .build(this, executionContext, sqlText));
                     break;
                 case ExecutionModel.CREATE_MAT_VIEW:
-                    compiledQuery.ofCreateMatView(((CreateMatViewOperationBuilder) executionModel).build(this, executionContext, sqlText));
+                    compiledQuery.ofCreateMatView(((CreateMatViewOperationBuilder) executionModel)
+                            .build(this, executionContext, sqlText));
                     break;
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
@@ -2960,7 +3002,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         boolean partitionsKeyword = isPartitionsKeyword(tok);
         if (partitionsKeyword || isTableKeyword(tok)) {
             tok = expectToken(lexer, "table name");
-            assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+            assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
             int tableNamePos = lexer.lastTokenPosition();
             CharSequence eol = SqlUtil.fetchNext(lexer);
@@ -3479,29 +3521,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void executeWithRetries(
-            ExecutableMethod method,
-            ExecutionModel executionModel,
-            int retries,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        int attemptsLeft = retries;
-        do {
-            try {
-                method.execute(executionModel, executionContext);
-                return;
-            } catch (TableReferenceOutOfDateException e) {
-                attemptsLeft--;
-                clearExceptSqlText();
-                lexer.restart();
-                executionModel = compileExecutionModel(executionContext);
-                if (attemptsLeft < 0) {
-                    throw SqlException.position(0).put("too many ").put(e.getFlyweightMessage());
-                }
-            }
-        } while (true);
-    }
-
     private int filterApply(
             Function filter,
             int functionPosition,
@@ -3701,7 +3720,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             BindVariableService bindVariableService
     ) throws SqlException {
         final int columnType = metadata.getColumnType(metadataColumnIndex);
-        if (function.isUndefined()) {
+        if (ColumnType.isUnderdefined(function.getType())) {
             function.assignType(columnType, bindVariableService);
         }
 
@@ -3973,11 +3992,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             AlterOperationBuilder dropColumnStatement
     ) throws SqlException {
         throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
-    }
-
-    @FunctionalInterface
-    private interface ExecutableMethod {
-        void execute(ExecutionModel model, SqlExecutionContext sqlExecutionContext) throws SqlException;
     }
 
     @FunctionalInterface

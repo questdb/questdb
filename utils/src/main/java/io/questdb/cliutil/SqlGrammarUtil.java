@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.misc;
+package io.questdb.cliutil;
 
 
 import io.questdb.cairo.ColumnType;

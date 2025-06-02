@@ -281,6 +281,8 @@ public interface CairoConfiguration {
 
     int getMatViewRowsPerQueryEstimate();
 
+    long getMatViewTimerStartEpsilon();
+
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();
@@ -740,6 +742,8 @@ public interface CairoConfiguration {
      * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
      */
     boolean mangleTableDirNames();
+
+    int maxArrayElementCount();
 
     boolean useFastAsOfJoin();
 
