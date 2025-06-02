@@ -1089,7 +1089,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             assertExceptionNoLeakCheck(updateSql);
         } catch (CairoException e) {
             TestUtils.assertContains(
-                    "cannot update read-only partition [table=" + tableName + ", partitionTimestamp=" + partitionName + "T00:00:00.000Z]",
+                    "cannot update read-only partition [table=" + tableName + ", partitionTimestamp=" + partitionName + "T00:00:00.000000Z]",
                     e.getFlyweightMessage());
         } catch (Throwable e) {
             Assert.fail("not expecting any Exception: " + e.getMessage());
