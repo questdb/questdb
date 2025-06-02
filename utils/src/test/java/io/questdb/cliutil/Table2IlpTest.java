@@ -164,7 +164,7 @@ public class Table2IlpTest {
                 () -> new SqlExecutionContextImpl(engine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
         );
 
-        receiver = new LineTcpReceiver(new DefaultLineTcpReceiverConfiguration() {
+        receiver = new LineTcpReceiver(new DefaultLineTcpReceiverConfiguration(configuration) {
             @Override
             public int getBindPort() {
                 return ILP_PORT;
@@ -186,7 +186,7 @@ public class Table2IlpTest {
                 new DefaultServerConfiguration(root) {
                     @Override
                     public HttpFullFatServerConfiguration getHttpServerConfiguration() {
-                        return new DefaultHttpServerConfiguration() {
+                        return new DefaultHttpServerConfiguration(configuration) {
                             @Override
                             public int getBindPort() {
                                 return HTTP_PORT;

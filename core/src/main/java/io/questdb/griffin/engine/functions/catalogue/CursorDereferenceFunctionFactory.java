@@ -91,7 +91,7 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return cursorFunction.getRecord(rec).getInt(columnIndex);
+            return cursorFunction.extendedOps().getRecord(rec).getInt(columnIndex);
         }
 
         @Override

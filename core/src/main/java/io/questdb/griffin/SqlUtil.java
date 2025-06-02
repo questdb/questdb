@@ -27,7 +27,9 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.model.ExpressionNode;
@@ -56,6 +58,7 @@ import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
@@ -740,6 +743,18 @@ public class SqlUtil {
         }
     }
 
+    public static ArrayView implicitCastStringAsDoubleArray(CharSequence value, DoubleArrayParser parser, int expectedType) {
+        try {
+            parser.of(value, ColumnType.decodeArrayDimensionality(expectedType));
+        } catch (IllegalArgumentException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
+        }
+        if (expectedType != ColumnType.UNDEFINED && parser.getType() != expectedType) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
+        }
+        return parser;
+    }
+
     public static long implicitCastSymbolAsTimestamp(CharSequence value) {
         return implicitCastStrVarcharAsTimestamp0(value, ColumnType.SYMBOL);
     }
@@ -879,6 +894,29 @@ public class SqlUtil {
         return pool.next().of(exprNodeType, token, 0, position);
     }
 
+    public static int parseArrayDimensionality(GenericLexer lexer) throws SqlException {
+        int dim = 0;
+        do {
+            CharSequence tok = fetchNext(lexer);
+            if (Chars.equalsNc(tok, '[')) {
+                // could be a start of array type
+                tok = fetchNext(lexer);
+
+                if (Chars.equalsNc(tok, ']')) {
+                    dim++;
+                } else {
+                    // we do not expect anything between [], but lets try to be helpful to user and ask them
+                    // to remove things between brackets
+                    throw SqlException.$(lexer.lastTokenPosition(), "']' expected");
+                }
+            } else {
+                lexer.unparseLast();
+                break;
+            }
+        } while (true);
+        return dim;
+    }
+
     /**
      * Parses partial representation of timestamp with time zone.
      *
@@ -896,7 +934,7 @@ public class SqlUtil {
         }
     }
 
-    public static short toPersistedTypeTag(CharSequence tok, int tokPosition) throws SqlException {
+    public static short toPersistedTypeTag(@NotNull CharSequence tok, int tokPosition) throws SqlException {
         final short typeTag = ColumnType.tagOf(tok);
         if (typeTag == -1) {
             throw SqlException.$(tokPosition, "unsupported column type: ").put(tok);
@@ -905,7 +943,6 @@ public class SqlUtil {
             return typeTag;
         }
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
-
     }
 
     private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {

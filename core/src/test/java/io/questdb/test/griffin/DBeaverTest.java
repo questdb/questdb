@@ -46,7 +46,8 @@ public class DBeaverTest extends AbstractCairoTest {
                         "pg_catalog\t1082\t11\tdate\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
                         "pg_catalog\t2950\t11\tuuid\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
                         "pg_catalog\t2281\t11\tinternal\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
-                        "pg_catalog\t26\t11\toid\tb\tnull\tfalse\t\tnull\t\t\t\t0\n",
+                        "pg_catalog\t26\t11\toid\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t1022\t11\t_float8\tb\tnull\tfalse\t\tnull\t\t\t\t0\n",
                 "SELECT ns.nspname, typ_and_elem_type.*,\n" +
                         "   CASE\n" +
                         "       WHEN typtype IN ('b', 'e', 'p') THEN 0           -- First base types, enums, pseudo-types\n" +
@@ -168,7 +169,8 @@ public class DBeaverTest extends AbstractCairoTest {
                         "23\t23\tint4\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "26\t26\toid\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "700\t700\tfloat4\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
-                        "701\t701\tfloat8\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "701\t701\tfloat8\t0\t1022\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "1022\t1022\t_float8\t0\t0\t11\tfalse\t0\tb\tA\tnull\t701\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "1042\t1042\tbpchar\t0\t0\t11\tfalse\t0\tb\tZ\tnull\t0\t0\t0\t0\t0\t2\tfalse\tfalse\ttrue\tc\tp\t0\t0\t0\t\t\t\n" +
                         "1043\t1043\tvarchar\t0\t0\t11\tfalse\t0\tb\tS\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "1082\t1082\tdate\t0\t0\t11\tfalse\t0\tb\tD\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +

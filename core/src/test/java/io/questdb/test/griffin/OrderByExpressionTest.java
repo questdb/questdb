@@ -35,7 +35,7 @@ public class OrderByExpressionTest extends AbstractCairoTest {
         assertException(
                 "select b from (select rnd_bin(10, 20, 2) b from long_sequence(10)) order by b desc",
                 76,
-                "unsupported column type: BINARY"
+                "BINARY is not a supported type in ORDER BY clause"
         );
     }
 
@@ -254,7 +254,7 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                         ") " +
                         "order by i desc",
                 151,
-                "unsupported column type: INTERVAL"
+                "INTERVAL is not a supported type in ORDER BY clause"
         );
     }
 
@@ -366,19 +366,17 @@ public class OrderByExpressionTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByWithAlphanumericNamedColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            assertSql("5_sum\n" +
-                    "123\n" +
-                    "456\n" +
-                    "789\n", "SELECT * FROM (\n" +
-                    "  SELECT 456 AS \"5_sum\"\n" +
-                    "  UNION ALL \n" +
-                    "  SELECT 789 AS \"5_sum\"\n" +
-                    "  UNION ALL \n" +
-                    "  SELECT 123 AS \"5_sum\"\n" +
-                    ")\n" +
-                    "ORDER BY \"5_sum\"");
-        });
+        assertMemoryLeak(() -> assertSql("5_sum\n" +
+                "123\n" +
+                "456\n" +
+                "789\n", "SELECT * FROM (\n" +
+                "  SELECT 456 AS \"5_sum\"\n" +
+                "  UNION ALL \n" +
+                "  SELECT 789 AS \"5_sum\"\n" +
+                "  UNION ALL \n" +
+                "  SELECT 123 AS \"5_sum\"\n" +
+                ")\n" +
+                "ORDER BY \"5_sum\""));
     }
 
     @Test

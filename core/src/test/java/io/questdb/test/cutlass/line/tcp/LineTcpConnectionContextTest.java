@@ -45,6 +45,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -487,7 +488,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
         String table = "commitException";
         node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1);
-        recvBufferSize.set(60);
+        maxRecvBufferSize.set(60);
         runInContext(
                 new TestFilesFacadeImpl() {
                     @Override
@@ -1408,11 +1409,14 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
-    public void testMaxSizes() throws Exception {
+    public void testMaxMeasurementSize() throws Exception {
+        Assume.assumeFalse(walEnabled);
         String table = "maxSize";
         runInContext(() -> {
-            String longMeasurement = table + ",location=us-eastcoastxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx temperature=81 1465839830101400200\n";
-            Assert.assertFalse(longMeasurement.length() < lineTcpConfiguration.getMaxMeasurementSize());
+            String longStr = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+            longStr += longStr;
+            String longMeasurement = table + ",location=us-eastcoast" + longStr + " temperature=81 1465839830101400200\n";
+            Assert.assertTrue(longMeasurement.length() > lineTcpConfiguration.getMaxMeasurementSize());
             recvBuffer =
                     table + ",location=us-midwest temperature=82 1465839830100400200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1421,13 +1425,11 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            Assert.assertFalse(recvBuffer.length() < lineTcpConfiguration.getRecvBufferSize());
             handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoastxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\t81.0\t2016-06-13T17:43:50.101400Z\n" +
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
@@ -1574,7 +1576,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testMultipleTablesWithMultipleWriterThreads() throws Exception {
-        recvBufferSize.set(4096);
+        maxRecvBufferSize.set(4096);
         nWriterThreads = 3;
         int nTables = 5;
         int nIterations = 10_000;
@@ -1583,7 +1585,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testMultipleTablesWithSingleWriterThread() throws Exception {
-        recvBufferSize.set(4096);
+        maxRecvBufferSize.set(4096);
         nWriterThreads = 1;
         int nTables = 3;
         int nIterations = 10_000;
@@ -1748,14 +1750,16 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testOverflow() throws Exception {
         runInContext(() -> {
-            int msgBufferSize = lineTcpConfiguration.getRecvBufferSize();
-            recvBuffer = "A";
-            while (recvBuffer.length() <= msgBufferSize) {
+            long maxBufferSize = lineTcpConfiguration.getMaxRecvBufferSize();
+            recvBuffer = "MAXBUFSIZ";
+            while (recvBuffer.length() <= maxBufferSize) {
                 recvBuffer += recvBuffer;
             }
-            int nUnread = recvBuffer.length() - msgBufferSize;
-            handleContextIO0();
-            Assert.assertTrue(disconnected);
+            long nUnread = recvBuffer.length() - maxBufferSize;
+            do {
+                handleContextIO0();
+                Assert.assertFalse(recvBuffer.isEmpty());
+            } while (!disconnected);
             Assert.assertEquals(nUnread, recvBuffer.length());
         });
     }
