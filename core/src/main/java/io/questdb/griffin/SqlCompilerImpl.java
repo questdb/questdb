@@ -637,7 +637,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             circuitBreaker.statefulThrowExceptionIfTripped();
             CharSequence str = record.getStrA(cursorTimestampIndex);
             // It's allowed to insert ISO formatted string to timestamp column
-            TableWriter.Row row = writer.newRow(timestampDriver.castStr(str, -1, ColumnType.STRING, (short) timestampType));
+            TableWriter.Row row = writer.newRow(timestampDriver.implicitCastStr(str, ColumnType.STRING));
             copier.copy(record, row);
             row.append();
             if (++rowCount >= commitTarget) {
@@ -657,13 +657,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int cursorTimestampIndex,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
+        final int timestampType = writer.getMetadata().getTimestampType();
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             final CharSequence str = record.getStrA(cursorTimestampIndex);
             // It's allowed to insert ISO formatted string to timestamp column
-            TableWriter.Row row = writer.newRow(SqlUtil.implicitCastStrAsTimestamp(str));
+            TableWriter.Row row = writer.newRow(timestampDriver.implicitCastStr(str, ColumnType.STRING));
             copier.copy(record, row);
             row.append();
             rowCount++;

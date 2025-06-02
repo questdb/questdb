@@ -280,7 +280,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             final CharSequence value = dynamicFunction.getStrA(null);
             if (value != null) {
                 try {
-                    return TimestampUtils.parseFloorPartialTimestamp(value);
+                    return ColumnType.getTimestampDriver(timestampType).parseFloorLiteral(value);
                 } catch (NumericException e) {
                     return Numbers.LONG_NULL;
                 }

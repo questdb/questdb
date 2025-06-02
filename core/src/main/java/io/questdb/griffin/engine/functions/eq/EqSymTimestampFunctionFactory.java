@@ -25,17 +25,17 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.BitSet;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 /**
@@ -62,8 +62,10 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(
-            int position, ObjList<Function> args,
-            IntList argPositions, CairoConfiguration configuration,
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
 
@@ -72,7 +74,7 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
         if (symbolFunc.isConstant()) {
             CharSequence value = symbolFunc.getSymbol(null);
-            long symbolConstant = value != null ? SqlUtil.implicitCastSymbolAsTimestamp(value) : Numbers.LONG_NULL;
+            long symbolConstant = MicrosTimestampDriver.INSTANCE.implicitCastStr(value, ColumnType.SYMBOL);
 
             if (timestampFunc.isConstant()) {
                 return symbolConstant == timestampFunc.getLong(null) ? BooleanConstant.TRUE : BooleanConstant.FALSE;

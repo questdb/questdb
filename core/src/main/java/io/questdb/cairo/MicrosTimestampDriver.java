@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.ptt.PartitionDateParseUtil;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -256,6 +257,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             default:
                 return null;
         }
+    }
+
+    @Override
+    public long implicitCastStr(CharSequence value, int typeFrom) {
+        return SqlUtil.implicitCastStrVarcharAsTimestamp0(value, typeFrom);
     }
 
     @Override

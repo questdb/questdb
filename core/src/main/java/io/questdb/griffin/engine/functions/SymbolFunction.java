@@ -25,12 +25,12 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -177,7 +177,7 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     @Override
     public final long getTimestamp(Record rec) {
         final CharSequence value = getSymbol(rec);
-        return SqlUtil.implicitCastSymbolAsTimestamp(value);
+        return MicrosTimestampDriver.INSTANCE.implicitCastStr(value, ColumnType.SYMBOL);
     }
 
     @Override

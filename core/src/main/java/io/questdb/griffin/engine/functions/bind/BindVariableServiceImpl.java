@@ -1108,8 +1108,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setStr0(Function function, CharSequence value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = ColumnType.tagOf(function.getType());
-        switch (functionType) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.BOOLEAN:
                 ((BooleanBindVariable) function).value = value != null && SqlKeywords.isTrueKeyword(value);
                 break;
@@ -1132,7 +1131,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((LongBindVariable) function).value = SqlUtil.implicitCastStrAsLong(value);
                 break;
             case ColumnType.TIMESTAMP:
-                ((TimestampBindVariable) function).value = SqlUtil.implicitCastStrAsTimestamp(value);
+                ((TimestampBindVariable) function).value = ColumnType.getTimestampDriver(function.getType()).implicitCastStr(value, ColumnType.STRING);
                 break;
             case ColumnType.DATE:
                 ((DateBindVariable) function).value = SqlUtil.implicitCastStrAsDate(value);

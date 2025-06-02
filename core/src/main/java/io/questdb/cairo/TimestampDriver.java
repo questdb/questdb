@@ -46,6 +46,8 @@ public interface TimestampDriver {
 
     long castStr(CharSequence value, int tupleIndex, short fromType, short toType);
 
+    long implicitCastStr(CharSequence value, int typeFrom);
+
     // todo: explore static ref
     boolean convertToVar(long fixedAddr, CharSink<?> stringSink);
 
