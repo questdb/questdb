@@ -764,10 +764,6 @@ public class SqlUtil {
         return parser;
     }
 
-    public static long implicitCastSymbolAsTimestamp(CharSequence value) {
-        return implicitCastStrVarcharAsTimestamp0(value, ColumnType.SYMBOL);
-    }
-
     public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink<?> sink) {
         if (Uuid.isNull(lo, hi)) {
             return false;

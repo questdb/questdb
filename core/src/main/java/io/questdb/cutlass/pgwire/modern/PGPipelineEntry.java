@@ -2342,10 +2342,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         outColTxtUuid(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.ARRAY:
-                        outColTxtArr(utf8Sink, record, colIndex, type);
+                        outColTxtArr(utf8Sink, record, colIndex, columnType);
                         break;
                     case BINARY_TYPE_ARRAY:
-                        outColBinArr(utf8Sink, record, colIndex, type);
+                        outColBinArr(utf8Sink, record, colIndex, columnType);
                         break;
                     default:
                         assert false;
@@ -2500,7 +2500,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             throw kaput().put("array dimensions cannot be greater than maximum array dimensions [dimensions=").put(dimensions).put(", max=").put(ColumnType.ARRAY_NDIMS_LIMIT).put(']');
         }
 
-        int hasNull = getInt(lo, msgLimit, "malformed array null flag");
+        getInt(lo, msgLimit, "malformed array null flag");
         // hasNull flag is not a reliable indicator of a null element, since some clients
         // send it as 0 even if the array element is null. we need to manually check for null
         lo += Integer.BYTES;

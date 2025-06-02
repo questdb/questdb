@@ -45,6 +45,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -139,7 +140,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             ) {
                 String table = "array_test";
                 CountDownLatch released = createTableCommitNotifier(table);
-                long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
+                long ts = TimestampFormatUtils.parseTimestamp("2025-02-22T00:00:00.000000Z");
                 double[] arr1d = createDoubleArray(5);
                 double[][] arr2d = createDoubleArray(2, 3);
                 double[][][] arr3d = createDoubleArray(1, 2, 3);
@@ -157,7 +158,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 sender.flush();
                 waitTableWriterFinish(released);
                 assertTableSizeEventually(engine, table, 1);
-                // @todo assert table contents, needs getArray support in TestTableReadCursor
             }
         });
     }
