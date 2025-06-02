@@ -7154,18 +7154,14 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextExportDisconnectOnDataUnavailableEventNeverFired() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(root)
+        getSimpleTester()
                 .withWorkerCount(2)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
                 .withQueryTimeout(100)
                 .run((engine, sqlExecutionContext) -> {
                     AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
                     TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-
-                    try (TestHttpClient client = new TestHttpClient()) {
-                        client.assertGetRegexp(
+                    try {
+                        testHttpClient.assertGetRegexp(
                                 "/query",
                                 ".*timeout, query aborted.*",
                                 "select * from test_data_unavailable(1, 10)",
@@ -7173,6 +7169,8 @@ public class IODispatcherTest extends AbstractTest {
                                 null,
                                 "400"
                         );
+                    } finally {
+                        Misc.free(eventRef.get());
                     }
                 });
     }
