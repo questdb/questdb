@@ -38,6 +38,7 @@ import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory.ttlToSink;
 
@@ -49,6 +50,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     private int refreshType = -1;
     private String timeZone;
     private String timeZoneOffset;
+    private String timerTimeZone;
 
     @Override
     public CreateMatViewOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
@@ -60,7 +62,8 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
                 baseTableName,
                 baseTableNamePosition,
                 timeZone,
-                timeZoneOffset
+                timeZoneOffset,
+                timerTimeZone
         );
     }
 
@@ -72,6 +75,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         baseTableNamePosition = 0;
         timeZone = null;
         timeZoneOffset = null;
+        timerTimeZone = null;
     }
 
     public CreateTableOperationBuilderImpl getCreateTableOperationBuilder() {
@@ -101,6 +105,11 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         this.baseTableNamePosition = baseTableNamePosition;
     }
 
+    public void setMatViewTimer(@Nullable String timeZone, long start, int interval, char unit) {
+        createTableOperationBuilder.setMatViewTimer(start, interval, unit);
+        this.timerTimeZone = timeZone;
+    }
+
     public void setRefreshType(int refreshType) {
         this.refreshType = refreshType;
     }
@@ -126,12 +135,21 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
             sink.putAscii(" with base ");
             sink.put(baseTableName);
         }
-        if (refreshType == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
-            sink.putAscii(" refresh start '");
+        sink.putAscii(" refresh");
+        if (refreshType == MatViewDefinition.TIMER_REFRESH_TYPE) {
+            sink.putAscii(" start '");
             sink.putISODate(createTableOperationBuilder.getMatViewTimerStart());
+            if (timerTimeZone != null) {
+                sink.putAscii("' time zone '");
+                sink.put(timerTimeZone);
+            }
             sink.putAscii("' every ");
             sink.put(createTableOperationBuilder.getMatViewTimerInterval());
             sink.putAscii(createTableOperationBuilder.getMatViewTimerIntervalUnit());
+        } else if (refreshType == MatViewDefinition.IMMEDIATE_REFRESH_TYPE) {
+            sink.putAscii(" immediate");
+        } else if (refreshType == MatViewDefinition.MANUAL_REFRESH_TYPE) {
+            sink.putAscii(" manual");
         }
         sink.putAscii(" as (");
         if (createTableOperationBuilder.getQueryModel() != null) {
@@ -156,7 +174,9 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
             sink.putAscii(')');
         }
 
-        sink.putAscii(" partition by ").put(PartitionBy.toString(createTableOperationBuilder.getPartitionByFromExpr()));
+        if (createTableOperationBuilder.getPartitionByFromExpr() != PartitionBy.NONE) {
+            sink.putAscii(" partition by ").put(PartitionBy.toString(createTableOperationBuilder.getPartitionByFromExpr()));
+        }
 
         final int ttlHoursOrMonths = createTableOperationBuilder.getTtlHoursOrMonths();
         ttlToSink(ttlHoursOrMonths, sink);

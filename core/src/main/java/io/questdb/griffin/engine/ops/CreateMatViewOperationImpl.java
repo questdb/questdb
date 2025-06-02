@@ -94,6 +94,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String sqlText;
     private final String timeZone;
     private final String timeZoneOffset;
+    private final String timerTimeZone;
     private final IntList tmpColumnIndexes = new IntList();
     private final LowerCaseCharSequenceHashSet tmpLiterals = new LowerCaseCharSequenceHashSet();
     private CreateTableOperationImpl createTableOperation;
@@ -107,7 +108,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             @NotNull String baseTableName,
             int baseTableNamePosition,
             @Nullable String timeZone,
-            @Nullable String timeZoneOffset
+            @Nullable String timeZoneOffset,
+            @Nullable String timerTimeZone
     ) {
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
@@ -116,6 +118,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         this.baseTableNamePosition = baseTableNamePosition;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
+        this.timerTimeZone = timerTimeZone;
     }
 
     @Override
@@ -271,7 +274,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 samplingInterval,
                 samplingIntervalUnit,
                 timeZone,
-                timeZoneOffset
+                timeZoneOffset,
+                timerTimeZone
         );
     }
 

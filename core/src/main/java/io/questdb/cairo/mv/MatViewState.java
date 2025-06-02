@@ -82,12 +82,12 @@ public class MatViewState implements QuietCloseable {
             @Nullable CharSequence invalidationReason,
             @NotNull BlockFileWriter writer
     ) {
-        final AppendableBlock block = writer.append();
+        AppendableBlock block = writer.append();
         appendState(lastRefreshBaseTxn, invalid, invalidationReason, block);
         block.commit(MAT_VIEW_STATE_FORMAT_MSG_TYPE);
-        final AppendableBlock blockTs = writer.append();
-        appendTs(lastRefreshTimestamp, blockTs);
-        blockTs.commit(MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE);
+        block = writer.append();
+        appendTs(lastRefreshTimestamp, block);
+        block.commit(MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE);
         writer.commit();
     }
 

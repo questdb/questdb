@@ -141,6 +141,54 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateImmediateMatViewModelToSink() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select ts, k, avg(v) from " + TABLE1 + " sample by 30s";
+            final String sql = "create materialized view test as (" + query + "), index (k capacity 1024) partition by day ttl 3 days" +
+                    (Os.isWindows() ? "" : " in volume vol1");
+
+            sink.clear();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final ExecutionModel model = compiler.testCompileModel(sql, sqlExecutionContext);
+                assertEquals(ExecutionModel.CREATE_MAT_VIEW, model.getModelType());
+                ((Sinkable) model).toSink(sink);
+                TestUtils.assertEquals(
+                        "create materialized view test with base " + TABLE1 + " refresh immediate as (" +
+                                "select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00')" +
+                                "), index(k capacity 1024) partition by DAY TTL 3 DAYS" +
+                                (Os.isWindows() ? "" : " in volume 'vol1'"),
+                        sink
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testCreateManualMatViewModelToSink() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select ts, k, avg(v) from " + TABLE1 + " sample by 30s";
+            final String sql = "create materialized view test refresh manual as " + query;
+
+            sink.clear();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final ExecutionModel model = compiler.testCompileModel(sql, sqlExecutionContext);
+                assertEquals(ExecutionModel.CREATE_MAT_VIEW, model.getModelType());
+                ((Sinkable) model).toSink(sink);
+                TestUtils.assertEquals(
+                        "create materialized view test with base " + TABLE1 + " refresh manual as (" +
+                                "select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00')" +
+                                ")",
+                        sink
+                );
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewAsExpectedPosition() throws Exception {
         assertMemoryLeak(() -> {
             assertExceptionNoLeakCheck(
@@ -261,8 +309,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             final String query = "select ts, k || '10' as k, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute("CREATE MATERIALIZED VIEW test AS (" + query + ") PARTITION BY WEEK TTL 3 WEEKS;");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
@@ -282,8 +330,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             // notice upper-case column names
             final String query = "select TS, K || '10' as k, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute("CREATE MATERIALIZED VIEW test AS (" + query + ") PARTITION BY WEEK TTL 3 WEEKS;");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
@@ -302,8 +350,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             final String query = "select ts, concat(k, '10') as k, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + ") partition by week");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
@@ -337,8 +385,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day");
 
             assertQuery0("ts1\tavg\n", "test", "ts1");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'm');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'm');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 1, 'm');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 1, 'm');
         });
     }
 
@@ -351,8 +399,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day");
 
             assertQuery0("ts2\tavg\n", "test", "ts2");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'm');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'm');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 1, 'm');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 1, 'm');
         });
     }
 
@@ -380,12 +428,12 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final long startEpoch = TimestampFormatUtils.parseTimestamp(start);
             final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute(
-                    "CREATE MATERIALIZED VIEW test REFRESH START '" + start + "' EVERY 5m AS (" +
+                    "CREATE MATERIALIZED VIEW test REFRESH START '" + start + "' TIME ZONE 'Europe/Berlin' EVERY 5m AS (" +
                             query +
                             ") PARTITION BY YEAR;"
             );
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null);
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null);
+            assertMatViewDefinition(MatViewDefinition.TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, "Europe/Berlin");
+            assertMatViewDefinitionFile(MatViewDefinition.TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, "Europe/Berlin");
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
@@ -412,8 +460,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             query +
                             ") PARTITION BY YEAR;"
             );
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null);
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null);
+            assertMatViewDefinition(MatViewDefinition.TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, null);
+            assertMatViewDefinitionFile(MatViewDefinition.TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, null);
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
@@ -516,32 +564,27 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertFalse(metadata.isDedupKey(3));
                 assertEquals(7 * 24, metadata.getTtlHoursOrMonths());
             }
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
         });
     }
 
     @Test
-    public void testCreateMatViewModelToSink() throws Exception {
+    public void testCreateMatViewManual() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            final String query = "select ts, k, avg(v) from " + TABLE1 + " sample by 30s";
-            final String sql = "create materialized view test as (" + query + "), index (k capacity 1024) partition by day ttl 3 days" +
-                    (Os.isWindows() ? "" : " in volume vol1");
+            final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s";
+            execute("CREATE MATERIALIZED VIEW test REFRESH MANUAL AS " + query);
+            assertMatViewDefinition(MatViewDefinition.MANUAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, null);
+            assertMatViewDefinitionFile(MatViewDefinition.MANUAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, null);
 
-            sink.clear();
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                final ExecutionModel model = compiler.testCompileModel(sql, sqlExecutionContext);
-                assertEquals(ExecutionModel.CREATE_MAT_VIEW, model.getModelType());
-                ((Sinkable) model).toSink(sink);
-                TestUtils.assertEquals(
-                        "create materialized view test with base " + TABLE1 + " as (" +
-                                "select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00')" +
-                                "), index(k capacity 1024) partition by DAY TTL 3 DAYS" +
-                                (Os.isWindows() ? "" : " in volume 'vol1'"),
-                        sink
-                );
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertEquals(0, metadata.getTimestampIndex());
+                assertTrue(metadata.isDedupKey(0));
+                assertTrue(metadata.isDedupKey(1));
+                assertEquals(0, metadata.getMatViewTimerInterval());
+                assertEquals(0, metadata.getMatViewTimerIntervalUnit());
             }
         });
     }
@@ -803,8 +846,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by week");
 
             assertQuery0("ts\tavg\n", "test", "ts");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
         });
     }
 
@@ -815,8 +858,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             final String query = "select ts, 1L::timestamp as ts2, avg(v) from (select ts, k, v+10 as v from " + TABLE1 + ") sample by 30s";
             execute("create materialized view test as (" + query + ") partition by week");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
@@ -850,8 +893,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day");
 
             assertQuery0("ts\tavg\n", "test", "ts");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
         });
     }
 
@@ -864,8 +907,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test_view as (" + query + ") partition by day");
 
             assertQuery0("ts\tts2\tavg\n", "test_view", "ts");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test_view", query, TABLE3, 30, 's');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test_view", query, TABLE3, 30, 's');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test_view", query, TABLE3, 30, 's');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test_view", query, TABLE3, 30, 's');
         });
     }
 
@@ -986,8 +1029,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day");
 
             assertQuery0("ts\tavg\n", "test", "ts");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, null);
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, null);
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, null, null);
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, null, null);
         });
     }
 
@@ -1001,8 +1044,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day");
 
             assertQuery0("ts\tavg\n", "test", "ts");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, null);
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, null);
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, null, null);
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, null, null);
         });
     }
 
@@ -1017,8 +1060,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day");
 
             assertQuery0("ts\tavg\n", "test", "ts");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, offset);
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, offset);
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, offset, null);
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', tz, offset, null);
         });
     }
 
@@ -1032,8 +1075,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day");
 
             assertQuery0("ts\tavg\n", "test", "ts");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', null, offset);
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', null, offset);
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', null, offset, null);
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 1, 'd', null, offset, null);
         });
     }
 
@@ -1046,8 +1089,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("CREATE MATERIALIZED VIEW test AS (" + query + ") PARTITION BY WEEK TTL 3 WEEKS;");
             execute("ALTER MATERIALIZED VIEW test SET REFRESH LIMIT 1m;");
             drainWalQueue();
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
@@ -1066,8 +1109,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
             final String query = "select ts, ts as ts1, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + ") partition by week");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
         });
     }
 
@@ -1077,8 +1120,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
             final String query = "select ts, last(ts) as last_ts, cast(ts as long) as tm, concat(k, '10') as k, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + ") partition by week");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
         });
     }
 
@@ -1089,8 +1132,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 1h";
             execute("CREATE MATERIALIZED VIEW test AS (" + query + ") TTL 1 MONTH;");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'h');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'h');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 1, 'h');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 1, 'h');
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
@@ -1162,8 +1205,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test with base " + TABLE1 + " as (" + query + ") partition by day");
 
             assertQuery0("ts\tavg\n", "test", "ts");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 60, 's');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 60, 's');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 60, 's');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 60, 's');
         });
     }
 
@@ -1198,8 +1241,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             // with IF NOT EXISTS
             execute("create materialized view if not exists test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE2, 4, 'h');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE2, 4, 'h');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE2, 4, 'h');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE2, 4, 'h');
 
             assertExceptionNoLeakCheck(
                     "create table test(ts timestamp, col varchar) timestamp(ts) partition by day wal",
@@ -1218,8 +1261,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + "), index (k) partition by day");
 
             assertQuery0("ts\tk\tavg\n", "test", "ts");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertTrue(metadata.isDedupKey(0));
@@ -1323,8 +1366,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day");
 
             assertQuery0("ts\tdoubleV\tavg\n", "test", "ts");
-            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
-            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
+            assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, "test", query, TABLE1, 30, 's');
         });
     }
 
@@ -1391,6 +1434,30 @@ public class CreateMatViewTest extends AbstractCairoTest {
             refresher.join();
 
             Assert.assertEquals(0, errorCounter.get());
+        });
+    }
+
+    @Test
+    public void testCreateTimerMatViewModelToSink() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select ts, k, avg(v) from " + TABLE1 + " sample by 30s";
+            final String sql = "create materialized view test refresh start '2021-01-01T01:01:00.000000Z' time zone 'Europe/Berlin' every 42m as " + query;
+
+            sink.clear();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final ExecutionModel model = compiler.testCompileModel(sql, sqlExecutionContext);
+                assertEquals(ExecutionModel.CREATE_MAT_VIEW, model.getModelType());
+                ((Sinkable) model).toSink(sink);
+                TestUtils.assertEquals(
+                        "create materialized view test with base " + TABLE1 + " refresh " +
+                                "start '2021-01-01T01:01:00.000000Z' time zone 'Europe/Berlin' every 42m as (" +
+                                "select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00')" +
+                                ")",
+                        sink
+                );
+            }
         });
     }
 
@@ -1584,14 +1651,15 @@ public class CreateMatViewTest extends AbstractCairoTest {
             MatViewDefinition def = new MatViewDefinition();
             try {
                 def.init(
-                        MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
+                        MatViewDefinition.IMMEDIATE_REFRESH_TYPE,
                         matViewToken,
                         query,
                         TABLE1,
                         30,
                         'K',
                         "Europe/Berlin",
-                        "00:00"
+                        "00:00",
+                        null
                 );
                 Assert.fail("exception expected");
             } catch (CairoException e) {
@@ -1600,14 +1668,15 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             try {
                 def.init(
-                        MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
+                        MatViewDefinition.IMMEDIATE_REFRESH_TYPE,
                         matViewToken,
                         query,
                         TABLE1,
                         30,
                         's',
                         "Oceania",
-                        "00:00"
+                        "00:00",
+                        "Europe/Berlin"
                 );
                 Assert.fail("exception expected");
             } catch (CairoException e) {
@@ -1615,14 +1684,15 @@ public class CreateMatViewTest extends AbstractCairoTest {
             }
             try {
                 def.init(
-                        MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
+                        MatViewDefinition.IMMEDIATE_REFRESH_TYPE,
                         matViewToken,
                         query,
                         TABLE1,
                         30,
                         's',
                         "Europe/Berlin",
-                        "T00:00"
+                        "T00:00",
+                        null
                 );
                 Assert.fail("exception expected");
             } catch (CairoException e) {
@@ -1734,14 +1804,15 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                     MatViewDefinition unknownDefinition = new MatViewDefinition();
                     unknownDefinition.init(
-                            MatViewDefinition.INCREMENTAL_REFRESH_TYPE + 42,
+                            MatViewDefinition.IMMEDIATE_REFRESH_TYPE + 42,
                             matViewToken,
                             matViewDefinition.getMatViewSql(),
                             TABLE1,
                             matViewDefinition.getSamplingInterval(),
                             matViewDefinition.getSamplingIntervalUnit(),
                             matViewDefinition.getTimeZone(),
-                            matViewDefinition.getTimeZoneOffset()
+                            matViewDefinition.getTimeZoneOffset(),
+                            null
                     );
                     AppendableBlock block = writer.append();
                     MatViewDefinition.append(unknownDefinition, block);
@@ -1771,16 +1842,34 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testShowCreateMatView() throws Exception {
+    public void testShowCreateImmediateMatView() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
             final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + ") partition by day TTL 3 WEEKS");
             assertQueryNoLeakCheck(
                     "ddl\n" +
-                            "CREATE MATERIALIZED VIEW 'test' WITH BASE 'table1' REFRESH INCREMENTAL AS ( \n" +
+                            "CREATE MATERIALIZED VIEW 'test' WITH BASE 'table1' REFRESH IMMEDIATE AS (\n" +
                             "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
                             ") PARTITION BY DAY TTL 3 WEEKS;\n",
+                    "show create materialized view test",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testShowCreateManualMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+            execute("create materialized view test refresh manual as " + query);
+            assertQueryNoLeakCheck(
+                    "ddl\n" +
+                            "CREATE MATERIALIZED VIEW 'test' WITH BASE 'table1' REFRESH MANUAL AS (\n" +
+                            "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
+                            ") PARTITION BY DAY;\n",
                     "show create materialized view test",
                     null,
                     false
@@ -1823,6 +1912,24 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 30,
                 "materialized view does not exist [view=test]"
         );
+    }
+
+    @Test
+    public void testShowCreateTimerMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+            execute("create materialized view test refresh start '2020-01-01T02:23:59.900000Z' time zone 'Europe/Paris' every 7d as " + query);
+            assertQueryNoLeakCheck(
+                    "ddl\n" +
+                            "CREATE MATERIALIZED VIEW 'test' WITH BASE 'table1' REFRESH START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' EVERY 7d AS (\n" +
+                            "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
+                            ") PARTITION BY DAY;\n",
+                    "show create materialized view test",
+                    null,
+                    false
+            );
+        });
     }
 
     @Test
@@ -1911,7 +2018,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             long samplingInterval,
             char samplingIntervalUnit,
             String timeZone,
-            String timeZoneOffset
+            String timeZoneOffset,
+            String timerTimeZone
     ) {
         final MatViewDefinition matViewDefinition = getMatViewDefinition(name);
         assertNotNull(matViewDefinition);
@@ -1924,14 +2032,15 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertEquals(samplingIntervalUnit, matViewDefinition.getSamplingIntervalUnit());
         assertEquals(timeZone, timeZone != null ? matViewDefinition.getTimeZone() : null);
         assertEquals(timeZoneOffset != null ? timeZoneOffset : "00:00", matViewDefinition.getTimeZoneOffset());
+        assertEquals(timerTimeZone, timerTimeZone != null ? matViewDefinition.getTimerTimeZone() : null);
     }
 
     private static void assertMatViewDefinition(int refreshType, String name, String query, String baseTableName, int samplingInterval, char samplingIntervalUnit) {
-        assertMatViewDefinition(refreshType, name, query, baseTableName, samplingInterval, samplingIntervalUnit, null, null);
+        assertMatViewDefinition(refreshType, name, query, baseTableName, samplingInterval, samplingIntervalUnit, null, null, null);
     }
 
     private static void assertMatViewDefinitionFile(int refreshType, String name, String query, String baseTableName, int samplingInterval, char samplingIntervalUnit) {
-        assertMatViewDefinitionFile(refreshType, name, query, baseTableName, samplingInterval, samplingIntervalUnit, null, null);
+        assertMatViewDefinitionFile(refreshType, name, query, baseTableName, samplingInterval, samplingIntervalUnit, null, null, null);
     }
 
     private static void assertMatViewDefinitionFile(
@@ -1942,7 +2051,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             long samplingInterval,
             char samplingIntervalUnit,
             String timeZone,
-            String timeZoneOffset
+            String timeZoneOffset,
+            String timerTimeZone
     ) {
         final TableToken matViewToken = engine.getTableTokenIfExists(name);
         try (
@@ -1967,6 +2077,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertEquals(samplingIntervalUnit, matViewDefinition.getSamplingIntervalUnit());
             assertEquals(timeZone, Chars.toString(matViewDefinition.getTimeZone()));
             assertEquals(timeZoneOffset != null ? timeZoneOffset : "00:00", matViewDefinition.getTimeZoneOffset());
+            assertEquals(timerTimeZone, Chars.toString(matViewDefinition.getTimerTimeZone()));
         }
     }
 
@@ -2032,8 +2143,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
         try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists(matViewName))) {
             assertEquals(expectedPartitionBy, metadata.getPartitionBy());
         }
-        assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, matViewName, query, TABLE1, samplingInterval, samplingIntervalUnit);
-        assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, matViewName, query, TABLE1, samplingInterval, samplingIntervalUnit);
+        assertMatViewDefinition(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, matViewName, query, TABLE1, samplingInterval, samplingIntervalUnit);
+        assertMatViewDefinitionFile(MatViewDefinition.IMMEDIATE_REFRESH_TYPE, matViewName, query, TABLE1, samplingInterval, samplingIntervalUnit);
     }
 
     private void testCreateMatViewNonDeterministicFunctionInSelect(String func, String columnName) throws Exception {
