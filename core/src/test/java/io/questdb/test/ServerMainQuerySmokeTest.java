@@ -27,7 +27,9 @@ package io.questdb.test;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -35,9 +37,11 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
+import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.Arrays;
@@ -46,6 +50,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.cutlass.pgwire.BasePGTest.assertResultSet;
+import static io.questdb.test.tools.TestUtils.assertContains;
 import static io.questdb.test.tools.TestUtils.unchecked;
 
 @RunWith(Parameterized.class)
@@ -84,6 +89,47 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 PropertyKey.DEBUG_ENABLE_TEST_FACTORIES + "=true"
         ));
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testParallelFilterOomError() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+        try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+            serverMain.start();
+            try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
+                try (Statement stat = conn.createStatement()) {
+                    stat.execute(
+                            "create table x as (" +
+                                    " select timestamp_sequence(0, 1000000) ts, x" +
+                                    " from long_sequence(10000000)" +
+                                    ") timestamp(ts);"
+                    );
+                }
+
+                final String expected = "count[BIGINT]\n" +
+                        "9999999\n";
+                try (PreparedStatement stmt = conn.prepareStatement("select count() from x where x != 1")) {
+                    // Set RSS limit, so that the SELECT will fail with OOM.
+                    Unsafe.setRssMemLimit(39 * Numbers.SIZE_1MB);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, rs);
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        assertContains(e.getMessage(), "global RSS memory limit exceeded");
+                    }
+
+                    // Remove the limit, this time the query should succeed.
+                    Unsafe.setRssMemLimit(0);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, rs);
+                    }
+                } finally {
+                    Unsafe.setRssMemLimit(0);
+                }
+            }
+        }
     }
 
     @Test

@@ -374,7 +374,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     if (invalid) {
                         return "invalid";
                     }
-                    return (lastRefreshFinishTimestamp != Numbers.LONG_NULL && lastRefreshStartTimestamp > lastRefreshFinishTimestamp)
+                    return (lastRefreshStartTimestamp != Numbers.LONG_NULL && lastRefreshStartTimestamp > lastRefreshFinishTimestamp)
                             ? "refreshing"
                             : "valid";
                 }

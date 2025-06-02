@@ -5179,6 +5179,7 @@ public class SqlOptimiser implements Mutable {
                 tsFloorIntervalParam.token = characterStoreEntry.toImmutable();
                 tsFloorIntervalParam.paramCount = 0;
                 tsFloorIntervalParam.type = CONSTANT;
+                tsFloorIntervalParam.position = sampleBy.position;
 
                 final ExpressionNode tsFloorTsParam = expressionNodePool.next();
                 tsFloorTsParam.token = timestampColumn;

@@ -913,7 +913,7 @@ public class SqlParser {
                 }
                 tok = tok(lexer, "interval");
                 final int interval = Timestamps.getStrideMultiple(tok);
-                final char unit = Timestamps.getStrideUnit(tok);
+                final char unit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
                 refreshType = MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE;
                 tableOpBuilder.setMatViewTimer(start, interval, unit);
