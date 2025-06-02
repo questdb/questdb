@@ -45,6 +45,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 
 public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
@@ -52,6 +53,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
     private final AsOfJoinRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
+    private final long toleranceIntervalMicros;
 
     public AsOfJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -67,7 +69,8 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             RecordValueSink slaveValueSink,
             IntList columnIndex, // this column index will be used to retrieve symbol tables from underlying slave
             JoinContext joinContext,
-            ColumnFilter masterTableKeyColumns
+            ColumnFilter masterTableKeyColumns,
+            long toleranceIntervalMicros
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         try {
@@ -87,6 +90,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                     columnIndex
             );
             this.columnIndex = columnIndex;
+            this.toleranceIntervalMicros = toleranceIntervalMicros;
         } catch (Throwable th) {
             close();
             throw th;
@@ -236,7 +240,12 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                 value = key.findValue();
                 if (value != null) {
                     value.setMapRecordHere();
-                    record.hasSlave(true);
+                    if (toleranceIntervalMicros == Numbers.LONG_NULL) {
+                        record.hasSlave(true);
+                    } else {
+                        long slaveRecordTimestamp = joinKeyMap.getRecord().getTimestamp(slaveTimestampIndex);
+                        record.hasSlave(slaveRecordTimestamp >= masterTimestamp - toleranceIntervalMicros);
+                    }
                 } else {
                     record.hasSlave(false);
                 }

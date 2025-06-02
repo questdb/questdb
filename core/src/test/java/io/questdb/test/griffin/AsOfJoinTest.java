@@ -488,6 +488,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
             TestUtils.assertContains(sink, "AsOf Join Light");
             assertQuery(expected, query, null, "ts", false, true);
 
+            assertQueryFullFatNoLeakCheck(expected, query, "ts", false, true, true);
+
 
             // non-keyed join and slave supports timeframe -> should use AsOfJoinNoKeyFastRecordCursorFactory
             query = "SELECT * FROM t1 ASOF JOIN t2 TOLERANCE 2s;";
@@ -512,7 +514,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
             assertQuery(expected, query, null, "ts", false, true);
 
-            // non-keyed join,slave has a filter, no hint -> should use AsOfJoinNoKeyRecordCursorFactory
+            // non-keyed join, slave has a filter, no hint -> should use AsOfJoinNoKeyRecordCursorFactory
             query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "AsOf Join");

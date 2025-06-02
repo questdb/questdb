@@ -681,7 +681,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordValueSink slaveValueSink,
             IntList columnIndex,
             JoinContext joinContext,
-            ColumnFilter masterTableKeyColumns
+            ColumnFilter masterTableKeyColumns,
+            long toleranceInterval
     ) {
         return new AsOfJoinRecordCursorFactory(
                 configuration,
@@ -697,7 +698,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 slaveValueSink,
                 columnIndex,
                 joinContext,
-                masterTableKeyColumns
+                masterTableKeyColumns,
+                toleranceInterval
         );
     }
 
@@ -715,8 +717,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordValueSink slaveValueSink,
             IntList columnIndex,
             JoinContext joinContext,
-            ColumnFilter masterTableKeyColumns
+            ColumnFilter masterTableKeyColumns,
+            long toleranceIntervalMicros
     ) {
+        assert toleranceIntervalMicros == Numbers.LONG_NULL : "Tolerance interval for LT JOIN is not implemented";
         return new LtJoinRecordCursorFactory(
                 configuration,
                 metadata,
@@ -1079,7 +1083,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             CharSequence slaveAlias,
             int joinPosition,
             FullFatJoinGenerator generator,
-            JoinContext joinContext
+            JoinContext joinContext,
+            long toleranceIntervalMicros
     ) throws SqlException {
         // create hash set of key columns to easily find them
         intHashSet.clear();
@@ -1189,7 +1194,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB), // slaveValueSink
                     columnIndex,
                     joinContext,
-                    masterTableKeyColumns
+                    masterTableKeyColumns,
+                    toleranceIntervalMicros
             );
 
         } catch (Throwable e) {
@@ -2637,7 +2643,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaveModel.getName(),
                                             slaveModel.getJoinKeywordPosition(),
                                             CREATE_FULL_FAT_AS_OF_JOIN,
-                                            slaveModel.getContext()
+                                            slaveModel.getContext(),
+                                            toleranceInterval
                                     );
                                 }
                                 masterAlias = null;
@@ -2699,7 +2706,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaveModel.getName(),
                                             slaveModel.getJoinKeywordPosition(),
                                             CREATE_FULL_FAT_LT_JOIN,
-                                            slaveModel.getContext()
+                                            slaveModel.getContext(),
+                                            Numbers.LONG_NULL
                                     );
                                 }
                                 masterAlias = null;
@@ -6510,7 +6518,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 RecordValueSink slaveValueSink,
                 IntList columnIndex,
                 JoinContext joinContext,
-                ColumnFilter masterTableKeyColumns
+                ColumnFilter masterTableKeyColumns,
+                long toleranceIntervalMicros
         );
     }
 
