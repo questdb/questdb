@@ -505,7 +505,7 @@ inline void measure_time(int index, T func) {
 
 extern "C" {
 
-DECLARE_DISPATCHER(platform_memcpy) ;
+DECLARE_DISPATCHER(platform_memcpy);
 JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memcpy0
         (JNIEnv *e, jclass cl, jlong src, jlong dst, jlong len) {
     platform_memcpy(
@@ -515,7 +515,7 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memcpy0
     );
 }
 
-DECLARE_DISPATCHER(platform_memcmp) ;
+DECLARE_DISPATCHER(platform_memcmp);
 JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_memcmp
         (JNIEnv *e, jclass cl, jlong a, jlong b, jlong len) {
     int res;
@@ -528,7 +528,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_memcmp
     return res;
 }
 
-DECLARE_DISPATCHER(platform_memmove) ;
+DECLARE_DISPATCHER(platform_memmove);
 JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memmove
         (JNIEnv *e, jclass cl, jlong dst, jlong src, jlong len) {
     platform_memmove(
@@ -538,7 +538,7 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memmove
     );
 }
 
-DECLARE_DISPATCHER(platform_memset) ;
+DECLARE_DISPATCHER(platform_memset);
 JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memset
         (JNIEnv *e, jclass cl, jlong dst, jlong len, jint value) {
     platform_memset(
@@ -548,7 +548,7 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memset
     );
 }
 
-DECLARE_DISPATCHER(merge_copy_var_column_int32) ;
+DECLARE_DISPATCHER(merge_copy_var_column_int32);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_oooMergeCopyStrColumn(JNIEnv *env, jclass cl,
                                                jlong merge_index,
@@ -575,7 +575,7 @@ Java_io_questdb_std_Vect_oooMergeCopyStrColumn(JNIEnv *env, jclass cl,
     });
 }
 
-DECLARE_DISPATCHER(merge_copy_varchar_column) ;
+DECLARE_DISPATCHER(merge_copy_varchar_column);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_oooMergeCopyVarcharColumn(JNIEnv *env, jclass cl,
                                                    jlong merge_index,
@@ -602,10 +602,37 @@ Java_io_questdb_std_Vect_oooMergeCopyVarcharColumn(JNIEnv *env, jclass cl,
     });
 }
 
+DECLARE_DISPATCHER(merge_copy_array_column);
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_oooMergeCopyArrayColumn(JNIEnv *env, jclass cl,
+                                                 jlong merge_index,
+                                                 jlong merge_index_size,
+                                                 jlong src_data_fix,
+                                                 jlong src_data_var,
+                                                 jlong src_ooo_fix,
+                                                 jlong src_ooo_var,
+                                                 jlong dst_fix,
+                                                 jlong dst_var,
+                                                 jlong dst_var_offset) {
+    measure_time(31, [=]() {
+        merge_copy_array_column(
+                reinterpret_cast<index_t *>(merge_index),
+                __JLONG_REINTERPRET_CAST__(int64_t, merge_index_size),
+                reinterpret_cast<int64_t *>(src_data_fix),
+                reinterpret_cast<char *>(src_data_var),
+                reinterpret_cast<int64_t *>(src_ooo_fix),
+                reinterpret_cast<char *>(src_ooo_var),
+                reinterpret_cast<int64_t *>(dst_fix),
+                reinterpret_cast<char *>(dst_var),
+                __JLONG_REINTERPRET_CAST__(int64_t, dst_var_offset)
+        );
+    });
+}
+
 // 1 oooMergeCopyStrColumnWithTop removed and now executed as Merge Copy without Top
 // 2 oooMergeCopyBinColumnWithTop removed and now executed as Merge Copy without Top
 
-DECLARE_DISPATCHER(merge_copy_var_column_int64) ;
+DECLARE_DISPATCHER(merge_copy_var_column_int64);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_oooMergeCopyBinColumn(JNIEnv *env, jclass cl,
                                                jlong merge_index,
@@ -980,6 +1007,51 @@ Java_io_questdb_std_Vect_mergeShuffleVarcharColumnFromManyAddresses(
     return row_count;
 }
 
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_mergeShuffleArrayColumnFromManyAddresses(
+        JNIEnv *env,
+        jclass cl,
+        jlong indexFormat,
+        jlong srcPrimaryAddresses,
+        jlong srcSecondaryAddresses,
+        jlong dstPrimaryAddress,
+        jlong dstSecondaryAddress,
+        jlong mergeIndex,
+        jlong dstVarOffset,
+        jlong dstDataSize
+) {
+    auto merge_index_address = reinterpret_cast<const index_l *>(mergeIndex);
+    auto src_primary = reinterpret_cast<const char **>(srcPrimaryAddresses);
+    auto src_secondary = reinterpret_cast<const int64_t **>(srcSecondaryAddresses);
+    auto dst_primary = reinterpret_cast<char *>(dstPrimaryAddress);
+    auto dst_secondary = reinterpret_cast<int64_t *>(dstSecondaryAddress);
+    auto dst_var_offset = __JLONG_REINTERPRET_CAST__(int64_t, dstVarOffset);
+    auto dst_data_size = __JLONG_REINTERPRET_CAST__(int64_t, dstDataSize);
+    auto row_count = read_row_count(indexFormat);
+    auto index_segment_encoding_bytes = read_segment_bytes(indexFormat);
+    auto format = read_format(indexFormat);
+
+    if (format != shuffle_index_format && format != dedup_shuffle_index_format) {
+        // Error, invalid format
+        return -2;
+    }
+
+    int64_t end_dst_var_offset = merge_shuffle_array_column_from_many_addresses(
+            src_primary, src_secondary,
+            dst_primary, dst_secondary,
+            merge_index_address, row_count,
+            dst_var_offset,
+            index_segment_encoding_bytes * 8u,
+            dst_data_size
+    );
+    if (end_dst_var_offset < 0) {
+        // Error occurred, this is error code
+        return end_dst_var_offset;
+    }
+
+    return row_count;
+}
+
 
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
@@ -1204,7 +1276,7 @@ Java_io_questdb_std_Vect_mergeTwoLongIndexesAsc(
     );
 }
 
-DECLARE_DISPATCHER(re_shuffle_int32) ;
+DECLARE_DISPATCHER(re_shuffle_int32);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_indexReshuffle32Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
                                              jlong count) {
@@ -1218,7 +1290,7 @@ Java_io_questdb_std_Vect_indexReshuffle32Bit(JNIEnv *env, jclass cl, jlong pSrc,
     });
 }
 
-DECLARE_DISPATCHER(re_shuffle_int64) ;
+DECLARE_DISPATCHER(re_shuffle_int64);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_indexReshuffle64Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
                                              jlong count) {
@@ -1232,7 +1304,7 @@ Java_io_questdb_std_Vect_indexReshuffle64Bit(JNIEnv *env, jclass cl, jlong pSrc,
     });
 }
 
-DECLARE_DISPATCHER(re_shuffle_128bit) ;
+DECLARE_DISPATCHER(re_shuffle_128bit);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_indexReshuffle128Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
                                               jlong count) {
@@ -1246,7 +1318,7 @@ Java_io_questdb_std_Vect_indexReshuffle128Bit(JNIEnv *env, jclass cl, jlong pSrc
     });
 }
 
-DECLARE_DISPATCHER(re_shuffle_256bit) ;
+DECLARE_DISPATCHER(re_shuffle_256bit);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_indexReshuffle256Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
                                               jlong count) {
@@ -1329,7 +1401,7 @@ Java_io_questdb_std_Vect_mergeShuffle32Bit(JNIEnv *env, jclass cl, jlong src1, j
     });
 }
 
-DECLARE_DISPATCHER(merge_shuffle_int64) ;
+DECLARE_DISPATCHER(merge_shuffle_int64);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_mergeShuffle64Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
                                            jlong count) {
@@ -1375,7 +1447,7 @@ Java_io_questdb_std_Vect_mergeShuffle256Bit(JNIEnv *env, jclass cl, jlong src1, 
 
 // Methods 13-16 were mergeShuffleWithTop(s) and replaced with calls to simple mergeShuffle(s)
 
-DECLARE_DISPATCHER(flatten_index) ;
+DECLARE_DISPATCHER(flatten_index);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_flattenIndex(JNIEnv *env, jclass cl, jlong pIndex,
                                       jlong count) {
@@ -1412,7 +1484,7 @@ Java_io_questdb_std_Vect_makeTimestampIndex(JNIEnv *env, jclass cl, jlong pData,
     });
 }
 
-DECLARE_DISPATCHER(shift_timestamp_index) ;
+DECLARE_DISPATCHER(shift_timestamp_index);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_shiftTimestampIndex(JNIEnv *env, jclass cl, jlong pSrc, jlong count, jlong pDest) {
     measure_time(31, [=]() {
@@ -1424,7 +1496,7 @@ Java_io_questdb_std_Vect_shiftTimestampIndex(JNIEnv *env, jclass cl, jlong pSrc,
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_int64) ;
+DECLARE_DISPATCHER(set_memory_vanilla_int64);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryLong(JNIEnv *env, jclass cl, jlong pData, jlong value,
                                        jlong count) {
@@ -1437,7 +1509,7 @@ Java_io_questdb_std_Vect_setMemoryLong(JNIEnv *env, jclass cl, jlong pData, jlon
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_int32) ;
+DECLARE_DISPATCHER(set_memory_vanilla_int32);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryInt(JNIEnv *env, jclass cl, jlong pData, jint value,
                                       jlong count) {
@@ -1450,7 +1522,7 @@ Java_io_questdb_std_Vect_setMemoryInt(JNIEnv *env, jclass cl, jlong pData, jint 
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_double) ;
+DECLARE_DISPATCHER(set_memory_vanilla_double);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryDouble(JNIEnv *env, jclass cl, jlong pData, jdouble value,
                                          jlong count) {
@@ -1463,7 +1535,7 @@ Java_io_questdb_std_Vect_setMemoryDouble(JNIEnv *env, jclass cl, jlong pData, jd
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_float) ;
+DECLARE_DISPATCHER(set_memory_vanilla_float);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryFloat(JNIEnv *env, jclass cl, jlong pData, jfloat value,
                                         jlong count) {
@@ -1476,7 +1548,7 @@ Java_io_questdb_std_Vect_setMemoryFloat(JNIEnv *env, jclass cl, jlong pData, jfl
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_short) ;
+DECLARE_DISPATCHER(set_memory_vanilla_short);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryShort(JNIEnv *env, jclass cl, jlong pData, jshort value,
                                         jlong count) {
@@ -1490,12 +1562,12 @@ Java_io_questdb_std_Vect_setMemoryShort(JNIEnv *env, jclass cl, jlong pData, jsh
 }
 
 
-DECLARE_DISPATCHER(set_var_refs_32_bit) ;
+DECLARE_DISPATCHER(set_string_column_null_refs);
 JNIEXPORT void JNICALL
-Java_io_questdb_std_Vect_setVarColumnRefs32Bit(JNIEnv *env, jclass cl, jlong pData, jlong offset,
+Java_io_questdb_std_Vect_setStringColumnNullRefs(JNIEnv *env, jclass cl, jlong pData, jlong offset,
                                                jlong count) {
     measure_time(24, [=]() {
-        set_var_refs_32_bit(
+        set_string_column_null_refs(
                 reinterpret_cast<int64_t *>(pData),
                 __JLONG_REINTERPRET_CAST__(int64_t, offset),
                 __JLONG_REINTERPRET_CAST__(int64_t, count)
@@ -1503,12 +1575,12 @@ Java_io_questdb_std_Vect_setVarColumnRefs32Bit(JNIEnv *env, jclass cl, jlong pDa
     });
 }
 
-DECLARE_DISPATCHER(set_var_refs_64_bit) ;
+DECLARE_DISPATCHER(set_binary_column_null_refs);
 JNIEXPORT void JNICALL
-Java_io_questdb_std_Vect_setVarColumnRefs64Bit(JNIEnv *env, jclass cl, jlong pData, jlong offset,
+Java_io_questdb_std_Vect_setBinaryColumnNullRefs(JNIEnv *env, jclass cl, jlong pData, jlong offset,
                                                jlong count) {
     measure_time(25, [=]() {
-        set_var_refs_64_bit(
+        set_binary_column_null_refs(
                 reinterpret_cast<int64_t *>(pData),
                 __JLONG_REINTERPRET_CAST__(int64_t, offset),
                 __JLONG_REINTERPRET_CAST__(int64_t, count)
@@ -1516,7 +1588,7 @@ Java_io_questdb_std_Vect_setVarColumnRefs64Bit(JNIEnv *env, jclass cl, jlong pDa
     });
 }
 
-DECLARE_DISPATCHER(copy_index) ;
+DECLARE_DISPATCHER(copy_index);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_oooCopyIndex(JNIEnv *env, jclass cl, jlong pIndex, jlong index_size,
                                       jlong pDest) {
@@ -1529,7 +1601,7 @@ Java_io_questdb_std_Vect_oooCopyIndex(JNIEnv *env, jclass cl, jlong pIndex, jlon
     });
 }
 
-DECLARE_DISPATCHER(shift_copy) ;
+DECLARE_DISPATCHER(shift_copy);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_shiftCopyFixedSizeColumnData(JNIEnv *env, jclass cl, jlong shift, jlong src, jlong srcLo,
                                                       jlong srcHi, jlong dst) {
@@ -1544,7 +1616,7 @@ Java_io_questdb_std_Vect_shiftCopyFixedSizeColumnData(JNIEnv *env, jclass cl, jl
     });
 }
 
-DECLARE_DISPATCHER(shift_copy_varchar_aux) ;
+DECLARE_DISPATCHER(shift_copy_varchar_aux);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_shiftCopyVarcharColumnAux(JNIEnv *env, jclass cl, jlong shift, jlong src, jlong srcLo,
                                                    jlong srcHi, jlong dst) {
@@ -1559,7 +1631,7 @@ Java_io_questdb_std_Vect_shiftCopyVarcharColumnAux(JNIEnv *env, jclass cl, jlong
     });
 }
 
-DECLARE_DISPATCHER(copy_index_timestamp) ;
+DECLARE_DISPATCHER(copy_index_timestamp);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_copyFromTimestampIndex(JNIEnv *env, jclass cl, jlong pIndex, jlong indexLo, jlong indexHi,
                                                 jlong pTs) {
@@ -1573,7 +1645,7 @@ Java_io_questdb_std_Vect_copyFromTimestampIndex(JNIEnv *env, jclass cl, jlong pI
     });
 }
 
-DECLARE_DISPATCHER(set_varchar_null_refs) ;
+DECLARE_DISPATCHER(set_varchar_null_refs);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setVarcharColumnNullRefs(JNIEnv *env, jclass cl, jlong aux, jlong offset,
                                                   jlong count) {
@@ -1582,6 +1654,34 @@ Java_io_questdb_std_Vect_setVarcharColumnNullRefs(JNIEnv *env, jclass cl, jlong 
                 reinterpret_cast<int64_t *>(aux),
                 __JLONG_REINTERPRET_CAST__(int64_t, offset),
                 __JLONG_REINTERPRET_CAST__(int64_t, count)
+        );
+    });
+}
+
+DECLARE_DISPATCHER(set_array_null_refs);
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_setArrayColumnNullRefs(JNIEnv *env, jclass cl, jlong aux, jlong offset,
+                                                  jlong count) {
+    measure_time(31, [=]() {
+        set_array_null_refs(
+                reinterpret_cast<int64_t *>(aux),
+                __JLONG_REINTERPRET_CAST__(int64_t, offset),
+                __JLONG_REINTERPRET_CAST__(int64_t, count)
+        );
+    });
+}
+
+DECLARE_DISPATCHER(shift_copy_array_aux);
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_shiftCopyArrayColumnAux(JNIEnv *env, jclass cl, jlong shift, jlong src, jlong srcLo,
+                                                 jlong srcHi, jlong dst) {
+    measure_time(32, [=]() {
+        shift_copy_array_aux(
+                __JLONG_REINTERPRET_CAST__(int64_t, shift),
+                reinterpret_cast<int64_t *>(src),
+                __JLONG_REINTERPRET_CAST__(int64_t, srcLo),
+                __JLONG_REINTERPRET_CAST__(int64_t, srcHi),
+                reinterpret_cast<int64_t *>(dst)
         );
     });
 }
@@ -1614,20 +1714,20 @@ Java_io_questdb_std_Vect_resetPerformanceCounters(JNIEnv *env, jclass cl) {
 }
 
 JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_sortVarColumn(JNIEnv *env, jclass cl, jlong mergedTimestampsAddr, jlong valueCount,
+Java_io_questdb_std_Vect_sortStringColumn(JNIEnv *env, jclass cl, jlong mergedTimestampsAddr, jlong valueCount,
                                        jlong srcDataAddr, jlong srcIndxAddr, jlong tgtDataAddr, jlong tgtIndxAddr) {
 
     const index_t *index = reinterpret_cast<index_t *> (mergedTimestampsAddr);
-    const int64_t count = __JLONG_REINTERPRET_CAST__(int64_t, valueCount);
+    const auto count = __JLONG_REINTERPRET_CAST__(int64_t, valueCount);
     const char *src_data = reinterpret_cast<const char *>(srcDataAddr);
-    const int64_t *src_index = reinterpret_cast<const int64_t *>(srcIndxAddr);
+    const auto *src_index = reinterpret_cast<const int64_t *>(srcIndxAddr);
     char *tgt_data = reinterpret_cast<char *>(tgtDataAddr);
-    int64_t *tgt_index = reinterpret_cast<int64_t *>(tgtIndxAddr);
+    auto *tgt_index = reinterpret_cast<int64_t *>(tgtIndxAddr);
 
     int64_t offset = 0;
     for (int64_t i = 0; i < count; ++i) {
         MM_PREFETCH_T0(index + i + 64);
-        const int64_t row = index[i].i;
+        const uint64_t row = index[i].i;
         const int64_t o1 = src_index[row];
         const int64_t o2 = src_index[row + 1];
         const int64_t len = o2 - o1;
@@ -1644,16 +1744,16 @@ Java_io_questdb_std_Vect_sortVarcharColumn(JNIEnv *env, jclass cl, jlong mergedT
                                            jlong srcDataAddr, jlong srcAuxAddr, jlong tgtDataAddr, jlong tgtAuxAddr) {
 
     const index_t *index = reinterpret_cast<index_t *> (mergedTimestampsAddr);
-    const int64_t count = __JLONG_REINTERPRET_CAST__(int64_t, valueCount);
+    const auto count = __JLONG_REINTERPRET_CAST__(int64_t, valueCount);
     const char *src_data = reinterpret_cast<const char *>(srcDataAddr);
-    const int64_t *src_aux = reinterpret_cast<const int64_t *>(srcAuxAddr);
+    const auto *src_aux = reinterpret_cast<const int64_t *>(srcAuxAddr);
     char *tgt_data = reinterpret_cast<char *>(tgtDataAddr);
-    int64_t *tgt_aux = reinterpret_cast<int64_t *>(tgtAuxAddr);
+    auto *tgt_aux = reinterpret_cast<int64_t *>(tgtAuxAddr);
 
     int64_t offset = 0;
     for (int64_t i = 0; i < count; ++i) {
         MM_PREFETCH_T0(index + i + 64);
-        const int64_t row = index[i].i;
+        const uint64_t row = index[i].i;
         const int64_t a1 = src_aux[2 * row];
         const int64_t a2 = src_aux[2 * row + 1];
         tgt_aux[2 * i] = a1;
@@ -1665,6 +1765,37 @@ Java_io_questdb_std_Vect_sortVarcharColumn(JNIEnv *env, jclass cl, jlong mergedT
             platform_memcpy(reinterpret_cast<void *>(tgt_data + offset),
                             reinterpret_cast<const void *>(src_data + (a2 >> 16)),
                             size);
+            offset += size;
+        }
+    }
+    return __JLONG_REINTERPRET_CAST__(jlong, offset);
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_sortArrayColumn(JNIEnv *env, jclass cl, jlong mergedTimestampsAddr, jlong valueCount,
+                                         jlong srcDataAddr, jlong srcAuxAddr, jlong tgtDataAddr, jlong tgtAuxAddr) {
+
+    const index_t *index = reinterpret_cast<index_t *> (mergedTimestampsAddr);
+    const auto count = __JLONG_REINTERPRET_CAST__(int64_t, valueCount);
+    const char *src_data = reinterpret_cast<const char *>(srcDataAddr);
+    const auto *src_aux = reinterpret_cast<const int64_t *>(srcAuxAddr);
+    char *tgt_data = reinterpret_cast<char *>(tgtDataAddr);
+    auto *tgt_aux = reinterpret_cast<int64_t *>(tgtAuxAddr);
+
+    int64_t offset = 0;
+    for (int64_t i = 0; i < count; ++i) {
+        MM_PREFETCH_T0(index + i + 64);
+        const uint64_t row = index[i].i;
+        const int64_t src_offset = src_aux[2 * row] & OFFSET_MAX;
+        const int64_t size = src_aux[2 * row + 1] & ARRAY_SIZE_MAX;
+        tgt_aux[2 * i] = offset;
+        tgt_aux[2 * i + 1] = size;
+        if (size > 0) {
+            platform_memcpy(
+                    reinterpret_cast<void *>(tgt_data + offset),
+                    reinterpret_cast<const void *>(src_data + src_offset),
+                    size
+            );
             offset += size;
         }
     }

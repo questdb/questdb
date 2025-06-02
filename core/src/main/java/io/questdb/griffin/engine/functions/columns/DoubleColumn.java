@@ -25,18 +25,18 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class DoubleColumn extends DoubleFunction implements ScalarFunction {
+public class DoubleColumn extends DoubleFunction implements Function {
     private static final ObjList<DoubleColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public DoubleColumn(int columnIndex) {
+    private DoubleColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

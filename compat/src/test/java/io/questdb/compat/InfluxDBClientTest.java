@@ -363,7 +363,8 @@ public class InfluxDBClientTest extends AbstractTest {
     @Test
     public void testLineDoesNotFitBuffer() throws Exception {
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
-            put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512");
+            put(PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE.getEnvVarName(), "512");
+            put(PropertyKey.HTTP_RECV_BUFFER_SIZE.getEnvVarName(), "128");
             put(PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "15");
         }})) {
             serverMain.start();
@@ -388,7 +389,8 @@ public class InfluxDBClientTest extends AbstractTest {
                         "very_long_field=92827791";
 
                 assertRequestErrorContains(influxDB, points, line, "{\"code\":\"request too large\"," +
-                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):unable to read data: ILP line does not fit QuestDB ILP buffer size\"," +
+                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):transaction is too large, " +
+                        "either flush more frequently or increase buffer size \\\"line.http.max.recv.buffer.size\\\" [maxBufferSize=512 B]\"," +
                         "\"line\":1,\"errorId\":");
 
                 // Fail on second line
@@ -408,7 +410,8 @@ public class InfluxDBClientTest extends AbstractTest {
                         "very_long_field=92827791";
 
                 assertRequestErrorContains(influxDB, points, line2, "{\"code\":\"request too large\"," +
-                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):unable to read data: ILP line does not fit QuestDB ILP buffer size\"," +
+                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):transaction is too large," +
+                        " either flush more frequently or increase buffer size \\\"line.http.max.recv.buffer.size\\\" [maxBufferSize=512 B]\"," +
                         "\"line\":2,\"errorId\":");
             }
         }

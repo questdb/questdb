@@ -71,6 +71,38 @@ class TestRunner {
                 case 'date':
                     resolvedParameters.push(value);
                     break;
+                case 'array_float8':
+                    // Handle floating point arrays like {-1, 2, 3, 4, 5.42}
+                    if (typeof value === 'string') {
+                        // Handle empty array case "{}"
+                        if (value.trim() === '{}') {
+                            resolvedParameters.push([]);
+                            break;
+                        }
+
+                        // Strip curly braces and split by comma
+                        const strippedValue = value.replace(/^\{|\}$/g, '');
+                        // Convert each element to float, handling null values
+                        const floatArray = strippedValue.split(',').map(item => {
+                            const trimmedItem = item.trim();
+                            if (!trimmedItem) return undefined;
+                            if (trimmedItem.toLowerCase() === 'null') return null;
+                            return parseFloat(trimmedItem);
+                        }).filter(item => item !== undefined); // Filter out undefined values
+                        resolvedParameters.push(floatArray);
+                    }
+                    // If already an array, ensure all elements are floats or null
+                    else if (Array.isArray(value)) {
+                        const floatArray = value.map(item => {
+                            if (item === null || item === undefined) return null;
+                            return parseFloat(item);
+                        });
+                        resolvedParameters.push(floatArray);
+                    }
+                    else {
+                        throw new Error(`Invalid array_float8 value: ${value}`);
+                    }
+                    break;
                 default:
                     resolvedParameters.push(value);
             }
@@ -87,10 +119,26 @@ class TestRunner {
             // Pad or truncate to exactly 6 digits and add Z
             return `${datePart}.${(fractionPart + '000000').slice(0, 6)}Z`;
         }
-        // Handle numeric strings
-        // if (typeof value === 'string' && /^-?\d+(\.\d+)?$/.test(value)) {
-        //     return value.includes('.') ? parseFloat(value) : parseInt(value, 10);
+
+        // Handle array values if they come back as JavaScript arrays
+        if (Array.isArray(value)) {
+            // Format as PostgreSQL array string with proper handling of null values
+            return `{${value.map(v => {
+                if (v === null || v === undefined) return 'null';
+                if (typeof v === 'number') {
+                    // For integers, append .0, for decimals keep their original precision
+                    return Number.isInteger(v) ? `${v}.0` : v.toString();
+                }
+                return this.formatValue(v);
+            }).join(',')}}`;
+        }
+
+        // Handle array strings to ensure consistent format
+        // if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
+        //     // It's already a PostgreSQL array string, ensure numbers have .0 format
+        //     return value.replace(/(-?\d+)(?!\.)/g, '$1.0').replace(/\s+/g, '');
         // }
+
         return value;
     }
 

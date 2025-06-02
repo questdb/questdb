@@ -25,23 +25,26 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
-public class IndexedParameterLinkFunction implements ScalarFunction {
+public class IndexedParameterLinkFunction implements Function, FunctionExtension {
     private final int position;
     private final int variableIndex;
     private Function base;
@@ -61,6 +64,21 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     @Override
     public void close() {
         base = Misc.free(base);
+    }
+
+    @Override
+    public FunctionExtension extendedOps() {
+        return this;
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        return getBase().getArray(rec);
+    }
+
+    @Override
+    public int getArrayLength() {
+        return getBase().extendedOps().getArrayLength();
     }
 
     @Override
@@ -134,6 +152,11 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public @NotNull Interval getInterval(Record rec) {
+        return getBase().getInterval(rec);
+    }
+
+    @Override
     public long getLong(Record rec) {
         return getBase().getLong(rec);
     }
@@ -164,6 +187,11 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public Record getRecord(Record rec) {
+        return getBase().extendedOps().getRecord(rec);
+    }
+
+    @Override
     public RecordCursorFactory getRecordCursorFactory() {
         return getBase().getRecordCursorFactory();
     }
@@ -174,13 +202,28 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public CharSequence getStrA(Record rec, int arrayIndex) {
+        return getBase().extendedOps().getStrA(rec, arrayIndex);
+    }
+
+    @Override
     public CharSequence getStrA(Record rec) {
         return getBase().getStrA(rec);
     }
 
     @Override
+    public CharSequence getStrB(Record rec, int arrayIndex) {
+        return getBase().extendedOps().getStrB(rec, arrayIndex);
+    }
+
+    @Override
     public CharSequence getStrB(Record rec) {
         return getBase().getStrB(rec);
+    }
+
+    @Override
+    public int getStrLen(Record rec, int arrayIndex) {
+        return getBase().extendedOps().getStrLen(rec, arrayIndex);
     }
 
     @Override

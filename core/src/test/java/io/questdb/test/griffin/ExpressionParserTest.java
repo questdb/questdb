@@ -32,7 +32,10 @@ import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
+
+import static org.junit.Assert.assertEquals;
 
 public class ExpressionParserTest extends AbstractCairoTest {
     private final static RpnBuilder rpnBuilder = new RpnBuilder();
@@ -61,6 +64,37 @@ public class ExpressionParserTest extends AbstractCairoTest {
         x("a b <>all", "a != all(b)");
     }
 
+    @Ignore
+    @Test
+    public void testArrayCast() throws SqlException {
+        x("'{1, 2, 3, 4}' int[] cast", "cast('{1, 2, 3, 4}' as int[])");
+    }
+
+    @Test
+    public void testArrayConstruct() throws SqlException {
+        x("1 2 3 ARRAY", "ARRAY[1, 2, 3]");
+        x("1 2 ARRAY 3 ARRAY", "ARRAY[1, [2], 3]");
+        x("1 2 3 4 ARRAY ARRAY 5 ARRAY", "ARRAY[1, [2, [3, 4]], 5]");
+        x("x 1 []", "x[1]");
+        x("x 1 2 []", "x[1, 2]");
+        x("x.y 1 2 []", "x.y[1, 2]");
+        x("b i [] c i [] func", "func(b[i], c[i])");
+        x("1 2 func 3 ARRAY", "ARRAY[1, func(2), 3]");
+        x("1 func 2 []", "func(1)[2]");
+        x("1 2 func 3 [] 4 ARRAY", "ARRAY[1, func(2)[3], 4]");
+        x("1 2 func ARRAY 3 ARRAY", "ARRAY[1, [func(2)], 3]");
+        x("1 2 ARRAY 3 ARRAY", "ARRAY[1, ARRAY[2], 3]");
+        x("1 ARRAY 2 []", "ARRAY[1][2]");
+        x("1 2 ARRAY 3 [] 4 ARRAY", "ARRAY[1, ARRAY[2][3], 4]");
+    }
+
+    @Test
+    public void testArrayConstructInvalid() {
+        assertFail("ARRAY[1", 5, "unbalanced [");
+        assertFail("ARRAY[1, [1]", 5, "unbalanced [");
+        assertFail("ARRAY[1 2]", 8, "dangling expression");
+    }
+
     @Test
     public void testArrayDereferenceExpr() throws SqlException {
         x("a i 10 + []", "a[i+10]");
@@ -71,7 +105,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "a[]",
                 2,
-                "missing array index"
+                "empty brackets"
         );
     }
 
@@ -80,7 +114,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "a[",
                 1,
-                "unbalanced ]"
+                "unbalanced ["
         );
     }
 
@@ -89,7 +123,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "f(a[)",
                 3,
-                "unbalanced ]"
+                "unbalanced ["
         );
     }
 
@@ -97,8 +131,8 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testArrayDereferenceNotClosedFunctionArg() {
         assertFail(
                 "f(b,a[,c)",
-                5,
-                "unbalanced ]"
+                6,
+                "missing arguments"
         );
     }
 
@@ -732,7 +766,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "a(i)(o)",
                 4,
-                "not a method call"
+                "not a function call"
         );
     }
 
@@ -752,7 +786,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testExtractGeoHashBitsSuffixNoSuffix() throws SqlException {
         for (String tok : new String[]{"#", "#/", "#p", "#pp", "#ppp", "#0", "#01", "#001"}) {
-            Assert.assertEquals(
+            assertEquals(
                     Numbers.encodeLowHighShorts((short) 0, (short) (5 * (tok.length() - 1))),
                     ExpressionParser.extractGeoHashSuffix(0, tok));
         }
@@ -765,17 +799,17 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testExtractGeoHashBitsSuffixValid() throws SqlException {
         for (int bits = 1; bits < 10; bits++) {
-            Assert.assertEquals(
+            assertEquals(
                     Numbers.encodeLowHighShorts((short) 2, (short) bits),
                     ExpressionParser.extractGeoHashSuffix(0, "#/" + bits)); // '/d'
         }
         for (int bits = 1; bits < 10; bits++) {
-            Assert.assertEquals(
+            assertEquals(
                     Numbers.encodeLowHighShorts((short) 3, (short) bits),
                     ExpressionParser.extractGeoHashSuffix(0, "#/0" + bits)); // '/0d'
         }
         for (int bits = 10; bits <= 60; bits++) {
-            Assert.assertEquals(
+            assertEquals(
                     Numbers.encodeLowHighShorts((short) 3, (short) bits),
                     ExpressionParser.extractGeoHashSuffix(0, "#/" + bits)); // '/dd'
         }
@@ -1158,7 +1192,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "a([i)]",
                 2,
-                "unbalanced ]"
+                "unbalanced ["
         );
     }
 
@@ -1236,6 +1270,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testTextArrayQualifier() throws SqlException {
         x("'{hello}' text[] ::", "'{hello}'::text[]");
+    }
+
+    @Test
+    public void testTimestampWithTimezone() throws SqlException {
+        x("'2021-12-31 15:15:51.663+00:00' timestamp cast",
+                "cast('2021-12-31 15:15:51.663+00:00' as timestamp with time zone)");
     }
 
     @Test
@@ -1318,7 +1358,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
             compiler.testParseExpression(content, rpnBuilder);
             Assert.fail("expected exception");
         } catch (SqlException e) {
-            Assert.assertEquals(pos, e.getPosition());
+            assertEquals(pos, e.getPosition());
             if (!Chars.contains(e.getFlyweightMessage(), contains)) {
                 Assert.fail(e.getMessage() + " does not contain '" + contains + '\'');
             }

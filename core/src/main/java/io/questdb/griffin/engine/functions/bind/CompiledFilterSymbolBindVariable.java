@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
@@ -40,7 +39,7 @@ import org.jetbrains.annotations.Nullable;
  * String bind variable function wrapper used in SQL JIT. Also used to handle deferred
  * (unknown at compile time) symbol literals.
  */
-public class CompiledFilterSymbolBindVariable extends SymbolFunction implements ScalarFunction {
+public class CompiledFilterSymbolBindVariable extends SymbolFunction {
 
     private final int columnIndex;
     private final Function symbolFunction;

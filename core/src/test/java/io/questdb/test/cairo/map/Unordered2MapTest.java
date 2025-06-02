@@ -808,7 +808,7 @@ public class Unordered2MapTest extends AbstractCairoTest {
                 }
 
                 MapRecordCursor mapCursor = map.getCursor();
-                mapCursor.longTopK(list, new LongColumn(0));
+                mapCursor.longTopK(list, LongColumn.newInstance(0));
 
                 Assert.assertEquals(heapCapacity, list.size());
 

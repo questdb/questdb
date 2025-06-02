@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
@@ -52,6 +53,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class BindVariableServiceImpl implements BindVariableService {
     private final ObjectPool<IPv4BindVariable> IPv4VarPool;
+    private final ObjectPool<ArrayBindVariable> arrayVarPool;
     private final ObjectPool<BooleanBindVariable> booleanVarPool;
     private final ObjectPool<ByteBindVariable> byteVarPool;
     private final ObjectPool<CharBindVariable> charVarPool;
@@ -88,6 +90,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         this.long256VarPool = new ObjectPool<>(Long256BindVariable::new, 8);
         this.uuidVarPool = new ObjectPool<>(UuidBindVariable::new, 8);
         this.varcharVarPool = new ObjectPool<>(VarcharBindVariable::new, poolSize);
+        this.arrayVarPool = new ObjectPool<>(ArrayBindVariable::new, poolSize); // todo: this might be excessive, smaller pool size might be enough
     }
 
     @Override
@@ -110,6 +113,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         geoHashVarPool.clear();
         uuidVarPool.clear();
         varcharVarPool.clear();
+        arrayVarPool.clear();
     }
 
     @Override
@@ -184,6 +188,9 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.VARCHAR:
                 setVarchar(index);
                 return type;
+            case ColumnType.ARRAY:
+                setArrayType(index, type);
+                return type;
             default:
                 throw SqlException.$(position, "bind variable cannot be used [contextType=").put(ColumnType.nameOf(type)).put(", index=").put(index).put(']');
         }
@@ -213,6 +220,19 @@ public class BindVariableServiceImpl implements BindVariableService {
     @Override
     public ObjList<CharSequence> getNamedVariables() {
         return namedVariables.keys();
+    }
+
+    @Override
+    public void setArray(int index, ArrayView value) throws SqlException {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function != null) {
+            setArray0(function, value, index, null);
+        } else {
+            indexedVariables.setQuick(index, function = arrayVarPool.next());
+            ((ArrayBindVariable) function).setView(value);
+        }
     }
 
     @Override
@@ -770,6 +790,21 @@ public class BindVariableServiceImpl implements BindVariableService {
         throw SqlException.$(0, "bind variable '").put(name).put("' is defined as ").put(ColumnType.nameOf(function.getType())).put(" and cannot accept ").put(ColumnType.nameOf(srcType));
     }
 
+    private static void setArray0(Function function, ArrayView value, int index, @Nullable CharSequence name) throws SqlException {
+        final int functionType = ColumnType.tagOf(function.getType());
+        switch (functionType) {
+            case ColumnType.ARRAY:
+                ((ArrayBindVariable) function).setView(value);
+                break;
+            case ColumnType.STRING:
+            case ColumnType.VARCHAR:
+                throw new UnsupportedOperationException("implement me");
+            default:
+                reportError(function, ColumnType.ARRAY, index, name);
+                break;
+        }
+    }
+
     private static void setBoolean0(Function function, boolean value, int index, @Nullable CharSequence name) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
@@ -1156,6 +1191,9 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.UUID:
                 SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
                 break;
+            case ColumnType.ARRAY:
+                ((ArrayBindVariable) function).parseArray(value);
+                break;
             default:
                 reportError(function, ColumnType.STRING, index, name);
                 break;
@@ -1297,6 +1335,27 @@ public class BindVariableServiceImpl implements BindVariableService {
             charSeq = sink;
         }
         return charSeq;
+    }
+
+    private void setArray(int index) throws SqlException {
+        setArray(index, null);
+    }
+
+    private void setArrayType(int index, int colType) throws SqlException {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function == null) {
+            indexedVariables.setQuick(index, function = arrayVarPool.next());
+            ((ArrayBindVariable) function).assignType(colType);
+        } else {
+            short tag = ColumnType.tagOf(function.getType());
+            if (tag == ColumnType.ARRAY) {
+                ((ArrayBindVariable) function).assignType(colType);
+            } else {
+                reportError(function, colType, index, null);
+            }
+        }
     }
 
     private void setUndefined(int index) {
