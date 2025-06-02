@@ -184,12 +184,12 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
 
                 Path parquet2 = Path.getThreadLocal(root).concat(tt.getDirName());
                 TableUtils.setPathForParquetPartition(
-                    parquet2,
-                    xw.getMetadata().getTimestampType(),
-                    xw.getPartitionBy(),
-                    partitionTs,
-                    xw.getPartitionNameTxnByPartitionTimestamp(partitionTs)
-            );
+                        parquet2,
+                        xw.getMetadata().getTimestampType(),
+                        xw.getPartitionBy(),
+                        partitionTs,
+                        xw.getPartitionNameTxnByPartitionTimestamp(partitionTs)
+                );
 
                 final long fileSize2 = Files.length(parquet2.$());
                 Assert.assertTrue(fileSize2 >= fileSize);
