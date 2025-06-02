@@ -370,7 +370,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 drainWalQueue();
             }
 
-            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(configuration, tableNameNonWal, rnd);
+            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameNonWal, rnd);
             try {
                 int snapshotIndex = 1 + rnd.nextInt(transactions.size() - 1);
 

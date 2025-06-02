@@ -39,7 +39,6 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     private static final Log LOG = LogFactory.getLog(DirectIntList.class);
     private final long initialCapacity;
     private final int memoryTag;
-    private final DirectIntSlice slice = new DirectIntSlice();
     private long address;
     private long capacity;
     private long limit;
@@ -68,14 +67,6 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         }
         Vect.memcpy(this.pos, that.address, thatSize);
         this.pos += thatSize;
-    }
-
-    public DirectIntSlice asSlice() {
-        final long length = size();
-        assert length >= 0;
-        assert length <= Integer.MAX_VALUE;
-        slice.of(getAddress(), (int) length);
-        return slice;
     }
 
     // clear without "zeroing" memory

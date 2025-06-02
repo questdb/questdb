@@ -127,7 +127,6 @@ import org.junit.runner.Description;
 import java.io.File;
 import java.io.IOException;
 import java.util.Collections;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
@@ -1313,10 +1312,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
         }
         assertFactoryMemoryUsage();
-    }
-
-    protected static void configOverrideEnv(Map<String, String> env) {
-        node1.getConfigurationOverrides().setEnv(env);
     }
 
     protected static void configOverrideRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {

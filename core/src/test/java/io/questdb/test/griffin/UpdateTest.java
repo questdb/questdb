@@ -770,8 +770,10 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(3))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            try (DirectArray array = new DirectArray();
-                 DirectArray array2 = new DirectArray();) {
+            try (
+                    DirectArray array = new DirectArray();
+                    DirectArray array2 = new DirectArray()
+            ) {
                 array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
                 array.setDimLen(0, 2);
                 array.setDimLen(1, 2);

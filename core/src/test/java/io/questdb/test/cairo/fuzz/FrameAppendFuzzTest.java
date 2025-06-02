@@ -161,7 +161,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
         assertMemoryLeak(() -> {
             TableToken src = fuzzer.createInitialTable(tableName, false);
-            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(configuration, tableName, rnd);
+            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd);
             try {
                 fuzzer.applyNonWal(transactions, tableName, rnd);
                 engine.releaseInactive();

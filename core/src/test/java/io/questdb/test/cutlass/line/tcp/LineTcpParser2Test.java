@@ -68,7 +68,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         long mem = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
         try (
                 DirectUtf8Sink sink = new DirectUtf8Sink(1024);
-                DirectArray array = new DirectArray(configuration);
+                DirectArray array = new DirectArray(configuration)
         ) {
             String array1 = "[1.0,2.0]";
             array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
@@ -654,6 +654,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
             Unsafe.getUnsafe().putByte(memStart, b);
             memStart++;
             if (b == '=' && lastByte == '=') {
+                Assert.assertNotNull(binaryValuesSize);
                 Vect.memcpy(memStart, binaryValuesPtr[binaryValueIndex], binaryValuesSize[binaryValueIndex]);
                 memStart += binaryValuesSize[binaryValueIndex];
                 binaryValueIndex++;

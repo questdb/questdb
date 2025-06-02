@@ -3521,29 +3521,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void executeWithRetries(
-            ExecutableMethod method,
-            ExecutionModel executionModel,
-            int retries,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        int attemptsLeft = retries;
-        do {
-            try {
-                method.execute(executionModel, executionContext);
-                return;
-            } catch (TableReferenceOutOfDateException e) {
-                attemptsLeft--;
-                clearExceptSqlText();
-                lexer.restart();
-                executionModel = compileExecutionModel(executionContext);
-                if (attemptsLeft < 0) {
-                    throw SqlException.position(0).put("too many ").put(e.getFlyweightMessage());
-                }
-            }
-        } while (true);
-    }
-
     private int filterApply(
             Function filter,
             int functionPosition,
@@ -4015,11 +3992,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             AlterOperationBuilder dropColumnStatement
     ) throws SqlException {
         throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
-    }
-
-    @FunctionalInterface
-    private interface ExecutableMethod {
-        void execute(ExecutionModel model, SqlExecutionContext sqlExecutionContext) throws SqlException;
     }
 
     @FunctionalInterface

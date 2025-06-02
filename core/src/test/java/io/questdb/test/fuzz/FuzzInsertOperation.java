@@ -24,7 +24,6 @@
 
 package io.questdb.test.fuzz;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
@@ -85,7 +84,6 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
     private final long timestamp;
 
     public FuzzInsertOperation(
-            CairoConfiguration cairoConfiguration,
             long seed1,
             long seed2,
             long timestamp,

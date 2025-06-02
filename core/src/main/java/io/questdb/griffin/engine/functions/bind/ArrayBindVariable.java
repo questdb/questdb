@@ -63,7 +63,6 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
 
     @Override
     public ArrayView getArray(Record rec) {
-        // todo: consider view field to use ArrayConstant.NULL instead of null
         if (view == null) {
             return ArrayConstant.NULL;
         }

@@ -88,7 +88,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             long end,
             String tableName
     ) {
-        return fuzzer.generateSet(configuration, rnd, sequencerMetadata, readerMetadata, start, end, tableName);
+        return fuzzer.generateSet(rnd, sequencerMetadata, readerMetadata, start, end, tableName);
     }
 
     @Before

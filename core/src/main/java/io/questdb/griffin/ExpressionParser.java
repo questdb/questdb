@@ -68,7 +68,7 @@ public class ExpressionParser {
     private static final Log LOG = LogFactory.getLog(ExpressionParser.class);
     private static final LowerCaseAsciiCharSequenceObjHashMap<CharSequence> allFunctions = new LowerCaseAsciiCharSequenceObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
-    // columnTypes that an expression can be cast into, in addition to the range BOOLEAN..LONG256
+    // columnTypes that an expression can be cast into, in addition to the range BOOLEAN…LONG256
     private static final IntHashSet moreCastTargetTypes = new IntHashSet();
     private static final IntHashSet nonLiteralBranches = new IntHashSet(); // branches that can't be followed by constants
     private final OperatorRegistry activeRegistry;
@@ -252,7 +252,7 @@ public class ExpressionParser {
     }
 
     private boolean withinArrayConstructor() {
-        for (int n = scopeStack.size(), i = 0; i < n; i++) {
+        for (int i = 0, n = scopeStack.size(); i < n; i++) {
             if (scopeStack.peek(i) == Scope.ARRAY) {
                 return true;
             }
@@ -1089,7 +1089,7 @@ public class ExpressionParser {
                             thisBranch = BRANCH_LITERAL;
                             final ExpressionNode en = opStack.peek();
                             if (en != null && en.type != ExpressionNode.CONTROL) {
-                                // leverage the fact '*' is dedicated token and it returned from cache
+                                // leverage the fact '*' is dedicated token, and it returned from cache
                                 // therefore lexer.tokenHi does not move when * follows dot without whitespace
                                 // e.g. 'a.*'
                                 if (en.token instanceof GenericLexer.FloatingSequence) {
@@ -1440,8 +1440,10 @@ public class ExpressionParser {
                                                 continue;
                                             }
                                         }
-                                        throw SqlException.$(zoneTokPosition,
-                                                "String literal expected after 'timestamp with time zone'");
+                                        throw SqlException.$(
+                                                zoneTokPosition,
+                                                "String literal expected after 'timestamp with time zone'"
+                                        );
                                     }
                                 }
                                 lexer.backTo(withTokPosition, withTok);

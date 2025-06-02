@@ -111,7 +111,7 @@ public class IntListTest {
         Assert.assertNotEquals(list1, list5);
 
         // null
-        Assert.assertNotEquals(list1, null);
+        Assert.assertNotEquals(null, list1);
 
         // equals
         final IntList list6 = new IntList();

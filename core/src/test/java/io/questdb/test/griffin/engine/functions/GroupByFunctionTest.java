@@ -125,7 +125,7 @@ public class GroupByFunctionTest {
 
         @Override
         public @NotNull Interval getInterval(Record rec) {
-            return null;
+            throw new UnsupportedOperationException();
         }
 
         @Override

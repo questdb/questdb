@@ -456,7 +456,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                      DoubleArray a1 = new DoubleArray(2, 2, 2);
                      DoubleArray a2 = new DoubleArray(2, 2, 2).set(99.0, 0, 1, 0).set(100.0, 1, 1, 1);
                      DoubleArray a3 = new DoubleArray(2, 2, 2).setAll(101);
-                     DoubleArray a4 = new DoubleArray(100_000_000, 100_000_000, 0).setAll(0);
+                     DoubleArray a4 = new DoubleArray(100_000_000, 100_000_000, 0).setAll(0)
                 ) {
                     // array.append() appends in a circular fashion, wrapping around to start from the end.
                     // We deliberately append two more than the length of the array, to test this behavior.
@@ -588,7 +588,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                      LongArray a1 = new LongArray(2, 2, 2);
                      LongArray a2 = new LongArray(2, 2, 2).set(99L, 0, 1, 0).set(100L, 1, 1, 1);
                      LongArray a3 = new LongArray(2, 2, 2).setAll(101);
-                     LongArray a4 = new LongArray(100_000_000, 100_000_000, 0);
+                     LongArray a4 = new LongArray(100_000_000, 100_000_000, 0)
                 ) {
                     // array.append() appends in a circular fashion, wrapping around to start from the end.
                     // We deliberately append two more than the length of the array, to test this behavior.
@@ -685,7 +685,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .address("localhost:" + port)
                         .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
                         .retryTimeoutMillis(0)
-                        .build();
+                        .build()
                 ) {
                     sender.table(tableName)
                             .symbol("x", "42i")
@@ -1027,6 +1027,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         });
     }
 
+    @SuppressWarnings("unchecked")
     private static <T> T buildNestedArray(ArrayDataType dataType, int[] shape, int currentDim, int[] indices) {
         if (currentDim == shape.length - 1) {
             Object arr = dataType.createArray(shape[currentDim]);

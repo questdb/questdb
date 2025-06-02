@@ -57,8 +57,8 @@ public class DoubleArrayParserTest extends AbstractTest {
             try {
                 parser.of(input);
                 Assert.fail();
-            } catch (IllegalArgumentException ignore) {
-                TestUtils.assertContains(ignore.getMessage(),
+            } catch (IllegalArgumentException e) {
+                TestUtils.assertContains(e.getMessage(),
                         "element counts in sub-arrays don't match [depth=1, currentCount=1, alreadyObservedCount=2, position=19]");
             }
         }

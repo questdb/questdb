@@ -107,7 +107,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .protocolVersion(PROTOCOL_VERSION_V2)
                     .build();
-                 DoubleArray a1 = new DoubleArray(1, 1, 2, 1).setAll(1);
+                 DoubleArray a1 = new DoubleArray(1, 1, 2, 1).setAll(1)
             ) {
                 String table = "array_at_now";
                 CountDownLatch released = createTableCommitNotifier(table);
@@ -135,7 +135,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .build();
                  DoubleArray a4 = new DoubleArray(1, 1, 2, 1).setAll(4);
                  DoubleArray a5 = new DoubleArray(3, 2, 1, 4, 1).setAll(5);
-                 DoubleArray a6 = new DoubleArray(1, 3, 4, 2, 1, 1).setAll(6);
+                 DoubleArray a6 = new DoubleArray(1, 3, 4, 2, 1, 1).setAll(6)
             ) {
                 String table = "array_test";
                 CountDownLatch released = createTableCommitNotifier(table);
@@ -632,7 +632,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     public void testMaxNameLength() throws Exception {
         runInContext(r -> {
             PlainTcpLineChannel channel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, HOST, bindPort, 1024);
-            try (AbstractLineTcpSender sender = new LineTcpSenderV2(channel, 1024, 20);) {
+            try (AbstractLineTcpSender sender = new LineTcpSenderV2(channel, 1024, 20)) {
                 try {
                     sender.table("table_with_long______________________name");
                     fail();

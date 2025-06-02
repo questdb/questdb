@@ -124,7 +124,7 @@ public class HttpMinTestBuilder {
         return this;
     }
 
-    public HttpMinTestBuilder withScrapable(Target target) {
+    public HttpMinTestBuilder withScrappable(Target target) {
         this.target = target;
         return this;
     }

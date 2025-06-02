@@ -129,7 +129,6 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                 TableWriter w2 = TestUtils.getWriter(engine, "y")
         ) {
             ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(
-                    engine.getConfiguration(),
                     nTotalRows,
                     sequencerMetadata,
                     w.getMetadata(),

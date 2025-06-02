@@ -559,8 +559,6 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
     // order by is absent so default frame mode includes all rows in the partition
     static class LastNotNullValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
-        private double lastValue;
-
         public LastNotNullValueOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
         }

@@ -159,7 +159,7 @@ public class ObjectPoolTest extends AbstractTest {
     }
 
     @Test
-    public void testreleaseNotFromPool() {
+    public void testReleaseNotFromPool() {
         TestObject notFromPool = new TestObject();
         try {
             pool.release(notFromPool);

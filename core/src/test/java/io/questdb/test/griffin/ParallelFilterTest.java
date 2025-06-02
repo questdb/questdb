@@ -270,11 +270,36 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     @Test
     public void testAsyncTimestampSubQueryWithEqFilter() throws Exception {
-        testAsyncTimestampSubQueryWithFilter(
-                "select * from x where ts2 = (select min(ts) from x)",
-                "ts\tts2\tid\n" +
-                        "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\n"
+        String query = "select * from x where ts2 = (select min(ts) from x)";
+        String expected = "ts\tts2\tid\n" +
+                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\n";
+
+        WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE x (" +
+                                    "  ts TIMESTAMP," +
+                                    "  ts2 TIMESTAMP," +
+                                    "  id long" +
+                                    ") timestamp (ts) PARTITION BY DAY;",
+                            sqlExecutionContext
+                    );
+                    engine.execute("insert into x select x::timestamp, x::timestamp, x from long_sequence(100000)", sqlExecutionContext);
+
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            query,
+                            sink,
+                            expected
+                    );
+                },
+                configuration,
+                LOG
         );
+
     }
 
     @Test
@@ -581,7 +606,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStressVarcharMultipleThreadsMultipleWorkersJitDisabled() throws Exception {
-        testParallelStressVarchar(varcharQueryNoLimit, expectedVarcharNoLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
+        testParallelStressVarchar(varcharQueryNoLimit, expectedVarcharNoLimit, 4, SqlJitMode.JIT_MODE_DISABLED);
     }
 
     @Test
@@ -589,12 +614,12 @@ public class ParallelFilterTest extends AbstractCairoTest {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
 
-        testParallelStressVarchar(varcharQueryNoLimit, expectedVarcharNoLimit, 4, 4, SqlJitMode.JIT_MODE_ENABLED);
+        testParallelStressVarchar(varcharQueryNoLimit, expectedVarcharNoLimit, 4, SqlJitMode.JIT_MODE_ENABLED);
     }
 
     @Test
     public void testParallelStressVarcharSingleThreadMultipleWorkersJitDisabled() throws Exception {
-        testParallelStressVarchar(varcharQueryNoLimit, expectedVarcharNoLimit, 4, 1, SqlJitMode.JIT_MODE_DISABLED);
+        testParallelStressVarchar(varcharQueryNoLimit, expectedVarcharNoLimit, 1, SqlJitMode.JIT_MODE_DISABLED);
     }
 
     @Test
@@ -602,7 +627,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
 
-        testParallelStressVarchar(varcharQueryNoLimit, expectedVarcharNoLimit, 4, 1, SqlJitMode.JIT_MODE_ENABLED);
+        testParallelStressVarchar(varcharQueryNoLimit, expectedVarcharNoLimit, 1, SqlJitMode.JIT_MODE_ENABLED);
     }
 
     @Test
@@ -611,7 +636,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 "x where l > 3326086085493629941L and l < 4326086085493629941L and v = 'A왋G&ُܵ9}\uD91F\uDCE8+\uDAAF\uDC59\uDAC8\uDE3B亲' order by l",
                 "l\tv\n" +
                         "3571824131493518678\tA왋G&ُܵ9}\uD91F\uDCE8+\uDAAF\uDC59\uDAC8\uDE3B亲\n",
-                4,
                 1,
                 SqlJitMode.JIT_MODE_DISABLED
         );
@@ -854,34 +878,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
         );
     }
 
-    private void testAsyncTimestampSubQueryWithFilter(String query, String expected) throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
-        TestUtils.execute(
-                pool,
-                (engine, compiler, sqlExecutionContext) -> {
-                    engine.execute(
-                            "CREATE TABLE x (" +
-                                    "  ts TIMESTAMP," +
-                                    "  ts2 TIMESTAMP," +
-                                    "  id long" +
-                                    ") timestamp (ts) PARTITION BY DAY;",
-                            sqlExecutionContext
-                    );
-                    engine.execute("insert into x select x::timestamp, x::timestamp, x from long_sequence(100000)", sqlExecutionContext);
-
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            query,
-                            sink,
-                            expected
-                    );
-                },
-                configuration,
-                LOG
-        );
-    }
-
     private void testIn(int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
@@ -1067,11 +1063,11 @@ public class ParallelFilterTest extends AbstractCairoTest {
         );
     }
 
-    private void testParallelStressVarchar(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
+    private void testParallelStressVarchar(String query, String expected, int threadCount, int jitMode) throws Exception {
         Assume.assumeFalse(convertToParquet);
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new WorkerPool(() -> workerCount);
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -1101,7 +1097,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                         int finalI = i;
                         new Thread(() -> {
                             TestUtils.await(barrier);
-                            try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
+                            try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, 4)) {
                                 RecordCursorFactory factory = factories[finalI];
                                 assertQuery(expected, factory, ctx);
                             } catch (Throwable e) {

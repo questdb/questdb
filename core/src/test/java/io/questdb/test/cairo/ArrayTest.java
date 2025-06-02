@@ -372,13 +372,11 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testConcatFailsGracefully() throws Exception {
-        assertMemoryLeak(() -> {
-            assertException(
-                    "SELECT ARRAY[1.0] || ARRAY[2.0, 3.0] FROM long_sequence(1)",
-                    12,
-                    "unsupported type: DOUBLE[]"
-            );
-        });
+        assertMemoryLeak(() -> assertException(
+                "SELECT ARRAY[1.0] || ARRAY[2.0, 3.0] FROM long_sequence(1)",
+                12,
+                "unsupported type: DOUBLE[]"
+        ));
     }
 
     @Test
@@ -635,7 +633,7 @@ public class ArrayTest extends AbstractCairoTest {
                     true
             );
 
-            // casting to less dimensions is not allowed
+            // casting to fewer dimensions is not allowed
             assertException("SELECT ARRAY[[1.0], [2.0]]::double[]",
                     26,
                     "cannot cast array to lower dimension [from=DOUBLE[][] (2D), to=DOUBLE[] (1D)]. Use array flattening operation (e.g. 'arr[:]' or 'flatten_array(arr)') instead"
@@ -753,7 +751,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("cast\n" +
                     "[]\n", "SELECT '{{}, {}}'::double[][] FROM long_sequence(1)");
 
-            // empty array can be casted to higher dimensionality -> empty array
+            // empty array can be cast to higher dimensionality -> empty array
             assertSql("cast\n" +
                     "[]\n", "SELECT '{}'::double[][] FROM long_sequence(1)");
 
@@ -767,7 +765,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("cast\n" +
                     "null\n", "SELECT 'not an array'::double[] FROM long_sequence(1)");
 
-            // 2D array explicitly casted to 1D array -> null
+            // 2D array explicitly cast to 1D array -> null
             assertSql("cast\n" +
                     "null\n", "SELECT '{{1,2}, {3, 4}}'::double[] FROM long_sequence(1)");
 
@@ -1625,8 +1623,6 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testUnionDistinct() throws Exception {
         assertMemoryLeak(() -> {
-            int i = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
-
             execute("create table alpha (arr double[])");
             execute("create table bravo (arr double[])");
 

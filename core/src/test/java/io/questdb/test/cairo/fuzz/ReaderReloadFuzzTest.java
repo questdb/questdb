@@ -107,7 +107,7 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
                 reader.openPartition(0);
                 reader.goPassive();
 
-                ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(configuration, tableName, rnd);
+                ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd);
                 try {
                     fuzzer.applyToWal(transactions, tableName, 1 + rnd.nextInt(2), rnd);
                     drainWalQueue();

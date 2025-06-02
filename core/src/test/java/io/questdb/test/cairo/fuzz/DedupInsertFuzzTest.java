@@ -542,7 +542,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         FuzzInsertOperation insertOperation = (FuzzInsertOperation) operation;
                         if (op % dupStep == 1) {
                             FuzzInsertOperation duplicate = new FuzzInsertOperation(
-                                    configuration,
                                     rnd.nextLong(),
                                     rnd.nextLong(),
                                     insertOperation.getTimestamp(),
@@ -825,7 +824,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
             long end = start + fuzzer.partitionCount * Timestamps.DAY_MICROS;
-            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(configuration, tableNameDedup, rnd, start, end);
+            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameDedup, rnd, start, end);
 
             try {
                 transactions = uniqueInserts(transactions);

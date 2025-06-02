@@ -353,7 +353,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         fuzzer.createInitialTable(tableNameBase, true);
         createMatView(viewSql, matViewName);
 
-        ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(configuration, tableNameBase, rnd);
+        ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd);
 
         // Release table writers to reduce memory pressure
         engine.releaseInactive();
@@ -372,7 +372,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         fuzzer.createInitialTable(tableNameBase, true);
         createTimerMatView(viewSql, matViewName, start, intervalStride, intervalUnit);
 
-        ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(configuration, tableNameBase, rnd, start);
+        ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd, start);
 
         // Release table writers to reduce memory pressure
         engine.releaseInactive();
@@ -673,7 +673,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
             setFuzzParams(rnd, 0);
 
-            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(configuration, baseTableName, rnd);
+            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(baseTableName, rnd);
             ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
             fuzzTransactions.add(transactions);
             fuzzer.applyManyWalParallel(

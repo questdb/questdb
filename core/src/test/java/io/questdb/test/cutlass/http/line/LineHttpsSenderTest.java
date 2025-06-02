@@ -104,9 +104,9 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
             )) {
                 serverMain.start();
                 int port = tlsProxy.getListeningPort();
-                String adress = "localhost:" + port;
+                String address = "localhost:" + port;
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                        .address(adress)
+                        .address(address)
                         .enableTls()
                         .advancedTls()
                         .disableCertificateValidation()

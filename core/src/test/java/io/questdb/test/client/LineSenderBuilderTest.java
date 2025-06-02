@@ -141,7 +141,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testAutoFlushInteralNotSupportedForTcp() throws Exception {
+    public void testAutoFlushIntervalNotSupportedForTcp() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 Sender.builder(Sender.Transport.TCP).address(LOCALHOST).autoFlushIntervalMillis(1).build();
@@ -382,7 +382,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                         .address(LOCALHOST)
                         .port(bindPort)
                         .enableAuth(AUTH_KEY_ID1)
-                        .authToken(AUTH_TOKEN_KEY1) // it does not really matter as server will never receive the challange response due to the custom NetworkFacade
+                        .authToken(AUTH_TOKEN_KEY1) // it does not really matter as server will never receive the challenge response due to the custom NetworkFacade
                         .build();
                 fail("should have failed");
             } catch (LineSenderException e) {
@@ -880,7 +880,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testSmallMaxNameLen() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                Sender.LineSenderBuilder builder = Sender
+                Sender.LineSenderBuilder ignored = Sender
                         .builder(Sender.Transport.TCP)
                         .maxNameLength(10);
                 fail("should not allow double buffer capacity set");
@@ -892,29 +892,25 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testTCPDefaultProtocolVersionV1() throws Exception {
-        assertMemoryLeak(() -> {
-            runInContext(r -> {
-                try (Sender sender = Sender.builder(Sender.Transport.TCP)
-                        .address(LOCALHOST)
-                        .port(bindPort).build()) {
-                    Assert.assertTrue(sender instanceof LineTcpSenderV1);
-                }
-            });
-        });
+        assertMemoryLeak(() -> runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address(LOCALHOST)
+                    .port(bindPort).build()) {
+                Assert.assertTrue(sender instanceof LineTcpSenderV1);
+            }
+        }));
     }
 
     @Test
     public void testTCPSetProtocolVersionV2() throws Exception {
-        assertMemoryLeak(() -> {
-            runInContext(r -> {
-                try (Sender sender = Sender.builder(Sender.Transport.TCP)
-                        .address(LOCALHOST)
-                        .protocolVersion(PROTOCOL_VERSION_V2)
-                        .port(bindPort).build()) {
-                    Assert.assertTrue(sender instanceof LineTcpSenderV2);
-                }
-            });
-        });
+        assertMemoryLeak(() -> runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address(LOCALHOST)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
+                    .port(bindPort).build()) {
+                Assert.assertTrue(sender instanceof LineTcpSenderV2);
+            }
+        }));
     }
 
     @Test

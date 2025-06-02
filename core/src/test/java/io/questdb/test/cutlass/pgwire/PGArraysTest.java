@@ -103,7 +103,7 @@ public class PGArraysTest extends BasePGTest {
                 Array arr = connection.createArrayOf("int8", new Double[]{1d, 2d, 3d, 4d, 5d});
                 int pos = 1;
                 stmt.setArray(pos++, arr);
-                stmt.setTimestamp(pos++, new java.sql.Timestamp(0));
+                stmt.setTimestamp(pos, new java.sql.Timestamp(0));
                 stmt.execute();
             }
             drainWalQueue();
@@ -120,7 +120,7 @@ public class PGArraysTest extends BasePGTest {
             try (PreparedStatement stmt = connection.prepareStatement("update tango set arr = ?")) {
                 Array arr = connection.createArrayOf("int8", new Double[]{9d, 8d, 7d, 6d, 5d});
                 int pos = 1;
-                stmt.setArray(pos++, arr);
+                stmt.setArray(pos, arr);
                 stmt.execute();
             }
             drainWalQueue();
@@ -615,7 +615,7 @@ public class PGArraysTest extends BasePGTest {
         int dimLen1 = 10 + bufferSizeRnd.nextInt(90);
         int dimLen2 = 10 + bufferSizeRnd.nextInt(90);
         String literal = buildArrayLiteral2d(dimLen1, dimLen2);
-        String result = buildArrayResult2d(1, dimLen1, 1, dimLen2) + '\n';
+        String result = buildArrayResult2d(dimLen1, dimLen2) + '\n';
         assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
             try (Statement stmt = conn.createStatement()) {
                 stmt.execute("CREATE TABLE tango AS (SELECT x n, " + literal + " arr FROM long_sequence(9))");
@@ -817,14 +817,14 @@ public class PGArraysTest extends BasePGTest {
         return b.toString();
     }
 
-    private @NotNull String buildArrayResult2d(int start1, int dimLen1, int start2, int dimLen2) {
+    private @NotNull String buildArrayResult2d(int dimLen1, int dimLen2) {
         StringBuilder b = new StringBuilder();
         b.append("{");
         String comma = "";
-        for (int i = start1; i < dimLen1; i++) {
+        for (int i = 1; i < dimLen1; i++) {
             b.append(comma);
             comma = ",";
-            buildArrayResultInner(i * dimLen2 + start2, (i + 1) * dimLen2, b);
+            buildArrayResultInner(i * dimLen2 + 1, (i + 1) * dimLen2, b);
         }
         b.append("}");
         return b.toString();
