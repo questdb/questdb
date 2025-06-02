@@ -25,25 +25,33 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.Numbers.IPv4_NULL;
 
-public abstract class IPv4Function implements ScalarFunction {
+public abstract class IPv4Function implements Function {
     private final StringSink sinkA = new StringSink();
     private final StringSink sinkB = new StringSink();
     private final Utf8StringSink utf8SinkA = new Utf8StringSink();
     private final Utf8StringSink utf8SinkB = new Utf8StringSink();
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public final BinarySequence getBin(Record rec) {
@@ -107,6 +115,11 @@ public abstract class IPv4Function implements ScalarFunction {
 
     @Override
     public int getInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
         throw new UnsupportedOperationException();
     }
 

@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
@@ -36,6 +37,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -54,6 +56,11 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
             return 0;
         }
     };
+    private final CairoConfiguration cairoConfiguration;
+
+    public DefaultLineTcpReceiverConfiguration(CairoConfiguration cairoConfiguration) {
+        this.cairoConfiguration = cairoConfiguration;
+    }
 
     @Override
     public String getAuthDB() {
@@ -68,6 +75,11 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     @Override
     public boolean getAutoCreateNewTables() {
         return true;
+    }
+
+    @Override
+    public CairoConfiguration getCairoConfiguration() {
+        return cairoConfiguration;
     }
 
     @Override
@@ -142,6 +154,11 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     @Override
     public int getMaxMeasurementSize() {
         return 512;
+    }
+
+    @Override
+    public long getMaxRecvBufferSize() {
+        return Numbers.SIZE_1GB;
     }
 
     @Override

@@ -25,6 +25,7 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.FilesFacade;
@@ -66,6 +67,11 @@ public class NullMemoryCMR implements MemoryCMR {
 
     @Override
     public void extend(long size) {
+    }
+
+    @Override
+    public ArrayView getArray(long offset) {
+        return null;
     }
 
     @Override

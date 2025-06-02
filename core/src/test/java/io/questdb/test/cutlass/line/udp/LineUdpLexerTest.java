@@ -33,6 +33,7 @@ import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -41,7 +42,7 @@ import org.junit.Test;
 import java.util.HashMap;
 import java.util.Map;
 
-public class LineUdpLexerTest {
+public class LineUdpLexerTest extends AbstractCairoTest {
 
     private final static LineUdpLexer lexer = new LineUdpLexer(4096);
     protected final StringSink sink = new StringSink();

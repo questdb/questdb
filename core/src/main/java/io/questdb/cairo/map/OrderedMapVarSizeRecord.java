@@ -29,6 +29,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.DirectBinarySequence;
@@ -55,6 +58,7 @@ import org.jetbrains.annotations.Nullable;
  * The last accessed key column offset is cached to speed up sequential access.
  */
 final class OrderedMapVarSizeRecord implements OrderedMapRecord {
+    private final BorrowedArray[] arrays;
     private final DirectBinarySequence[] bs;
     private final DirectString[] csA;
     private final DirectString[] csB;
@@ -108,6 +112,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         DirectBinarySequence[] bs = null;
         Long256Impl[] long256A = null;
         Long256Impl[] long256B = null;
+        BorrowedArray[] arrays = null;
         Interval[] intervals = null;
 
         final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
@@ -151,6 +156,12 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
                     }
                     intervals[i + keyIndexOffset] = new Interval();
                     break;
+                case ColumnType.ARRAY:
+                    if (arrays == null) {
+                        arrays = new BorrowedArray[nColumns];
+                    }
+                    arrays[i + keyIndexOffset] = new BorrowedArray();
+                    break;
                 default:
                     break;
             }
@@ -177,6 +188,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         this.bs = bs;
         this.keyLong256A = long256A;
         this.keyLong256B = long256B;
+        this.arrays = arrays;
         this.intervals = intervals;
     }
 
@@ -192,6 +204,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             DirectBinarySequence[] bs,
             Long256Impl[] keyLong256A,
             Long256Impl[] keyLong256B,
+            BorrowedArray[] arrays,
             Interval[] intervals
     ) {
         this.valueSize = valueSize;
@@ -206,6 +219,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         this.bs = bs;
         this.keyLong256A = keyLong256A;
         this.keyLong256B = keyLong256B;
+        this.arrays = arrays;
         this.intervals = intervals;
     }
 
@@ -219,6 +233,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         final DirectBinarySequence[] bs;
         final Long256Impl[] long256A;
         final Long256Impl[] long256B;
+        final BorrowedArray[] arrays;
         final Interval[] intervals;
 
         // csA and csB are pegged, checking one for null should be enough
@@ -294,7 +309,19 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             intervals = null;
         }
 
-        return new OrderedMapVarSizeRecord(valueSize, valueOffsets, keyTypes, splitIndex, csA, csB, usA, usB, bs, long256A, long256B, intervals);
+        if (this.arrays != null) {
+            int n = this.arrays.length;
+            arrays = new BorrowedArray[n];
+            for (int i = 0; i < n; i++) {
+                if (this.arrays[i] != null) {
+                    arrays[i] = new BorrowedArray();
+                }
+            }
+        } else {
+            arrays = null;
+        }
+
+        return new OrderedMapVarSizeRecord(valueSize, valueOffsets, keyTypes, splitIndex, csA, csB, usA, usB, bs, long256A, long256B, arrays, intervals);
     }
 
     @Override
@@ -308,6 +335,13 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     public void copyValue(MapValue destValue) {
         OrderedMapValue destFastValue = (OrderedMapValue) destValue;
         destFastValue.copyRawValue(valueAddress);
+    }
+
+    @Override
+    public ArrayView getArray(int index, int columnType) {
+        long address = addressOfColumn(index);
+        BorrowedArray ba = arrays[index];
+        return ArrayTypeDriver.getPlainValue(address, ba);
     }
 
     @Override
@@ -535,8 +569,11 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             if (size > 0) {
                 // Fixed-size type.
                 addr += size;
+            } else if (ColumnType.isArray(columnType)) {
+                addr += ArrayTypeDriver.getPlainValueSize(addr);
             } else {
-                // Var-size type: string or varchar or binary.
+                // var-size type: string or varchar, binary
+                assert columnType == ColumnType.STRING || columnType == ColumnType.VARCHAR || columnType == ColumnType.BINARY;
                 final int len = Unsafe.getUnsafe().getInt(addr);
                 addr += Integer.BYTES;
                 if (len != TableUtils.NULL_LEN) {

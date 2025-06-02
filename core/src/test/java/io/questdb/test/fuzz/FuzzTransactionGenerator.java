@@ -306,6 +306,8 @@ public class FuzzTransactionGenerator {
                 return ColumnType.getGeoHashTypeWithBits(25);
             case ColumnType.GEOLONG:
                 return ColumnType.getGeoHashTypeWithBits(35);
+            case ColumnType.ARRAY:
+                return ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
             default:
                 return columnType;
         }

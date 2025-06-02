@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
@@ -171,7 +172,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             memStart = Unsafe.malloc(sizeBytes, memoryTag);
             Vect.memset(memStart, sizeBytes, 0);
             memLimit = memStart + sizeBytes;
-            keySink = new DirectByteSink(KEY_SINK_INITIAL_CAPACITY);
+            keySink = new DirectByteSink(KEY_SINK_INITIAL_CAPACITY, memoryTag);
 
             value = new UnorderedVarcharMapValue(valueSize, valueOffsets);
             value2 = new UnorderedVarcharMapValue(valueSize, valueOffsets);
@@ -636,6 +637,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         @Override
         public void put(Record record, RecordSink sink) {
             sink.copy(record, this);
+        }
+
+        @Override
+        public void putArray(ArrayView view) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
