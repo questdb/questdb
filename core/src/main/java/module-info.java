@@ -28,6 +28,7 @@ open module io.questdb {
     requires static java.management;
     requires jdk.management;
     requires java.desktop;
+    requires java.sql;
 
     uses io.questdb.griffin.FunctionFactory;
     exports io.questdb;
@@ -122,4 +123,5 @@ open module io.questdb {
     exports io.questdb.cairo.mv;
     exports io.questdb.cutlass.pgwire.modern;
     exports io.questdb.cairo.file;
+    exports io.questdb.preferences;
 }

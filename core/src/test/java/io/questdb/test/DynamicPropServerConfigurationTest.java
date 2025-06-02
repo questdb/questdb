@@ -574,7 +574,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                     // this executes a query, and would trigger query tracing (if it was enabled) as a side effect
                     assertTableEmpty.run();
-                    Thread.sleep(1_000);
+                    Os.sleep(1_000);
                     // by this time the query_trace table would most likely exist if tracing was enabled
                     assertTableEmpty.run();
 

@@ -53,11 +53,18 @@ public interface HttpRequestHeader {
 
     DirectUtf8Sequence getMethodLine();
 
-    @Nullable DirectUtf8String getQuery();
+    @Nullable
+    DirectUtf8String getQuery();
 
     long getStatementTimeout();
 
     DirectUtf8String getUrl();
 
     DirectUtf8Sequence getUrlParam(Utf8Sequence name);
+
+    boolean isGetRequest();
+
+    boolean isPostRequest();
+
+    boolean isPutRequest();
 }

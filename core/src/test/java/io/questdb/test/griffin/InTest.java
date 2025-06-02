@@ -45,9 +45,9 @@ public class InTest extends AbstractCairoTest {
 
         // '' literal is treated as a zero char
         assertQuery(
-                "ts\tcast\n" +
-                        "2020-01-01T00:00:00.000000Z\t0\n",
-                "select ts, ch::byte from tab2 where ch in ('')",
+                "ts\tch\n" +
+                        "2020-01-01T00:00:00.000000Z\t\n",
+                "select ts, ch from tab2 where ch in ('')",
                 "create table tab2 as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, (x-1)::char ch from long_sequence(9))" +
                         " timestamp(ts) PARTITION BY MONTH",
                 "ts",
@@ -57,9 +57,9 @@ public class InTest extends AbstractCairoTest {
 
         // empty varchar is also treated as a zero char
         assertQuery(
-                "ts\tcast\n" +
-                        "2020-01-01T00:00:00.000000Z\t0\n",
-                "select ts, ch::byte from tab3 where ch in (''::varchar)",
+                "ts\tch\n" +
+                        "2020-01-01T00:00:00.000000Z\t\n",
+                "select ts, ch from tab3 where ch in (''::varchar)",
                 "create table tab3 as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, (x-1)::char ch from long_sequence(9))" +
                         " timestamp(ts) PARTITION BY MONTH",
                 "ts",
@@ -202,6 +202,23 @@ public class InTest extends AbstractCairoTest {
                         "2020-01-01T00:30:00.000000Z\t4\n",
                 "select * from tab WHERE s in (null, 1::string, 2::varchar, 3::symbol, '4'::char)",
                 "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, x::symbol s from long_sequence(20))" +
+                        " timestamp(ts) PARTITION BY MONTH",
+                "ts",
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testInSymbol_escapedConstant() throws Exception {
+        assertQuery(
+                "ts\ts\n" +
+                        "2020-01-01T00:00:00.000000Z\t1'suffix\n" +
+                        "2020-01-01T00:10:00.000000Z\t2'suffix\n" +
+                        "2020-01-01T00:20:00.000000Z\t3'suffix\n" +
+                        "2020-01-01T00:30:00.000000Z\t4'suffix\n",
+                "select * from tab WHERE s in ('1''suffix', '2''suffix', '3''suffix', '4''suffix')",
+                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, concat(x::symbol, '''', 'suffix')::symbol s from long_sequence(20))" +
                         " timestamp(ts) PARTITION BY MONTH",
                 "ts",
                 true,

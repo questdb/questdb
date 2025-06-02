@@ -48,24 +48,24 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public class MatViewDefinition implements Mutable {
-    // For now, incremental refresh is the only supported refresh type.
     public static final int INCREMENTAL_REFRESH_TYPE = 0;
+    public static final int INCREMENTAL_TIMER_REFRESH_TYPE = 1;
     public static final String MAT_VIEW_DEFINITION_FILE_NAME = "_mv";
     public static final int MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
     private String baseTableName;
-    // is not persisted, parsed from timeZoneOffset
+    // Not persisted, parsed from timeZoneOffset.
     private long fixedOffset;
     private String matViewSql;
     private TableToken matViewToken;
     private int refreshType = -1;
-    // is not persisted, parsed from timeZone
+    // Not persisted, parsed from timeZone.
     private @Nullable TimeZoneRules rules;
     private long samplingInterval;
     private char samplingIntervalUnit;
     private @Nullable String timeZone;
     private @Nullable String timeZoneOffset;
-    // is not persisted, parsed from samplingInterval and samplingIntervalUnit;
-    // access must be synchronized as this object is not thread-safe
+    // Not persisted, parsed from samplingInterval and samplingIntervalUnit.
+    // Access must be synchronized as this object is not thread-safe.
     private TimestampSampler timestampSampler;
 
     public static void append(@NotNull MatViewDefinition matViewDefinition, @NotNull AppendableBlock block) {
@@ -79,7 +79,7 @@ public class MatViewDefinition implements Mutable {
     }
 
     public static void append(@NotNull MatViewDefinition matViewDefinition, @NotNull BlockFileWriter writer) {
-        final AppendableBlock block = writer.append();
+        AppendableBlock block = writer.append();
         append(matViewDefinition, block);
         block.commit(MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE);
         writer.commit();
@@ -92,12 +92,13 @@ public class MatViewDefinition implements Mutable {
             int rootLen,
             @NotNull TableToken matViewToken
     ) {
-        path.trimTo(rootLen).concat(matViewToken.getDirName()).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
+        path.trimTo(rootLen).concat(matViewToken.getDirName()).concat(MAT_VIEW_DEFINITION_FILE_NAME);
         reader.of(path.$());
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
-        // Iterate through the block until we find the one we recognize.
         while (cursor.hasNext()) {
-            if (loadMatViewDefinition(destDefinition, cursor.next(), matViewToken)) {
+            final ReadableBlock block = cursor.next();
+            if (block.type() == MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE) {
+                readDefinitionBlock(destDefinition, block, matViewToken);
                 return;
             }
         }
@@ -216,15 +217,16 @@ public class MatViewDefinition implements Mutable {
         }
     }
 
-    private static boolean loadMatViewDefinition(MatViewDefinition destDefinition, ReadableBlock block, TableToken matViewToken) {
-        if (block.type() != MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE) {
-            // Unknown block.
-            return false;
-        }
+    private static void readDefinitionBlock(
+            MatViewDefinition destDefinition,
+            ReadableBlock block,
+            TableToken matViewToken
+    ) {
+        assert block.type() == MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE;
 
         long offset = 0;
         final int refreshType = block.getInt(offset);
-        if (refreshType != INCREMENTAL_REFRESH_TYPE) {
+        if (refreshType != INCREMENTAL_REFRESH_TYPE && refreshType != INCREMENTAL_TIMER_REFRESH_TYPE) {
             throw CairoException.critical(0)
                     .put("unsupported refresh type [view=")
                     .put(matViewToken.getTableName())
@@ -277,6 +279,5 @@ public class MatViewDefinition implements Mutable {
                 timeZoneStr,
                 timeZoneOffsetStr
         );
-        return true;
     }
 }

@@ -33,7 +33,6 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IOURingFacade;
 import io.questdb.std.IOURingFacadeImpl;
@@ -50,6 +49,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -71,6 +71,16 @@ public interface CairoConfiguration {
     }
 
     boolean enableTestFactories();
+
+    /**
+     * Exports subset of configuration parameters into a sink. Configuration
+     * parameters are exported in JSON format.
+     *
+     * @return true if anything was exported
+     */
+    default boolean exportConfiguration(CharSink<?> sink) {
+        return false;
+    }
 
     default boolean freeLeakedReaders() {
         return true;
@@ -172,6 +182,8 @@ public interface CairoConfiguration {
     @NotNull
     String getDbRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
+    boolean getDebugWalApplyBlockFailureNoRetry();
+
     @NotNull
     DateLocale getDefaultDateLocale();
 
@@ -182,8 +194,6 @@ public interface CairoConfiguration {
     int getDefaultSymbolCapacity();
 
     int getDetachedMkDirMode();
-
-    int getDoubleToStrCastScale();
 
     default Map<String, String> getEnv() {
         return System.getenv();
@@ -198,8 +208,6 @@ public interface CairoConfiguration {
 
     @NotNull
     FilesFacade getFilesFacade();
-
-    int getFloatToStrCastScale();
 
     long getGroupByAllocatorDefaultChunkSize();
 
@@ -241,7 +249,7 @@ public interface CairoConfiguration {
     int getInsertModelPoolCapacity();
 
     /**
-     * Installation root, i.e. the directory that usually contains the "conf", "db", etc directories.
+     * Installation root, i.e., the directory that usually contains the "conf", "db", etc. directories.
      */
     @NotNull
     String getInstallRoot();
@@ -265,7 +273,13 @@ public interface CairoConfiguration {
 
     long getMatViewInsertAsSelectBatchSize();
 
-    int getMatViewMaxRecompileAttempts();
+    int getMatViewMaxRefreshRetries();
+
+    long getMatViewMinRefreshInterval();
+
+    long getMatViewRefreshOomRetryTimeout();
+
+    int getMatViewRowsPerQueryEstimate();
 
     int getMaxCrashFiles();
 
@@ -368,6 +382,8 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
+    int getPreferencesStringPoolCapacity();
+
     int getQueryCacheEventQueueCapacity();
 
     int getQueryRegistryPoolSize();
@@ -404,11 +420,13 @@ public interface CairoConfiguration {
 
     int getSampleByIndexSearchPageSize();
 
+    int getScoreboardFormat();
+
     long getSequencerCheckInterval();
 
     /**
      * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
-     * on database start the id is compared with the id stored in the checkpoint, if any. If the ids
+     * on database start the id is compared with the ID stored in the checkpoint, if any. If the ids
      * are different, snapshot recovery is being triggered.
      *
      * @return instance id.
@@ -430,7 +448,7 @@ public interface CairoConfiguration {
 
     int getSqlCopyBufferSize();
 
-    // null or empty input root disables "copy" sql
+    // null or empty input root disables "copy" SQL
     CharSequence getSqlCopyInputRoot();
 
     CharSequence getSqlCopyInputWorkRoot();
@@ -622,6 +640,8 @@ public interface CairoConfiguration {
 
     long getWorkStealTimeoutNanos();
 
+    long getWriteBackOffTimeoutOnMemPressureMs();
+
     long getWriterAsyncCommandBusyWaitTimeout();
 
     long getWriterAsyncCommandMaxTimeout();
@@ -721,12 +741,7 @@ public interface CairoConfiguration {
      */
     boolean mangleTableDirNames();
 
-    default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-    }
-
     boolean useFastAsOfJoin();
 
-    long getWriteBackOffTimeoutOnMemPressureMs();
-
-    boolean getDebugWalApplyBlockFailureNoRetry();
+    boolean useWithinLatestByOptimisation();
 }

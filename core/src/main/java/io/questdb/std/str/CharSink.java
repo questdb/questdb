@@ -38,6 +38,31 @@ import org.jetbrains.annotations.Nullable;
 @SuppressWarnings("unchecked")
 public interface CharSink<T extends CharSink<?>> {
 
+    default void escapeJsonStrChar(char c) {
+        switch (c) {
+            case '\b':
+                putAscii("\\b");
+                break;
+            case '\f':
+                putAscii("\\f");
+                break;
+            case '\n':
+                putAscii("\\n");
+                break;
+            case '\r':
+                putAscii("\\r");
+                break;
+            case '\t':
+                putAscii("\\t");
+                break;
+            default:
+                putAscii("\\u00");
+                put(c >> 4);
+                putAscii(Numbers.hexDigits[c & 15]);
+                break;
+        }
+    }
+
     /**
      * Assumes the char is ASCII and appends it to the sink n times.
      * If the char is non-ASCII, it may append a corrupted char, depending
@@ -112,24 +137,8 @@ public interface CharSink<T extends CharSink<?>> {
     /**
      * Appends a string representation of the supplied number to this sink.
      */
-    default T put(float value, int scale) {
-        Numbers.append(this, value, scale);
-        return (T) this;
-    }
-
-    /**
-     * Appends a string representation of the supplied number to this sink.
-     */
     default T put(double value) {
         Numbers.append(this, value);
-        return (T) this;
-    }
-
-    /**
-     * Appends a string representation of the supplied number to this sink.
-     */
-    default T put(double value, int scale) {
-        Numbers.append(this, value, scale);
         return (T) this;
     }
 

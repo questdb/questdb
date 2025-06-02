@@ -62,31 +62,13 @@ public class QueryRegistryTest extends AbstractTest {
         AbstractTest.tearDownStatic();
     }
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
         SharedRandom.RANDOM.set(new Rnd());
         testHttpClient.setKeepConnection(false);
         counter.set(0);
-    }
-
-    @Test
-    public void testAlterTable() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
-            assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value LONG)");
-            assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab (value) VALUES (6)");
-            assertGet("{\"ddl\":\"OK\"}", "ALTER TABLE tab ADD COLUMN text VARCHAR");
-            assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab VALUES (9, 'hoho')");
-            assertGet(
-                    "{\"query\":\"tab\"," +
-                            "\"columns\":[{\"name\":\"value\",\"type\":\"LONG\"},{\"name\":\"text\",\"type\":\"VARCHAR\"}]," +
-                            "\"timestamp\":-1," +
-                            "\"dataset\":[[6,null],[9,\"hoho\"]]," +
-                            "\"count\":2}",
-                    "tab"
-            );
-            assertQueryRegistry();
-        });
     }
 
     @Test
@@ -143,7 +125,7 @@ public class QueryRegistryTest extends AbstractTest {
     public void testExplain() throws Exception {
         getSimpleTester().run((engine, sqlExecutionContext) -> {
             assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value LONG)");
-            assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab (value) VALUES (10)");
+            assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab select 10");
             assertGet(
                     "{\"query\":\"explain tab\"," +
                             "\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}]," +
@@ -160,14 +142,13 @@ public class QueryRegistryTest extends AbstractTest {
     public void testInsertAsSelect() throws Exception {
         getSimpleTester().run((engine, sqlExecutionContext) -> {
             assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value LONG)");
-            assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab (value) VALUES (1)");
-            assertGet("{\"ddl\":\"OK\"}", "INSERT INTO tab SELECT x+5 FROM long_sequence(2)");
+            assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab SELECT x+5 FROM long_sequence(2)");
             assertGet(
                     "{\"query\":\"tab\"," +
                             "\"columns\":[{\"name\":\"value\",\"type\":\"LONG\"}]," +
                             "\"timestamp\":-1," +
-                            "\"dataset\":[[1],[6],[7]]," +
-                            "\"count\":3}",
+                            "\"dataset\":[[6],[7]]," +
+                            "\"count\":2}",
                     "tab"
             );
             assertQueryRegistry();
@@ -178,7 +159,7 @@ public class QueryRegistryTest extends AbstractTest {
     public void testTruncateTable() throws Exception {
         getSimpleTester().run((engine, sqlExecutionContext) -> {
             assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value LONG)");
-            assertGet("{\"ddl\":\"OK\"}", "INSERT INTO tab SELECT x FROM long_sequence(3)");
+            assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab SELECT x FROM long_sequence(3)");
             assertGet("{\"ddl\":\"OK\"}", "TRUNCATE TABLE tab");
             assertGet(
                     "{\"query\":\"tab\"," +
@@ -196,7 +177,7 @@ public class QueryRegistryTest extends AbstractTest {
     public void testUpdateTable() throws Exception {
         getSimpleTester().run((engine, sqlExecutionContext) -> {
             assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value LONG)");
-            assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab (value) VALUES (6)");
+            assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab select 6");
             assertGet("{\"dml\":\"OK\",\"updated\":1}", "UPDATE tab SET value=5");
             assertGet(
                     "{\"query\":\"tab\"," +

@@ -33,6 +33,10 @@ import io.questdb.std.Chars;
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
 public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata, TableStructure {
+    private int matViewRefreshLimitHoursOrMonths;
+    private int matViewTimerInterval;
+    private char matViewTimerIntervalUnit;
+    private long matViewTimerStart;
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;
@@ -57,6 +61,22 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
     }
 
+    public int getMatViewRefreshLimitHoursOrMonths() {
+        return matViewRefreshLimitHoursOrMonths;
+    }
+
+    public int getMatViewTimerInterval() {
+        return matViewTimerInterval;
+    }
+
+    public char getMatViewTimerIntervalUnit() {
+        return matViewTimerIntervalUnit;
+    }
+
+    public long getMatViewTimerStart() {
+        return matViewTimerStart;
+    }
+
     @Override
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
@@ -78,8 +98,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     public int getReplacingColumnIndex(int columnIndex) {
-        WriterTableColumnMetadata columnMeta = (WriterTableColumnMetadata) columnMetadata.get(columnIndex);
-        return columnMeta.getReplacingIndex();
+        return columnMetadata.get(columnIndex).getReplacingIndex();
     }
 
     @Override
@@ -139,6 +158,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
+        this.matViewRefreshLimitHoursOrMonths = TableUtils.getMatViewRefreshLimitHoursOrMonths(metaMem);
+        this.matViewTimerStart = TableUtils.getMatViewTimerStart(metaMem);
+        this.matViewTimerInterval = TableUtils.getMatViewTimerInterval(metaMem);
+        this.matViewTimerIntervalUnit = TableUtils.getMatViewTimerIntervalUnit(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -172,6 +195,22 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             }
             offset += Vm.getStorageLength(name);
         }
+    }
+
+    public void setMatViewRefreshLimitHoursOrMonths(int matViewRefreshLimitHoursOrMonths) {
+        this.matViewRefreshLimitHoursOrMonths = matViewRefreshLimitHoursOrMonths;
+    }
+
+    public void setMatViewTimerInterval(int matViewTimerInterval) {
+        this.matViewTimerInterval = matViewTimerInterval;
+    }
+
+    public void setMatViewTimerIntervalUnit(char matViewTimerIntervalUnit) {
+        this.matViewTimerIntervalUnit = matViewTimerIntervalUnit;
+    }
+
+    public void setMatViewTimerStart(long matViewTimerStart) {
+        this.matViewTimerStart = matViewTimerStart;
     }
 
     public void setMaxUncommittedRows(int rows) {

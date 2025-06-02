@@ -96,6 +96,7 @@ stages:
           CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
           COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
           SHOULD_RUN: $[ and( or( eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo') ), eq(variables['System.PullRequest.IsFork'], 'false') )]
+          jdk: "1.17"
 
         # Coverage Job is required to run by a validation rule, but there's no point in running the steps
         # if there were no code changes. Therefore we define SHOULD_RUN and use it as a condition in all steps.
@@ -117,6 +118,7 @@ stages:
             parameters:
               shouldRun: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
           - task: Cache@2
+            continueOnError: true
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
             inputs:
               key: '"questdb_main" | "maven"'
@@ -129,7 +131,7 @@ stages:
               mavenOptions: "$(MAVEN_OPTS)"
               goals: "compile"
               options: "--batch-mode -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-              jdkVersionOption: "1.11"
+              jdkVersionOption: $(jdk)
           - task: Maven@3
             displayName: "Merge partial JaCoCo reports"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
@@ -141,6 +143,7 @@ stages:
                 -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate
                 -DcoverDiff=$(COVERAGE_DIFF)
                 -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+              jdkVersionOption: $(jdk)
           - bash: |
               set -eux
               export PATH=$LLVM_TOOLS_PATH:$PATH
@@ -185,7 +188,7 @@ stages:
               done
               [ -f cobertura.xml ] && COVER_ARGS="$COVER_ARGS -type cobertura --cover cobertura.xml"
 
-              $JAVA_HOME_11_X64/bin/java -jar \
+              $JAVA_HOME_17_X64/bin/java -jar \
                 $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
                 $COVER_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
                 -t $(DIFF_COVER_THRESHOLD_PCT) --github-token $(GH_TOKEN)

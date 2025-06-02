@@ -579,6 +579,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     .I$();
             Misc.freeObjList(args);
             throw SqlException.position(position).put("bad function factory (NULL), check log");
+        } else if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
+            Misc.freeObjList(args);
+            throw SqlException.nonDeterministicColumn(node.position, node.token);
         }
         return function;
     }
@@ -681,16 +684,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
-        // Disable async offload for in (select ...) sub-queries to avoid infinite loops
-        // due to nested reduce calls. See SqlCodeGenerator#testBug484() for the reproducer.
-        boolean currentFilterEnabled = sqlExecutionContext.isParallelFilterEnabled();
-        sqlExecutionContext.setParallelFilterEnabled(false);
         // Make sure to override timestamp required flag from base query.
         sqlExecutionContext.pushTimestampRequiredFlag(false);
         try {
             return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
         } finally {
-            sqlExecutionContext.setParallelFilterEnabled(currentFilterEnabled);
             sqlExecutionContext.popTimestampRequiredFlag();
         }
     }
@@ -705,7 +703,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw invalidFunction(node, args);
         }
 
-
         final int argCount = args == null ? 0 : args.size();
         FunctionFactory candidate = null;
         FunctionFactoryDescriptor candidateDescriptor = null;
@@ -716,9 +713,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         int bestMatch = MATCH_NO_MATCH;
         boolean isWindowContext = !sqlExecutionContext.getWindowContext().isEmpty();
 
-
-        if (SqlKeywords.isCastKeyword(node.token) && argCount == 2
-                && args.getQuick(1).isConstant()) skipAssigningType:{
+        if (
+                SqlKeywords.isCastKeyword(node.token)
+                        && argCount == 2
+                        && args.getQuick(1).isConstant()
+        ) skipAssigningType:{
             // If this the cast into same type, return the first argument
             if (args.getQuick(0).getType() == args.getQuick(1).getType()) {
                 return args.getQuick(0);
@@ -825,7 +824,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     if (sigArgTypeTag == argTypeTag ||
                             (argTypeTag == ColumnType.CHAR &&              // 'a' could also be a string literal, so it should count as proper match
                                     sigArgTypeTag == ColumnType.STRING &&  // for both string and char, otherwise ? > 'a' matches char function even though
-                                    arg.isConstant() &&                    // bind variable parameter might be a string and throw error during execution.
+                                    factory.supportImplicitCastCharToStr() &&
+                                    arg.isConstant() && // bind variable parameter might be a string and throw error during execution.
                                     arg != CharTypeConstant.INSTANCE) ||   // Ignore type constant to keep cast(X as char) working
                             (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType))) {
                         switch (match) {
@@ -861,6 +861,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                                 // prefer CHAR -> STRING to STRING -> CHAR conversion
                                 overloadDistance = 2 * overloadDistance;
                             }
+                        } else if (argTypeTag == ColumnType.CHAR && sigArgTypeTag == ColumnType.STRING && !factory.supportImplicitCastCharToStr()) {
+                            overloadDistance = ColumnType.OVERLOAD_NONE;
                         }
 
                         sigArgTypeScore += overloadDistance;

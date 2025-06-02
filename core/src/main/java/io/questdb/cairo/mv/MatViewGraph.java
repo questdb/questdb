@@ -24,49 +24,105 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.mp.Queue;
+import io.questdb.std.Chars;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.ThreadLocal;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-public interface MatViewGraph extends QuietCloseable, Mutable {
+import java.util.ArrayDeque;
+import java.util.function.Function;
 
-    // only adds the view, no refresh initiated, no telemetry event logged
-    MatViewRefreshState addView(MatViewDefinition viewDefinition);
+/**
+ * Holds mat view definitions and dependency lists, i.e. mat view graph.
+ * This object is always in-use, even when mat views are disabled or the node is a read-only replica.
+ */
+public class MatViewGraph implements Mutable {
+    private static final ThreadLocal<LowerCaseCharSequenceHashSet> tlSeen = new ThreadLocal<>(LowerCaseCharSequenceHashSet::new);
+    private static final ThreadLocal<ArrayDeque<CharSequence>> tlStack = new ThreadLocal<>(ArrayDeque::new);
+    private static final ThreadLocal<MatViewTimerTask> tlTimerTask = new ThreadLocal<>(MatViewTimerTask::new);
+    private final Function<CharSequence, MatViewDependencyList> createDependencyList;
+    private final ConcurrentHashMap<MatViewDefinition> definitionsByTableDirName = new ConcurrentHashMap<>();
+    // Note: this map is grow-only, i.e. keys are never removed.
+    private final ConcurrentHashMap<MatViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
+    private final Queue<MatViewTimerTask> timerTaskQueue;
+
+    public MatViewGraph(Queue<MatViewTimerTask> timerTaskQueue) {
+        this.createDependencyList = name -> new MatViewDependencyList();
+        this.timerTaskQueue = timerTaskQueue;
+    }
+
+    public boolean addView(MatViewDefinition viewDefinition) {
+        final TableToken matViewToken = viewDefinition.getMatViewToken();
+        final MatViewDefinition prevDefinition = definitionsByTableDirName.putIfAbsent(matViewToken.getDirName(), viewDefinition);
+        // WAL table directories are unique, so we don't expect previous value
+        if (prevDefinition != null) {
+            return false;
+        }
+
+        synchronized (this) {
+            if (hasDependencyLoop(viewDefinition.getBaseTableName(), matViewToken)) {
+                throw CairoException.critical(0)
+                        .put("circular dependency detected for materialized view [view=").put(matViewToken.getTableName())
+                        .put(", baseTable=").put(viewDefinition.getBaseTableName())
+                        .put(']');
+            }
+            final MatViewDependencyList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());
+            final ObjList<TableToken> matViews = list.lockForWrite();
+            try {
+                matViews.add(matViewToken);
+            } finally {
+                list.unlockAfterWrite();
+            }
+        }
+        if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
+            final MatViewTimerTask timerTask = tlTimerTask.get();
+            timerTaskQueue.enqueue(timerTask.ofAdd(matViewToken));
+        }
+        return true;
+    }
 
     @TestOnly
     @Override
-    void clear();
+    public void clear() {
+        definitionsByTableDirName.clear();
+        dependentViewsByTableName.clear();
+    }
 
-    // adds the view, initiates refresh, logs telemetry event
-    void createView(MatViewDefinition viewDefinition);
+    public void getDependentViews(TableToken baseTableToken, ObjList<TableToken> sink) {
+        final MatViewDependencyList list = getOrCreateDependentViews(baseTableToken.getTableName());
+        final ReadOnlyObjList<TableToken> matViews = list.lockForRead();
+        try {
+            sink.addAll(matViews);
+        } finally {
+            list.unlockAfterRead();
+        }
+    }
 
-    void dropViewIfExists(TableToken matViewToken);
+    public MatViewDefinition getViewDefinition(TableToken matViewToken) {
+        return definitionsByTableDirName.get(matViewToken.getDirName());
+    }
 
-    void enqueueFullRefresh(TableToken matViewToken);
+    public void getViews(ObjList<TableToken> sink) {
+        for (MatViewDefinition viewDefinition : definitionsByTableDirName.values()) {
+            sink.add(viewDefinition.getMatViewToken());
+        }
+    }
 
-    void enqueueIncrementalRefresh(TableToken matViewToken);
-
-    void enqueueInvalidate(TableToken matViewToken, String invalidationReason);
-
-    void getDependentMatViews(TableToken baseTableToken, ObjList<TableToken> sink);
-
-    @Nullable
-    MatViewDefinition getViewDefinition(TableToken matViewToken);
-
-    @Nullable
-    MatViewRefreshState getViewRefreshState(TableToken matViewToken);
-
-    void getViews(ObjList<TableToken> bucket);
-
-    void notifyBaseInvalidated(TableToken baseTableToken);
-
-    void notifyBaseRefreshed(MatViewRefreshTask task, long seqTxn);
-
-    void notifyTxnApplied(MatViewRefreshTask task, long seqTxn);
+    public void onAlterRefreshTimer(TableToken matViewToken) {
+        final MatViewDefinition viewDefinition = definitionsByTableDirName.get(matViewToken.getDirName());
+        assert viewDefinition == null || viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE;
+        final MatViewTimerTask timerTask = tlTimerTask.get();
+        timerTaskQueue.enqueue(timerTask.ofUpdate(matViewToken));
+    }
 
     /**
      * Writes all table tokens to the destination list in order, so that dependent materialized views
@@ -79,7 +135,125 @@ public interface MatViewGraph extends QuietCloseable, Mutable {
      * @param tables      source set of all table tokens
      * @param orderedSink destination list
      */
-    void orderByDependentViews(ObjHashSet<TableToken> tables, ObjList<TableToken> orderedSink);
+    public void orderByDependentViews(ObjHashSet<TableToken> tables, ObjList<TableToken> orderedSink) {
+        orderedSink.clear();
+        ObjHashSet<TableToken> seen = new ObjHashSet<>();
+        ArrayDeque<TableToken> stack = new ArrayDeque<>();
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            TableToken token = tables.get(i);
+            if (!seen.contains(token)) {
+                orderByDependentViews(token, seen, stack, orderedSink);
+            }
+        }
+    }
 
-    boolean tryDequeueRefreshTask(MatViewRefreshTask task);
+    public void removeView(TableToken matViewToken) {
+        final MatViewDefinition viewDefinition = definitionsByTableDirName.remove(matViewToken.getDirName());
+        if (viewDefinition != null) {
+            final CharSequence baseTableName = viewDefinition.getBaseTableName();
+            final MatViewDependencyList dependentViews = dependentViewsByTableName.get(baseTableName);
+            if (dependentViews != null) {
+                final ObjList<TableToken> matViews = dependentViews.lockForWrite();
+                try {
+                    for (int i = 0, n = matViews.size(); i < n; i++) {
+                        final TableToken matView = matViews.get(i);
+                        if (matView.equals(matViewToken)) {
+                            matViews.remove(i);
+                            break;
+                        }
+                    }
+                } finally {
+                    dependentViews.unlockAfterWrite();
+                }
+            }
+            if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
+                final MatViewTimerTask timerTask = tlTimerTask.get();
+                timerTaskQueue.enqueue(timerTask.ofDrop(matViewToken));
+            }
+        }
+    }
+
+    @NotNull
+    private MatViewDependencyList getOrCreateDependentViews(CharSequence baseTableName) {
+        return dependentViewsByTableName.computeIfAbsent(baseTableName, createDependencyList);
+    }
+
+    private boolean hasDependencyLoop(CharSequence baseTableName, TableToken newMatViewToken) {
+        LowerCaseCharSequenceHashSet seen = tlSeen.get();
+        ArrayDeque<CharSequence> stack = tlStack.get();
+
+        seen.clear();
+        stack.clear();
+
+        if (Chars.equalsIgnoreCase(baseTableName, newMatViewToken.getTableName())) {
+            return true; // Self-loop
+        }
+
+        stack.push(newMatViewToken.getTableName());
+
+        while (!stack.isEmpty()) {
+            CharSequence currentTableName = stack.pop();
+            if (!seen.add(currentTableName)) {
+                continue;
+            }
+
+            MatViewDependencyList dependentViews = dependentViewsByTableName.get(currentTableName);
+            if (dependentViews != null) {
+                ReadOnlyObjList<TableToken> matViews = dependentViews.lockForRead();
+                try {
+                    for (int i = 0, n = matViews.size(); i < n; i++) {
+                        TableToken matView = matViews.get(i);
+                        if (Chars.equalsIgnoreCase(matView.getTableName(), baseTableName)) {
+                            return true; // Cycle detected
+                        }
+                        stack.push(matView.getTableName());
+                    }
+                } finally {
+                    dependentViews.unlockAfterRead();
+                }
+            }
+        }
+        return false;
+    }
+
+    private void orderByDependentViews(
+            TableToken current,
+            ObjHashSet<TableToken> seen,
+            ArrayDeque<TableToken> stack,
+            ObjList<TableToken> sink
+    ) {
+        stack.push(current);
+        while (!stack.isEmpty()) {
+            TableToken top = stack.peek();
+            if (!seen.contains(top)) {
+                MatViewDependencyList list = dependentViewsByTableName.get(top.getTableName());
+                if (list == null) {
+                    sink.add(top);
+                    seen.add(top);
+                    stack.pop();
+                } else {
+                    boolean allDependentSeen = true;
+                    ReadOnlyObjList<TableToken> views = list.lockForRead();
+                    try {
+                        for (int i = 0, n = views.size(); i < n; i++) {
+                            TableToken view = views.get(i);
+                            if (!seen.contains(view)) {
+                                stack.push(view);
+                                allDependentSeen = false;
+                            }
+                        }
+                    } finally {
+                        list.unlockAfterRead();
+                    }
+                    if (allDependentSeen) {
+                        sink.add(top);
+                        seen.add(top);
+                        stack.pop();
+                    }
+                }
+            } else {
+                stack.pop();
+            }
+        }
+    }
 }

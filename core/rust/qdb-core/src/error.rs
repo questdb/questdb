@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     pub fn test_io_error() {
-        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "io_error");
+        let io_err = std::io::Error::other("io_error");
         let mut err = CoreErrorReason::Io(Arc::new(io_err)).into_err();
         err.add_context("context_msg");
         let result: Result<(), _> = Err(err);
@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn io_err_into_coreerror() {
-        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "io_error");
+        let io_err = std::io::Error::other("io_error");
         let err: CoreError = io_err.into();
         assert_eq!(err.to_string(), "io_error");
     }
@@ -265,7 +265,7 @@ mod tests {
 
     #[test]
     pub fn test_no_context() {
-        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "io_error");
+        let io_err = std::io::Error::other("io_error");
         let err = CoreErrorReason::Io(Arc::new(io_err)).into_err();
         assert_eq!(err.to_string(), "io_error");
     }

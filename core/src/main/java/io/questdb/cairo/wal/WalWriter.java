@@ -308,7 +308,8 @@ public class WalWriter implements TableWriterAPI {
         commit0(Long.MIN_VALUE, Long.MIN_VALUE);
     }
 
-    public void commitWithExtra(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
+    // Called as the last transaction of a materialized view refresh.
+    public void commitMatView(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
         assert lastRefreshBaseTxn != Numbers.LONG_NULL;
         commit0(lastRefreshBaseTxn, lastRefreshTimestamp);
     }
@@ -364,7 +365,7 @@ public class WalWriter implements TableWriterAPI {
         return symbolMapReaders.getQuick(columnIndex);
     }
 
-    public TableToken getTableToken() {
+    public @NotNull TableToken getTableToken() {
         return tableToken;
     }
 
@@ -392,8 +393,9 @@ public class WalWriter implements TableWriterAPI {
         } catch (CairoException e) {
             LOG.critical().$("could not apply structure changes, WAL will be closed [table=").$(tableToken.getTableName())
                     .$(", walId=").$(walId)
+                    .$(", ex=").$((Throwable) e)
                     .$(", errno=").$(e.getErrno())
-                    .$(", error=").$((Throwable) e).I$();
+                    .I$();
             distressed = true;
             return false;
         }
@@ -411,16 +413,6 @@ public class WalWriter implements TableWriterAPI {
 
     public boolean inTransaction() {
         return segmentRowCount > currentTxnStartRowNum;
-    }
-
-    public void invalidate(boolean invalid, @Nullable CharSequence invalidationReason) {
-        try {
-            lastSegmentTxn = events.invalidate(invalid, invalidationReason);
-            getSequencerTxn();
-        } catch (Throwable th) {
-            rollback();
-            throw th;
-        }
     }
 
     public boolean isDistressed() {
@@ -479,6 +471,23 @@ public class WalWriter implements TableWriterAPI {
         long txn = apply(alterOp, true);
         assert Chars.equals(newTableName, tableToken.getTableName());
         return txn;
+    }
+
+    // Marks the materialized view as invalid or resets its invalidation status,
+    // depending on the input values.
+    public void resetMatViewState(
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            boolean invalid,
+            @Nullable CharSequence invalidationReason
+    ) {
+        try {
+            lastSegmentTxn = events.appendMatViewInvalidate(lastRefreshBaseTxn, lastRefreshTimestamp, invalid, invalidationReason);
+            getSequencerTxn();
+        } catch (Throwable th) {
+            rollback();
+            throw th;
+        }
     }
 
     public void rollSegment() {
@@ -822,8 +831,9 @@ public class WalWriter implements TableWriterAPI {
                 if (metaValidatorSvc.structureVersion != getColumnStructureVersion() + 1) {
                     retry = false;
                     throw CairoException.nonCritical()
-                            .put("statements containing multiple transactions, such as 'alter table add column col1, col2'" +
-                                    " are currently not supported for WAL tables [table=").put(tableToken.getTableName())
+                            .put("statement is either no-op,")
+                            .put(" or contains multiple transactions, such as 'alter table add column col1, col2',")
+                            .put(" and currently not supported for WAL tables [table=").put(tableToken.getTableName())
                             .put(", oldStructureVersion=").put(getColumnStructureVersion())
                             .put(", newStructureVersion=").put(metaValidatorSvc.structureVersion).put(']');
                 }
@@ -2079,7 +2089,7 @@ public class WalWriter implements TableWriterAPI {
                     }
                 }
             } else {
-                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exists");
+                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exist");
             }
         }
 
@@ -2141,7 +2151,7 @@ public class WalWriter implements TableWriterAPI {
                     }
                 }
             } else {
-                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exists");
+                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exist");
             }
         }
 
@@ -2195,7 +2205,7 @@ public class WalWriter implements TableWriterAPI {
                     }
                 }
             } else {
-                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exists");
+                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exist");
             }
         }
 

@@ -24,10 +24,21 @@
 
 package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.map.*;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
@@ -35,7 +46,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowColumn;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 
 public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -58,13 +74,17 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     ) throws SqlException {
         checkWindowParameter(position, sqlExecutionContext);
         int framingMode = windowContext.getFramingMode();
-        if (framingMode == WindowColumn.FRAMING_GROUPS) {
-            throw SqlException.$(position, "function not implemented for given window parameters");
-        }
-
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
+        if (rowsHi < rowsLo) {
+            return new DoubleNullFunction(args.get(0),
+                    NAME,
+                    rowsLo,
+                    rowsHi,
+                    framingMode == WindowColumn.FRAMING_RANGE,
+                    partitionByRecord);
+        }
 
         if (partitionByRecord != null) {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
@@ -449,7 +469,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // - sum(a) over (partition by x rows between unbounded preceding and current row)
     // - sum(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
-    static class SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
+    static class SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         private double sum;
 
@@ -501,6 +521,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -519,7 +540,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     }
 
     // Handles sum() over (rows between unbounded preceding and current row); there's no partition by.
-    public static class SumOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
+    public static class SumOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDoubleFunction {
 
         private long count = 0;
         private double externalSum;
@@ -555,6 +576,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -588,7 +610,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     }
 
     // sum() over () - empty clause, no partition by no order by, no frame == default frame
-    static class SumOverWholeResultSetFunction extends BaseDoubleWindowFunction {
+    static class SumOverWholeResultSetFunction extends BaseWindowFunction implements WindowDoubleFunction {
         private long count;
         private double externalSum;
         private double sum;
@@ -606,6 +628,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
         }
+
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {

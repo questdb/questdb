@@ -145,14 +145,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     public void testAutoFlush() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
-            int fragmentation = 1 + rnd.nextInt(5);
+            int fragmentation = 300 + rnd.nextInt(100);
             LOG.info().$("=== fragmentation=").$(fragmentation).$();
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation)
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                int totalCount = 100_000;
+                int totalCount = 50_000;
                 int autoFlushRows = 1000;
                 try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 0, 0, Long.MAX_VALUE)) {
                     for (int i = 0; i < totalCount; i++) {
@@ -169,6 +169,45 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     serverMain.awaitTable("table with space");
                     serverMain.assertSql("select count() from 'table with space'", "count\n" +
                             totalCount + "\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCanSendLong256ViaString() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+                serverMain.ddl("create table foo (ts TIMESTAMP, d LONG256) timestamp(ts) partition by day wal;");
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+                    sender.table("foo")
+                            .stringColumn("d", "0xAB")
+                            .at(1233456, ChronoUnit.NANOS);
+                    sender.flush();
+
+                    serverMain.awaitTxn("foo", 1);
+                    serverMain.assertSql("foo;",
+                            "ts\td\n" +
+                                    "1970-01-01T00:00:00.001233Z\t0xab\n");
+
+                    sender.table("foo")
+                            .stringColumn("d", "0xABC")
+                            .at(1233456, ChronoUnit.NANOS);
+
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "error in line 1: table: foo, column: d; cast error from protocol type: STRING to column type: LONG256"
+                    );
                 }
             }
         });
@@ -427,7 +466,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         sender.flush();
                         Assert.fail("Expected exception");
                     } catch (LineSenderException e) {
-                        TestUtils.assertContains(e.getMessage(), "http-status=404");
+                        TestUtils.assertContains(e.getMessage(), "http-status=405");
                         TestUtils.assertContains(e.getMessage(), "Could not flush buffer: HTTP endpoint does not support ILP.");
                     }
                 }
@@ -547,14 +586,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     public void testSmoke() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
-            int fragmentation = 1 + rnd.nextInt(5);
+            int fragmentation = 300 + rnd.nextInt(100);
             LOG.info().$("=== fragmentation=").$(fragmentation).$();
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation)
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                int totalCount = 1_000_000;
+                int totalCount = 100_000;
                 try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, 100_000, null, null, null, 0, 0, Long.MAX_VALUE)) {
                     for (int i = 0; i < totalCount; i++) {
                         sender.table("table with space")

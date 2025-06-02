@@ -27,7 +27,7 @@
 
     <groupId>io.questdb</groupId>
     <artifactId>utils</artifactId>
-    <version>8.2.4-SNAPSHOT</version>
+    <version>8.3.4-SNAPSHOT</version>
 
     <name>Command line utils for QuestDB</name>
 

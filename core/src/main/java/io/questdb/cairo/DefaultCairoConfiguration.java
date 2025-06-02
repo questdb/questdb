@@ -51,6 +51,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -102,9 +103,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean freeLeakedReaders() {
-        // to override use overrides() system, the idea for the "false" here
+        // To override use overrides() system, the idea for the "false" here
         // is not to hide reader leaks and continue to get errors in tests if
-        // reader is left behind by the cursor. The need to override should be rare,
+        // the cursor leaves behind the reader. The need to override should be rare,
         // and only for testing the "supervisor" system itself.
         return false;
     }
@@ -310,11 +311,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getDoubleToStrCastScale() {
-        return Numbers.MAX_DOUBLE_SCALE;
-    }
-
-    @Override
     public int getExplainPoolCapacity() {
         return 32;
     }
@@ -332,11 +328,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public @NotNull FilesFacade getFilesFacade() {
         return FilesFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public int getFloatToStrCastScale() {
-        return Numbers.MAX_FLOAT_SCALE;
     }
 
     @Override
@@ -478,8 +469,23 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getMatViewMaxRecompileAttempts() {
+    public int getMatViewMaxRefreshRetries() {
         return 10;
+    }
+
+    @Override
+    public long getMatViewMinRefreshInterval() {
+        return Timestamps.MINUTE_MICROS;
+    }
+
+    @Override
+    public long getMatViewRefreshOomRetryTimeout() {
+        return 200;
+    }
+
+    @Override
+    public int getMatViewRowsPerQueryEstimate() {
+        return 10_000_000;
     }
 
     @Override
@@ -649,6 +655,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPreferencesStringPoolCapacity() {
+        return 64;
+    }
+
+    @Override
     public int getQueryCacheEventQueueCapacity() {
         return 4;
     }
@@ -691,6 +702,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return 0;
+    }
+
+    @Override
+    public int getScoreboardFormat() {
+        return 2;
     }
 
     @Override
@@ -1182,9 +1198,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getWriterFileOpenOpts() {
-        // In some places we rely on the fact that data written via conventional IO
-        // is immediately visible to mapped memory for the same area of file. While this is the
-        // case on Linux it is absolutely not the case on Windows. We must not enable anything other
+        // In some places, we rely on the fact that data written via conventional IO
+        // is immediately visible to mapped memory for the same area of a file. While this is the
+        // case on Linux, it is absolutely not the case on Windows. We must not enable anything other
         // than MMAP on Windows.
         return Os.type != Os.WINDOWS ? O_ASYNC : O_NONE;
     }
@@ -1216,7 +1232,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isMatViewEnabled() {
-        return false;
+        return true;
     }
 
     @Override
@@ -1322,5 +1338,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean useFastAsOfJoin() {
         return true;
+    }
+
+    @Override
+    public boolean useWithinLatestByOptimisation() {
+        return false;
     }
 }

@@ -53,6 +53,9 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cutlass.http.client.Fragment;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.Response;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -116,10 +119,15 @@ import java.io.InputStream;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Paths;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -631,10 +639,6 @@ public final class TestUtils {
         assertEventually(assertion, 30);
     }
 
-    public interface EventualCode {
-        void run() throws Exception;
-    }
-
     public static void assertEventually(EventualCode assertion, int timeoutSeconds) throws Exception {
         long maxSleepingTimeMillis = 1000;
         long nextSleepingTimeMillis = 10;
@@ -703,9 +707,71 @@ public final class TestUtils {
         }
     }
 
+    /**
+     * Asserts that a {@code CharSequence} does NOT contain another {@code CharSequence}.
+     *
+     * @param sequence the {@code CharSequence} to check.
+     * @param term     the {@code CharSequence} to search for (and assert its absence).
+     * @see #assertNotContains(String, CharSequence, CharSequence)
+     */
+    public static void assertNotContains(CharSequence sequence, CharSequence term) {
+        assertNotContains(null, sequence, term);
+    }
+
+    /**
+     * Asserts that a {@code CharSequence} does NOT contain another {@code CharSequence}.
+     * <p>
+     * Fails if the {@code term} is empty (""), because the convention established by
+     * {@link #assertContains(String, CharSequence, CharSequence)} considers an empty
+     * term to be contained within any sequence.
+     * </p>
+     *
+     * @param message  the identifying message for the {@link AssertionError} (<code>null</code> okay)
+     * @param sequence the {@code CharSequence} to check.
+     * @param term     the {@code CharSequence} to search for (and assert its absence).
+     */
+    public static void assertNotContains(String message, CharSequence sequence, CharSequence term) {
+        if (term.length() == 0) {
+            String formatted = "";
+            if (message != null) {
+                formatted = message + " ";
+            }
+            Assert.fail(formatted + "Cannot assert that sequence does not contain an empty term; an empty term is always considered contained by definition.");
+        }
+
+        if (!Chars.contains(sequence, term)) {
+            return;
+        }
+
+        String formatted = "";
+        if (message != null) {
+            formatted = message + " ";
+        }
+        Assert.fail(formatted + "Expected sequence <" + sequence + "> to NOT contain term <" + term + "> but it did.");
+    }
+
     public static void assertReader(CharSequence expected, TableReader reader, MutableUtf16Sink sink) {
         try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
             assertCursor(expected, cursor, reader.getMetadata(), true, sink);
+        }
+    }
+
+    public static void assertResponse(HttpClient.Request request, int expectedStatusCode, String expectedHttpResponse) {
+        try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
+            responseHeaders.await();
+
+            assertEquals(String.valueOf(expectedStatusCode), responseHeaders.getStatusCode());
+
+            final Utf8StringSink sink = new Utf8StringSink();
+
+            Fragment fragment;
+            final Response response = responseHeaders.getResponse();
+            while ((fragment = response.recv()) != null) {
+                Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
+            }
+
+            assertEquals(expectedHttpResponse, sink);
+            sink.clear();
         }
     }
 
@@ -881,6 +947,36 @@ public final class TestUtils {
             latch.await();
         } catch (Throwable ignore) {
         }
+    }
+
+    /**
+     * Generates a cartesian product from multiple sets of values.
+     * <p>
+     * This utility method creates all possible combinations of elements where each combination
+     * takes exactly one element from each input set. It's primarily used to generate comprehensive
+     * test parameters for parameterized tests.
+     * <p>
+     * Example usage:
+     * <pre>{@code
+     * Object[][] parameters = cartesianProduct(new Object[][]{
+     *     JoinType.values(),     // First set: all join types
+     *     {true, false},         // Second set: boolean values
+     *     LimitType.values(),    // Third set: all limit types
+     *     {true, false}          // Fourth set: more boolean values
+     * });
+     * }</pre>
+     *
+     * @param values A non-empty array of arrays, where each inner array represents a set of values.
+     *               None of the inner arrays can be empty.
+     * @return A two-dimensional array containing all possible combinations of the input values,
+     * where each row is one combination.
+     * @throws AssertionError If the input array is empty or any inner array is empty
+     */
+    public static Object[][] cartesianProduct(@NotNull Object[][] values) {
+        if (values.length == 0) {
+            throw new AssertionError("Expected at least one set of values");
+        }
+        return cartesianProduct(values, 0);
     }
 
     public static int connect(long fd, long sockAddr) {
@@ -1145,9 +1241,13 @@ public final class TestUtils {
     }
 
     public static void drainPurgeJob(CairoEngine engine) {
+        drainPurgeJob(engine, engine.getConfiguration().getFilesFacade());
+    }
+
+    public static void drainPurgeJob(CairoEngine engine, FilesFacade filesFacade) {
         try (WalPurgeJob job = new WalPurgeJob(
                 engine,
-                engine.getConfiguration().getFilesFacade(),
+                filesFacade,
                 engine.getConfiguration().getMicrosecondClock()
         )) {
             engine.setWalPurgeJobRunLock(job.getRunLock());
@@ -1229,6 +1329,23 @@ public final class TestUtils {
         }
     }
 
+    public static void execute(Connection conn, String sql, String... bindVars) throws SQLException {
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            for (int i = 0; i < bindVars.length; i++) {
+                stmt.setString(i + 1, bindVars[i]);
+            }
+            stmt.execute();
+        }
+    }
+
+    public static void executeSQLViaPostgres(String username, String password, int pgPort, String... sqls) throws SQLException {
+        try (final Connection connection = getConnectionForUser(username, password, pgPort)) {
+            for (String sql : sqls) {
+                execute(connection, sql);
+            }
+        }
+    }
+
     @NotNull
     public static Rnd generateRandom(Log log) {
         return generateRandom(log, System.nanoTime(), System.currentTimeMillis());
@@ -1263,6 +1380,10 @@ public final class TestUtils {
             }
         }
         return Integer.parseInt(version);
+    }
+
+    public static String getPgConnectionUri(int pgPort) {
+        return "jdbc:postgresql://127.0.0.1:" + pgPort + "/qdb";
     }
 
     public static String getResourcePath(String resourceName) {
@@ -1907,6 +2028,32 @@ public final class TestUtils {
         }
     }
 
+    private static Object[][] cartesianProduct(Object[][] values, int offset) {
+        Object[] currentLvlValues = values[offset];
+        if (currentLvlValues.length == 0) {
+            throw new AssertionError("Expected at least one value [offset=" + offset + "]");
+        }
+
+        if (values.length - offset == 1) {
+            // the last level
+            Object[][] result = new Object[currentLvlValues.length][1];
+            for (int i = 0; i < currentLvlValues.length; i++) {
+                result[i][0] = currentLvlValues[i];
+            }
+            return result;
+        }
+
+        Object[][] lowerLvlValues = cartesianProduct(values, offset + 1);
+        Object[][] res = new Object[currentLvlValues.length * lowerLvlValues.length][lowerLvlValues[0].length + 1];
+        for (int i = 0; i < currentLvlValues.length; i++) {
+            for (int j = 0; j < lowerLvlValues.length; j++) {
+                res[i * lowerLvlValues.length + j][0] = currentLvlValues[i];
+                System.arraycopy(lowerLvlValues[j], 0, res[i * lowerLvlValues.length + j], 1, lowerLvlValues[0].length);
+            }
+        }
+        return res;
+    }
+
     private static ObjObjHashMap<String, Long> findPartitionSizes(
             Utf8Sequence root,
             String tableName,
@@ -2044,6 +2191,13 @@ public final class TestUtils {
         );
     }
 
+    static Connection getConnectionForUser(String username, String password, int pgPort) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", username);
+        properties.setProperty("password", password);
+        return DriverManager.getConnection(getPgConnectionUri(pgPort), properties);
+    }
+
     public interface CheckedIntFunction {
         int get() throws Throwable;
     }
@@ -2055,6 +2209,10 @@ public final class TestUtils {
 
     public interface CheckedSupplier<T> {
         T get() throws Throwable;
+    }
+
+    public interface EventualCode {
+        void run() throws Exception;
     }
 
     @FunctionalInterface

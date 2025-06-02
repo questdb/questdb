@@ -46,8 +46,8 @@ public class NullEqualsTest extends AbstractCairoTest {
             execute("insert into x values(null, 1.0)");
             execute("insert into x values(3.14, 1.0)");
             assertSql("a\tb\n" +
-                    "null\t1.0000\n" +
-                    "3.1400\t1.0000\n", "select * from x where a <> b");
+                    "null\t1.0\n" +
+                    "3.14\t1.0\n", "select * from x where a <> b");
             assertSql("a\tb\n", "select * from x where a = b");
         });
     }
