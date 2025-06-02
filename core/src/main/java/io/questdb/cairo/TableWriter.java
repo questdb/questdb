@@ -1547,7 +1547,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (lastPartitionConverted) {
             // Open last partition as read-only
-            openPartition(partitionTimestamp);
+            openPartition(partitionTimestamp, txWriter.getTransientRowCount());
         }
         return true;
     }
@@ -1726,7 +1726,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (lastPartitionConverted) {
             // Open last partition as read-only
-            openPartition(partitionTimestamp);
+            openPartition(partitionTimestamp, txWriter.getTransientRowCount());
         }
         return true;
     }
@@ -5086,7 +5086,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             closeActivePartition(false);
 
             if (index != 0) {
-                openPartition(prevTimestamp);
+                openPartition(prevTimestamp, txWriter.getTransientRowCount());
                 setAppendPosition(newTransientRowCount, false);
             } else {
                 rowAction = ROW_ACTION_OPEN_PARTITION;
@@ -5171,7 +5171,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             updateO3ColumnTops();
         }
         if (!isEmptyTable() && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)) {
-            openPartition(txWriter.getLastPartitionTimestamp());
+            openPartition(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
         }
 
         // Data is written out successfully, however, we can still fail to set append position, for
@@ -6078,26 +6078,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .$("merged partition [table=`").utf8(tableToken.getTableName())
                             .$("`, ts=").$ts(partitionTimestamp)
                             .$(", txn=").$(txWriter.txn)
+                            .$(", rows=").$(srcDataNewPartitionSize)
                             .I$();
 
                     if (isCommitReplaceMode() && srcDataNewPartitionSize == 0) {
                         // Partition data is fully removed by the replace-commit
-                        LOG.info().$("partition is fully removed in range replace [table=").$(tableToken)
-                                .$(", ts=").$ts(partitionTimestamp)
-                                .I$();
+                        int partIndex = txWriter.getPartitionIndex(partitionTimestamp);
+                        boolean isSplitPartition = partIndex > 0
+                                && txWriter.getPartitionFloor(txWriter.getPartitionTimestampByIndex(partIndex - 1)) == txWriter.getPartitionFloor(partitionTimestamp);
 
+                        // It is not easy to remove the split
+                        // the parent can become writable and we can overwrite / truncate data visible to the readers
+                        if (!isSplitPartition) {
+                            LOG.info().$("partition is fully removed in range replace [table=").$(tableToken)
+                                    .$(", ts=").$ts(partitionTimestamp)
+                                    .I$();
 
-                        int removedIndex = txWriter.removeAttachedPartitions(partitionTimestamp);
-                        columnVersionWriter.removePartition(partitionTimestamp);
-                        partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                            txWriter.removeAttachedPartitions(partitionTimestamp);
+                            columnVersionWriter.removePartition(partitionTimestamp);
+                            partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                        } else {
+                            // Set partition size to 0 and process all 0 size partitions at the end of the method.
+                            // It will be removed if there are no readers on the previous partition.
+                            txWriter.updatePartitionSizeByTimestamp(partitionTimestamp, srcDataNewPartitionSize);
+                        }
+
                         partitionsRemoved = true;
-                        firstPartitionRemoved |= removedIndex == 0;
-                        boolean removedIsLast = removedIndex == txWriter.getPartitionCount();
+                        firstPartitionRemoved |= partIndex == 0;
+                        boolean removedIsLast = partIndex == txWriter.getPartitionCount();
                         lastPartitionRemoved |= removedIsLast;
 
                         if (removedIsLast) {
-                            if (removedIndex > 0) {
-                                int newLastPartitionIndex = removedIndex - 1;
+                            if (partIndex > 0) {
+                                int newLastPartitionIndex = partIndex - 1;
                                 long newLastPartitionTimestamp = txWriter.getPartitionTimestampByIndex(newLastPartitionIndex);
                                 long newLastPartitionSize = txWriter.getPartitionSize(newLastPartitionIndex);
                                 columnVersionWriter.replaceInitialPartitionRecords(newLastPartitionTimestamp, newLastPartitionSize);
@@ -6131,6 +6144,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         if (partitionsRemoved) {
+            o3ConsumePartitionUpdateSink_processSplitPartitionRemoval();
+
             // Replace commit removed some of the partitions
             if (txWriter.getPartitionCount() > 0) {
                 try {
@@ -6175,6 +6190,131 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.bumpPartitionTableVersion();
         } else {
             txWriter.transientRowCount = commitTransientRowCount;
+        }
+    }
+
+    private void o3ConsumePartitionUpdateSink_findNewSplitPartitionSizeTimestamp(Path partitionPath, long partitionTimestamp, long partitionSize) {
+        // Find how many rows of the same timestamp we need to split out to create a minimum size split partition
+        // this is needed sometimes when split partition is fully removed in a replace commit
+        int pathSize = partitionPath.size();
+        try {
+            CharSequence tsColumnName = metadata.getColumnName(metadata.getTimestampIndex());
+            final long fd = openRO(ff, dFile(partitionPath, tsColumnName, COLUMN_NAME_TXN_NONE), LOG);
+            try {
+                final long mapSize = partitionSize * Long.BYTES;
+                final long addr = mapRO(ff, fd, mapSize, MemoryTag.MMAP_TABLE_WRITER);
+                try {
+                    long lastTs = Unsafe.getUnsafe().getLong(addr + (partitionSize - 1) * Long.BYTES);
+
+                    long currentTs = lastTs - 1;
+                    long row = partitionSize - 2;
+                    for (; row >= 0; row--) {
+                        currentTs = Unsafe.getUnsafe().getLong(addr + row * Long.BYTES);
+                        if (currentTs != lastTs) {
+                            break;
+                        }
+                    }
+                    // Use attachMinTimestamp feild to pass new partition size
+                    attachMinTimestamp = row + 1;
+                    // Use attachMaxTimestamp field to pass new partition max timestamp
+                    attachMaxTimestamp = row > -1 ? currentTs + 1 : partitionTimestamp;
+                } finally {
+                    ff.munmap(addr, mapSize, MemoryTag.MMAP_TABLE_WRITER);
+                }
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            partitionPath.trimTo(pathSize);
+        }
+    }
+
+    private void o3ConsumePartitionUpdateSink_processSplitPartitionRemoval() {
+        // Process all the partitions with 0 sizes
+        // after running 3ConsumePartitionUpdateSink()
+        // 0 size partition means that the partition cannot be removed
+        // straight away because it is
+        // - split partition, say 2024-02-24T1258
+        // - parent partition 2024-02-24 may be used by a reader locked on txn before the split
+        //   and cannot have any data to be appended or partition files to be truncated
+        // The solution to this situation is before removal of the split partition 2024-02-24T1258
+        // we split one more partition from the parent partition 2024-02-24
+        // with 1 line (or minimum number of lines with the same timestamp)
+        // to another split, for example 2024-02-24T1257
+        // and then drop the split partition 2024-02-24T1258
+        for (int i = txWriter.getPartitionCount() - 1; i > 0; i--) {
+            long partitionSize = txWriter.getPartitionSize(i);
+            if (partitionSize == 0) {
+                // This is a split partition that is fully removed in the last commit.
+                long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
+                long partitionNameTxn = txWriter.getPartitionNameTxn(i);
+                long prevPartitionTimestamp = txWriter.getPartitionTimestampByIndex(i - 1);
+                long prevPartitionSize = txWriter.getPartitionSize(i - 1);
+                long prevPartitionTxn = txWriter.getPartitionNameTxn(i - 1);
+
+                if (txWriter.getPartitionFloor(partitionTimestamp) != txWriter.getPartitionFloor(prevPartitionTimestamp)
+                        || prevPartitionSize == 0
+                        || prevPartitionTxn == txWriter.txn
+                ) {
+                    // Previous partition is not the parent partition of this removed split
+                    // or previous partition is also 0 size, e.g. removed split
+                    // or the previous partition was just re-created in this commit
+                    // in this case we can remove the current partition fully
+                    partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
+                    txWriter.removeAttachedPartitions(partitionTimestamp);
+                } else {
+                    try {
+                        // The safe way to remove the split is to split one line from the parent partition
+                        // See comment in the beginning of this method.
+                        long prevPartitionNameTxn = setStateForTimestamp(path, prevPartitionTimestamp);
+                        o3ConsumePartitionUpdateSink_findNewSplitPartitionSizeTimestamp(
+                                path,
+                                prevPartitionTimestamp,
+                                prevPartitionSize
+                        );
+                        long newPrevPartitionSize = attachMinTimestamp;
+                        long newSplitPartitionTimestamp = attachMaxTimestamp;
+
+                        assert newSplitPartitionTimestamp <= partitionTimestamp;
+                        txWriter.insertPartition(i, newSplitPartitionTimestamp, prevPartitionSize - newPrevPartitionSize, txWriter.txn);
+                        setStateForTimestamp(other, newSplitPartitionTimestamp);
+                        ff.mkdir(other.$(), configuration.getMkDirMode());
+
+                        // This logging should be quite rare, we can afford info level.
+                        LOG.info().$("splitting last line of the partition [table=").$(tableToken)
+                                .$(", partition=").$ts(prevPartitionTimestamp)
+                                .$(", oldSize=").$(prevPartitionSize)
+                                .$(", newSize=").$(newPrevPartitionSize)
+                                .$(", splitPartition=").$ts(newSplitPartitionTimestamp)
+                                .$(", deletedSplitPartition=").$ts(partitionTimestamp)
+                                .$();
+
+                        try (
+                                Frame sourceFrame = frameFactory.openRO(path, prevPartitionTimestamp, metadata, columnVersionWriter, prevPartitionSize);
+                                Frame targetFrame = frameFactory.createRW(other, newSplitPartitionTimestamp, metadata, columnVersionWriter, 0)
+                        ) {
+                            FrameAlgebra.append(targetFrame, sourceFrame, newPrevPartitionSize, prevPartitionSize, configuration.getCommitMode());
+                        }
+                        addPhysicallyWrittenRows(prevPartitionSize - newPrevPartitionSize);
+
+                        // Add the new split
+                        if (newPrevPartitionSize > 0) {
+                            txWriter.updatePartitionSizeByTimestamp(prevPartitionTimestamp, newPrevPartitionSize);
+                        } else {
+                            // All rows were copied to the new split, 0 rows left in original
+                            partitionRemoveCandidates.add(prevPartitionTimestamp, prevPartitionNameTxn);
+                            txWriter.removeAttachedPartitions(prevPartitionTimestamp);
+                        }
+
+                        // Now it's safe to remove the empty split partition
+                        partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
+                        txWriter.removeAttachedPartitions(partitionTimestamp);
+                    } finally {
+                        path.trimTo(pathSize);
+                        other.trimTo(pathSize);
+                    }
+                }
+            }
         }
     }
 
@@ -6414,7 +6554,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void openLastPartitionAndSetAppendPosition(long ts) {
-        openPartition(ts);
+        openPartition(ts, txWriter.getTransientRowCount());
         setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagRowCount(), false);
     }
 
@@ -6462,10 +6602,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void openPartition(long timestamp) {
+    private void openPartition(long timestamp, long rowCount) {
         try {
             timestamp = txWriter.getPartitionTimestampByTimestamp(timestamp);
-            setStateForTimestamp(path, timestamp);
+            long partitionTxnName = setStateForTimestamp(path, timestamp);
             partitionTimestampHi = txWriter.getNextPartitionTimestamp(timestamp) - 1;
             int plen = path.size();
             if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
@@ -6487,7 +6627,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (indexer != null) {
                         // we have to create files before columns are open
                         // because we are reusing MAMemoryImpl object from columns' list
-                        createIndexFiles(name, columnNameTxn, metadata.getIndexValueBlockCapacity(i), plen, txWriter.getTransientRowCount() < 1);
+                        createIndexFiles(name, columnNameTxn, metadata.getIndexValueBlockCapacity(i), plen, rowCount < 1);
                     }
 
                     openColumnFiles(name, columnNameTxn, i, plen);
@@ -6499,7 +6639,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
             populateDenseIndexerList();
-            LOG.info().$("switched partition [path=").$substr(pathRootSize, path).I$();
+
+            LOG.info().$("switched partition [path=").$substr(pathRootSize, path)
+                    .$(", rowCount=").$(rowCount)
+                    .I$();
+
+            engine.getPartitionOverwriteControl().notifyPartitionMutates(
+                    tableToken,
+                    timestamp,
+                    partitionTxnName,
+                    rowCount
+            );
         } catch (Throwable e) {
             distressed = true;
             throw e;
@@ -7097,7 +7247,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Any more complicated case involve looking at what folders are present on disk before removing
             // do it async in O3PartitionPurgeJob
             if (schedulePurgeO3Partitions(messageBus, tableToken, partitionBy)) {
-                LOG.info().$("scheduled to purge partitions [table=").utf8(tableToken.getTableName()).I$();
+                LOG.debug().$("scheduled to purge partitions [table=").utf8(tableToken.getTableName()).I$();
             } else {
                 LOG.error().$("could not queue for purge, queue is full [table=").utf8(tableToken.getTableName()).I$();
             }
@@ -7128,7 +7278,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // The table is empty, last partition does not exist
                 // WAL processing needs last partition to store LAG data
                 // Create artificial partition at the point of o3TimestampMin.
-                openPartition(o3TimestampMin);
+                openPartition(o3TimestampMin, txWriter.getTransientRowCount());
                 txWriter.setMaxTimestamp(o3TimestampMin);
                 // Add the partition to the list of partitions with 0 size.
                 txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1);
@@ -9276,12 +9426,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param path      path instance to modify
      * @param timestamp to determine the interval for
      */
-    private void setStateForTimestamp(Path path, long timestamp) {
+    private long setStateForTimestamp(Path path, long timestamp) {
         // When partition is created, a txn name must always be set to purge dropped partitions.
         // When partition is created outside O3 merge use `txn-1` as the version
         long partitionTxnName = PartitionBy.isPartitioned(partitionBy) ? txWriter.getTxn() - 1 : -1;
         partitionTxnName = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp, partitionTxnName);
         setPathForNativePartition(path, partitionBy, timestamp, partitionTxnName);
+        return partitionTxnName;
     }
 
     private void shrinkO3Mem() {
@@ -9560,7 +9711,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // files after switch.
         updateIndexes();
         txWriter.switchPartitions(timestamp);
-        openPartition(timestamp);
+        openPartition(timestamp, txWriter.getTransientRowCount());
         setAppendPosition(0, false);
     }
 
@@ -10063,7 +10214,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (rollbackToMaxTimestamp > Long.MIN_VALUE) {
                     try {
                         txWriter.setMaxTimestamp(rollbackToMaxTimestamp);
-                        openPartition(rollbackToMaxTimestamp);
+                        openPartition(rollbackToMaxTimestamp, txWriter.getTransientRowCount());
                         setAppendPosition(rollbackToTransientRowCount, false);
                     } catch (Throwable e) {
                         freeColumns(false);

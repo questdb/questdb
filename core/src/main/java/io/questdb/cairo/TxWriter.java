@@ -243,8 +243,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         updateAttachedPartitionSizeByTimestamp(timestamp, 0L, txn - 1);
     }
 
-    public boolean isActivePartition(long timestamp) {
-        return getPartitionTimestampByTimestamp(maxTimestamp) == timestamp;
+    public void insertPartition(int index, long partitionTimestamp, long size, long nameTxn) {
+        insertPartitionSizeByTimestamp(index * LONGS_PER_TX_ATTACHED_PARTITION, partitionTimestamp, size, nameTxn);
     }
 
     public boolean isInsideExistingPartition(long timestamp) {

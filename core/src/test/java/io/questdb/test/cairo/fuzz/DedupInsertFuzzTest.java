@@ -352,6 +352,45 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testRandomColumnsDedupMultipleKeyColWithRCommits() throws Exception {
+        // Replace commits not yet supported with Parquet
+        Assume.assumeFalse(convertToParquet);
+        Rnd rnd = generateRandomAndProps();
+        setFuzzProbabilities(
+                rnd.nextDouble() / 100,
+                rnd.nextDouble(),
+                rnd.nextDouble(),
+                0.1 * rnd.nextDouble(),
+                0.1 * rnd.nextDouble(),
+                0,
+                rnd.nextDouble(),
+                0.0,
+                rnd.nextDouble(),
+                0.0,
+                0.0,
+                0.1 * rnd.nextDouble(),
+                0.0,
+                0.5,
+                0.5
+        );
+
+        // Set isO3 to false to enforce unique timestamps inside the transactions,
+        // replace commits do not run deduplication inside the transaction rows.
+        setFuzzCounts(
+                false,
+                rnd.nextInt(100_000),
+                rnd.nextInt(20),
+                rnd.nextInt(20),
+                rnd.nextInt(20),
+                rnd.nextInt(1000),
+                rnd.nextInt(100_000),
+                1 + rnd.nextInt(1)
+        );
+
+        runFuzzWithRandomColsDedup(rnd, -1);
+    }
+
+    @Test
     public void testRandomColumnsDedupOneKeyCol() throws Exception {
         Rnd rnd = generateRandomAndProps();
         setFuzzProbabilities(
