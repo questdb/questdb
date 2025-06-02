@@ -41,6 +41,8 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException;
 
+    CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx, boolean generateProgressLogger) throws SqlException;
+
     void compileBatch(CharSequence batchText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception;
 
     /**

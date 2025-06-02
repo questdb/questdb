@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
@@ -53,6 +54,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     private static final Log LOG = LogFactory.getLog(MatViewTimerJob.class);
     private static final Comparator<Timer> timerComparator = Comparator.comparingLong(t -> t.deadlineUtc);
     private final MicrosecondClock clock;
+    private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final ObjList<Timer> expired = new ObjList<>();
     private final Predicate<Timer> filterByDirName;
@@ -65,7 +67,8 @@ public class MatViewTimerJob extends SynchronizedJob {
 
     public MatViewTimerJob(CairoEngine engine) {
         this.engine = engine;
-        this.clock = engine.getConfiguration().getMicrosecondClock();
+        this.configuration = engine.getConfiguration();
+        this.clock = configuration.getMicrosecondClock();
         this.timerTaskQueue = engine.getMatViewTimerQueue();
         this.matViewGraph = engine.getMatViewGraph();
         this.matViewStateStore = engine.getMatViewStateStore();
@@ -89,7 +92,14 @@ public class MatViewTimerJob extends SynchronizedJob {
                 throw CairoException.critical(0).put("invalid EVERY interval and/or unit: ").put(interval)
                         .put(", ").put(unit);
             }
-            final Timer timer = new Timer(viewToken, sampler, viewDefinition.getTimerTzRules(), start, now);
+            final Timer timer = new Timer(
+                    viewToken,
+                    sampler,
+                    viewDefinition.getTimerTzRules(),
+                    start,
+                    configuration.getMatViewTimerStartEpsilon(),
+                    now
+            );
             timerQueue.add(timer);
             LOG.info().$("registered timer for materialized view [view=").$(viewToken)
                     .$(", start=").$ts(start)
@@ -198,6 +208,7 @@ public class MatViewTimerJob extends SynchronizedJob {
                 @NotNull TimestampSampler sampler,
                 @Nullable TimeZoneRules rules,
                 long start,
+                long startEpsilon,
                 long now
         ) {
             this.matViewToken = matViewToken;
@@ -205,7 +216,7 @@ public class MatViewTimerJob extends SynchronizedJob {
             this.rules = rules;
             sampler.setStart(start);
             // It's fine if the timer triggers immediately.
-            deadlineUtc = now > start ? sampler.nextTimestamp(sampler.round(now - 1)) : start;
+            deadlineUtc = now > start + startEpsilon ? sampler.nextTimestamp(sampler.round(now - 1)) : start;
             deadlineLocal = rules != null ? deadlineUtc + rules.getOffset(deadlineUtc) : deadlineUtc;
         }
 

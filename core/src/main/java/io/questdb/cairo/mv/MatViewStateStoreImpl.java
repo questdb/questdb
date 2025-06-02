@@ -38,6 +38,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TelemetryMatViewTask;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -126,6 +127,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
             // Kickstart incremental refresh.
             enqueueMatViewTask(
                     viewDefinition.getMatViewToken(),
+                    null,
                     MatViewRefreshTask.INCREMENTAL_REFRESH,
                     null,
                     Numbers.LONG_NULL,
@@ -150,6 +152,18 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     }
 
     @Override
+    public void enqueueInvalidateDependentViews(TableToken baseTableToken, String invalidationReason) {
+        enqueueMatViewTask(
+                null,
+                baseTableToken,
+                MatViewRefreshTask.INVALIDATE,
+                invalidationReason,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL
+        );
+    }
+
+    @Override
     public void enqueueRangeRefresh(TableToken matViewToken, long rangeFrom, long rangeTo) {
         enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.RANGE_REFRESH, null, rangeFrom, rangeTo);
     }
@@ -163,7 +177,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     ) {
         final MatViewState state = stateByTableDirName.get(matViewToken.getDirName());
         if (state != null && !state.isDropped()) {
-            enqueueMatViewTask(matViewToken, operation, invalidationReason, rangeFrom, rangeTo);
+            enqueueMatViewTask(matViewToken, null, operation, invalidationReason, rangeFrom, rangeTo);
         }
     }
 
@@ -241,7 +255,8 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     }
 
     private void enqueueMatViewTask(
-            TableToken matViewToken,
+            @Nullable TableToken matViewToken,
+            @Nullable TableToken baseTableToken,
             int operation,
             String invalidationReason,
             long rangeFrom,
@@ -250,6 +265,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         final MatViewRefreshTask task = taskHolder.get();
         task.clear();
         task.matViewToken = matViewToken;
+        task.baseTableToken = baseTableToken;
         task.operation = operation;
         task.invalidationReason = invalidationReason;
         task.rangeFrom = rangeFrom;
