@@ -24,6 +24,8 @@
 
 package io.questdb.metrics;
 
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsRecord;
+
 public interface LongGauge extends Target {
 
     void add(long value);
@@ -35,6 +37,16 @@ public interface LongGauge extends Target {
     long getValue();
 
     void inc();
+
+    @Override
+    default int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        record
+                .setGaugeName(getName())
+                .setType("gauge")
+                .setValue(getValue())
+                .setKind("LONG");
+        return 1;
+    }
 
     void setValue(long value);
 }

@@ -26,5 +26,5 @@ package io.questdb.metrics;
 
 public interface CounterWithTwoLabels extends Target {
 
-    void inc(short label0, short label1);
+    void inc(int label0, int label1);
 }
