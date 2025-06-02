@@ -30,12 +30,12 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -346,15 +346,15 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 for (int i = 0; i < 3; i += 2) {
                     w.upsert(i, i % 10, -1, i * 10L);
                 }
-                w.upsertDefaultTxnName(4, 123, TimestampUtils.parseFloorPartialTimestamp("2024-02-24"));
+                w.upsertDefaultTxnName(4, 123, TimestampFormatUtils.parseTimestamp("2024-02-24T00:00:00.000000Z"));
 
                 w.commit();
 
                 r.readSafe(configuration.getMillisecondClock(), 1);
                 Assert.assertEquals("{[\n" +
-                        "{columnIndex: 4, defaultNameTxn: 123, addedPartition: '2024-02-24T00:00:00.000Z'},\n" +
-                        "{columnIndex: 0, nameTxn: -1, partition: '1970-01-01T00:00:00.000Z', columnTop: 0},\n" +
-                        "{columnIndex: 2, nameTxn: -1, partition: '1970-01-01T00:00:00.000Z', columnTop: 20}\n" +
+                        "{columnIndex: 4, defaultNameTxn: 123, addedPartition: '2024-02-24T00:00:00.000000Z'},\n" +
+                        "{columnIndex: 0, nameTxn: -1, partition: '1970-01-01T00:00:00.000000Z', columnTop: 0},\n" +
+                        "{columnIndex: 2, nameTxn: -1, partition: '1970-01-01T00:00:00.000002Z', columnTop: 20}\n" +
                         "]}", r.toString());
             }
         });

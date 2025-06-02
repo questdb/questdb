@@ -177,7 +177,7 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     @Override
     public final long getTimestamp(Record rec) {
         final CharSequence value = getSymbol(rec);
-        return MicrosTimestampDriver.INSTANCE.implicitCastStr(value, ColumnType.SYMBOL);
+        return MicrosTimestampDriver.INSTANCE.implicitCast(value, ColumnType.SYMBOL);
     }
 
     @Override

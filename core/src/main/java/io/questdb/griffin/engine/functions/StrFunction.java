@@ -169,7 +169,7 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final long getTimestamp(Record rec) {
-        return MicrosTimestampDriver.INSTANCE.implicitCastStr(getStrA(rec), ColumnType.STRING);
+        return MicrosTimestampDriver.INSTANCE.implicitCast(getStrA(rec));
     }
 
     @Override

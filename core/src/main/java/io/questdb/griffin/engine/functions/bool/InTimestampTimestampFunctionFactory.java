@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -163,7 +164,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
     private static long tryParseTimestamp(CharSequence seq, int position) throws SqlException {
         try {
-            return TimestampUtils.parseFloorPartialTimestamp(seq);
+            return MicrosTimestampDriver.INSTANCE.parseFloorLiteral(seq);
         } catch (NumericException e) {
             throw SqlException.invalidDate(seq, position);
         }

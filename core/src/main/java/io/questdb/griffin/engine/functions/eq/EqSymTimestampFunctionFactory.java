@@ -74,7 +74,7 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
         if (symbolFunc.isConstant()) {
             CharSequence value = symbolFunc.getSymbol(null);
-            long symbolConstant = MicrosTimestampDriver.INSTANCE.implicitCastStr(value, ColumnType.SYMBOL);
+            long symbolConstant = MicrosTimestampDriver.INSTANCE.implicitCast(value, ColumnType.SYMBOL);
 
             if (timestampFunc.isConstant()) {
                 return symbolConstant == timestampFunc.getLong(null) ? BooleanConstant.TRUE : BooleanConstant.FALSE;

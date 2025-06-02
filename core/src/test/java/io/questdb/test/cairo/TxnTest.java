@@ -65,7 +65,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class TxnTest extends AbstractCairoTest {
-    protected static final Log LOG = LogFactory.getLog(TxnTest.class);
+    private static final Log LOG = LogFactory.getLog(TxnTest.class);
 
     @Test
     public void testFailedTxWriterDoesNotCorruptTable() throws Exception {
@@ -160,10 +160,10 @@ public class TxnTest extends AbstractCairoTest {
                         txReader.ofRO(path.$(), TableUtils.getTimestampType(model), PartitionBy.DAY);
 
                         txReader.unsafeLoadAll();
-                        final String expected = "{txn: 1, attachedPartitions: [\n" +
-                                "{ts: '1970-01-01T00:00:00.000Z', rowCount: 1, nameTxn: -1},\n" +
-                                "{ts: '1970-01-02T00:00:00.000Z', rowCount: 2, nameTxn: -1}\n" +
-                                "], transientRowCount: 2, fixedRowCount: 1, minTimestamp: '294247-01-10T04:00:54.775Z', maxTimestamp: '1970-01-03T00:00:00.000Z', dataVersion: 0, structureVersion: 0, partitionTableVersion: 0, columnVersion: 0, truncateVersion: 0, seqTxn: 0, symbolColumnCount: 0, lagRowCount: 0, lagMinTimestamp: '294247-01-10T04:00:54.775Z', lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}";
+                        final String expected = "{txn: 1, attachedPartitions: [\n"+
+                                "{ts: '1970-01-01T00:00:00.000000Z', rowCount: 1, nameTxn: -1},\n" +
+                                "{ts: '1970-01-02T00:00:00.000000Z', rowCount: 2, nameTxn: -1}\n" +
+                                "], transientRowCount: 2, fixedRowCount: 1, minTimestamp: '294247-01-10T04:00:54.775807Z', maxTimestamp: '1970-01-03T00:00:00.000001Z', dataVersion: 0, structureVersion: 0, partitionTableVersion: 0, columnVersion: 0, truncateVersion: 0, seqTxn: 0, symbolColumnCount: 0, lagRowCount: 0, lagMinTimestamp: '294247-01-10T04:00:54.775807Z', lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}";
                         Assert.assertEquals(expected, txReader.toString());
 
                         txCopyReader.loadAllFrom(txReader);
@@ -225,8 +225,8 @@ public class TxnTest extends AbstractCairoTest {
                             txWriter.updatePartitionSizeByTimestamp(i * Timestamps.DAY_MICROS, i + 1);
                         }
                         TestUtils.assertContains(txWriter.toString(), "[\n" +
-                                "{ts: '1970-01-01T00:00:00.000Z', rowCount: 1, nameTxn: -1},\n" +
-                                "{ts: '1970-01-02T00:00:00.000Z', rowCount: 2, nameTxn: -1}\n" +
+                                "{ts: '1970-01-01T00:00:00.000000Z', rowCount: 1, nameTxn: -1},\n" +
+                                "{ts: '1970-01-02T00:00:00.000000Z', rowCount: 2, nameTxn: -1}\n" +
                                 "]");
                     }
                 }

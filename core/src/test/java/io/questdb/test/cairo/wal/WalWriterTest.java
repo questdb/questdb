@@ -34,6 +34,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
@@ -59,7 +60,6 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.mp.SOCountDownLatch;
@@ -2079,6 +2079,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             final int rowsToInsertTotal = 100;
             final long pointer = Unsafe.malloc(rowsToInsertTotal, MemoryTag.NATIVE_DEFAULT);
+            final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
             try {
                 final long ts = Os.currentTimeMicros();
                 final Long256Impl long256 = new Long256Impl();
@@ -2125,7 +2126,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         stringSink.put("some rubbish to be ignored");
                         row.putLong256(20, stringSink, 2, strLen);
 
-                        row.putTimestamp(21, SqlUtil.implicitCastStrAsTimestamp("2022-06-10T09:13:46." + (i + 1)));
+                        row.putTimestamp(21, timestampDriver.implicitCast("2022-06-10T09:13:46." + (i + 1)));
 
                         row.putStr(22, (char) (65 + i % 26));
                         row.putStr(23, "abcdefghijklmnopqrstuvwxyz", 0, i % 26 + 1);

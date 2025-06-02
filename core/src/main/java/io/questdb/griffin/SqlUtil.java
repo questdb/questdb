@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
@@ -65,8 +64,8 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT
 public class SqlUtil {
 
     static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
-    private static final DateFormat[] DATE_FORMATS_FOR_TIMESTAMP;
-    private static final int DATE_FORMATS_FOR_TIMESTAMP_SIZE;
+    private static final DateFormat[] IMPLICIT_CAST_FORMATS;
+    private static final int IMPLICIT_CAST_FORMATS_SIZE;
     private static final ThreadLocal<Long256ConstantFactory> LONG256_FACTORY = new ThreadLocal<>(Long256ConstantFactory::new);
 
     public static void addSelectStar(
@@ -76,6 +75,18 @@ public class SqlUtil {
     ) throws SqlException {
         model.addBottomUpColumn(nextColumn(queryColumnPool, expressionNodePool, "*", "*", 0));
         model.setArtificialStar(true);
+    }
+
+    public static long castPGDates(CharSequence value, int fromColumnType) {
+        final int hi = value.length();
+        for (int i = 0; i < IMPLICIT_CAST_FORMATS_SIZE; i++) {
+            try {
+                //
+                return IMPLICIT_CAST_FORMATS[i].parse(value, 0, hi, EN_LOCALE) * 1000L;
+            } catch (NumericException ignore) {
+            }
+        }
+        throw ImplicitCastException.inconvertibleValue(value, fromColumnType, ColumnType.TIMESTAMP);
     }
 
     // used by Copier assembler
@@ -714,10 +725,6 @@ public class SqlUtil {
         }
     }
 
-    public static long implicitCastStrAsTimestamp(CharSequence value) {
-        return implicitCastStrVarcharAsTimestamp0(value, ColumnType.STRING);
-    }
-
     public static void implicitCastStrAsUuid(CharSequence str, Uuid uuid) {
         if (str == null || str.length() == 0) {
             uuid.ofNull();
@@ -740,35 +747,6 @@ public class SqlUtil {
         } catch (NumericException e) {
             throw ImplicitCastException.inconvertibleValue(str, ColumnType.STRING, ColumnType.UUID);
         }
-    }
-
-    public static long implicitCastStrVarcharAsTimestamp0(CharSequence value, int fromColumnType) {
-        assert fromColumnType == ColumnType.STRING || fromColumnType == ColumnType.VARCHAR || fromColumnType == ColumnType.SYMBOL;
-
-        if (value != null) {
-            try {
-                return Numbers.parseLong(value);
-            } catch (NumericException ignore) {
-            }
-
-            // Parse as ISO with variable length.
-            try {
-                return TimestampUtils.parseFloorPartialTimestamp(value);
-            } catch (NumericException ignore) {
-            }
-
-            final int hi = value.length();
-            for (int i = 0; i < DATE_FORMATS_FOR_TIMESTAMP_SIZE; i++) {
-                try {
-                    //
-                    return DATE_FORMATS_FOR_TIMESTAMP[i].parse(value, 0, hi, EN_LOCALE) * 1000L;
-                } catch (NumericException ignore) {
-                }
-            }
-
-            throw ImplicitCastException.inconvertibleValue(value, fromColumnType, ColumnType.TIMESTAMP);
-        }
-        return Numbers.LONG_NULL;
     }
 
     public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink<?> sink) {
@@ -861,10 +839,6 @@ public class SqlUtil {
         } catch (NumericException ignore) {
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.SHORT);
         }
-    }
-
-    public static long implicitCastVarcharAsTimestamp(CharSequence value) {
-        return implicitCastStrVarcharAsTimestamp0(value, ColumnType.VARCHAR);
     }
 
     public static boolean isNotPlainSelectModel(QueryModel model) {
@@ -1027,12 +1001,12 @@ public class SqlUtil {
         final DateFormat pgDateTimeFormat = milliCompiler.compile("y-MM-dd HH:mm:ssz");
 
         // we are using "millis" compiler deliberately because clients encode millis into strings
-        DATE_FORMATS_FOR_TIMESTAMP = new DateFormat[]{
+        IMPLICIT_CAST_FORMATS = new DateFormat[]{
                 PG_DATE_Z_FORMAT,
                 PG_DATE_MILLI_TIME_Z_FORMAT,
                 pgDateTimeFormat
         };
 
-        DATE_FORMATS_FOR_TIMESTAMP_SIZE = DATE_FORMATS_FOR_TIMESTAMP.length;
+        IMPLICIT_CAST_FORMATS_SIZE = IMPLICIT_CAST_FORMATS.length;
     }
 }

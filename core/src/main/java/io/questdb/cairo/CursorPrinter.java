@@ -59,7 +59,7 @@ public class CursorPrinter {
                 DateFormatUtils.appendDateTime(sink, record.getDate(columnIndex));
                 break;
             case ColumnType.TIMESTAMP:
-                ColumnType.getTimestampDriver(columnType).append2(sink, record.getTimestamp(columnIndex));
+                ColumnType.getTimestampDriver(columnType).append(sink, record.getTimestamp(columnIndex));
                 break;
             case ColumnType.DOUBLE:
                 double v = record.getDouble(columnIndex);

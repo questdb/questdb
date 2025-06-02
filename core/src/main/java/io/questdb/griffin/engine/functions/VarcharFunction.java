@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -197,7 +198,7 @@ public abstract class VarcharFunction implements ScalarFunction {
 
     @Override
     public final long getTimestamp(Record rec) {
-        return SqlUtil.implicitCastVarcharAsTimestamp(getStrA(rec));
+        return MicrosTimestampDriver.INSTANCE.implicitCastVarchar(getVarcharA(rec));
     }
 
     @Override

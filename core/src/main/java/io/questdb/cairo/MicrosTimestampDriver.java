@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.ptt.PartitionDateParseUtil;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -37,11 +36,13 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.PartitionBy.*;
 import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
+import static io.questdb.griffin.SqlUtil.castPGDates;
 import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
 import static io.questdb.std.datetime.microtime.TimestampFormatUtils.*;
 
@@ -120,11 +121,6 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public void append(CharSink<?> sink, long timestamp) {
-        TimestampFormatUtils.appendDateTime(sink, timestamp);
-    }
-
-    @Override
-    public void append2(CharSink<?> sink, long timestamp) {
         TimestampFormatUtils.appendDateTimeUSec(sink, timestamp);
     }
 
@@ -149,7 +145,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
     @Override
     public long castStr(CharSequence value, int tupleIndex, short fromType, short toType) {
         try {
-            return TimestampUtils.parseFloorPartialTimestamp(value);
+            return parseFloorLiteral(value);
         } catch (NumericException e) {
             throw ImplicitCastException.inconvertibleValue(tupleIndex, value, fromType, toType);
         }
@@ -260,8 +256,46 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long implicitCastStr(CharSequence value, int typeFrom) {
-        return SqlUtil.implicitCastStrVarcharAsTimestamp0(value, typeFrom);
+    public long implicitCast(CharSequence value, int typeFrom) {
+        assert typeFrom == ColumnType.STRING || typeFrom == ColumnType.SYMBOL;
+        if (value != null) {
+            try {
+                return Numbers.parseLong(value);
+            } catch (NumericException ignore) {
+            }
+
+            // Parse as ISO with variable length.
+            try {
+                return parseFloorLiteral(value);
+            } catch (NumericException ignore) {
+            }
+
+            return castPGDates(value, typeFrom);
+        }
+        return Numbers.LONG_NULL;
+    }
+
+    @Override
+    public long implicitCastVarchar(Utf8Sequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseLong(value);
+            } catch (NumericException ignore) {
+            }
+
+            // Parse as ISO with variable length.
+            try {
+                return TimestampUtils.parseFloorPartialTimestamp(value);
+            } catch (NumericException ignore) {
+            }
+
+            // all formats are ascii
+            if (value.isAscii()) {
+                return castPGDates(value.asAsciiCharSequence(), ColumnType.VARCHAR);
+            }
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.TIMESTAMP);
+        }
+        return Numbers.LONG_NULL;
     }
 
     @Override

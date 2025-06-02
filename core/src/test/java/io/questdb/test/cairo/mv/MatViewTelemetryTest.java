@@ -29,6 +29,7 @@ import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -36,7 +37,6 @@ import org.junit.Test;
 
 import static io.questdb.PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT;
 import static io.questdb.PropertyKey.DEV_MODE_ENABLED;
-import static io.questdb.griffin.model.TimestampUtils.parseFloorPartialTimestamp;
 import static org.junit.Assert.assertNull;
 
 public class MatViewTelemetryTest extends AbstractCairoTest {
@@ -72,7 +72,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                         "price_1h order by ts, sym"
                 );
 
-                currentMicros = parseFloorPartialTimestamp("2024-10-24T17:00:33.000000Z");
+                currentMicros = TimestampFormatUtils.parseTimestamp("2024-10-24T17:00:33.000000Z");
                 execute("drop materialized view price_1h");
                 assertNull(engine.getTableTokenIfExists("price_1h"));
                 telemetryJob.runSerially();
@@ -233,7 +233,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
     }
 
     private static void createBaseTable(String currentTime) throws SqlException, NumericException {
-        currentMicros = parseFloorPartialTimestamp(currentTime);
+        currentMicros = TimestampFormatUtils.parseTimestamp(currentTime);
         execute("create table " + "base_price" + " (" +
                 "sym varchar, price double, ts timestamp" +
                 ") timestamp(ts) partition by DAY WAL"
@@ -242,7 +242,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
     }
 
     private static void createMatView(String currentTime, TelemetryJob telemetryJob) throws NumericException, SqlException {
-        currentMicros = parseFloorPartialTimestamp(currentTime);
+        currentMicros = TimestampFormatUtils.parseTimestamp(currentTime);
         execute("create materialized view " + "price_1h" + " as ("
                 + "select sym, last(price) as price, ts from " + "base_price" + " sample by 1h"
                 + ") partition by DAY");
@@ -255,7 +255,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
             execute(sqls[i]);
         }
         drainWalQueue();
-        currentMicros = parseFloorPartialTimestamp(currentTime);
+        currentMicros = TimestampFormatUtils.parseTimestamp(currentTime);
         drainMatViewQueue(refreshJob);
         drainWalQueue();
         telemetryJob.runSerially();
