@@ -1679,7 +1679,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             tok = expectToken(lexer, "interval");
                             final int interval = Timestamps.getStrideMultiple(tok);
                             final char unit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
-                            SqlParser.validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
+                            SqlParser.validateMatViewEveryUnit(unit, lexer.lastTokenPosition());
                             final AlterOperationBuilder setTimer = alterOperationBuilder.ofSetMatViewRefreshTimer(
                                     matViewNamePosition,
                                     matViewToken,

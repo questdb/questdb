@@ -3100,11 +3100,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void setMetaMatViewRefreshTimer(long start, int interval, char unit) {
+    public void setMetaMatViewTimer(long start, int interval, char unit) {
         commit();
         metadata.setMatViewTimerStart(start);
         metadata.setMatViewTimerInterval(interval);
-        metadata.setMatViewTimerIntervalUnit(unit);
+        metadata.setMatViewTimerUnit(unit);
         writeMetadataToDisk();
         engine.getMatViewGraph().onAlterRefreshTimer(tableToken);
     }
@@ -8670,7 +8670,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putInt(metadata.getMatViewRefreshLimitHoursOrMonths());
             ddlMem.putLong(metadata.getMatViewTimerStart());
             ddlMem.putInt(metadata.getMatViewTimerInterval());
-            ddlMem.putChar(metadata.getMatViewTimerIntervalUnit());
+            ddlMem.putChar(metadata.getMatViewTimerUnit());
+            ddlMem.putInt(metadata.getMatViewPeriodLength());
+            ddlMem.putChar(metadata.getMatViewPeriodLengthUnit());
+            ddlMem.putInt(metadata.getMatViewPeriodDelay());
+            ddlMem.putChar(metadata.getMatViewPeriodDelayUnit());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {

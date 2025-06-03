@@ -170,18 +170,38 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public int getMatViewPeriodDelay() {
+        return createTableOperation.getMatViewPeriodDelay();
+    }
+
+    @Override
+    public char getMatViewPeriodDelayUnit() {
+        return createTableOperation.getMatViewPeriodDelayUnit();
+    }
+
+    @Override
+    public int getMatViewPeriodLength() {
+        return createTableOperation.getMatViewPeriodLength();
+    }
+
+    @Override
+    public char getMatViewPeriodLengthUnit() {
+        return createTableOperation.getMatViewPeriodLengthUnit();
+    }
+
+    @Override
     public int getMatViewTimerInterval() {
         return createTableOperation.getMatViewTimerInterval();
     }
 
     @Override
-    public char getMatViewTimerIntervalUnit() {
-        return createTableOperation.getMatViewTimerIntervalUnit();
+    public long getMatViewTimerStart() {
+        return createTableOperation.getMatViewTimerStart();
     }
 
     @Override
-    public long getMatViewTimerStart() {
-        return createTableOperation.getMatViewTimerStart();
+    public char getMatViewTimerUnit() {
+        return createTableOperation.getMatViewTimerUnit();
     }
 
     @Override

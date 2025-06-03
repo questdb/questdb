@@ -599,7 +599,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         final int interval = (int) extraInfo.get(1);
         final char unit = (char) extraInfo.get(2);
         try {
-            svc.setMetaMatViewRefreshTimer(start, interval, unit);
+            svc.setMetaMatViewTimer(start, interval, unit);
         } catch (CairoException e) {
             e.position(tableNamePosition);
             throw e;

@@ -36,10 +36,14 @@ public class CairoTable implements Sinkable {
     public final IntList columnOrderList;
     public final ObjList<CairoColumn> columns;
     private boolean dedup;
+    private int matViewPeriodDelay;
+    private char matViewPeriodDelayUnit;
+    private int matViewPeriodLength;
+    private char matViewPeriodLengthUnit;
     private int matViewRefreshLimitHoursOrMonths;
     private int matViewTimerInterval;
-    private char matViewTimerIntervalUnit;
     private long matViewTimerStart;
+    private char matViewTimerUnit;
     private int maxUncommittedRows;
     private long metadataVersion = -1;
     private long o3MaxLag;
@@ -75,7 +79,11 @@ public class CairoTable implements Sinkable {
         matViewRefreshLimitHoursOrMonths = fromTab.getMatViewRefreshLimitHoursOrMonths();
         matViewTimerStart = fromTab.getMatViewTimerStart();
         matViewTimerInterval = fromTab.getMatViewTimerInterval();
-        matViewTimerIntervalUnit = fromTab.getMatViewTimerIntervalUnit();
+        matViewTimerUnit = fromTab.getMatViewTimerUnit();
+        matViewPeriodLength = fromTab.getMatViewPeriodLength();
+        matViewPeriodLengthUnit = fromTab.getMatViewPeriodLengthUnit();
+        matViewPeriodDelay = fromTab.getMatViewPeriodDelay();
+        matViewPeriodDelayUnit = fromTab.getMatViewPeriodDelayUnit();
     }
 
     public int getColumnCount() {
@@ -107,6 +115,22 @@ public class CairoTable implements Sinkable {
         return token.getTableId();
     }
 
+    public int getMatViewPeriodDelay() {
+        return matViewPeriodDelay;
+    }
+
+    public char getMatViewPeriodDelayUnit() {
+        return matViewPeriodDelayUnit;
+    }
+
+    public int getMatViewPeriodLength() {
+        return matViewPeriodLength;
+    }
+
+    public char getMatViewPeriodLengthUnit() {
+        return matViewPeriodLengthUnit;
+    }
+
     public int getMatViewRefreshLimitHoursOrMonths() {
         return matViewRefreshLimitHoursOrMonths;
     }
@@ -115,12 +139,12 @@ public class CairoTable implements Sinkable {
         return matViewTimerInterval;
     }
 
-    public char getMatViewTimerIntervalUnit() {
-        return matViewTimerIntervalUnit;
-    }
-
     public long getMatViewTimerStart() {
         return matViewTimerStart;
+    }
+
+    public char getMatViewTimerUnit() {
+        return matViewTimerUnit;
     }
 
     public int getMaxUncommittedRows() {
@@ -189,6 +213,22 @@ public class CairoTable implements Sinkable {
         this.dedup = dedup;
     }
 
+    public void setMatViewPeriodDelay(int matViewPeriodDelay) {
+        this.matViewPeriodDelay = matViewPeriodDelay;
+    }
+
+    public void setMatViewPeriodDelayUnit(char matViewPeriodDelayUnit) {
+        this.matViewPeriodDelayUnit = matViewPeriodDelayUnit;
+    }
+
+    public void setMatViewPeriodLength(int matViewPeriodLength) {
+        this.matViewPeriodLength = matViewPeriodLength;
+    }
+
+    public void setMatViewPeriodLengthUnit(char matViewPeriodLengthUnit) {
+        this.matViewPeriodLengthUnit = matViewPeriodLengthUnit;
+    }
+
     public void setMatViewRefreshLimitHoursOrMonths(int matViewRefreshLimitHoursOrMonths) {
         this.matViewRefreshLimitHoursOrMonths = matViewRefreshLimitHoursOrMonths;
     }
@@ -197,12 +237,12 @@ public class CairoTable implements Sinkable {
         this.matViewTimerInterval = matViewTimerInterval;
     }
 
-    public void setMatViewTimerIntervalUnit(char matViewTimerIntervalUnit) {
-        this.matViewTimerIntervalUnit = matViewTimerIntervalUnit;
-    }
-
     public void setMatViewTimerStart(long matViewTimerStart) {
         this.matViewTimerStart = matViewTimerStart;
+    }
+
+    public void setMatViewTimerUnit(char matViewTimerUnit) {
+        this.matViewTimerUnit = matViewTimerUnit;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {

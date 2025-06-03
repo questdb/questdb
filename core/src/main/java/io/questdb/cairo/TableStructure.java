@@ -41,6 +41,22 @@ public interface TableStructure {
         return null;
     }
 
+    default int getMatViewPeriodDelay() {
+        return 0; // disabled by default
+    }
+
+    default char getMatViewPeriodDelayUnit() {
+        return 0; // disabled by default
+    }
+
+    default int getMatViewPeriodLength() {
+        return 0; // disabled by default
+    }
+
+    default char getMatViewPeriodLengthUnit() {
+        return 0; // disabled by default
+    }
+
     /**
      * Returns incremental refresh limit for the materialized view:
      * if positive, it's in hours;
@@ -55,12 +71,12 @@ public interface TableStructure {
         return 0; // disabled by default
     }
 
-    default char getMatViewTimerIntervalUnit() {
-        return 0; // disabled by default
-    }
-
     default long getMatViewTimerStart() {
         return Numbers.LONG_NULL; // disabled by default
+    }
+
+    default char getMatViewTimerUnit() {
+        return 0; // disabled by default
     }
 
     int getMaxUncommittedRows();

@@ -210,7 +210,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                 if (matViewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
                                     timerStart = matViewMeta.getMatViewTimerStart();
                                     timerInterval = matViewMeta.getMatViewTimerInterval();
-                                    timerIntervalUnit = matViewMeta.getMatViewTimerIntervalUnit();
+                                    timerIntervalUnit = matViewMeta.getMatViewTimerUnit();
                                 }
                             }
 

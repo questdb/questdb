@@ -84,7 +84,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
             final long start = matViewMeta.getMatViewTimerStart();
             final int interval = matViewMeta.getMatViewTimerInterval();
-            final char unit = matViewMeta.getMatViewTimerIntervalUnit();
+            final char unit = matViewMeta.getMatViewTimerUnit();
             final TimestampSampler sampler;
             try {
                 sampler = TimestampSamplerFactory.getInstance(interval, unit, 0);

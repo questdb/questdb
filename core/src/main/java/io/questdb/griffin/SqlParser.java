@@ -244,15 +244,78 @@ public class SqlParser {
         return visitor.visit(node);
     }
 
-    public static void validateMatViewIntervalUnit(char unit, int pos) throws SqlException {
+    public static void validateMatViewDelay(int lengthInterval, char lengthUnit, int delayInterval, char delayUnit, int pos) throws SqlException {
+        int lengthMinutes;
+        switch (lengthUnit) {
+            case 'm':
+                lengthMinutes = lengthInterval;
+                break;
+            case 'h':
+                lengthMinutes = lengthInterval * 60;
+                break;
+            case 'd':
+                lengthMinutes = lengthInterval * 24 * 60;
+                break;
+            default:
+                throw SqlException.position(pos).put("unsupported length unit: ").put(lengthInterval).put(lengthUnit)
+                        .put(", supported units are 'm', 'h', 'd'");
+        }
+
+        int delayMinutes;
+        switch (delayUnit) {
+            case 'm':
+                delayMinutes = delayInterval;
+                break;
+            case 'h':
+                delayMinutes = delayInterval * 60;
+                break;
+            case 'd':
+                delayMinutes = delayInterval * 24 * 60;
+                break;
+            default:
+                throw SqlException.position(pos).put("unsupported delay unit: ").put(delayInterval).put(delayUnit)
+                        .put(", supported units are 'm', 'h', 'd'");
+        }
+
+        if (delayMinutes >= lengthMinutes) {
+            throw SqlException.position(pos).put("delay cannot be equal to or greater than length");
+        }
+    }
+
+    public static void validateMatViewEveryUnit(char unit, int pos) throws SqlException {
         if (unit != 'M' && unit != 'y' && unit != 'w' && unit != 'd' && unit != 'h' && unit != 'm') {
             throw SqlException.position(pos).put("unsupported interval unit: ").put(unit)
                     .put(", supported units are 'm', 'h', 'd', 'w', 'y', 'M'");
         }
     }
 
+    public static void validateMatViewLength(int interval, char unit, int pos) throws SqlException {
+        switch (unit) {
+            case 'm':
+                if (interval > 24 * 60) {
+                    throw SqlException.position(pos).put("maximum supported length interval is 24 hours: ").put(interval).put(unit);
+                }
+                break;
+            case 'h':
+                if (interval > 24) {
+                    throw SqlException.position(pos).put("maximum supported length interval is 24 hours: ").put(interval).put(unit);
+                }
+                break;
+            case 'd':
+                if (interval > 1) {
+                    throw SqlException.position(pos).put("maximum supported length interval is 24 hours: ").put(interval).put(unit);
+                }
+                break;
+            default:
+                throw SqlException.position(pos).put("unsupported length unit: ").put(interval).put(unit)
+                        .put(", supported units are 'm', 'h', 'd'");
+        }
+    }
+
     private static void collectAllTableNames(
-            QueryModel model, LowerCaseCharSequenceHashSet outTableNames, IntList outTableNamePositions
+            QueryModel model,
+            LowerCaseCharSequenceHashSet outTableNames,
+            IntList outTableNamePositions
     ) {
         QueryModel m = model;
         do {
@@ -878,7 +941,7 @@ public class SqlParser {
         int baseTableNamePos = 0;
         if (isWithKeyword(tok)) {
             expectTok(lexer, "base");
-            tok = tok(lexer, "base table expected");
+            tok = tok(lexer, "base table");
             baseTableName = sansPublicSchema(tok, lexer);
             assertNameIsQuotedOrNotAKeyword(baseTableName, lexer.lastTokenPosition());
             baseTableName = unquote(baseTableName);
@@ -890,7 +953,7 @@ public class SqlParser {
         int refreshType = MatViewDefinition.IMMEDIATE_REFRESH_TYPE;
         if (isRefreshKeyword(tok)) {
             refreshDefined = true;
-            tok = tok(lexer, "'immediate' or 'manual' or 'start' or 'every' or 'as' expected");
+            tok = tok(lexer, "'immediate' or 'manual' or 'period' or 'start' or 'every' or 'as'");
             // 'incremental' is obsolete, same as 'immediate',
             // but it also used to be accepted in timer mat views
             if (isIncrementalKeyword(tok)) {
@@ -902,9 +965,67 @@ public class SqlParser {
             } else if (isManualKeyword(tok)) {
                 refreshType = MatViewDefinition.MANUAL_REFRESH_TYPE;
                 tok = tok(lexer, "'as'");
-            } else { // REFRESH [START '<datetime>' [TIME ZONE '<timezone>']] EVERY <interval>
+            } else if (isPeriodKeyword(tok)) {
+                // REFRESH PERIOD START '<time>' [TIME ZONE '<timezone>'] LENGTH <interval> [DELAY <interval>] [IMMEDIATE | MANUAL | EVERY <interval>]
+                expectTok(lexer, "start");
+                final long start;
+                tok = tok(lexer, "START timestamp");
+                try {
+                    start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
+                }
+                tok = tok(lexer, "'time zone' or 'length'");
+
                 String timeZone = null;
+                if (isTimeKeyword(tok)) {
+                    expectTok(lexer, "zone");
+                    tok = tok(lexer, "TIME ZONE name");
+                    timeZone = unquote(tok).toString();
+                    tok = tok(lexer, "'length'");
+                }
+
+                if (!isLengthKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'length' expected");
+                }
+
+                tok = tok(lexer, "LENGTH interval");
+                final int length = Timestamps.getStrideMultiple(tok);
+                final char lengthUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
+                tok = tok(lexer, "'delay' or 'immediate' or 'manual' or 'every' or 'as'");
+
+                int delay = 0;
+                char delayUnit = 0;
+                if (isDelayKeyword(tok)) {
+                    tok = tok(lexer, "DELAY interval");
+                    delay = Timestamps.getStrideMultiple(tok);
+                    delayUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                    validateMatViewDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
+                    tok = tok(lexer, "'immediate' or 'manual' or 'every' or 'as'");
+                }
+
+                int every = 0;
+                char everyUnit = 0;
+                if (isImmediateKeyword(tok)) {
+                    tok = tok(lexer, "'as'");
+                } else if (isManualKeyword(tok)) {
+                    refreshType = MatViewDefinition.MANUAL_REFRESH_TYPE;
+                    tok = tok(lexer, "'as'");
+                } else if (isEveryKeyword(tok)) {
+                    tok = tok(lexer, "interval");
+                    every = Timestamps.getStrideMultiple(tok);
+                    everyUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                    validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
+                    refreshType = MatViewDefinition.TIMER_REFRESH_TYPE;
+                    tok = tok(lexer, "'as'");
+                }
+                mvOpBuilder.setTimer(timeZone, start, every, everyUnit);
+                mvOpBuilder.setPeriodLength(length, lengthUnit, delay, delayUnit);
+            } else {
+                // REFRESH [START '<datetime>' [TIME ZONE '<timezone>']] EVERY <interval>
                 long start = Numbers.LONG_NULL;
+                String timeZone = null;
                 if (isStartKeyword(tok)) {
                     tok = tok(lexer, "START timestamp");
                     try {
@@ -928,11 +1049,11 @@ public class SqlParser {
                         start = configuration.getMicrosecondClock().getTicks();
                     }
                     tok = tok(lexer, "interval");
-                    final int interval = Timestamps.getStrideMultiple(tok);
-                    final char unit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
-                    validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
+                    final int every = Timestamps.getStrideMultiple(tok);
+                    final char everyUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                    validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
                     refreshType = MatViewDefinition.TIMER_REFRESH_TYPE;
-                    mvOpBuilder.setMatViewTimer(timeZone, start, interval, unit);
+                    mvOpBuilder.setTimer(timeZone, start, every, everyUnit);
                     tok = tok(lexer, "'as'");
                 } else if (start != Numbers.LONG_NULL) {
                     throw SqlException.position(lexer.lastTokenPosition()).put("'every' expected");
