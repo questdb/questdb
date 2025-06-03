@@ -457,6 +457,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewTimerStartEpsilon() {
+        return getDelegate().getMatViewTimerStartEpsilon();
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return getDelegate().getMaxCrashFiles();
     }
@@ -1313,6 +1318,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean mangleTableDirNames() {
         return getDelegate().mangleTableDirNames();
+    }
+
+    @Override
+    public int maxArrayElementCount() {
+        return getDelegate().maxArrayElementCount();
     }
 
     public void setDelegate(CairoConfiguration delegate) {

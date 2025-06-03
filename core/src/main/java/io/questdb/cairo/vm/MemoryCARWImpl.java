@@ -126,11 +126,13 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
      *
      * @param offset position from 0 in virtual memory.
      */
+    @Override
     public void jumpTo(long offset) {
         checkAndExtend(pageAddress + offset);
         appendAddress = pageAddress + offset;
     }
 
+    @Override
     public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
         putLong256(hexString, start, end, long256Acceptor);
     }

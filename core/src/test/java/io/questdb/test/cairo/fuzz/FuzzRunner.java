@@ -494,7 +494,9 @@ public class FuzzRunner {
         return generateTransactions(tableName, rnd, start, end);
     }
 
-    public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start) {
+    public ObjList<FuzzTransaction> generateTransactions(
+            String tableName, Rnd rnd, long start
+    ) {
         long end = start + partitionCount * Timestamps.DAY_MICROS;
         return generateTransactions(tableName, rnd, start, end);
     }
@@ -529,11 +531,42 @@ public class FuzzRunner {
         }
     }
 
-    public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
-        setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount, -1, 1);
+    public void setFuzzCounts(
+            boolean isO3,
+            int fuzzRowCount,
+            int transactionCount,
+            int strLen,
+            int symbolStrLenMax,
+            int symbolCountMax,
+            int initialRowCount,
+            int partitionCount
+    ) {
+        setFuzzCounts(
+                isO3,
+                fuzzRowCount,
+                transactionCount,
+                strLen,
+                symbolStrLenMax,
+                symbolCountMax,
+                initialRowCount,
+                partitionCount,
+                -1,
+                1
+        );
     }
 
-    public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount, int parallelWalCount, int ioFailureCount) {
+    public void setFuzzCounts(
+            boolean isO3,
+            int fuzzRowCount,
+            int transactionCount,
+            int strLen,
+            int symbolStrLenMax,
+            int symbolCountMax,
+            int initialRowCount,
+            int partitionCount,
+            int parallelWalCount,
+            int ioFailureCount
+    ) {
         this.isO3 = isO3;
         this.fuzzRowCount = fuzzRowCount;
         this.transactionCount = transactionCount;
@@ -903,7 +936,7 @@ public class FuzzRunner {
                             long rowCount = reader.getPartitionRowCount(partitionIndex) - colTop;
                             long dColAddress = dCol == null ? 0 : dCol.getPageAddress(0);
                             if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dColAddress, columnType)) {
-                                Assert.fail("var column " + reader.getMetadata().getColumnName(i)
+                                Assert.fail("var column " + reader.getMetadata().getColumnName(i) + ", columnType " + ColumnType.nameOf(columnType)
                                         + " is not dense, .i file record size is different from .d file record size");
                             }
                         }
@@ -947,93 +980,103 @@ public class FuzzRunner {
 
         ObjList<FuzzTransaction> transactions;
         transactions = generateTransactions(tableNameNoWal, rnd);
-        String timestampColumnName;
-        try (TableMetadata meta = engine.getTableMetadata(nonWalTt)) {
-            timestampColumnName = meta.getColumnName(meta.getTimestampIndex());
+        try {
+            String timestampColumnName;
+            try (TableMetadata meta = engine.getTableMetadata(nonWalTt)) {
+                timestampColumnName = meta.getColumnName(meta.getTimestampIndex());
+            }
+
+            long startMicro = System.nanoTime() / 1000;
+            applyNonWal(transactions, tableNameNoWal, rnd);
+            long endNonWalMicro = System.nanoTime() / 1000;
+            long nonWalTotal = endNonWalMicro - startMicro;
+
+            applyWal(transactions, tableNameWal, 1, rnd);
+
+            long endWalMicro = System.nanoTime() / 1000;
+            long walTotal = endWalMicro - endNonWalMicro;
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                String limit = "";
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+
+                startMicro = System.nanoTime() / 1000;
+                applyWalParallel(transactions, tableNameWal2, rnd);
+                endWalMicro = System.nanoTime() / 1000;
+                long totalWalParallel = endWalMicro - startMicro;
+
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
+                LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
+            }
+
+            assertCounts(tableNameWal, timestampColumnName);
+            assertCounts(tableNameNoWal, timestampColumnName);
+            assertStringColDensity(tableNameWal);
+        } finally {
+            Misc.freeObjListAndClear(transactions);
         }
-
-        long startMicro = System.nanoTime() / 1000;
-        applyNonWal(transactions, tableNameNoWal, rnd);
-        long endNonWalMicro = System.nanoTime() / 1000;
-        long nonWalTotal = endNonWalMicro - startMicro;
-
-        applyWal(transactions, tableNameWal, 1, rnd);
-
-        long endWalMicro = System.nanoTime() / 1000;
-        long walTotal = endWalMicro - endNonWalMicro;
-
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            String limit = "";
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
-            assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
-
-            startMicro = System.nanoTime() / 1000;
-            applyWalParallel(transactions, tableNameWal2, rnd);
-            endWalMicro = System.nanoTime() / 1000;
-            long totalWalParallel = endWalMicro - startMicro;
-
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
-            assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
-            LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
-        }
-
-        assertCounts(tableNameWal, timestampColumnName);
-        assertCounts(tableNameNoWal, timestampColumnName);
-        assertStringColDensity(tableNameWal);
     }
 
     protected void runFuzz(Rnd rnd, String tableNameBase, int tableCount, boolean randomiseProbs, boolean randomiseCounts) throws Exception {
         ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
-        for (int i = 0; i < tableCount; i++) {
-            String tableNameWal = tableNameBase + "_" + i;
-            if (randomiseProbs) {
-                setFuzzProbabilities(
-                        0.5 * rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        0.5 * rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        0.01,
-                        0.0,
-                        0.1 * rnd.nextDouble(),
-                        rnd.nextDouble(),
-                        0.0
-                );
-            }
-            if (randomiseCounts) {
-                setFuzzCounts(
-                        rnd.nextBoolean(),
-                        rnd.nextInt(2_000_000),
-                        rnd.nextInt(1000),
-                        randomiseStringLengths(rnd, 1000),
-                        rnd.nextInt(1000),
-                        rnd.nextInt(1000),
-                        rnd.nextInt(1_000_000),
-                        5 + rnd.nextInt(10)
-                );
-            }
-
-            ObjList<FuzzTransaction> transactions = createTransactions(rnd, tableNameWal);
-            fuzzTransactions.add(transactions);
-        }
-        // Can help to reduce memory consumption.
-        engine.releaseInactive();
-
-        applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, true, true);
-        checkNoSuspendedTables(new ObjHashSet<>());
-
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+        try {
             for (int i = 0; i < tableCount; i++) {
-                String tableNameNoWal = tableNameBase + "_" + i + "_nonwal";
-                String tableNameWal = getWalParallelApplyTableName(tableNameBase, i);
-                LOG.infoW().$("comparing tables ").$(tableNameNoWal).$(" and ").$(tableNameWal).$();
-                String limit = "";
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
-                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+                String tableNameWal = tableNameBase + "_" + i;
+                if (randomiseProbs) {
+                    setFuzzProbabilities(
+                            0.5 * rnd.nextDouble(),
+                            rnd.nextDouble(),
+                            rnd.nextDouble(),
+                            0.5 * rnd.nextDouble(),
+                            rnd.nextDouble(),
+                            rnd.nextDouble(),
+                            rnd.nextDouble(),
+                            rnd.nextDouble(),
+                            rnd.nextDouble(),
+                            0.01,
+                            0.0,
+                            0.1 * rnd.nextDouble(),
+                            rnd.nextDouble(),
+                            0.0
+                    );
+                }
+                if (randomiseCounts) {
+                    setFuzzCounts(
+                            rnd.nextBoolean(),
+                            rnd.nextInt(2_000_000),
+                            rnd.nextInt(1000),
+                            randomiseStringLengths(rnd, 1000),
+                            rnd.nextInt(1000),
+                            rnd.nextInt(1000),
+                            rnd.nextInt(1_000_000),
+                            5 + rnd.nextInt(10)
+                    );
+                }
+
+                ObjList<FuzzTransaction> transactions = createTransactions(rnd, tableNameWal);
+                fuzzTransactions.add(transactions);
+            }
+            // Can help to reduce memory consumption.
+            engine.releaseInactive();
+
+            applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, true, true);
+            checkNoSuspendedTables(new ObjHashSet<>());
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (int i = 0; i < tableCount; i++) {
+                    String tableNameNoWal = tableNameBase + "_" + i + "_nonwal";
+                    String tableNameWal = getWalParallelApplyTableName(tableNameBase, i);
+                    LOG.infoW().$("comparing tables ").$(tableNameNoWal).$(" and ").$(tableNameWal).$();
+                    String limit = "";
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
+                    assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+                }
+            }
+        } finally {
+            for (int i = 0, n = fuzzTransactions.size(); i < n; i++) {
+                Misc.freeObjListAndClear(fuzzTransactions.get(i));
             }
         }
     }

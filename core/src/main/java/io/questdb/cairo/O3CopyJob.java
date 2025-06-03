@@ -379,7 +379,17 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         }
     }
 
-    public static void copyFixedSizeCol(FilesFacade ff, long src, long srcLo, long srcHi, long dstFixAddr, long dstFixFileOffset, long dstFd, int shl, boolean mixedIOFlag) {
+    public static void copyFixedSizeCol(
+            FilesFacade ff,
+            long src,
+            long srcLo,
+            long srcHi,
+            long dstFixAddr,
+            long dstFixFileOffset,
+            long dstFd,
+            int shl,
+            boolean mixedIOFlag
+    ) {
         final long len = (srcHi - srcLo + 1) << shl;
         O3Utils.copyFixedSizeCol(ff, src, srcLo, dstFixAddr, dstFixFileOffset, dstFd, mixedIOFlag, len, shl);
     }

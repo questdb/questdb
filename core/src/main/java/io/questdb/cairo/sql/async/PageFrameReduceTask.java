@@ -55,6 +55,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId;
     private boolean isCancelled;
+    private boolean isOutOfMemory;
     private byte type;
 
     public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
@@ -151,6 +152,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return isCancelled;
     }
 
+    public boolean isOutOfMemory() {
+        return isOutOfMemory;
+    }
+
     public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
         this.frameSequence = frameSequence;
         this.frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
@@ -159,6 +164,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         this.frameIndex = frameIndex;
         errorMsg.clear();
         isCancelled = false;
+        isOutOfMemory = false;
         frameMemory = null;
         filteredRows.clear();
     }
@@ -216,8 +222,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         }
 
         if (th instanceof CairoException) {
-            isCancelled = ((CairoException) th).isCancellation();
-            errorMessagePosition = ((CairoException) th).getPosition();
+            final CairoException ce = (CairoException) th;
+            isCancelled = ce.isCancellation();
+            isOutOfMemory = ce.isOutOfMemory();
+            errorMessagePosition = ce.getPosition();
         }
     }
 
