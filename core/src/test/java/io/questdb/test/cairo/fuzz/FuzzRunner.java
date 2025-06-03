@@ -1147,9 +1147,9 @@ public class FuzzRunner {
             applyNonWal(transactions, tableNameNoWal, rnd);
             long endNonWalMicro = System.nanoTime() / 1000;
             long nonWalTotal = endNonWalMicro - startMicro;
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameNoWal);
-        }
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameNoWal);
+            }
 
             applyWal(transactions, tableNameWal, 1, rnd);
 
@@ -1159,21 +1159,21 @@ public class FuzzRunner {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameWal);
 
-            String limit = "";
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
-            assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+                String limit = "";
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
 
                 startMicro = System.nanoTime() / 1000;
                 applyWalParallel(transactions, tableNameWal2, rnd);
                 endWalMicro = System.nanoTime() / 1000;
                 long totalWalParallel = endWalMicro - startMicro;
 
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
-            assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
-            LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
+                LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
 
-            assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameWal2);
-        }
+                assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameWal2);
+            }
 
             assertCounts(tableNameWal, timestampColumnName);
             assertCounts(tableNameNoWal, timestampColumnName);
@@ -1204,21 +1204,21 @@ public class FuzzRunner {
                             0.1 * rnd.nextDouble(),
                             rnd.nextDouble(),
                             0.0,
-                        0.05
-                );
-            }
-            if (randomiseCounts) {
-                setFuzzCounts(
-                        rnd.nextBoolean(),
-                        rnd.nextInt(2_000_000),
-                        rnd.nextInt(1000),
-                        randomiseStringLengths(rnd, 1000),
-                        rnd.nextInt(1000),
-                        rnd.nextInt(1000),
-                        rnd.nextInt(1_000_000),
-                        5 + rnd.nextInt(10)
-                );
-            }
+                            0.05
+                    );
+                }
+                if (randomiseCounts) {
+                    setFuzzCounts(
+                            rnd.nextBoolean(),
+                            rnd.nextInt(2_000_000),
+                            rnd.nextInt(1000),
+                            randomiseStringLengths(rnd, 1000),
+                            rnd.nextInt(1000),
+                            rnd.nextInt(1000),
+                            rnd.nextInt(1_000_000),
+                            5 + rnd.nextInt(10)
+                    );
+                }
 
                 ObjList<FuzzTransaction> transactions = createTransactions(rnd, tableNameWal);
                 fuzzTransactions.add(transactions);

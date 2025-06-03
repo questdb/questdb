@@ -368,7 +368,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
             String tableNameNonWal = getTestTableName() + "_non_wal";
             String tableNameWal = getTestTableName();
             TableToken walTable = fuzzer.createInitialTableWal(tableNameWal, fuzzer.initialRowCount);
-            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameNonWal, rnd);
+            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameWal, rnd);
 
             fuzzer.createInitialTableNonWal(tableNameNonWal, transactions);
             if (rnd.nextBoolean()) {
