@@ -26,8 +26,8 @@ package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
-import io.questdb.cutlass.line.array.ArrayBufferAppender;
 import io.questdb.cutlass.http.HttpKeywords;
+import io.questdb.cutlass.line.array.ArrayBufferAppender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOOperation;
@@ -509,6 +509,16 @@ public abstract class HttpClient implements QuietCloseable {
             }
 
             sendHeaderAndContent(maxContentLen, timeout);
+        }
+
+        public Request setCookie(CharSequence name, CharSequence value) {
+            beforeHeader();
+            put(HEADER_COOKIE).putAscii(": ").put(name);
+            if (value != null) {
+                putAscii(COOKIE_VALUE_SEPARATOR).put(value);
+            }
+            eol();
+            return this;
         }
 
         public void trimContentToLen(int contentLen) {
