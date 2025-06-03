@@ -89,20 +89,19 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             // sourceHi is exclusive
             long srcAuxMemSize = columnTypeDriver.getAuxVectorSize(sourceHi - sourceLo);
 
-            long mapOffset = columnTypeDriver.getAuxVectorOffset(sourceLo);
             final long srcAuxMemAddr = TableUtils.mapAppendColumnBuffer(
                     ff,
                     sourceColumn.getSecondaryFd(),
-                    mapOffset,
+                    0,
                     srcAuxMemSize,
                     false,
                     MEMORY_TAG
             );
 
             try {
-                long srcDataOffset = columnTypeDriver.getDataVectorOffset(srcAuxMemAddr, 0);
+                long srcDataOffset = columnTypeDriver.getDataVectorOffset(srcAuxMemAddr, sourceLo);
                 assert (sourceLo == 0 && srcDataOffset == 0) || (sourceLo > 0 && srcDataOffset >= columnTypeDriver.getDataVectorMinEntrySize() && srcDataOffset < 1L << 40);
-                long srcDataSize = columnTypeDriver.getDataVectorSize(srcAuxMemAddr, 0, sourceHi - sourceLo - 1);
+                long srcDataSize = columnTypeDriver.getDataVectorSize(srcAuxMemAddr, sourceLo, sourceHi - 1);
                 if (srcDataSize > 0) {
                     assert srcDataSize < 1L << 40;
                     TableUtils.allocateDiskSpaceToPage(ff, dataFd, targetDataOffset + srcDataSize);
@@ -150,7 +149,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 try {
                     columnTypeDriver.shiftCopyAuxVector(
                             srcDataOffset - targetDataOffset,
-                            srcAuxMemAddr - mapOffset,
+                            srcAuxMemAddr,
                             sourceLo,
                             sourceHi - 1, // inclusive
                             dstAuxAddr,
@@ -170,7 +169,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 TableUtils.mapAppendColumnBufferRelease(
                         ff,
                         srcAuxMemAddr,
-                        mapOffset,
+                        0,
                         srcAuxMemSize,
                         MEMORY_TAG
                 );

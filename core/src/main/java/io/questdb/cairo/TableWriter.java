@@ -272,6 +272,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private int lastErrno;
     private boolean lastOpenPartitionIsReadOnly;
     private long lastOpenPartitionTs = Long.MIN_VALUE;
+    private long lastOpenPartitionTxnName = -1;
     private long lastPartitionTimestamp;
     private long lastWalCommitTimestampMicros;
     private LifecycleManager lifecycleManager;
@@ -1548,6 +1549,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (lastPartitionConverted) {
             // Open last partition as read-only
             openPartition(partitionTimestamp, txWriter.getTransientRowCount());
+            setAppendPosition(txWriter.getTransientRowCount(), false);
         }
         return true;
     }
@@ -1727,6 +1729,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (lastPartitionConverted) {
             // Open last partition as read-only
             openPartition(partitionTimestamp, txWriter.getTransientRowCount());
+            setAppendPosition(txWriter.getTransientRowCount(), false);
         }
         return true;
     }
@@ -5086,7 +5089,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             closeActivePartition(false);
 
             if (index != 0) {
-                openPartition(prevTimestamp, txWriter.getTransientRowCount());
+                openPartition(prevTimestamp, newTransientRowCount);
                 setAppendPosition(newTransientRowCount, false);
             } else {
                 rowAction = ROW_ACTION_OPEN_PARTITION;
@@ -6275,10 +6278,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long newPrevPartitionSize = attachMinTimestamp;
                         long newSplitPartitionTimestamp = attachMaxTimestamp;
 
-                        assert newSplitPartitionTimestamp <= partitionTimestamp;
-                        txWriter.insertPartition(i, newSplitPartitionTimestamp, prevPartitionSize - newPrevPartitionSize, txWriter.txn);
-                        setStateForTimestamp(other, newSplitPartitionTimestamp);
-                        ff.mkdir(other.$(), configuration.getMkDirMode());
+                        assert newSplitPartitionTimestamp < partitionTimestamp || (newPrevPartitionSize == 0 && newSplitPartitionTimestamp == partitionTimestamp);
 
                         // This logging should be quite rare, we can afford info level.
                         LOG.info().$("splitting last line of the partition [table=").$(tableToken)
@@ -6286,25 +6286,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", oldSize=").$(prevPartitionSize)
                                 .$(", newSize=").$(newPrevPartitionSize)
                                 .$(", splitPartition=").$ts(newSplitPartitionTimestamp)
+                                .$(", splitPartitionNameTxn=").$(txWriter.txn)
                                 .$(", deletedSplitPartition=").$ts(partitionTimestamp)
                                 .$();
 
-                        try (
-                                Frame sourceFrame = frameFactory.openRO(path, prevPartitionTimestamp, metadata, columnVersionWriter, prevPartitionSize);
-                                Frame targetFrame = frameFactory.createRW(other, newSplitPartitionTimestamp, metadata, columnVersionWriter, 0)
-                        ) {
-                            FrameAlgebra.append(targetFrame, sourceFrame, newPrevPartitionSize, prevPartitionSize, configuration.getCommitMode());
+                        int insertPartitionIndex = i;
+                        try (Frame sourceFrame = frameFactory.openRO(path, prevPartitionTimestamp, metadata, columnVersionWriter, prevPartitionSize)) {
+                            // Create the source frame and then manipulate partitions in txWriter
+                            // When newSplitPartitionTimestamp == partitionTimestamp it is the only way
+                            // to open 2 frames to the same partition timestamp
+                            if (newPrevPartitionSize == 0) {
+                                // newSplitPartitionTimestamp can be equal to partitionTimestamp
+                                partitionRemoveCandidates.add(prevPartitionTimestamp, prevPartitionNameTxn);
+                                insertPartitionIndex = txWriter.removeAttachedPartitions(prevPartitionTimestamp);
+                            } else {
+                                txWriter.updatePartitionSizeByTimestamp(prevPartitionTimestamp, newPrevPartitionSize);
+                            }
+
+                            txWriter.insertPartition(insertPartitionIndex, newSplitPartitionTimestamp, prevPartitionSize - newPrevPartitionSize, txWriter.txn);
+                            setStateForTimestamp(other, newSplitPartitionTimestamp);
+                            ff.mkdir(other.$(), configuration.getMkDirMode());
+                            try (Frame targetFrame = frameFactory.createRW(other, newSplitPartitionTimestamp, metadata, columnVersionWriter, 0)) {
+                                FrameAlgebra.append(targetFrame, sourceFrame, newPrevPartitionSize, prevPartitionSize, configuration.getCommitMode());
+                            }
                         }
                         addPhysicallyWrittenRows(prevPartitionSize - newPrevPartitionSize);
-
-                        // Add the new split
-                        if (newPrevPartitionSize > 0) {
-                            txWriter.updatePartitionSizeByTimestamp(prevPartitionTimestamp, newPrevPartitionSize);
-                        } else {
-                            // All rows were copied to the new split, 0 rows left in original
-                            partitionRemoveCandidates.add(prevPartitionTimestamp, prevPartitionNameTxn);
-                            txWriter.removeAttachedPartitions(prevPartitionTimestamp);
-                        }
 
                         // Now it's safe to remove the empty split partition
                         partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
@@ -6554,7 +6560,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void openLastPartitionAndSetAppendPosition(long ts) {
-        openPartition(ts, txWriter.getTransientRowCount());
+        openPartition(ts, txWriter.getTransientRowCount() + txWriter.getLagRowCount());
         setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagRowCount(), false);
     }
 
@@ -6605,7 +6611,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void openPartition(long timestamp, long rowCount) {
         try {
             timestamp = txWriter.getPartitionTimestampByTimestamp(timestamp);
-            long partitionTxnName = setStateForTimestamp(path, timestamp);
+            lastOpenPartitionTxnName = setStateForTimestamp(path, timestamp);
             partitionTimestampHi = txWriter.getNextPartitionTimestamp(timestamp) - 1;
             int plen = path.size();
             if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
@@ -6643,13 +6649,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.info().$("switched partition [path=").$substr(pathRootSize, path)
                     .$(", rowCount=").$(rowCount)
                     .I$();
-
-            engine.getPartitionOverwriteControl().notifyPartitionMutates(
-                    tableToken,
-                    timestamp,
-                    partitionTxnName,
-                    rowCount
-            );
         } catch (Throwable e) {
             distressed = true;
             throw e;
@@ -7278,7 +7277,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // The table is empty, last partition does not exist
                 // WAL processing needs last partition to store LAG data
                 // Create artificial partition at the point of o3TimestampMin.
-                openPartition(o3TimestampMin, txWriter.getTransientRowCount());
+                openPartition(o3TimestampMin, 0);
                 txWriter.setMaxTimestamp(o3TimestampMin);
                 // Add the partition to the list of partitions with 0 size.
                 txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1);
@@ -8607,7 +8606,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(partitionLen);
         }
-
+//2025-06-03T11:37:24.321696Z I i.q.c.TableWriter splitting last line of the partition [table=testWalWriteRollbackHeavy_wal_parallel~4, partition=2022-02-25T03:06:23.170634Z, oldSize=1, newSize=0, splitPartition=2022-02-25T03:06:23.170634Z, deletedSplitPartition=2022-02-25T04:17:50.004575Z
         if (attachMinTimestamp < 0 || attachMaxTimestamp < 0) {
             throw CairoException.critical(ff.errno())
                     .put("cannot read min, max timestamp from the [path=").put(path)
@@ -9361,6 +9360,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void setAppendPosition(final long rowCount, boolean doubleAllocate) {
+        engine.getPartitionOverwriteControl().notifyPartitionMutates(
+                tableToken,
+                lastOpenPartitionTs,
+                lastOpenPartitionTxnName,
+                rowCount
+        );
+
         long recordLength = 0;
         for (int i = 0; i < columnCount; i++) {
             recordLength += setColumnAppendPosition(i, rowCount, doubleAllocate);
@@ -9711,7 +9717,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // files after switch.
         updateIndexes();
         txWriter.switchPartitions(timestamp);
-        openPartition(timestamp, txWriter.getTransientRowCount());
+        openPartition(timestamp, 0);
         setAppendPosition(0, false);
     }
 
@@ -10214,7 +10220,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (rollbackToMaxTimestamp > Long.MIN_VALUE) {
                     try {
                         txWriter.setMaxTimestamp(rollbackToMaxTimestamp);
-                        openPartition(rollbackToMaxTimestamp, txWriter.getTransientRowCount());
+                        openPartition(rollbackToMaxTimestamp, rollbackToTransientRowCount);
                         setAppendPosition(rollbackToTransientRowCount, false);
                     } catch (Throwable e) {
                         freeColumns(false);
