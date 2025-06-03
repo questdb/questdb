@@ -27,7 +27,7 @@ package io.questdb;
 // This is useful to enable during debugging to catch leaks, double closes, etc.
 public class ParanoiaState {
     // Set to true to enable log record leaks where $() is not called for the record.
-    public final static boolean LOG_PARANOIA_MODE = false;
+    public final static boolean LOG_PARANOIA_MODE = true;
     // Set to true to enable stricter boundary checks on Vm memories implementations.
     public static final boolean VM_PARANOIA_MODE = false;
     // Set to true to enable stricter File Descriptor double close checks, trace closed usages.

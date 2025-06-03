@@ -2005,7 +2005,6 @@ public final class TestUtils {
                         break;
                 }
             } catch (AssertionError e) {
-                e.printStackTrace();
                 String expected = recordToString(rr, metadataExpected, genericStringMatch);
                 String actual = recordToString(lr, metadataActual, genericStringMatch);
                 Assert.assertEquals(

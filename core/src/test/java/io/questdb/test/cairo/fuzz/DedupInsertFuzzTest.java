@@ -513,7 +513,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         try {
                             assertEquals(dedupWrapper, factory.getMetadata(), actualCursor, factory2.getMetadata(), false);
                         } catch (AssertionError e) {
-                            log.error().$(e).$();
                             dedupWrapper.toTop();
                             actualCursor.toTop();
                             log.xDebugW().$();
@@ -676,6 +675,14 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     private Rnd generateRandomAndProps() {
         Rnd rnd = fuzzer.generateRandom(io.questdb.test.AbstractCairoTest.LOG);
+        setFuzzProperties(rnd);
+        setRandomAppendPageSize(rnd);
+        return rnd;
+    }
+
+    @SuppressWarnings("unused")
+    private Rnd generateRandomAndProps(long s0, long s1) {
+        Rnd rnd = fuzzer.generateRandom(io.questdb.test.AbstractCairoTest.LOG, s0, s1);
         setFuzzProperties(rnd);
         setRandomAppendPageSize(rnd);
         return rnd;
