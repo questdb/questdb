@@ -74,9 +74,17 @@ jobs:
       image: almalinux:8
     steps:
       - name: Install dependencies
-        run: dnf install -y curl maven git
+        run: dnf install -y curl zip unzip git bash wget
       - name: Print GLIBC version
         run: ldd --version
+      - name: Install Maven - the version in AlmaLinux 8 is too old
+        run: |
+          cd /opt
+          wget https://archive.apache.org/dist/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.zip
+          unzip apache-maven-3.9.9-bin.zip
+          ln -s /opt/apache-maven-3.9.9 /opt/maven
+          echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV
+          echo "/opt/maven/bin" >> $GITHUB_PATH
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:

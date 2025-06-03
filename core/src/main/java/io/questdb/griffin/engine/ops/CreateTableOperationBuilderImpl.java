@@ -86,7 +86,11 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     }
 
     @Override
-    public CreateTableOperationImpl build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
+    public CreateTableOperationImpl build(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sqlText
+    ) throws SqlException {
         if (selectText != null) {
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),

@@ -232,6 +232,9 @@ class WalEventWriter implements Closeable {
             case ColumnType.UUID:
                 eventMem.putLong128(function.getLong128Lo(null), function.getLong128Hi(null));
                 break;
+            case ColumnType.ARRAY:
+                eventMem.putArray(function.getArray(null));
+                break;
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
         }

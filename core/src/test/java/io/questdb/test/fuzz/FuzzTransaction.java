@@ -25,9 +25,11 @@
 package io.questdb.test.fuzz;
 
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 
-public class FuzzTransaction {
+public class FuzzTransaction implements QuietCloseable {
     public ObjList<FuzzTransactionOperation> operationList = new ObjList<>();
     public boolean reopenTable;
     public boolean rollback;
@@ -62,5 +64,10 @@ public class FuzzTransaction {
         this.replaceLoTs = replaceLoTs;
         this.replaceHiTs = replaceHiTs;
         waitAllDone = true;
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjListAndClear(operationList);
     }
 }

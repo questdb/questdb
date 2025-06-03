@@ -63,6 +63,7 @@ import org.postgresql.util.PSQLException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.BindException;
+import java.sql.Array;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.JDBCType;
@@ -273,6 +274,14 @@ public abstract class BasePGTest extends AbstractCairoTest {
                             sink.put(object.toString());
                         }
                         break;
+                    case ARRAY:
+                        Array array = rs.getArray(i);
+                        if (array == null) {
+                            sink.put("null");
+                        } else {
+                            writeArrayContent(sink, array.getArray());
+                        }
+                        break;
                     default:
                         assert false;
                 }
@@ -327,6 +336,39 @@ public abstract class BasePGTest extends AbstractCairoTest {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private static void writeArrayContent(StringSink sink, Object array) {
+        if (array == null) {
+            sink.put("null");
+            return;
+        }
+        if (!array.getClass().isArray()) {
+            if (array instanceof Number) {
+                if (array instanceof Double || array instanceof Float) {
+                    sink.put(((Number) array).doubleValue());
+                } else {
+                    sink.put(((Number) array).longValue());
+                }
+            } else if (array instanceof Boolean) {
+                sink.put((Boolean) array);
+            } else {
+                sink.put(array.toString());
+            }
+            return;
+        }
+
+        sink.put('{');
+        int length = java.lang.reflect.Array.getLength(array);
+        for (int i = 0; i < length; i++) {
+            Object element = java.lang.reflect.Array.get(array, i);
+            writeArrayContent(sink, element);
+
+            if (i < length - 1) {
+                sink.put(',');
+            }
+        }
+        sink.put('}');
     }
 
     protected static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {

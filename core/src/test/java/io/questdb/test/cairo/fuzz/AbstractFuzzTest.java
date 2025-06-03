@@ -105,7 +105,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         fuzzer.after();
     }
 
-    protected static void setZeroWalPurgeInterval() {
+    private static void setZeroWalPurgeInterval() {
         node1.setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 0L);
     }
 

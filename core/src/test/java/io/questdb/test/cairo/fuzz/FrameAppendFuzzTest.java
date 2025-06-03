@@ -31,6 +31,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -163,22 +164,25 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
         assertMemoryLeak(() -> {
             TableToken src = fuzzer.createInitialTableNonWal(tableName, null);
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd);
+            try {
+                fuzzer.applyNonWal(transactions, tableName, rnd);
+                engine.releaseInactive();
 
-            fuzzer.applyNonWal(transactions, tableName, rnd);
-            engine.releaseInactive();
+                copyTableDir(src, merged);
+                mergeAllPartitions(merged);
 
-            copyTableDir(src, merged);
-            mergeAllPartitions(merged);
-
-            String limit = ""; // For debugging
-            TestUtils.assertSqlCursors(
-                    engine,
-                    sqlExecutionContext,
-                    tableName + limit,
-                    tableNameMerged + limit,
-                    LOG
-            );
-            fuzzer.assertRandomIndexes(tableName, tableNameMerged, rnd);
+                String limit = ""; // For debugging
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        tableName + limit,
+                        tableNameMerged + limit,
+                        LOG
+                );
+                fuzzer.assertRandomIndexes(tableName, tableNameMerged, rnd);
+            } finally {
+                Misc.freeObjListAndClear(transactions);
+            }
         });
     }
 }

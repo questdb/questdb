@@ -83,7 +83,8 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                     rowsLo,
                     rowsHi,
                     windowContext.getFramingMode() == WindowColumn.FRAMING_RANGE,
-                    windowContext.getPartitionByRecord());
+                    windowContext.getPartitionByRecord()
+            );
         }
         return windowContext.isIgnoreNulls() ?
                 this.generateIgnoreNullsFunction(position, args, configuration) :
@@ -124,7 +125,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                             LAST_VALUE_COLUMN_TYPES
                     );
 
-                    //same as for rows because calculation stops at current rows even if there are 'equal' following rows
+                    // same as for rows because calculation stops at current rows even if there are 'equal' following rows
                     return new LastNotNullValueOverUnboundedPartitionRowsFrameFunction(
                             map,
                             partitionByRecord,
@@ -161,7 +162,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                     );
                 }
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
-                //between unbounded preceding and current row
+                // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
@@ -193,7 +194,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                             args.get(0)
                     );
                 }
-                //between [unbounded | x] preceding and [x preceding | current row] (but not unbounded preceding to current row )
+                // between [unbounded | x] preceding and [x preceding | current row] (but not unbounded preceding to current row )
                 else {
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
@@ -557,8 +558,6 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
     // handles last_value() ignore nulls over (partition by x)
     // order by is absent so default frame mode includes all rows in the partition
     static class LastNotNullValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
-
-        private double lastValue;
 
         public LastNotNullValueOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);

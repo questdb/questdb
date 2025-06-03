@@ -27,12 +27,16 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectByteSequenceView;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -152,14 +156,25 @@ public class WalEventCursor {
         }
     }
 
-    private BinarySequence readBin() {
+    private ArrayView readArray(BorrowedArray array) {
+        checkMemSize(Long.BYTES);
+        long totalSize = eventMem.getLong(offset);
+        if (totalSize < 0) {
+            totalSize = 0;
+        }
+        checkMemSize(totalSize + Long.BYTES);
+        eventMem.getArray(offset, array);
+        offset += Long.BYTES + totalSize;
+        return array;
+    }
+
+    private BinarySequence readBin(DirectByteSequenceView view) {
         checkMemSize(Long.BYTES);
         final long binLength = eventMem.getBinLen(offset);
-
         checkMemSize(binLength);
-        final BinarySequence value = eventMem.getBin(offset);
+        view.of((DirectByteSequenceView) eventMem.getBin(offset));
         offset += binLength + Long.BYTES;
-        return value;
+        return view;
     }
 
     private boolean readBool() {
@@ -353,6 +368,7 @@ public class WalEventCursor {
             return outOfOrder;
         }
 
+        @Override
         public SymbolMapDiff nextSymbolMapDiff() {
             return readNextSymbolMapDiff(symbolMapDiff);
         }
@@ -450,6 +466,8 @@ public class WalEventCursor {
     }
 
     public class SqlInfo {
+        private final ObjectPool<BorrowedArray> arrayViewPool = new ObjectPool<>(BorrowedArray::new, 1);
+        private final ObjectPool<DirectByteSequenceView> byteViewPool = new ObjectPool<>(DirectByteSequenceView::new, 1);
         private final StringSink sql = new StringSink();
         private int cmdType;
         private long rndSeed0;
@@ -520,7 +538,7 @@ public class WalEventCursor {
                         bindVariableService.setVarchar(i, readVarchar());
                         break;
                     case ColumnType.BINARY:
-                        bindVariableService.setBin(i, readBin());
+                        bindVariableService.setBin(i, readBin(byteViewPool.next()));
                         break;
                     case ColumnType.GEOBYTE:
                         bindVariableService.setGeoHash(i, readByte(), type);
@@ -538,6 +556,12 @@ public class WalEventCursor {
                         long lo = readLong();
                         long hi = readLong();
                         bindVariableService.setUuid(i, lo, hi);
+                        break;
+                    case ColumnType.ARRAY:
+                        // Multiple arrayView objects might be bind to variables, and in `ArrayBindVariable`,
+                        // arrayView does not clone its meta information, so `arrayViewPool` is needed.
+                        // Same as `setBin`
+                        bindVariableService.setArray(i, readArray(arrayViewPool.next()));
                         break;
                     default:
                         throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
@@ -586,7 +610,7 @@ public class WalEventCursor {
                         bindVariableService.setVarchar(name, readVarchar());
                         break;
                     case ColumnType.BINARY:
-                        bindVariableService.setBin(name, readBin());
+                        bindVariableService.setBin(name, readBin(byteViewPool.next()));
                         break;
                     case ColumnType.GEOBYTE:
                         bindVariableService.setGeoHash(name, readByte(), type);
@@ -603,6 +627,12 @@ public class WalEventCursor {
                     case ColumnType.UUID:
                         bindVariableService.setUuid(name, readLong(), readLong());
                         break;
+                    case ColumnType.ARRAY:
+                        // Multiple arrayView objects might be bind to variables, and in `ArrayBindVariable`,
+                        // arrayView does not clone its meta information, so `arrayViewPool` is needed.
+                        // Same as `setBin`
+                        bindVariableService.setArray(i, readArray(arrayViewPool.next()));
+                        break;
                     default:
                         throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
                 }
@@ -615,6 +645,8 @@ public class WalEventCursor {
             sql.put(readStr());
             rndSeed0 = readLong();
             rndSeed1 = readLong();
+            arrayViewPool.clear();
+            byteViewPool.clear();
         }
     }
 }

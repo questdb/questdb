@@ -24,18 +24,36 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.RecordFunction;
+import io.questdb.std.Interval;
+import org.jetbrains.annotations.NotNull;
 
-public class RecordColumn extends RecordFunction {
+public class RecordColumn extends RecordFunction implements FunctionExtension {
     private final int columnIndex;
     private final RecordMetadata metadata;
 
     public RecordColumn(int columnIndex, RecordMetadata metadata) {
         this.columnIndex = columnIndex;
         this.metadata = metadata;
+    }
+
+    @Override
+    public FunctionExtension extendedOps() {
+        return this;
+    }
+
+    @Override
+    public int getArrayLength() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -46,6 +64,21 @@ public class RecordColumn extends RecordFunction {
     @Override
     public Record getRecord(Record rec) {
         return rec.getRecord(columnIndex);
+    }
+
+    @Override
+    public CharSequence getStrA(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getStrLen(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

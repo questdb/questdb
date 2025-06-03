@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
@@ -57,9 +58,19 @@ public class RndIntervalFunctionFactory implements FunctionFactory {
         return new RndFunction();
     }
 
-    private static class RndFunction extends IntervalFunction implements Function {
+    private static class RndFunction extends IntervalFunction implements Function, FunctionExtension {
         private final Interval interval = new Interval();
         private Rnd rnd;
+
+        @Override
+        public FunctionExtension extendedOps() {
+            return this;
+        }
+
+        @Override
+        public int getArrayLength() {
+            throw new UnsupportedOperationException();
+        }
 
         @Override
         public @NotNull Interval getInterval(Record rec) {
@@ -71,6 +82,26 @@ public class RndIntervalFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "rnd_interval";
+        }
+
+        @Override
+        public Record getRecord(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec, int arrayIndex) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec, int arrayIndex) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getStrLen(Record rec, int arrayIndex) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

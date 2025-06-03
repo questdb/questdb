@@ -59,6 +59,7 @@ type Test struct {
 	Steps      []Step                 `yaml:"steps"`
 	Teardown   []Step                 `yaml:"teardown"`
 	Iterations int                    `yaml:"iterations"`
+	Exclude    []string               `yaml:"exclude"`
 }
 
 // TestConfig represents the complete test configuration
@@ -116,6 +117,41 @@ func (tr *TestRunner) executeQuery(ctx context.Context, conn *pgx.Conn, query st
 	if len(result) == 0 {
 		commandTag := rows.CommandTag()
 		return [][]interface{}{{commandTag.RowsAffected()}}, nil
+	}
+
+	return result, nil
+}
+
+// parseArrayString parses a Postgres array string into a slice
+func (tr *TestRunner) parseArrayString(arrayStr string) ([]interface{}, error) {
+	// Handle empty array
+	if arrayStr == "{}" {
+		return []interface{}{}, nil
+	}
+
+	// Strip curly braces
+	stripped := strings.TrimPrefix(strings.TrimSuffix(arrayStr, "}"), "{")
+
+	// Split by comma
+	elements := strings.Split(stripped, ",")
+	result := make([]interface{}, 0, len(elements))
+
+	for _, element := range elements {
+		trimmed := strings.TrimSpace(element)
+		if trimmed == "" {
+			continue
+		}
+
+		if strings.EqualFold(trimmed, "null") {
+			result = append(result, nil)
+		} else {
+			// Try to parse as float
+			value, err := strconv.ParseFloat(trimmed, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid array element: %s", trimmed)
+			}
+			result = append(result, value)
+		}
 	}
 
 	return result, nil
@@ -183,12 +219,80 @@ func (tr *TestRunner) resolveParameters(typedParameters []Parameter, variables m
 			resolvedParameters = append(resolvedParameters, fmt.Sprintf("%v", value))
 		case "timestamp", "date":
 			resolvedParameters = append(resolvedParameters, value)
+		case "array_float8":
+			// Handle float array type
+			switch v := value.(type) {
+			case string:
+				// Parse PostgreSQL array string format
+				arr, err := tr.parseArrayString(v)
+				if err != nil {
+					return nil, fmt.Errorf("invalid array_float8 value: %v - %w", v, err)
+				}
+				resolvedParameters = append(resolvedParameters, arr)
+			case []interface{}:
+				// Convert each element to float
+				floatArray := make([]interface{}, 0, len(v))
+				for _, item := range v {
+					if item == nil {
+						floatArray = append(floatArray, nil)
+						continue
+					}
+
+					switch itemVal := item.(type) {
+					case float64:
+						floatArray = append(floatArray, itemVal)
+					case int:
+						floatArray = append(floatArray, float64(itemVal))
+					case string:
+						if strings.EqualFold(strings.TrimSpace(itemVal), "null") {
+							floatArray = append(floatArray, nil)
+						} else {
+							floatVal, err := strconv.ParseFloat(itemVal, 64)
+							if err != nil {
+								return nil, fmt.Errorf("invalid float in array: %v", itemVal)
+							}
+							floatArray = append(floatArray, floatVal)
+						}
+					default:
+						return nil, fmt.Errorf("unsupported type in array_float8: %T", item)
+					}
+				}
+				resolvedParameters = append(resolvedParameters, floatArray)
+			default:
+				return nil, fmt.Errorf("invalid array_float8 value type: %T", value)
+			}
 		default:
 			resolvedParameters = append(resolvedParameters, value)
 		}
 	}
 
 	return resolvedParameters, nil
+}
+
+// formatArrayValue formats an array value for consistent comparison
+func (tr *TestRunner) formatArrayValue(arr []interface{}) string {
+	elements := make([]string, 0, len(arr))
+
+	for _, v := range arr {
+		if v == nil {
+			elements = append(elements, "null")
+			continue
+		}
+
+		switch val := v.(type) {
+		case float64:
+			// Format as PostgreSQL array format - integers as x.0
+			if val == float64(int(val)) {
+				elements = append(elements, fmt.Sprintf("%.1f", val))
+			} else {
+				elements = append(elements, fmt.Sprintf("%v", val))
+			}
+		default:
+			elements = append(elements, fmt.Sprintf("%v", val))
+		}
+	}
+
+	return "{" + strings.Join(elements, ",") + "}"
 }
 
 // formatValue formats values for consistent comparison
@@ -200,6 +304,9 @@ func (tr *TestRunner) formatValue(value interface{}) interface{} {
 		return isoString
 	case []byte:
 		return string(v)
+	case []interface{}:
+		// Handle array values
+		return tr.formatArrayValue(v)
 	}
 	return value
 }
@@ -250,7 +357,11 @@ func (tr *TestRunner) assertResult(expect ExpectClause, actual interface{}) erro
 				}
 
 				for j := range rows[i] {
-					if fmt.Sprintf("%v", rows[i][j]) != fmt.Sprintf("%v", actualRows[i][j]) {
+					// Convert to strings for comparison
+					expectedStr := fmt.Sprintf("%v", rows[i][j])
+					actualStr := fmt.Sprintf("%v", actualRows[i][j])
+
+					if expectedStr != actualStr {
 						return fmt.Errorf("row %d, col %d: expected '%v', got '%v'",
 							i, j, rows[i][j], actualRows[i][j])
 					}
@@ -282,7 +393,9 @@ func (tr *TestRunner) assertResult(expect ExpectClause, actual interface{}) erro
 				if len(expectedRow) == len(actualRow) {
 					match := true
 					for i := range expectedRow {
-						if fmt.Sprintf("%v", expectedRow[i]) != fmt.Sprintf("%v", actualRow[i]) {
+						expectedStr := fmt.Sprintf("%v", expectedRow[i])
+						actualStr := fmt.Sprintf("%v", actualRow[i])
+						if expectedStr != actualStr {
 							match = false
 							break
 						}
@@ -424,6 +537,16 @@ func (tr *TestRunner) runTest(ctx context.Context, test Test, globalVariables ma
 	return nil
 }
 
+func isExcluded(test Test) bool {
+	exclusions := test.Exclude
+	for _, s := range exclusions {
+		if strings.EqualFold(s, "golang") {
+			return true
+		}
+	}
+	return false
+}
+
 // main is the entry point for the test runner
 func (tr *TestRunner) main(yamlFile string) error {
 	// Read and parse YAML file
@@ -447,12 +570,18 @@ func (tr *TestRunner) main(yamlFile string) error {
 
 	// Run each test
 	for _, test := range config.Tests {
+		if len(test.Exclude) > 0 && isExcluded(test) {
+			fmt.Printf("Skipping test '%s' due to exclusion.\n", test.Name)
+			continue
+		}
+
 		iterations := test.Iterations
 		if iterations == 0 {
 			iterations = 50 // Default iterations
 		}
 
 		for i := 0; i < iterations; i++ {
+
 			fmt.Printf("Running test '%s' iteration %d...\n", test.Name, i+1)
 
 			// Create a new connection for each test iteration

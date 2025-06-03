@@ -1320,6 +1320,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
         return getDelegate().mangleTableDirNames();
     }
 
+    @Override
+    public int maxArrayElementCount() {
+        return getDelegate().maxArrayElementCount();
+    }
+
     public void setDelegate(CairoConfiguration delegate) {
         this.delegate.set(delegate);
     }
