@@ -29,7 +29,9 @@ import io.questdb.std.str.Utf8String;
 public final class HttpConstants {
     public static final String CONTENT_TYPE_CSV = "text/csv; charset=utf-8";
     public static final String CONTENT_TYPE_JSON = "application/json; charset=utf-8";
+    @SuppressWarnings("unused")
     public static final String CONTENT_TYPE_MULTIPART_FORM_DATA = "multipart/form-data";
+    @SuppressWarnings("unused")
     public static final String CONTENT_TYPE_MULTIPART_MIXED = "multipart/mixed";
     public static final String CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     public static final char COOKIE_VALUE_SEPARATOR = '=';
@@ -45,9 +47,13 @@ public final class HttpConstants {
     public static final Utf8String HEADER_SET_COOKIE = new Utf8String("Set-Cookie");
     public static final Utf8String HEADER_STATEMENT_TIMEOUT = new Utf8String("Statement-Timeout");
     public static final Utf8String HEADER_TRANSFER_ENCODING = new Utf8String("Transfer-Encoding");
+    @SuppressWarnings("unused")
     public static final String HEADER_TRANSFER_ENCODING_CHUNKED = "chunked";
+    @SuppressWarnings("unused")
     public static final String METHOD_GET = "GET";
+    @SuppressWarnings("unused")
     public static final String METHOD_POST = "POST";
+    @SuppressWarnings("unused")
     public static final String METHOD_PUT = "PUT";
     public static final Utf8String URL_PARAM_ATOMICITY = new Utf8String("atomicity");
     public static final Utf8String URL_PARAM_ATTACHMENT = new Utf8String("attachment");

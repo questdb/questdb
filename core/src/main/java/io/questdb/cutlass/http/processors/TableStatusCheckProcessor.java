@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
@@ -91,7 +92,7 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, HttpRequ
             if (Utf8s.utf8ToUtf16(tableName, utf16Sink)) {
                 check = cairoEngine.getTableStatus(path, utf16Sink);
             }
-            if (Utf8s.equalsNcAscii("json", context.getRequestHeader().getUrlParam(URL_PARAM_STATUS_FORMAT))) {
+            if (HttpKeywords.isJson(context.getRequestHeader().getUrlParam(URL_PARAM_STATUS_FORMAT))) {
                 HttpChunkedResponse response = context.getChunkedResponse();
                 response.status(200, "application/json");
 

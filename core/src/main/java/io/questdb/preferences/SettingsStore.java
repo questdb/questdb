@@ -5,6 +5,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
@@ -14,15 +15,12 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.io.IOException;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
-import static io.questdb.cutlass.http.HttpConstants.METHOD_POST;
-import static io.questdb.cutlass.http.HttpConstants.METHOD_PUT;
 
 public class SettingsStore implements Closeable {
     private static final String PREFERENCES_FILE_NAME = "_preferences~store";
@@ -157,10 +155,10 @@ public class SettingsStore implements Closeable {
         MERGE, OVERWRITE;
 
         public static Mode of(Utf8Sequence method) {
-            if (Utf8s.equalsNcAscii(METHOD_PUT, method)) {
+            if (HttpKeywords.isPUT(method)) {
                 return OVERWRITE;
             }
-            if (Utf8s.equalsNcAscii(METHOD_POST, method)) {
+            if (HttpKeywords.isPOST(method)) {
                 return MERGE;
             }
             throw CairoException.nonCritical().put("Unsupported HTTP method [method=").put(method).put(']');
