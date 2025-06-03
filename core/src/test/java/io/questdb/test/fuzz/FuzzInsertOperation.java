@@ -32,6 +32,7 @@ import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
