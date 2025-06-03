@@ -3112,7 +3112,9 @@ public class SqlParser {
                     } else {
                         CharSequence tokenAlias = qc.getAst().token;
                         if (qc.isWindowColumn() && ((WindowColumn) qc).isIgnoreNulls()) {
-                            tokenAlias += "_ignore_nulls";
+                            CharacterStoreEntry e = characterStore.newEntry();
+                            e.put(tokenAlias).put("_ignore_nulls");
+                            tokenAlias = e.toImmutable();
                         }
                         alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
                     }
