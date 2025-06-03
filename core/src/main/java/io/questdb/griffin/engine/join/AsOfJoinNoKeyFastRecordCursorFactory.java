@@ -106,6 +106,7 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
     private static class AsOfJoinFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
 
         private final long toleranceIntervalMicros;
+        private long slaveTimestamp = Numbers.LONG_NULL;
 
         public AsOfJoinFastRecordCursor(
                 int columnSplit,
@@ -128,12 +129,15 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
             if (masterHasNext) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
                 if (masterTimestamp < lookaheadTimestamp) {
+                    if (toleranceIntervalMicros != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceIntervalMicros) {
+                        record.hasSlave(false);
+                    }
                     isMasterHasNextPending = true;
                     return true;
                 }
                 nextSlave(masterTimestamp);
                 if (toleranceIntervalMicros != Numbers.LONG_NULL && record.hasSlave()) {
-                    long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                    slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
                     if (slaveTimestamp < masterTimestamp - toleranceIntervalMicros) {
                         record.hasSlave(false);
                     }
@@ -142,6 +146,12 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
                 return true;
             }
             return false;
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            slaveTimestamp = Numbers.LONG_NULL;
         }
     }
 }

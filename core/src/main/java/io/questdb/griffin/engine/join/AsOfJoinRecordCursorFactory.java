@@ -53,6 +53,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
     private final AsOfJoinRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
+    private final int slaveValueTimestampIndex;
     private final long toleranceIntervalMicros;
 
     public AsOfJoinRecordCursorFactory(
@@ -70,7 +71,8 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             IntList columnIndex, // this column index will be used to retrieve symbol tables from underlying slave
             JoinContext joinContext,
             ColumnFilter masterTableKeyColumns,
-            long toleranceIntervalMicros
+            long toleranceIntervalMicros,
+            int slaveValueTimestampIndex
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         try {
@@ -91,6 +93,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             );
             this.columnIndex = columnIndex;
             this.toleranceIntervalMicros = toleranceIntervalMicros;
+            this.slaveValueTimestampIndex = slaveValueTimestampIndex;
         } catch (Throwable th) {
             close();
             throw th;
@@ -243,8 +246,9 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                     if (toleranceIntervalMicros == Numbers.LONG_NULL) {
                         record.hasSlave(true);
                     } else {
-                        long slaveRecordTimestamp = joinKeyMap.getRecord().getTimestamp(slaveTimestampIndex);
-                        record.hasSlave(slaveRecordTimestamp >= masterTimestamp - toleranceIntervalMicros);
+                        long slaveRecordTimestamp = value.getTimestamp(slaveValueTimestampIndex);
+                        long minTimestamp = masterTimestamp - toleranceIntervalMicros;
+                        record.hasSlave(slaveRecordTimestamp >= minTimestamp);
                     }
                 } else {
                     record.hasSlave(false);

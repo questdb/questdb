@@ -276,6 +276,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                     break;
                 }
 
+                slaveCursor.recordAtRowIndex(slaveRecB, filteredRowId);
                 slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
                 if (toleranceIntervalMicros != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceIntervalMicros) {
                     // we are past the tolerance interval, no need to traverse the slave cursor any further
@@ -283,8 +284,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                     highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);
                     break;
                 }
-
-                slaveCursor.recordAtRowIndex(slaveRecB, filteredRowId);
+                
                 if (slaveRecordFilter.getBool(filterRecord)) {
                     // we have a match, that's awesome, no need to traverse the slave cursor!
                     break;

@@ -682,7 +682,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IntList columnIndex,
             JoinContext joinContext,
             ColumnFilter masterTableKeyColumns,
-            long toleranceInterval
+            long toleranceInterval,
+            int slaveValueTimestampIndex
     ) {
         return new AsOfJoinRecordCursorFactory(
                 configuration,
@@ -699,7 +700,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 columnIndex,
                 joinContext,
                 masterTableKeyColumns,
-                toleranceInterval
+                toleranceInterval,
+                slaveValueTimestampIndex
         );
     }
 
@@ -718,7 +720,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IntList columnIndex,
             JoinContext joinContext,
             ColumnFilter masterTableKeyColumns,
-            long toleranceIntervalMicros
+            long toleranceIntervalMicros,
+            int slaveValueTimestampIndex
     ) {
         assert toleranceIntervalMicros == Numbers.LONG_NULL : "Tolerance interval for LT JOIN is not implemented";
         return new LtJoinRecordCursorFactory(
@@ -1149,6 +1152,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             listColumnFilterB.clear();
             valueTypes.clear();
             ArrayColumnTypes slaveTypes = new ArrayColumnTypes();
+            int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
+            int slaveValueTimestampIndex = -1;
             for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
                 if (intHashSet.excludes(i)) {
                     // this is not a key column. Add it to metadata as it is. Symbols columns are kept as symbols
@@ -1158,8 +1163,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnIndex.add(i);
                     valueTypes.add(m.getColumnType());
                     slaveTypes.add(m.getColumnType());
+                    if (i == slaveTimestampIndex) {
+                        slaveValueTimestampIndex = valueTypes.getColumnCount() - 1;
+                    }
                 }
             }
+            assert slaveValueTimestampIndex != -1;
 
             // now add key columns to metadata
             for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
@@ -1169,7 +1178,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 slaveTypes.add(m.getColumnType());
                 columnIndex.add(index);
             }
-
 
             if (masterMetadata.getTimestampIndex() != -1) {
                 metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
@@ -1195,7 +1203,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnIndex,
                     joinContext,
                     masterTableKeyColumns,
-                    toleranceIntervalMicros
+                    toleranceIntervalMicros,
+                    slaveValueTimestampIndex
             );
 
         } catch (Throwable e) {
@@ -6519,7 +6528,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 IntList columnIndex,
                 JoinContext joinContext,
                 ColumnFilter masterTableKeyColumns,
-                long toleranceIntervalMicros
+                long toleranceIntervalMicros,
+                int slaveValueTimestampIndex
         );
     }
 

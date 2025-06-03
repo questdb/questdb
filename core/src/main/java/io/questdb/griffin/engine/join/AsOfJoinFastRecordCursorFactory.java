@@ -189,6 +189,13 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 return true;
             }
 
+            // backup the original slave frame index and row id as returned from `nextSlave()`
+            long rowId = slaveRecB.getRowId();
+            int slaveFrameIndex = Rows.toPartitionIndex(rowId);
+            origSlaveFrameIndex = slaveFrameIndex;
+            long keyedRowId = Rows.toLocalRowID(rowId);
+            origSlaveRowId = keyedRowId;
+
             if (symbolShortCircuit.isShortCircuit(masterRecord)) {
                 // the master record's symbol does not match any symbol in the slave table, so we can skip the key matching part
                 // and report no match.
@@ -201,18 +208,13 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             masterSinkTarget.clear();
             masterKeySink.copy(masterRecord, masterSinkTarget);
 
-            // make sure the cursor points to the right frame - since `nextSlave()` might have moved it under our feet
+            // make sure the cursor points to the frame corresponding to slaveRecB - since `nextSlave()` might have moved it under our feet
             TimeFrame timeFrame = slaveCursor.getTimeFrame();
-            long rowId = slaveRecB.getRowId();
-            int slaveFrameIndex = Rows.toPartitionIndex(rowId);
-            origSlaveFrameIndex = slaveFrameIndex;
-            int cursorFrameIndex = timeFrame.getFrameIndex();
+            final int cursorFrameIndex = timeFrame.getFrameIndex();
             slaveCursor.jumpTo(slaveFrameIndex);
             slaveCursor.open();
 
             long rowLo = timeFrame.getRowLo();
-            long keyedRowId = Rows.toLocalRowID(rowId);
-            origSlaveRowId = keyedRowId;
             int keyedFrameIndex = timeFrame.getFrameIndex();
             for (; ; ) {
                 long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
