@@ -357,7 +357,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @Override
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) throws SqlException {
-        return compile(sqlText, executionContext, true);
+        return compile(sqlText, executionContext, false);
     }
 
     @NotNull
@@ -427,7 +427,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     // re-position lexer pointer to where sqlText just began
                     lexer.backTo(position, null);
-                    compileInner(executionContext, sqlText, true);
+                    compileInner(executionContext, sqlText, false);
 
                     // consume residual text, such as semicolon
                     goToQueryEnd();
@@ -2322,7 +2322,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         // executor is allowed to give up on the execution and fall back to standard behaviour
         if (executor == null || compiledQuery.getType() == CompiledQuery.NONE) {
-            compileUsingModel(executionContext, beginNanos, generateProgressLogger);
+            compileUsingModel(executionContext, beginNanos);
         }
         final short type = compiledQuery.getType();
         if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) && !executionContext.isWalApplication()) {
@@ -2450,7 +2450,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try (TableRecordMetadata writerMetadata = executionContext.getMetadataForWrite(tableToken)) {
             QueryModel queryModel = model.getQueryModel();
             final long metadataVersion = writerMetadata.getMetadataVersion();
-            factory = generateSelectWithRetries(queryModel, executionContext, true);
+            factory = generateSelectWithRetries(queryModel, executionContext, false);
             final RecordMetadata cursorMetadata = factory.getMetadata();
             // Convert sparse writer metadata into dense
             final int writerTimestampIndex = writerMetadata.getTimestampIndex();
@@ -2893,7 +2893,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofTruncate();
     }
 
-    private void compileUsingModel(SqlExecutionContext executionContext, long beginNanos, boolean generateProgressLogger) throws SqlException {
+    private void compileUsingModel(SqlExecutionContext executionContext, long beginNanos) throws SqlException {
         // This method will not populate sql cache directly; factories are assumed to be non-reentrant, and once
         // factory is out of this method, the caller assumes full ownership over it. However, the caller may
         // choose to return the factory back to this or any other instance of compiler for safekeeping
@@ -2912,7 +2912,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             generateSelectWithRetries(
                                     (QueryModel) executionModel,
                                     executionContext,
-                                    generateProgressLogger
+                                    true
                             )
                     );
                     break;
@@ -2943,6 +2943,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             renamePath,
                             GenericLexer.unquote(rtm.getTo().token)
                     );
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     compiledQuery.ofRenameTable();
                     break;
                 case ExecutionModel.UPDATE:
