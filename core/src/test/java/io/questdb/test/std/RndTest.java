@@ -24,6 +24,8 @@
 
 package io.questdb.test.std;
 
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
@@ -34,6 +36,20 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class RndTest extends AbstractTest {
+
+    @Test
+    public void testGenerateArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd();
+            try (DirectArray arrayView = new DirectArray(new DefaultCairoConfiguration(root))) {
+                for (int i = 0; i < 1000; i++) {
+                    rnd.nextDoubleArray(2, arrayView, 0, 8, 1);
+                    Assert.assertTrue(arrayView.getFlatViewLength() > 0);
+                    arrayView.clear();
+                }
+            }
+        });
+    }
 
     @Test
     public void testGeneratesDecodableUtf8() {

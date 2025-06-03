@@ -58,50 +58,10 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
 
     @SuppressWarnings("unused")
     public static final String importIDStr = Numbers.toHexStrPadded(importID);
-
     private final CairoConfiguration cairoConfiguration;
-
-    private final HttpFullFatServerConfiguration confHttp = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
-        @Override
-        public FactoryProvider getFactoryProvider() {
-            return factoryProvider;
-        }
-
-        @Override
-        public MillisecondClock getMillisecondClock() {
-            return StationaryMillisClock.INSTANCE;
-        }
-
-        @Override
-        public NanosecondClock getNanosecondClock() {
-            return StationaryNanosClock.INSTANCE;
-        }
-    }) {
-        @Override
-        public FactoryProvider getFactoryProvider() {
-            return factoryProvider;
-        }
-
-        @Override
-        public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
-            return new DefaultJsonQueryProcessorConfiguration() {
-                @Override
-                public FactoryProvider getFactoryProvider() {
-                    return factoryProvider;
-                }
-            };
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return workerCountHttp;
-        }
-
-        @Override
-        public boolean isEnabled() {
-            return enableHttp;
-        }
-    };
+    private final HttpFullFatServerConfiguration confHttp;
+    private final HttpServerConfiguration confHttpMin;
+    private final LineTcpReceiverConfiguration confLineTcp;
     private final WorkerPoolConfiguration confLineTcpIOPool;
     private final WorkerPoolConfiguration confLineTcpWriterPool;
     private final LineUdpReceiverConfiguration confLineUdp = new DefaultLineUdpReceiverConfiguration() {
@@ -110,30 +70,9 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             return false;
         }
     };
-    private final LineTcpReceiverConfiguration confLineTcp = new DefaultLineTcpReceiverConfiguration() {
-        @Override
-        public FactoryProvider getFactoryProvider() {
-            return factoryProvider;
-        }
-
-        @Override
-        public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
-            return confLineTcpIOPool;
-        }
-
-        @Override
-        public WorkerPoolConfiguration getWriterWorkerPoolConfiguration() {
-            return confLineTcpWriterPool;
-        }
-
-        @Override
-        public boolean isEnabled() {
-            return enableLineTcp;
-        }
-    };
+    private final WorkerPoolConfiguration confMatViewRefreshPool;
     private final WorkerPoolConfiguration confSharedPool;
-    private final boolean enableHttp;
-    private final boolean enableLineTcp;
+    private final WorkerPoolConfiguration confWalApplyPool;
     private final boolean enablePgWire;
     private final FactoryProvider factoryProvider;
     private final PGWireConfiguration confPgWire = new DefaultPGWireConfiguration() {
@@ -145,15 +84,6 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         @Override
         public boolean isEnabled() {
             return enablePgWire;
-        }
-    };
-    private final WorkerPoolConfiguration confMatViewRefreshPool;
-    private final WorkerPoolConfiguration confWalApplyPool;
-    private final int workerCountHttp;
-    private final HttpServerConfiguration confHttpMin = new DefaultHttpServerConfiguration() {
-        @Override
-        public boolean isEnabled() {
-            return false;
         }
     };
 
@@ -170,10 +100,6 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             FactoryProvider factoryProvider
     ) {
         super(dbRoot, installRoot);
-        // something we can override in test
-        this.workerCountHttp = workerCountHttp;
-        this.enableHttp = enableHttp;
-        this.enableLineTcp = enableLineTcp;
         this.enablePgWire = enablePgWire;
         this.factoryProvider = factoryProvider;
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
@@ -200,6 +126,80 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
                 return TestUtils.getCsvRoot();
             }
         };
+        this.confHttp = new DefaultHttpServerConfiguration(
+                cairoConfiguration,
+                new DefaultHttpContextConfiguration() {
+                    @Override
+                    public FactoryProvider getFactoryProvider() {
+                        return factoryProvider;
+                    }
+
+                    @Override
+                    public MillisecondClock getMillisecondClock() {
+                        return StationaryMillisClock.INSTANCE;
+                    }
+
+                    @Override
+                    public NanosecondClock getNanosecondClock() {
+                        return StationaryNanosClock.INSTANCE;
+                    }
+                }) {
+            @Override
+            public FactoryProvider getFactoryProvider() {
+                return factoryProvider;
+            }
+
+            @Override
+            public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+                return new DefaultJsonQueryProcessorConfiguration() {
+                    @Override
+                    public FactoryProvider getFactoryProvider() {
+                        return factoryProvider;
+                    }
+                };
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCountHttp;
+            }
+
+            @Override
+            public boolean isEnabled() {
+                return enableHttp;
+            }
+        };
+
+        this.confHttpMin = new DefaultHttpServerConfiguration(cairoConfiguration) {
+            @Override
+            public boolean isEnabled() {
+                return false;
+            }
+        };
+
+
+        this.confLineTcp = new DefaultLineTcpReceiverConfiguration(cairoConfiguration) {
+            @Override
+            public FactoryProvider getFactoryProvider() {
+                return factoryProvider;
+            }
+
+            @Override
+            public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
+                return confLineTcpIOPool;
+            }
+
+            @Override
+            public WorkerPoolConfiguration getWriterWorkerPoolConfiguration() {
+                return confLineTcpWriterPool;
+            }
+
+            @Override
+            public boolean isEnabled() {
+                return enableLineTcp;
+            }
+        };
+
         this.confMatViewRefreshPool = () -> 0; // shared pool
         this.confWalApplyPool = () -> 0;
         this.confSharedPool = () -> workerCountShared;
@@ -238,13 +238,13 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     }
 
     @Override
-    public PGWireConfiguration getPGWireConfiguration() {
-        return confPgWire;
+    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
+        return confMatViewRefreshPool;
     }
 
     @Override
-    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
-        return confMatViewRefreshPool;
+    public PGWireConfiguration getPGWireConfiguration() {
+        return confPgWire;
     }
 
     @Override

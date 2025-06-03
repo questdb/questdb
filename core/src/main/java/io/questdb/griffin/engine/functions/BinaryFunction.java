@@ -29,13 +29,14 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 public interface BinaryFunction extends Function {
 
     @Override
     default void close() {
-        getLeft().close();
-        getRight().close();
+        Misc.free(getLeft());
+        Misc.free(getRight());
     }
 
     @Override

@@ -524,6 +524,20 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount) {
+        long lastSizeInDataVector = 0;
+        for (int row = 0; row < rowCount; row++) {
+            long offset = getDataVectorOffset(auxMemAddr, row);
+            if (offset != lastSizeInDataVector) {
+                // Swiss cheese hole in var col file
+                return true;
+            }
+            lastSizeInDataVector = getDataVectorSizeAt(auxMemAddr, row);
+        }
+        return false;
+    }
+
+    @Override
     public void o3ColumnMerge(
             long timestampMergeIndexAddr,
             long timestampMergeIndexCount,
@@ -586,7 +600,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount) {
+    public long setAppendAuxMemAppendPosition(MemoryMA auxMem, MemoryMA dataMem, int columnType, long rowCount) {
         if (rowCount > 0) {
             auxMem.jumpTo(VARCHAR_AUX_WIDTH_BYTES * (rowCount - HEADER_FLAG_INLINED));
             final long dataMemOffset = getDataVectorSize(auxMem.getAppendAddress());
@@ -642,13 +656,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     public void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr, long dstAddrSize) {
         // +1 since srcHi is inclusive
         assert (srcHi - srcLo + 1) * VARCHAR_AUX_WIDTH_BYTES <= dstAddrSize;
-        O3Utils.shiftCopyVarcharColumnAux(
-                shift,
-                srcAddr,
-                srcLo,
-                srcHi,
-                dstAddr
-        );
+        Vect.shiftCopyVarcharColumnAux(shift, srcAddr, srcLo, srcHi, dstAddr);
     }
 
     private static long getDataOffset(long auxEntry) {

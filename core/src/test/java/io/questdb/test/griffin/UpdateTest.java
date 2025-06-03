@@ -31,12 +31,14 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlCompiler;
@@ -88,6 +90,7 @@ public class UpdateTest extends AbstractCairoTest {
         });
     }
 
+    @Override
     @Before
     public void setUp() {
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
@@ -754,6 +757,50 @@ public class UpdateTest extends AbstractCairoTest {
                             "1970-01-08T16:40:00.000000Z\t\t14\t\n" +
                             "1970-01-08T22:40:00.000000Z\t00000000 e4 35 e4 3a dc 5c 65 ff 27 67 77\t15\t00000000 52 d0 29 26 c5 aa da 18 ce 5f b2\n",
                     "up"
+            );
+        });
+    }
+
+    @Test
+    public void testUpdateBindArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as int) x, Array[[1, 2], [3, 4]] as y" +
+                    " from long_sequence(3))" +
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+
+            try (
+                    DirectArray array = new DirectArray();
+                    DirectArray array2 = new DirectArray()
+            ) {
+                array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
+                array.setDimLen(0, 2);
+                array.setDimLen(1, 2);
+                array.applyShape();
+                MemoryA mem = array.startMemoryA();
+                mem.putDouble(2);
+                mem.putDouble(3);
+                mem.putDouble(4);
+                mem.putDouble(5);
+                array2.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
+                array2.setDimLen(0, 0);
+                array2.setDimLen(1, 0);
+                array2.applyShape();
+                sqlExecutionContext.getBindVariableService().setArray(0, array);
+                sqlExecutionContext.getBindVariableService().setInt(1, 2);
+                sqlExecutionContext.getBindVariableService().setArray(2, array2);
+                sqlExecutionContext.getBindVariableService().setInt(3, 3);
+                update("UPDATE tab SET y = $1 WHERE x = $2");
+                update("UPDATE tab SET y = $3 WHERE x = $4");
+            }
+
+            assertSql(
+                    "ts\tx\ty\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t[[1.0,2.0],[3.0,4.0]]\n" +
+                            "1970-01-01T00:00:01.000000Z\t2\t[[2.0,3.0],[4.0,5.0]]\n" +
+                            "1970-01-01T00:00:02.000000Z\t3\t[]\n",
+                    "tab"
             );
         });
     }
@@ -3286,6 +3333,7 @@ public class UpdateTest extends AbstractCairoTest {
         super.assertSql(expected, sql);
     }
 
+    @Override
     protected long update(CharSequence updateSql) throws SqlException {
         try {
             if (walEnabled) {
