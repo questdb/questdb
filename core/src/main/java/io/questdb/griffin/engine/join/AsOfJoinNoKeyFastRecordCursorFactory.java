@@ -52,6 +52,8 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
                 slaveFactory.getMetadata().getTimestampIndex(),
+                masterFactory.getMetadata().getTimestampType(),
+                slaveFactory.getMetadata().getTimestampType(),
                 configuration.getSqlAsOfJoinLookAhead()
         );
     }
@@ -107,9 +109,11 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
                 Record nullRecord,
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
+                int masterTimestampType,
+                int slaveTimestampType,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, masterTimestampType, slaveTimestampType, lookahead);
         }
 
         @Override
@@ -119,7 +123,7 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
                 isMasterHasNextPending = false;
             }
             if (masterHasNext) {
-                final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+                final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 if (masterTimestamp < lookaheadTimestamp) {
                     isMasterHasNextPending = true;
                     return true;

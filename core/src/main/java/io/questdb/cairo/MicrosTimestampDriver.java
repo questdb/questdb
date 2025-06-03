@@ -366,6 +366,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
     }
 
+    @Override
+    public long toNanosScale() {
+        return Timestamps.MICRO_NANOS;
+    }
+
     public static class IsoDatePartitionFormat implements DateFormat {
         private final DateFormat baseFormat;
         private final PartitionFloorMethod floorMethod;

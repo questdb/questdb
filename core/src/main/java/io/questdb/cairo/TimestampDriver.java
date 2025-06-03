@@ -86,6 +86,8 @@ public interface TimestampDriver {
 
     long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi);
 
+    long toNanosScale();
+
     @FunctionalInterface
     interface PartitionAddMethod {
         long calculate(long timestamp, int increment);

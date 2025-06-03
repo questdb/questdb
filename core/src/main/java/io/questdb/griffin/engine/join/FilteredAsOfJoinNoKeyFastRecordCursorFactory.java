@@ -87,6 +87,8 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 slaveNullRecord,
                 masterFactory.getMetadata().getTimestampIndex(),
                 slaveTimestampIndex,
+                masterFactory.getMetadata().getTimestampType(),
+                slaveFactory.getMetadata().getTimestampType(),
                 configuration.getSqlAsOfJoinLookAhead()
         );
         if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {
@@ -157,9 +159,11 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 Record nullRecord,
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
+                int masterTimestampType,
+                int slaveTimestampType,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, masterTimestampType, slaveTimestampType, lookahead);
         }
 
         @Override
@@ -172,7 +176,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 return false;
             }
 
-            final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+            final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
             TimeFrame timeFrame = slaveCursor.getTimeFrame();
             if (masterTimestamp >= lookaheadTimestamp) {
                 if (unfilteredRecordRowId != -1 && slaveRecB.getRowId() != unfilteredRecordRowId) {
