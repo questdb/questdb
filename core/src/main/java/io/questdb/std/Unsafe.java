@@ -277,7 +277,7 @@ public final class Unsafe {
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
         try {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
-            // Check the limit unless realloc will free some memory.
+            // Check the limit unless realloc is going to free some memory.
             if (newSize >= oldSize) {
                 checkAllocLimit(-oldSize + newSize, memoryTag);
             }
