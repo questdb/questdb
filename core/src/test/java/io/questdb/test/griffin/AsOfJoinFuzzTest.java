@@ -71,7 +71,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 {true, false}, // exercise filters
                 ProjectionType.values(),
                 {true, false}, // apply outer projection
-                {true, false} // use tolerance
+                {true, false}, // use tolerance
+                {true, false} // use hint for BINARY_SEARCH
         });
         for (int i = 0, n = allParameterPermutations.length; i < n; i++) {
             Object[] params = allParameterPermutations[i];
@@ -82,8 +83,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             ProjectionType projectionType = (ProjectionType) params[4];
             boolean applyOuterProjection = (boolean) params[5];
             boolean useTolerance = (boolean) params[6];
+            boolean useBinarySearchHint = (boolean) params[7];
             try {
-                assertResultSetsMatch0(joinType, exerciseIntervals, limitType, exerciseFilters, projectionType, applyOuterProjection, useTolerance, rnd);
+                assertResultSetsMatch0(joinType, exerciseIntervals, limitType, exerciseFilters, projectionType, applyOuterProjection, useTolerance, useBinarySearchHint, rnd);
             } catch (AssertionError e) {
                 throw new AssertionError("Failed with parameters: " +
                         "joinType=" + joinType +
@@ -92,7 +94,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                         ", exerciseFilters=" + exerciseFilters +
                         ", projectionType=" + projectionType +
                         ", applyOuterProjection = " + applyOuterProjection +
-                        ", useTolerance=" + useTolerance,
+                        ", useTolerance=" + useTolerance +
+                        ", useBinarySearchHint=" + useBinarySearchHint,
                         e);
             }
         }
@@ -106,6 +109,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             ProjectionType projectionType,
             boolean applyOuterProjection,
             boolean useTolerance,
+            boolean useBinarySearchHint,
             Rnd rnd
     ) throws Exception {
         String join;
@@ -199,7 +203,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         }
 
         // we can always hint to use BINARY_SEARCH, it's ignored in cases where it doesn't apply
-        String query = "select /*+ USE_ASOF_BINARY_SEARCH(t1 t2) */ " + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
+        String query = "select " + (useBinarySearchHint ? " /*+ USE_ASOF_BINARY_SEARCH(t1 t2) */ " : "") + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
         int limit;
         switch (limitType) {
             case POSITIVE_LIMIT:
@@ -220,7 +224,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         expectedSink.put(sink);
 
         // sanity check: make sure non-keyd ASOF join use the Fast-path
-        if (joinType == JoinType.ASOF_NONKEYD) {
+        if (joinType == JoinType.ASOF_NONKEYD && useBinarySearchHint) {
             sink.clear();
             printSql("EXPLAIN " + query, false);
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
