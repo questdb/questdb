@@ -4978,7 +4978,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void rewritePivotBuildForInExpressionsAndAddThemToWhereClause(QueryModel nested, QueryModel groupByModel, ObjList<ExpressionNode> outForInExprs) throws SqlException {
+    private void rewritePivotBuildForInExpressionsAndAddThemToWhereClause(QueryModel nested, QueryModel groupByModel) throws SqlException {
         ExpressionNode forInExpr = null;
         assert nested.getPivotFor() != null;
 
@@ -4986,9 +4986,10 @@ public class SqlOptimiser implements Mutable {
 
             // Catch the final index before OOB error reading `getPivotFor()`.
             // Flush last expression and break.
-            if (forInExpr != null && j == n) {
-                rewritePivotFinaliseInExprAndAddToWhere(forInExpr, nested);
-                outForInExprs.add(forInExpr);
+            if (j == n) {
+                if (forInExpr != null) {
+                    rewritePivotFinaliseInExprAndAddToWhere(forInExpr, nested, null);
+                }
                 break;
             }
 
@@ -4997,26 +4998,37 @@ public class SqlOptimiser implements Mutable {
 
             if (forExpr.type == LITERAL) {
                 if (forInExpr != null) {
-                    rewritePivotFinaliseInExprAndAddToWhere(forInExpr, nested);
-                    outForInExprs.add(forInExpr);
+                   /*
+                    Let's check for the `ELSE` case.
+
+                    If there is an `ELSE`, we will need an additional column that inverts the for expression.
+
+                    Additionally, we don't want this to end up in the WHERE clause, or we will miss out data.
+                   */
+
+                    //noinspection ConstantValue
+                    assert j < n;
+
+                    QueryColumn maybeElseColumn = forColumn;
+                    if (!SqlUtil.isPivotElseToken(forColumn.getAst().token)) {
+                        // We stashed the alias in the alias slot of this placeholder column.
+                        maybeElseColumn = null;
+                        // if it wasn't else, then it is the name for the next group
+                        // need to go back one entry
+                        j--;
+                    }
+                    rewritePivotFinaliseInExprAndAddToWhere(forInExpr, nested, maybeElseColumn);
+                    forInExpr = null;
+                    continue;
                 }
 
-                ExpressionNode groupByName = expressionNodePool.next().of(
-                        LITERAL,
-                        forColumn.getName(),
-                        0,
-                        forColumn.getAst().position
-                );
-
+                ExpressionNode groupByName = nextLiteral(forColumn.getName(), forColumn.getAst().position);
                 groupByModel.addGroupBy(groupByName);
 
                 // If this name is not already part of the bottom-up columns, then we should add it.
                 // But we should not add duplicates!
                 if (!groupByModel.getAliasToColumnMap().contains(groupByName.token)) {
-                    groupByModel.addBottomUpColumn(queryColumnPool.next().of(
-                            groupByName.token,
-                            groupByName
-                    ));
+                    groupByModel.addBottomUpColumn(nextColumn(groupByName.token, groupByName.position));
                 }
 
                 // Create a new expression, ready for accumulation.
@@ -5076,11 +5088,21 @@ public class SqlOptimiser implements Mutable {
     /**
      * Rationalises the constructed IN expression and adds to WHERE clause.
      *
+     * If an ELSE clause is present, then we must not add it to the WHERE clause. Instead, we need to
+     * invert the IN expression with NOT, and then stash it for later.
+     *
      * @param forInExpr
      * @param nested
      */
-    private void rewritePivotFinaliseInExprAndAddToWhere(ExpressionNode forInExpr, QueryModel nested) {
-        // sublist is full
+    private void rewritePivotFinaliseInExprAndAddToWhere(ExpressionNode forInExpr, QueryModel nested, @Nullable QueryColumn elseColumn) {
+        /*
+            Depending on number of args, we need to rationalise the expression.
+
+            If it has 2 or more, we need to use the args list, and ensure it is in the correct format. That means
+            it needs to have the args in reverse order ,and the name on the end.
+
+            If not, then we need the name on the LHS, and the single argument on the RHS.
+         */
         int size = forInExpr.args.size();
         if (size >= 2) {
             forInExpr.args.reverse();
@@ -5093,11 +5115,25 @@ public class SqlOptimiser implements Mutable {
             forInExpr.args.clear();
         }
 
-        // add to where clause
-        if (nested.getWhereClause() == null) {
-            nested.setWhereClause(forInExpr);
+        if (elseColumn != null) {
+            /*
+                We cannot add it to the WHERE filter, but we will need to invert and stash it.
+
+                We will be cheeky and update our column, stashing it in the AST...
+             */
+            final ExpressionNode notExpr = expressionNodePool.next().of(OPERATION, "not", 0, elseColumn.getAst().position);
+            notExpr.lhs = forInExpr;
+            notExpr.paramCount = 1;
+            elseColumn.setAst(notExpr);
         } else {
-            nested.setWhereClause(rewritePivotMakeBinaryExpression(nested.getWhereClause(), forInExpr, "and", opAnd));
+            /*
+                We don't have an ELSE catch-all column, so we just add it to the WHERE clause to filter data out ASAP.
+             */
+            if (nested.getWhereClause() == null) {
+                nested.setWhereClause(forInExpr);
+            } else {
+                nested.setWhereClause(rewritePivotMakeBinaryExpression(nested.getWhereClause(), forInExpr, "and", opAnd));
+            }
         }
     }
 
@@ -7124,8 +7160,7 @@ public class SqlOptimiser implements Mutable {
                 Therefore, we loop over them, aggregate an IN expression, and then add it to the `WHERE` clause,
                 using an additional `AND` expression.
              */
-            ObjList<ExpressionNode> forExprs = new ObjList<>(); // todo(nwoolmer): object pooling
-            rewritePivotBuildForInExpressionsAndAddThemToWhereClause(nested, groupByModel, forExprs);
+            rewritePivotBuildForInExpressionsAndAddThemToWhereClause(nested, groupByModel);
 
             /*
                 Now, we may have duplicate aggregates (multiple `SUM`s, `COUNT`s etc.).
@@ -7366,7 +7401,7 @@ public class SqlOptimiser implements Mutable {
                     aggExpr.paramCount = 1;
 
                     ExpressionNode caseExpr;
-                    if (pivotForNamesSize == 1) {
+                    if (pivotForNamesSize == 1 && inValue.getAst().type == CONSTANT) {
                         caseExpr = expressionNodePool.next().of(FUNCTION, "switch", Integer.MIN_VALUE, 0);
                         caseExpr.paramCount = 4;
                     } else {

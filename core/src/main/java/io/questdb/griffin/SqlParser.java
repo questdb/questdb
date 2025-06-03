@@ -711,6 +711,14 @@ public class SqlParser {
         return SqlUtil.nextLiteral(expressionNodePool, token, position);
     }
 
+    private ExpressionNode nextConstant(CharSequence token, int position) {
+        return SqlUtil.nextConstant(expressionNodePool, token, position);
+    }
+
+    private QueryColumn nextColumn(CharSequence alias, CharSequence column, int position) {
+        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, position);
+    }
+
     private CharSequence notTermTok(GenericLexer lexer) throws SqlException {
         CharSequence tok = tok(lexer, "')' or ','");
         if (isFieldTerm(tok)) {
@@ -2620,14 +2628,32 @@ public class SqlParser {
         return tok;
     }
 
+    /**
+     * Parse expressions of the form:
+     *
+     * `tableName` PIVOT (sum(value) FOR name IN ('a', 'b', 'c') GROUP BY something);
+     * @param lexer
+     * @param model
+     * @param sqlParserCallback
+     * @return
+     * @throws SqlException
+     */
     private CharSequence parsePivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
-        CharSequence tok;
+        /*
+            On entry, we expect that the `PIVOT` keyword has just been parsed.
+         */
 
+        CharSequence tok;
         expectTok(lexer, '(');
 
-        // parse aggregate functions
-        do {
+        /*
+            Next, we parse aggregation functions of the form:
 
+            `func(param) AS alias, func2(param2) AS alias2`
+
+            The list is terminated by `FOR`.
+         */
+        do {
             QueryColumn nextAggregateCol = parsePivotParseColumn(lexer, model, sqlParserCallback);
 
             if (nextAggregateCol.getAst().type != ExpressionNode.FUNCTION) {
@@ -2635,15 +2661,26 @@ public class SqlParser {
             }
 
             model.addPivotColumn(nextAggregateCol);
-
             tok = SqlUtil.fetchNext(lexer);
         } while (tok != null && !isForKeyword(tok) && Chars.equals(tok, ','));
 
 
+        /*
+            Malformed query if no `FOR` present.
+         */
         if (tok == null || !isForKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "expected `FOR`");
         }
 
+        /*
+            Next we parse `FOR` expressions of the form:
+
+            FOR col1 IN (v1, v2) col2 IN (v3, v4)
+
+            Each aggregate function will be executed for every combination of the `FOR` arguments.
+
+            i.e. (v1, v3), (v1, v4), (v2, v3), (v2, v4)
+         */
         for (int i = 0; i < 500; i++) {
 
             int pivotForSize = model.getPivotFor() != null ? model.getPivotFor().size() : 0;
@@ -2653,14 +2690,18 @@ public class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "expected FOR expr");
             }
 
-            ExpressionNode forExpr = expressionNodePool.next().of(ExpressionNode.LITERAL, unquote(GenericLexer.immutableOf(forName)), 0, 0);
-            QueryColumn forColumn = queryColumnPool.next().of(null, forExpr);
+            /*
+                We need to construct a placeholder for the name of the `FOR` expr i.e LHS of the `IN`.
+
+                Then handle possible aliases.
+             */
+
+            QueryColumn forColumn = nextColumn(null, unquote(GenericLexer.immutableOf(forName)), lexer.lastTokenPosition());
 
             CharSequence inTokenOrAs = SqlUtil.fetchNext(lexer);
-
             if (isAsKeyword(inTokenOrAs)) {
                 tok = tok(lexer, "alias");
-                SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                 CharSequence aliasTok = GenericLexer.immutableOf(tok);
                 validateIdentifier(lexer, aliasTok);
                 forColumn.setAlias(unquote(aliasTok));
@@ -2680,10 +2721,18 @@ public class SqlParser {
 
             CharSequence maybeSelect = SqlUtil.fetchNext(lexer);
 
+            /*
+                Now it is possible that the IN list could originate from a subquery. e.g.
+
+                `tableName PIVOT (sum(value) FOR foo IN (SELECT DISTINCT foo FROM tableName) GROUP BY bah);`
+
+                In this instance, we need to find the matching close bracket for the query, and then compile
+                and execute it.
+
+                Then we need to read from the results cursor and construct an `IN` list of literals.
+             */
             if (isSelectKeyword(maybeSelect)) {
                 int start = lexer.lastTokenPosition();
-//                // the IN list must come from a subquery
-//                // We need to compile and execute the query, and then use the cursor to generate an IN list
 
                 // need to find the closing bracket
                 int bracketStack = 1;
@@ -2702,49 +2751,84 @@ public class SqlParser {
                     }
                 }
 
-                String query = Chars.toString(lexer.getContent(), start, j - 1);
+                /*
+                    Fast-forward lexer to be after the query, else we will try to re-parse the query later on.
+                 */
                 lexer.goToPosition(j);
-                SqlCompilerImpl compiler = (SqlCompilerImpl) sqlParserCallback;
 
+
+                /*
+                    Now eagerly compile and execute the query so we can get our IN keylist.
+                 */
+                SqlCompilerImpl compiler = (SqlCompilerImpl) sqlParserCallback;
                 SqlExecutionContext executionContext = new SqlExecutionContextImpl(compiler.getEngine(), 1);
 
-                try (RecordCursorFactory inListFactory = compiler.getEngine().select(query, executionContext)) {
+                try (RecordCursorFactory inListFactory = compiler
+                        .getEngine()
+                        .select(lexer.getContent().subSequence(start, j - 1), executionContext)) {
+
                     RecordMetadata inListMetadata = inListFactory.getMetadata();
+
+                    /*
+                        We expect a single column output, hopefully something that we can print into a valid literal.
+                     */
                     if (inListMetadata.getColumnCount() != 1) {
-                        throw SqlException.$(start, "`SELECT` subquery must return a single column");
+                        throw SqlException
+                                .$(start, "`SELECT` subquery must return a single column [columnCount=")
+                                .put(inListMetadata.getColumnCount())
+                                .put(']');
                     }
 
                     boolean hadEntries = false;
                     try (RecordCursor cursor = inListFactory.getCursor(executionContext)) {
+
+                        /*
+                            Print each output key and add it to our `FOR` list.
+                         */
                         while (cursor.hasNext()) {
                             hadEntries = true;
                             CharacterStoreEntry cse = characterStore.newEntry();
-                            Record record = cursor.getRecord();
+                            final Record record = cursor.getRecord();
                             CursorPrinter.printColumn(record, inListMetadata, 0, cse);
-                            QueryColumn qc = queryColumnPool.next().of(
-                                    null,
-                                    expressionNodePool.next().of(ExpressionNode.CONSTANT, cse.toImmutable(), 0, 0)
-                            );
+                            final QueryColumn qc = nextColumn(null, cse.toImmutable(), lexer.lastTokenPosition());
+                            qc.getAst().type = ExpressionNode.CONSTANT;
                             model.addPivotFor(qc);
                         }
                     }
 
+                    /*
+                        Guard against empty lists, we can't generate columns or a filter from them.
+                     */
                     if (!hadEntries) {
-                        throw SqlException.$(start, "query returned no results [query=").put(query).put(']');
+                        throw SqlException.$(start, "query returned no results [query=")
+                                .put(lexer.getContent().subSequence(start, j - 1))
+                                .put(']');
                     }
-
                 }
 
                 tok = SqlUtil.fetchNext(lexer);
 
+                /*
+                    Now we need to handle a possible `ELSE` clause. This has the form:
+
+                    FOR name IN (v1, v2) ELSE other_name
+
+                    This clause acts as a catch-all. It is an extra column that groups up all the other available
+                    columns in the table, with a `NOT IN (v1, v2)` filter.
+
+                    This makes it easy to compare a subset of values against all the other available values.
+                */
                 if (isElseKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
-                    model.addPivotElse(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf(tok), 0, 0));
+                    QueryColumn elseCol = nextColumn(unquote(GenericLexer.immutableOf(tok)), SqlUtil.PIVOT_ELSE_TOKEN, lexer.lastTokenPosition());
+                    model.addPivotFor(elseCol);
                     SqlUtil.fetchNext(lexer);
-                } else {
-                    model.addPivotElse(null);
                 }
 
+                /*
+                    The list of `FOR` expressions can be ended by various expressions, most likely a
+                    `GROUP BY` clause.
+                 */
                 if (isGroupKeyword(tok) || Chars.equals(tok, ';') || Chars.equals(tok, ')')
                         || isOrderKeyword(tok) || isLimitKeyword(tok) || isSampleKeyword(tok)) {
                     if (Chars.equals(tok, ')')) {
@@ -2755,6 +2839,13 @@ public class SqlParser {
                     lexer.unparseLast();
                 }
             } else {
+                /*
+                    We were checking for `SELECT`, but now we need to unparse and go back to the start of the expression.
+
+                    We accept aliases inside the list, for example:
+
+                    tableName PIVOT (sum(value) FOR foo IN (val1 as v1, val2 as v2) GROUP BY bah);
+                 */
                 lexer.unparseLast();
 
                 for (int j = 0; j < 500; j++) {
@@ -2776,21 +2867,15 @@ public class SqlParser {
                         continue;
                     }
 
-
                     if (isGroupKeyword(tok) || Chars.equals(tok, ';') || Chars.equals(tok, ')')
                             || isOrderKeyword(tok) || isLimitKeyword(tok) || isSampleKeyword(tok)) {
                         if (Chars.equals(tok, ')')) {
                             tok = SqlUtil.fetchNext(lexer);
                             if (isElseKeyword(tok)) {
                                 tok = SqlUtil.fetchNext(lexer);
-
-                                // else means all the columns that aren't in the list
-                                // lets build a FOR
-
-                                model.addPivotElse(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf(tok), 0, 0));
+                                QueryColumn elseCol = nextColumn(unquote(GenericLexer.immutableOf(tok)), SqlUtil.PIVOT_ELSE_TOKEN, lexer.lastTokenPosition());
+                                model.addPivotFor(elseCol);
                                 SqlUtil.fetchNext(lexer);
-                            } else {
-                                model.addPivotElse(null);
                             }
                         }
                         break;
@@ -2808,7 +2893,15 @@ public class SqlParser {
             }
         }
 
-        // parseGroupBy
+        /*
+            PIVOT constructs columns filtered by certain key combinations, and then grouped.
+
+            Therefore, a group by clause is almost always expected.
+
+            Inference of the group by keys is not used, as PIVOT only accepts wildcard selects (or subqueries).
+
+            In the rewrite, the columns are cleared and replaced with newly generated ones.
+         */
         if (isGroupKeyword(tok)) {
             expectBy(lexer);
 
@@ -2825,6 +2918,10 @@ public class SqlParser {
                 tok = SqlUtil.fetchNext(lexer);
             } while (tok != null && !Chars.equals(tok, ')') && Chars.equals(tok, ','));
         }
+
+        /*
+            The `PIVOT` result can further be ordered and limited.
+         */
 
         if (tok != null && isOrderKeyword(tok)) {
             tok = parseOrderBy(model, lexer, sqlParserCallback);
@@ -2845,6 +2942,14 @@ public class SqlParser {
         return tok;
     }
 
+    /**
+     * Parses a column expression, plus an optional alias.
+     * @param lexer
+     * @param model
+     * @param sqlParserCallback
+     * @return
+     * @throws SqlException
+     */
     private QueryColumn parsePivotParseColumn(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok;
         ExpressionNode expr = null;
@@ -2872,13 +2977,13 @@ public class SqlParser {
 
                 if (isAsKeyword(tok)) {
                     tok = tok(lexer, "alias");
-                    SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                    SqlKeywords.assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                     CharSequence aliasTok = GenericLexer.immutableOf(tok);
                     validateIdentifier(lexer, aliasTok);
                     alias = unquote(aliasTok);
                 } else {
                     validateIdentifier(lexer, tok);
-                    SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                    SqlKeywords.assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                     alias = GenericLexer.immutableOf(unquote(tok));
                 }
 
