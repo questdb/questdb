@@ -39,7 +39,7 @@ import java.lang.management.ThreadMXBean;
 @RunListener.ThreadSafe
 public class TestListener extends RunListener {
     private static final Log LOG = LogFactory.getLog(TestListener.class);
-
+    private final static StringBuilder sb = new StringBuilder();
     long testStartMs = -1;
 
     public static void dumpThreadStacks() {
@@ -60,6 +60,30 @@ public class TestListener extends RunListener {
             s.append("\n\n");
         }
         System.out.println(s);
+    }
+
+    public static CharSequence replaceInvalidUtf8(CharSequence input) {
+        return replaceInvalidUtf8(input, '?'); // Unicode replacement character
+    }
+
+    public static CharSequence replaceInvalidUtf8(CharSequence input, char replacement) {
+        if (input == null) return null;
+        sb.setLength(0);
+
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+
+            if (Character.isValidCodePoint(c) && !Character.isISOControl(c)) {
+                sb.append(c);
+            } else {
+                sb.append(replacement);
+            }
+        }
+        int invalidIndex = sb.indexOf("[-]");
+        if (invalidIndex >= 0) {
+            sb.replace(invalidIndex, invalidIndex + 4, "[<minus>]");
+        }
+        return sb;
     }
 
     @Override
@@ -90,14 +114,18 @@ public class TestListener extends RunListener {
 
     @Override
     public void testFinished(Description description) {
-        LOG.infoW().$("<<<< ").$(description.getClassName()).$('.').$(description.getMethodName()).$(" duration_ms=").$(getTestDuration()).$();
+        LOG.infoW().$("<<<< ").$(description.getClassName()).$('.')
+                .$(replaceInvalidUtf8(description.getMethodName()))
+                .$(" duration_ms=").$(getTestDuration()).$();
         System.out.println("<<<<= " + description.getClassName() + '.' + description.getMethodName() + " duration_ms=" + getTestDuration());
     }
 
     @Override
     public void testStarted(Description description) {
         testStartMs = System.currentTimeMillis();
-        LOG.infoW().$(">>>> ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
+        LOG.infoW().$(">>>> ").$(description.getClassName()).$('.')
+                .$(replaceInvalidUtf8(description.getMethodName()))
+                .$();
         System.out.println(">>>>= " + description.getClassName() + '.' + description.getMethodName());
     }
 
