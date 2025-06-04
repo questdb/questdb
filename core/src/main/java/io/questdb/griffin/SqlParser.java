@@ -79,6 +79,8 @@ public class SqlParser {
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
     public static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
     private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
+    public static final int PIVOT_MAX_FOR_IN_LISTS = 500;
+    public static final int PIVOT_MAX_FOR_IN_LIST_LENGTH = 10000;
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
@@ -2633,8 +2635,9 @@ public class SqlParser {
 
     /**
      * Parse expressions of the form:
-     *
+     * <p>
      * `tableName` PIVOT (sum(value) FOR name IN ('a', 'b', 'c') GROUP BY something);
+     *
      * @param lexer
      * @param model
      * @param sqlParserCallback
@@ -2667,7 +2670,6 @@ public class SqlParser {
             tok = optTok(lexer);
         } while (tok != null && !isForKeyword(tok) && isComma(tok));
 
-
         /*
             Malformed query if no `FOR` present.
          */
@@ -2684,7 +2686,7 @@ public class SqlParser {
 
             i.e. (v1, v3), (v1, v4), (v2, v3), (v2, v4)
          */
-        for (int i = 0; i < 500; i++) {
+        while (true) {
 
             // Get name of FOR
             tok = tok(lexer, "'LHS of IN expr'");
@@ -2771,36 +2773,6 @@ public class SqlParser {
                 }
 
                 tok = optTok(lexer);
-
-                /*
-                    Now we need to handle a possible `ELSE` clause. This has the form:
-
-                    FOR name IN (v1, v2) ELSE other_name
-
-                    This clause acts as a catch-all. It is an extra column that groups up all the other available
-                    columns in the table, with a `NOT IN (v1, v2)` filter.
-
-                    This makes it easy to compare a subset of values against all the other available values.
-                */
-                if (tok != null && isElseKeyword(tok)) {
-                    tok = optTok(lexer);
-                    QueryColumn elseCol = nextColumn(unquote(GenericLexer.immutableOf(tok)), SqlUtil.PIVOT_ELSE_TOKEN, lexer.lastTokenPosition());
-                    model.addPivotFor(elseCol);
-                    tok = optTok(lexer);
-                }
-
-                /*
-                    The list of `FOR` expressions can be ended by various expressions, most likely a
-                    `GROUP BY` clause.
-                 */
-                if (tok != null && pivotForStop.contains(tok)) {
-                    if (isRightParen(tok)) {
-                        tok = optTok(lexer);
-                    }
-                    break;
-                } else {
-                    lexer.unparseLast();
-                }
             } else {
                 /*
                     We were checking for `SELECT`, but now we need to unparse and go back to the start of the expression.
@@ -2811,7 +2783,7 @@ public class SqlParser {
                  */
                 lexer.unparseLast();
 
-                for (int j = 0; j < 500; j++) {
+                do {
                     final QueryColumn nextFor = parsePivotParseColumn(lexer, model, sqlParserCallback);
 
                     if (nextFor.getAst().type != ExpressionNode.CONSTANT) {
@@ -2822,31 +2794,37 @@ public class SqlParser {
 
                     model.addPivotFor(nextFor);
 
-                    if (isComma(tok)) {
-                        continue;
-                    }
+                } while (isComma(tok));
 
-                    if (pivotForStop.contains(tok)) {
-                        if (isRightParen(tok)) {
-                            tok = SqlUtil.fetchNext(lexer);
-                            if (isElseKeyword(tok)) {
-                                tok = SqlUtil.fetchNext(lexer);
-                                QueryColumn elseCol = nextColumn(unquote(GenericLexer.immutableOf(tok)), SqlUtil.PIVOT_ELSE_TOKEN, lexer.lastTokenPosition());
-                                model.addPivotFor(elseCol);
-                                SqlUtil.fetchNext(lexer);
-                            }
-                        }
-                        break;
-                    } else {
-                        lexer.unparseLast();
-                    }
+                if (isRightParen(tok)) {
+                    tok = optTok(lexer);
                 }
+            }
 
-                if (tok != null && pivotForStop.contains(tok)) {
-                    break;
-                } else {
-                    lexer.unparseLast();
+            /*
+                Now we need to handle a possible `ELSE` clause. This has the form:
+
+                FOR name IN (v1, v2) ELSE other_name
+
+                This clause acts as a catch-all. It is an extra column that groups up all the other available
+                columns in the table, with a `NOT IN (v1, v2)` filter.
+
+                This makes it easy to compare a subset of values against all the other available values.
+            */
+            if (tok != null && isElseKeyword(tok)) {
+                tok = optTok(lexer);
+                QueryColumn elseCol = nextColumn(unquote(GenericLexer.immutableOf(tok)), SqlUtil.PIVOT_ELSE_TOKEN, lexer.lastTokenPosition());
+                model.addPivotFor(elseCol);
+                tok = optTok(lexer);
+            }
+
+            if (tok != null && pivotForStop.contains(tok)) {
+                if (isRightParen(tok)) {
+                    tok = optTok(lexer);
                 }
+                break;
+            } else {
+                lexer.unparseLast();
             }
         }
 
@@ -2888,8 +2866,7 @@ public class SqlParser {
 
         /*
             The `PIVOT` result can further be ordered and limited.
-         */
-
+        */
         if (tok != null && isOrderKeyword(tok)) {
             tok = parseOrderBy(model, lexer, sqlParserCallback);
         }
@@ -2903,7 +2880,7 @@ public class SqlParser {
         }
 
         if (isRightParen(tok)) {
-            tok = SqlUtil.fetchNext(lexer);
+            tok = optTok(lexer);
         }
 
         return tok;
@@ -2911,6 +2888,7 @@ public class SqlParser {
 
     /**
      * Parses a column expression, plus an optional alias.
+     *
      * @param lexer
      * @param model
      * @param sqlParserCallback
@@ -2934,10 +2912,11 @@ public class SqlParser {
         }
 
         CharSequence alias;
-        tok = SqlUtil.fetchNext(lexer);
+        tok = tok(lexer, "'column'");
+
         col = queryColumnPool.next().of(null, expr);
 
-        if (tok != null && !isForKeyword(tok)) {
+        if (!isForKeyword(tok)) {
             if (columnAliasStop.excludes(tok)) {
                 assertNotDot(lexer, tok);
                 // verify that * wildcard is not aliased
@@ -2957,17 +2936,13 @@ public class SqlParser {
                 if (col.getAst().isWildcard()) {
                     throw err(lexer, null, "wildcard cannot have alias");
                 }
-                tok = SqlUtil.fetchNext(lexer);
+                tok = optTok(lexer);
                 col.setAlias(alias);
             }
 
         }
 
-        if (tok == null) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected end of expression");
-        }
-
-        if (isForKeyword(tok) || Chars.equals(tok, ',') || Chars.equals(tok, ')')) {
+        if (isForKeyword(tok) || isComma(tok) || isRightParen(tok)) {
             lexer.unparseLast();
         }
         return col;

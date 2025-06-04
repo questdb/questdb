@@ -102,6 +102,7 @@ public class SqlOptimiser implements Mutable {
     private static final int NOT_OP_NOT = 1;
     private static final int NOT_OP_NOT_EQ = 9;
     private static final int NOT_OP_OR = 3;
+    public static final int PIVOT_MAX_ALIAS_INTEGER = 500;
     // these are bit flags
     private static final int SAMPLE_BY_REWRITE_NO_WRAP = 0;
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 2;
@@ -5147,39 +5148,53 @@ public class SqlOptimiser implements Mutable {
     private void rewritePivotGenerateAliases(QueryModel nested) {
         assert nested.getPivotColumns() != null;
         ObjList<QueryColumn> pivotColumns = nested.getPivotColumns();
-        int pivotColumnSize = nested.getPivotColumns().size();
+        int pivotColumnSize = pivotColumns.size();
 
-        boolean allAlreadyAliased = true;
+        boolean someAreNotAliased = false;
         boolean duplicateAggregates = false;
 
+        /*
+            This map counts how many entries for each aggregate function name there are.
+         */
         CharSequenceIntHashMap aggregateDedupe = csIntHashMapPool.next();
+
+        /*
+            This set is used to check for any repeating aliases in the data.
+         */
         CharSequenceHashSet aliasDedupe = csHashSetPool.next();
+
+        /*
+            This used to build up an alias, which is later converted to an immutable entry.
+         */
         StringSink sink = stringSinkPool.next();
 
         try {
             for (int i = 0; i < pivotColumnSize; i++) {
                 final QueryColumn pc = pivotColumns.getQuick(i);
-                if (aggregateDedupe.incrementAndReturnValue(pc.getAst().token) > 0) {
-                    duplicateAggregates = true;
-                }
-                if (pc.getAlias() == null) {
-                    allAlreadyAliased = false;
-                }
+                duplicateAggregates |= (aggregateDedupe.incrementAndReturnValue(pc.getAst().token) > 0);
+                someAreNotAliased |= (pc.getAlias() == null);
             }
 
-            if (!allAlreadyAliased && duplicateAggregates) {
+            if (someAreNotAliased && duplicateAggregates) {
                 CharSequence tok;
                 for (int i = 0; i < pivotColumnSize; i++) {
                     final QueryColumn col = pivotColumns.getQuick(i);
-                    tok = col.getAst().token;
-                    sink.clear();
 
+                    /*
+                        If it is aliased, we'll keep it.
+                     */
                     if (col.getAlias() != null) {
                         aliasDedupe.add(col.getAlias());
                         continue;
                     }
 
-                    if (aggregateDedupe.get(tok) > 0 && col.getAlias() == null) {
+                    tok = col.getAst().token;
+                    sink.clear();
+
+                    /*
+                        Otherwise, we will build an alias using an incrementing counter.
+                    */
+                    if (aggregateDedupe.get(tok) > 0) {
                         // need to alias it
                         sink.put(tok).put('_').put(col.getAst().rhs);
                         if (aliasDedupe.contains(sink)) {
@@ -5189,14 +5204,14 @@ public class SqlOptimiser implements Mutable {
                             do {
                                 sink.trimTo(aliasLength);
                                 sink.put(suffix++);
-                            } while (aliasDedupe.contains(sink) && suffix < 500);
+                            } while (aliasDedupe.contains(sink) && suffix < PIVOT_MAX_ALIAS_INTEGER);
                         }
                         CharacterStoreEntry cse = characterStore.newEntry();
                         cse.put(sink);
                         CharSequence cs = cse.toImmutable();
-                        if (!aliasDedupe.add(cs)) {
-                            throw new UnsupportedOperationException();
-                        }
+
+                        // Sanity check
+                        assert aliasDedupe.add(cs);
                         col.setAlias(cs);
                     }
                 }
@@ -5225,17 +5240,10 @@ public class SqlOptimiser implements Mutable {
                 // This has special logic elsewhere in the optimiser.
                 throw SqlException.$(groupByExpr.position, "cannot use positional group by inside `PIVOT`");
             } else {
-                model.addBottomUpColumn(queryColumnPool.next().of(
-                        nestedGroupBy.getQuick(i).token,
-                        nestedGroupBy.getQuick(i)
-                ));
-                groupByModel.addBottomUpColumn(queryColumnPool.next().of(
-                        nestedGroupBy.getQuick(i).token,
-                        nestedGroupBy.getQuick(i)
-                ));
+                model.addBottomUpColumn(queryColumnPool.next().of(groupByExpr.token, groupByExpr));
+                groupByModel.addBottomUpColumn(queryColumnPool.next().of(groupByExpr.token, groupByExpr));
             }
         }
-
         groupByModel.moveGroupByFrom(model.getNestedModel());
     }
 
