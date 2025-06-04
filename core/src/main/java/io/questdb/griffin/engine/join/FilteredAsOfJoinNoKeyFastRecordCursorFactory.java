@@ -198,7 +198,6 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             // and in such case we do not want to call `masterCursor.hasNext()` during the next call to `this.hasNext()`.
             // if we are here then it's clear nextSlave() did not throw DataUnavailableException.
             isMasterHasNextPending = true;
-
             if (!record.hasSlave()) {
                 // the non-filtering algo did not find a matching record in the slave table.
                 // this means the slave table does not have a single record with a timestamp that is less than or equal
@@ -284,7 +283,6 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                     highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);
                     break;
                 }
-                
                 if (slaveRecordFilter.getBool(filterRecord)) {
                     // we have a match, that's awesome, no need to traverse the slave cursor!
                     break;
