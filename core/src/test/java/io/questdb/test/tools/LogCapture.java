@@ -83,6 +83,7 @@ public class LogCapture {
         Matcher m = Pattern.compile(regex).matcher(sink);
         while (!m.find() && (System.currentTimeMillis() - start) < maxWait) {
             Os.sleep(1);
+            m.reset(sink);
         }
         if ((System.currentTimeMillis() - start) > maxWait) {
             throw new AssertionError("timed out waiting for log to populate");

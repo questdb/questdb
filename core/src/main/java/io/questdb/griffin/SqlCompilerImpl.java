@@ -2968,7 +2968,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         compiledQuery.ofInsert(compileInsert(insertModel, executionContext), false);
                         QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     }
-
                     break;
             }
 
