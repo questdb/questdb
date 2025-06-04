@@ -91,12 +91,14 @@ public class TestListener extends RunListener {
     @Override
     public void testFinished(Description description) {
         LOG.infoW().$("<<<< ").$(description.getClassName()).$('.').$(description.getMethodName()).$(" duration_ms=").$(getTestDuration()).$();
+        System.out.println("<<<<= " + description.getClassName() + '.' + description.getMethodName() + " duration_ms=" + getTestDuration());
     }
 
     @Override
     public void testStarted(Description description) {
         testStartMs = System.currentTimeMillis();
         LOG.infoW().$(">>>> ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
+        System.out.println(">>>>= " + description.getClassName() + '.' + description.getMethodName());
     }
 
     private long getTestDuration() {
