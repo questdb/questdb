@@ -513,6 +513,47 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWithDynamicInListMultipleFor() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+
+            String query =
+                    "cities\n" +
+                            "PIVOT (\n" +
+                            "    SUM(population)\n" +
+                            "    FOR\n" +
+                            "        year IN (SELECT DISTINCT year FROM cities ORDER BY year)\n" +
+                            "        name IN (SELECT DISTINCT name FROM cities ORDER BY name)\n" +
+                            ");\n";
+
+            assertException(query, 60, "query returned no results");
+
+            execute(dmlCities);
+
+            assertQueryNoLeakCheck(
+                    "2000_Amsterdam\t2000_New York City\t2000_Seattle\t2010_Amsterdam\t2010_New York City\t2010_Seattle\t2020_Amsterdam\t2020_New York City\t2020_Seattle\n" +
+                            "1005\t8015\t564\t1065\t8175\t608\t1158\t8772\t738\n",
+                    query,
+                    null,
+                    false,
+                    true,
+                    false
+            );
+
+            assertPlanNoLeakCheck(query,
+                    "GroupBy vectorized: false\n" +
+                            "  values: [sum(case([(year=2000 and name='Amsterdam'),SUM,null])),sum(case([(year=2000 and name='New York City'),SUM,null])),sum(case([(year=2000 and name='Seattle'),SUM,null])),sum(case([(year=2010 and name='Amsterdam'),SUM,null])),sum(case([(year=2010 and name='New York City'),SUM,null])),sum(case([(year=2010 and name='Seattle'),SUM,null])),sum(case([(year=2020 and name='Amsterdam'),SUM,null])),sum(case([(year=2020 and name='New York City'),SUM,null])),sum(case([(year=2020 and name='Seattle'),SUM,null]))]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [year,name]\n" +
+                            "      values: [sum(population)]\n" +
+                            "      filter: (year in [2000,2010,2020] and name in [Amsterdam,New York City,Seattle])\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: cities\n");
+        });
+    }
+
+    @Test
     public void testPivotWithElse() throws Exception {
         assertQueryAndPlan(
                 "country\t2000\tother_years\n",
@@ -535,6 +576,39 @@ public class PivotTest extends AbstractSqlParserTest {
                 "GroupBy vectorized: false\n" +
                         "  keys: [country]\n" +
                         "  values: [sum(case([SUM,nullL,year])),sum(case([not (year in [2000]),SUM,null]))]\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [country,year]\n" +
+                        "      values: [sum(population)]\n" +
+                        "      filter: null\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: cities\n");
+    }
+
+    @Test
+    public void testPivotWithElseMultipleFor() throws Exception {
+        assertQueryAndPlan(
+                "country\t2000_NL\t2000_USA\tother_years_NL\tother_years_USA\n",
+                "cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population)\n" +
+                        "    FOR\n" +
+                        "        year IN (2000) ELSE other_years\n" +
+                        "        country IN ('NL') ELSE USA\n" +
+                        "    GROUP BY country\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "country\t2000_NL\t2000_USA\tother_years_NL\tother_years_USA\n" +
+                        "NL\t1005\tnull\t2223\tnull\n" +
+                        "US\tnull\t8579\tnull\t18293\n",
+                true,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  keys: [country]\n" +
+                        "  values: [sum(case([(year=2000 and country='NL'),SUM,null])),sum(case([(year=2000 and not (country in [NL])),SUM,null])),sum(case([(not (year in [2000]) and country='NL'),SUM,null])),sum(case([(not (year in [2000]) and not (country in [NL])),SUM,null]))]\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [country,year]\n" +
                         "      values: [sum(population)]\n" +

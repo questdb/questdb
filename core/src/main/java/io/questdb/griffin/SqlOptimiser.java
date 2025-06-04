@@ -139,6 +139,7 @@ public class SqlOptimiser implements Mutable {
     private final BoolList groupByUsed = new BoolList();
     private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
     private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 16);
+    private final ObjectPool<ObjList<ExpressionNode>> expressionNodeListPool = new ObjectPool<>(ObjList::new, 16);
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
     private final LiteralCheckingVisitor literalCheckingVisitor = new LiteralCheckingVisitor();
@@ -5088,7 +5089,7 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Rationalises the constructed IN expression and adds to WHERE clause.
-     *
+     * <p>
      * If an ELSE clause is present, then we must not add it to the WHERE clause. Instead, we need to
      * invert the IN expression with NOT, and then stash it for later.
      *
@@ -7219,66 +7220,67 @@ public class SqlOptimiser implements Mutable {
              */
             IntList forMaxes = intListPool.next();
             IntList forDepths = intListPool.next();
-            ObjList<ExpressionNode> pivotForNames = new ObjList<>(); // todo(nwoolmer): use a pool
+            ObjList<ExpressionNode> pivotForNames = expressionNodeListPool.next();
+            IntList forDepthsBackup = intListPool.next();
 
-            int expectedPivotColumnsPerAggregateFunction =
-                    rewritePivotCalculateForInExprIndices(nested.getPivotFor(), pivotForNames, forMaxes, forDepths);
+            try {
+                int expectedPivotColumnsPerAggregateFunction =
+                        rewritePivotCalculateForInExprIndices(nested.getPivotFor(), pivotForNames, forMaxes, forDepths);
 
-            int pivotForNamesSize = pivotForNames.size();
+                int pivotForNamesSize = pivotForNames.size();
 
             /*
                 ForDepths is mutable, so we need to duplicate it.
              */
-            IntList forDepthsBackup = intListPool.next().thenCheckCapacity(forDepths.capacity());
-            forDepthsBackup.addAll(forDepths);
+                forDepthsBackup.addAll(forDepths);
+                // todo(nwoolmer): this may be deprecated, but not in the case where the user set all of the aliases.
 
-            // todo(nwoolmer): this may be deprecated, but not in the case where the user set all of the aliases.
             /*
                 This is used in part of the fallback naming logic, to ensure unique column names.
              */
-            boolean duplicateAggregateFunctions = false;
-            CharSequenceHashSet aggregateFunctionNames = csHashSetPool.next();
-            for (int i = 0, n = nested.getPivotColumns().size(); i < n; i++) {
-                final CharSequence funcName = nested.getPivotColumns().get(i).getAst().token;
-                if (!aggregateFunctionNames.add(funcName)) {
-                    duplicateAggregateFunctions = true;
-                    break;
+                boolean duplicateAggregateFunctions = false;
+                CharSequenceHashSet aggregateFunctionNames = csHashSetPool.next();
+                for (int i = 0, n = nested.getPivotColumns().size(); i < n; i++) {
+                    final CharSequence funcName = nested.getPivotColumns().get(i).getAst().token;
+                    if (!aggregateFunctionNames.add(funcName)) {
+                        duplicateAggregateFunctions = true;
+                        break;
+                    }
                 }
-            }
 
-            csHashSetPool.release(aggregateFunctionNames);
-            int numberOfCols = expectedPivotColumnsPerAggregateFunction * nested.getPivotColumns().size();
+                csHashSetPool.release(aggregateFunctionNames);
+                int numberOfCols = expectedPivotColumnsPerAggregateFunction * nested.getPivotColumns().size();
 
             /*
                 An artificial limit is set on output pivot columns. This is consistent with other implementations,
                 and prevents queries hanging.
              */
-            if (numberOfCols > PIVOT_COLUMN_OUTPUT_LIMIT) {
-                intListPool.release(forDepths);
-                intListPool.release(forMaxes);
-                intListPool.release(forDepthsBackup);
-                throw SqlException.$(nested.getModelPosition(),
-                        "too many columns in PIVOT output: " + numberOfCols + " > " + PIVOT_COLUMN_OUTPUT_LIMIT);
-            }
+                if (numberOfCols > PIVOT_COLUMN_OUTPUT_LIMIT) {
+                    intListPool.release(forDepths);
+                    intListPool.release(forMaxes);
+                    intListPool.release(forDepthsBackup);
+                    throw SqlException.$(nested.getModelPosition(),
+                            "too many columns in PIVOT output: " + numberOfCols + " > " + PIVOT_COLUMN_OUTPUT_LIMIT);
+                }
 
             /*
                 For each aggregate function, we will need to loop over all combinations of the `FOR` expressions.
              */
-            for (int i = 0; i < expectedPivotColumnsPerAggregateFunction; i++) {
+                for (int i = 0; i < expectedPivotColumnsPerAggregateFunction; i++) {
 
-                for (int j = 0, n = nested.getPivotColumns().size(); j < n; j++) {
-                    QueryColumn pivotColumn = nested.getPivotColumns().get(j);
-                    ExpressionNode pivotColumnAst = pivotColumn.getAst();
-                    CharSequence pivotColumnName = pivotColumnAst.token;
-                    CharSequence pivotColumnParamToken = pivotColumnAst.rhs != null ? pivotColumnAst.rhs.token : null;
-                    CharSequence pivotColumnAlias = pivotColumn.getAlias();
-                    CharSequence pivotDefaultValue = "null";
+                    for (int j = 0, n = nested.getPivotColumns().size(); j < n; j++) {
+                        QueryColumn pivotColumn = nested.getPivotColumns().get(j);
+                        ExpressionNode pivotColumnAst = pivotColumn.getAst();
+                        CharSequence pivotColumnName = pivotColumnAst.token;
+                        CharSequence pivotColumnParamToken = pivotColumnAst.rhs != null ? pivotColumnAst.rhs.token : null;
+                        CharSequence pivotColumnAlias = pivotColumn.getAlias();
+                        CharSequence pivotDefaultValue = "null";
 
-                    ExpressionNode caseClause = null;
-                    QueryColumn inValue = null;
-                    ExpressionNode forName = null;
+                        ExpressionNode caseClause = null;
+                        QueryColumn inValue = null;
+                        ExpressionNode forName = null;
 
-                    CharacterStoreEntry nameSink = characterStore.newEntry();
+                        CharacterStoreEntry nameSink = characterStore.newEntry();
 
                     /*
                         We will now generate the latest column from `FOR` expressions
@@ -7311,25 +7313,31 @@ public class SqlOptimiser implements Mutable {
 
                         `sum(CASE WHEN year = 2000 AND country = 'NL' THEN ... ELSE ... END)`
                      */
-                    for (int k = 0; k < pivotForNamesSize; k++) {
-                        forName = pivotForNames.getQuick(k);
-                        inValue = nested.getPivotFor().getQuick(forDepths.get(k));
+                        for (int k = 0; k < pivotForNamesSize; k++) {
+                            forName = pivotForNames.getQuick(k);
+                            inValue = nested.getPivotFor().getQuick(forDepths.get(k));
 
-                        assert inValue != null;
+                            assert inValue != null;
 
-                        nameSink.put(GenericLexer.unquote(inValue.getName())).put('_');
+                            nameSink.put(GenericLexer.unquote(inValue.getName())).put('_');
 
-                        if (pivotForNamesSize != 1) {
-                            ExpressionNode caseFilterExpr = rewritePivotMakeBinaryExpression(forName, inValue.getAst(), "=", opEq);
+                            if (pivotForNamesSize != 1) {
+                                ExpressionNode caseFilterExpr;
+                                if (inValue.getAst().type != OPERATION) {
+                                    caseFilterExpr = rewritePivotMakeBinaryExpression(forName, inValue.getAst(), "=", opEq);
+                                } else {
+                                    caseFilterExpr = inValue.getAst();
+                                }
 
-                            if (caseClause == null) {
-                                caseClause = caseFilterExpr;
-                            } else {
-                                // need to combine with and
-                                caseClause = rewritePivotMakeBinaryExpression(caseClause, caseFilterExpr, "and", opAnd);
+
+                                if (caseClause == null) {
+                                    caseClause = caseFilterExpr;
+                                } else {
+                                    // need to combine with and
+                                    caseClause = rewritePivotMakeBinaryExpression(caseClause, caseFilterExpr, "and", opAnd);
+                                }
                             }
                         }
-                    }
 
                     /*
                         Now we have logic to generate appropriate names for the columns.
@@ -7344,35 +7352,35 @@ public class SqlOptimiser implements Mutable {
                         and then the aggregate itself.
                      */
 
-                    if (pivotColumnAlias != null) {
-                        // add the alias
-                        nameSink.put(pivotColumnAlias);
-                    } else if (nested.getPivotColumns().size() > 1) {
-                        if (duplicateAggregateFunctions) {
-                            nameSink.put(pivotColumnParamToken).put('_');
+                        if (pivotColumnAlias != null) {
+                            // add the alias
+                            nameSink.put(pivotColumnAlias);
+                        } else if (nested.getPivotColumns().size() > 1) {
+                            if (duplicateAggregateFunctions) {
+                                nameSink.put(pivotColumnParamToken).put('_');
+                            }
+                            // then add the pivot column
+                            nameSink.put(pivotColumnName);
+                        } else {
+                            // remove the '_', since we have finished our name
+                            nameSink.trimTo(nameSink.length() - 1);
                         }
-                        // then add the pivot column
-                        nameSink.put(pivotColumnName);
-                    } else {
-                        // remove the '_', since we have finished our name
-                        nameSink.trimTo(nameSink.length() - 1);
-                    }
 
-                    CharSequence name = nameSink.toImmutable();
+                        CharSequence name = nameSink.toImmutable();
 
                     /*
                         If there is a duplicate, then we tag on a number here to make it unique.
                      */
-                    if (model.getColumnAliasIndex(name) >= 0) {
-                        for (int _i = 0; _i < PIVOT_COLUMN_OUTPUT_LIMIT; _i++) {
-                            nameSink.put(_i);
-                            if (model.getColumnAliasIndex(nameSink.toImmutable()) < 0) {
-                                break;
-                            } else {
-                                nameSink.trimTo(nameSink.length() - 1);
+                        if (model.getColumnAliasIndex(name) >= 0) {
+                            for (int _i = 0; _i < PIVOT_COLUMN_OUTPUT_LIMIT; _i++) {
+                                nameSink.put(_i);
+                                if (model.getColumnAliasIndex(nameSink.toImmutable()) < 0) {
+                                    break;
+                                } else {
+                                    nameSink.trimTo(nameSink.length() - 1);
+                                }
                             }
                         }
-                    }
 
                     /*
                         Since we are using two `GROUP BY` executions, we cannot just use the same aggregation twice.
@@ -7385,15 +7393,15 @@ public class SqlOptimiser implements Mutable {
                         rows post the first group by. Instead, we use `sum` to ensure that we combine all the counts
                         into a total.
                      */
-                    CharSequence aggExprName = pivotColumnName;
-                    if (isFirstKeyword(pivotColumnName)) {
-                        aggExprName = "first_not_null";
-                    } else if (isLastKeyword(pivotColumnName)) {
-                        aggExprName = "last_not_null";
-                    } else if (isCountKeyword(pivotColumnName)) {
-                        aggExprName = "sum";
-                        pivotDefaultValue = "0";
-                    }
+                        CharSequence aggExprName = pivotColumnName;
+                        if (isFirstKeyword(pivotColumnName)) {
+                            aggExprName = "first_not_null";
+                        } else if (isLastKeyword(pivotColumnName)) {
+                            aggExprName = "last_not_null";
+                        } else if (isCountKeyword(pivotColumnName)) {
+                            aggExprName = "sum";
+                            pivotDefaultValue = "0";
+                        }
 
                     /*
                         Now we start building the full expression.
@@ -7405,76 +7413,79 @@ public class SqlOptimiser implements Mutable {
                         Then we must add the aggregate field to the happy path of the `CASE`.
                      */
 
-                    ExpressionNode aggExpr = expressionNodePool.next().of(FUNCTION, aggExprName, Integer.MIN_VALUE, 0);
-                    aggExpr.paramCount = 1;
+                        ExpressionNode aggExpr = expressionNodePool.next().of(FUNCTION, aggExprName, Integer.MIN_VALUE, 0);
+                        aggExpr.paramCount = 1;
 
-                    ExpressionNode caseExpr;
-                    if (pivotForNamesSize == 1 && inValue.getAst().type == CONSTANT) {
-                        caseExpr = expressionNodePool.next().of(FUNCTION, "switch", Integer.MIN_VALUE, 0);
-                        caseExpr.paramCount = 4;
-                    } else {
-                        caseExpr = expressionNodePool.next().of(FUNCTION, "case", Integer.MIN_VALUE, 0);
-                        caseExpr.paramCount = 3;
-                    }
+                        ExpressionNode caseExpr;
+                        if (pivotForNamesSize == 1 && inValue.getAst().type == CONSTANT) {
+                            caseExpr = expressionNodePool.next().of(FUNCTION, "switch", Integer.MIN_VALUE, 0);
+                            caseExpr.paramCount = 4;
+                        } else {
+                            caseExpr = expressionNodePool.next().of(FUNCTION, "case", Integer.MIN_VALUE, 0);
+                            caseExpr.paramCount = 3;
+                        }
 
-                    ExpressionNode defaultValueExpr = expressionNodePool.next().of(CONSTANT, pivotDefaultValue, Integer.MIN_VALUE, 0);
-                    caseExpr.args.add(defaultValueExpr);
+                        ExpressionNode defaultValueExpr = expressionNodePool.next().of(CONSTANT, pivotDefaultValue, Integer.MIN_VALUE, 0);
+                        caseExpr.args.add(defaultValueExpr);
 
-                    caseExpr.args.add(expressionNodePool.next().of(
-                            LITERAL,
-                            pivotColumnAlias == null ? pivotColumn.getAst().token : pivotColumnAlias,
-                            0,
-                            0
-                    ));
+                        caseExpr.args.add(expressionNodePool.next().of(
+                                LITERAL,
+                                pivotColumnAlias == null ? pivotColumn.getAst().token : pivotColumnAlias,
+                                0,
+                                0
+                        ));
 
                     /*
                         Depends if we are a `CASE` or a switch.
 
                         If switch, we didn't create a complex filter, so we just add it directly to the switch.
                      */
-                    if (pivotForNamesSize == 1) {
-                        caseExpr.args.add(inValue.getAst());
-                        caseExpr.args.add(forName);
-                    } else {
-                        // A == B AND C == D etc.
-                        assert caseClause != null;
-                        caseExpr.args.add(caseClause);
-                    }
+                        if (pivotForNamesSize == 1) {
+                            caseExpr.args.add(inValue.getAst());
+                            caseExpr.args.add(forName);
+                        } else {
+                            // A == B AND C == D etc.
+                            assert caseClause != null;
+                            caseExpr.args.add(caseClause);
+                        }
 
                     /*
                         Set the `CASE` as the argument of the aggregate function, then add it to the top-level model.
                      */
-                    aggExpr.rhs = caseExpr;
+                        aggExpr.rhs = caseExpr;
 
-                    model.addBottomUpColumn(queryColumnPool.next().of(
-                            name,
-                            aggExpr
-                    ));
-                }
+                        model.addBottomUpColumn(queryColumnPool.next().of(
+                                name,
+                                aggExpr
+                        ));
+                    }
 
                 /*
                     Now we must increment our indexes for the multi-list loop.
-                    We increment the lowest order number until that list completes.
-                    At that point, we reset it to 0 and increment the next number.
+                    We increment the lowest order number until that list is completed.
+                    At that point, we reset it to 0 and increment the position of the next list.
                  */
-                for (int z = forDepths.size() - 1; z >= 0; z--) {
-                    int depth = forDepths.getQuick(z);
-                    int max = forMaxes.getQuick(z);
+                    for (int z = forDepths.size() - 1; z >= 0; z--) {
+                        int depth = forDepths.getQuick(z);
+                        int max = forMaxes.getQuick(z);
 
-                    if (depth < max) {
-                        forDepths.increment(z);
-                        break;
-                    }
+                        if (depth < max) {
+                            forDepths.increment(z);
+                            break;
+                        }
 
-                    if (depth == max) {
-                        forDepths.setQuick(z, forDepthsBackup.getQuick(z));
+                        if (depth == max) {
+                            forDepths.setQuick(z, forDepthsBackup.getQuick(z));
+                        }
                     }
                 }
+            } finally {
+                intListPool.release(forMaxes);
+                intListPool.release(forDepths);
+                expressionNodeListPool.release(pivotForNames);
+                intListPool.release(forDepthsBackup);
             }
 
-            intListPool.release(forMaxes);
-            intListPool.release(forDepths);
-            intListPool.release(forDepthsBackup);
 
             /*
                 Now we must stack the models.
@@ -7485,7 +7496,7 @@ public class SqlOptimiser implements Mutable {
                    |
                 `group` -> inner group by and main dataset filter
                    |
-                `nested` -> raw scan from table.
+                `nested` -> raw scan from table
              */
             nested.clearPivot();
             groupByModel.setNestedModel(nested);

@@ -2674,7 +2674,7 @@ public class SqlParser {
             Malformed query if no `FOR` present.
          */
         if (tok == null || !isForKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "expected `FOR`");
+            throw SqlException.$(lexer.lastTokenPosition(), "expected FOR");
         }
 
         /*
@@ -2689,7 +2689,7 @@ public class SqlParser {
         while (true) {
 
             // Get name of FOR
-            tok = tok(lexer, "'LHS of IN expr'");
+            tok = tok(lexer, "LHS of IN expr");
 
             /*
                 We need to construct a placeholder for the name of the `FOR` expr i.e LHS of the `IN`.
@@ -2754,8 +2754,10 @@ public class SqlParser {
                         while (cursor.hasNext()) {
                             hadEntries = true;
                             CharacterStoreEntry cse = characterStore.newEntry();
+                            cse.put('\'');
                             final Record record = cursor.getRecord();
                             CursorPrinter.printColumn(record, inListMetadata, 0, cse);
+                            cse.put('\'');
                             final QueryColumn qc = nextColumn(null, cse.toImmutable(), lexer.lastTokenPosition());
                             qc.getAst().type = ExpressionNode.CONSTANT;
                             model.addPivotFor(qc);
@@ -2773,6 +2775,10 @@ public class SqlParser {
                 }
 
                 tok = optTok(lexer);
+
+                if (tok != null && isRightParen(tok)) {
+                    tok = optTok(lexer);
+                }
             } else {
                 /*
                     We were checking for `SELECT`, but now we need to unparse and go back to the start of the expression.
@@ -2912,7 +2918,7 @@ public class SqlParser {
         }
 
         CharSequence alias;
-        tok = tok(lexer, "'column'");
+        tok = tok(lexer, "column");
 
         col = queryColumnPool.next().of(null, expr);
 
