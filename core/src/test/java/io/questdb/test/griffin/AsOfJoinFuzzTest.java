@@ -71,7 +71,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 {true, false}, // exercise filters
                 ProjectionType.values(),
                 {true, false}, // apply outer projection
-                {true, false}, // use tolerance
+                {-1L, 1L, 1_000L, 100_000L, 10_000_000L}, // max tolerance in seconds, -1 = no tolerance
                 {true, false} // use hint for BINARY_SEARCH
         });
         for (int i = 0, n = allParameterPermutations.length; i < n; i++) {
@@ -82,10 +82,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             boolean exerciseFilters = (boolean) params[3];
             ProjectionType projectionType = (ProjectionType) params[4];
             boolean applyOuterProjection = (boolean) params[5];
-            boolean useTolerance = (boolean) params[6];
+            long maxTolerance = (long) params[6];
             boolean useBinarySearchHint = (boolean) params[7];
             try {
-                assertResultSetsMatch0(joinType, exerciseIntervals, limitType, exerciseFilters, projectionType, applyOuterProjection, useTolerance, useBinarySearchHint, rnd);
+                assertResultSetsMatch0(joinType, exerciseIntervals, limitType, exerciseFilters, projectionType, applyOuterProjection, maxTolerance, useBinarySearchHint, rnd);
             } catch (AssertionError e) {
                 throw new AssertionError("Failed with parameters: " +
                         "joinType=" + joinType +
@@ -94,7 +94,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                         ", exerciseFilters=" + exerciseFilters +
                         ", projectionType=" + projectionType +
                         ", applyOuterProjection = " + applyOuterProjection +
-                        ", useTolerance=" + useTolerance +
+                        ", maxTolerance=" + maxTolerance +
                         ", useBinarySearchHint=" + useBinarySearchHint,
                         e);
             }
@@ -108,7 +108,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             boolean exerciseFilters,
             ProjectionType projectionType,
             boolean applyOuterProjection,
-            boolean useTolerance,
+            long maxTolerance,
             boolean useBinarySearchHint,
             Rnd rnd
     ) throws Exception {
@@ -124,15 +124,15 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 break;
             case LT_NONKEYD:
                 join = " LT";
-                if (useTolerance) {
+                if (maxTolerance != -1) {
                     return; // LT join does not support tolerance
                 }
                 break;
             default:
                 throw new IllegalArgumentException("Unexpected join type: " + joinType);
         }
-        if (useTolerance) {
-            int toleranceSeconds = rnd.nextInt(1_000_000_000) + 1;
+        if (maxTolerance != -1) {
+            long toleranceSeconds = rnd.nextLong(maxTolerance) + 1;
             onSuffix += " tolerance " + toleranceSeconds + "s ";
         }
 
