@@ -142,7 +142,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             sqlExecutionContext.initNow();
             if (state.recordCursorFactory == null) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext, false);
+                    final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                     if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
                         state.recordCursorFactory = cc.getRecordCursorFactory();
                     } else if (isExpRequest) {

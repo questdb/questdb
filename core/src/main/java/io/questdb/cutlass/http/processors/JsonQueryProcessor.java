@@ -512,7 +512,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             for (int retries = 0; ; retries++) {
                 final long compilationStart = nanosecondClock.getTicks();
-                final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext, false);
+                final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
                 sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
                 state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
                 state.setQueryType(cc.getType());
