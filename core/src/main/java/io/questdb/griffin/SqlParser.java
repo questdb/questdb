@@ -162,6 +162,10 @@ public class SqlParser {
         return n != null && (n.type == ExpressionNode.CONSTANT || (n.type == ExpressionNode.LITERAL && isValidSampleByPeriodLetter(n.token)));
     }
 
+    public static boolean isFullTolerancePeriod(ExpressionNode n) {
+        return n != null && (n.type == ExpressionNode.CONSTANT || (n.type == ExpressionNode.LITERAL && isValidTolerancePeriodLetter(n.token)));
+    }
+
     /**
      * Parses a value and time unit into a TTL value. If the returned value is positive, the time unit
      * is hours. If it's negative, the time unit is months (and the actual value is positive).
@@ -341,6 +345,28 @@ public class SqlParser {
             case 'M':
                 // months
             case 'y':
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static boolean isValidTolerancePeriodLetter(CharSequence token) {
+        if (token.length() != 1) return false;
+        switch (token.charAt(0)) {
+            case 'U':
+                // micros
+            case 'T':
+                // millis
+            case 's':
+                // seconds
+            case 'm':
+                // minutes
+            case 'h':
+                // hours
+            case 'd':
+                // days
+            case 'w':
                 return true;
             default:
                 return false;
@@ -2579,19 +2605,11 @@ public class SqlParser {
         }
 
         final ExpressionNode n = expr(lexer, null, sqlParserCallback, decls);
-        if (isFullSampleByPeriod(n)) {
+        if (isFullTolerancePeriod(n)) {
             joinModel.setAsOfJoinTolerance(n);
             return joinModel;
         }
-
-        final int pos = lexer.lastTokenPosition();
-        tok = tok(lexer, "time interval unit");
-
-        if (isValidSampleByPeriodLetter(tok)) {
-            joinModel.setAsOfJoinTolerance(n, SqlUtil.nextLiteral(expressionNodePool, tok, pos));
-            return joinModel;
-        }
-        throw SqlException.$(pos, "one letter sample by period unit expected");
+        throw SqlException.$(lexer.lastTokenPosition(), "invalid tolerance period");
     }
 
     private void parseLatestBy(GenericLexer lexer, QueryModel model) throws SqlException {

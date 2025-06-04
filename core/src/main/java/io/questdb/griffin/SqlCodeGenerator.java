@@ -757,10 +757,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private static long tolerance(QueryModel slaveModel) throws SqlException {
-        // todo: implement the case where tolerance units are segregated from the interval itself,
-        //       e.g when the interval uses a function
-        assert slaveModel.getAsOfJoinToleranceUnit() == null : "todo";
-
         ExpressionNode tolerance = slaveModel.getAsOfJoinTolerance();
         long toleranceInterval = Numbers.LONG_NULL;
         if (tolerance != null) {
@@ -792,7 +788,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     multiplier = Timestamps.WEEK_MICROS;
                     break;
                 default:
-                    throw SqlException.$(tolerance.position, "unsupported interval qualifier");
+                    throw SqlException.$(tolerance.position, "unsupported interval qualifier [qualifier=").put(unit).put(']');
             }
             toleranceInterval *= multiplier;
         }

@@ -153,7 +153,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private boolean allowPropagationOfOrderByAdvice = true;
     private boolean artificialStar;
     private ExpressionNode asOfJoinTolerance = null;
-    private ExpressionNode asOfJoinToleranceUnit = null;
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
@@ -484,7 +483,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         forceBackwardScan = false;
         hintsMap.clear();
         asOfJoinTolerance = null;
-        asOfJoinToleranceUnit = null;
     }
 
     public void clearColumnMapStructs() {
@@ -704,8 +702,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(updateTableModel, that.updateTableModel)
                 && Objects.equals(updateTableToken, that.updateTableToken)
                 && Objects.equals(decls, that.decls)
-                && Objects.equals(asOfJoinTolerance, that.asOfJoinTolerance)
-                && Objects.equals(asOfJoinToleranceUnit, that.asOfJoinToleranceUnit);
+                && Objects.equals(asOfJoinTolerance, that.asOfJoinTolerance);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -737,11 +734,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     @Nullable
     public ExpressionNode getAsOfJoinTolerance() {
         return asOfJoinTolerance;
-    }
-
-    @Nullable
-    public ExpressionNode getAsOfJoinToleranceUnit() {
-        return asOfJoinToleranceUnit;
     }
 
     public ObjList<QueryColumn> getBottomUpColumns() {
@@ -1301,11 +1293,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setAsOfJoinTolerance(ExpressionNode asOfJoinTolerance) {
         this.asOfJoinTolerance = asOfJoinTolerance;
-    }
-
-    public void setAsOfJoinTolerance(ExpressionNode asOfJoinTolerance, ExpressionNode asOfJoinToleranceUnit) {
-        this.asOfJoinTolerance = asOfJoinTolerance;
-        this.asOfJoinToleranceUnit = asOfJoinToleranceUnit;
     }
 
     public void setBackupWhereClause(ExpressionNode backupWhereClause) {
