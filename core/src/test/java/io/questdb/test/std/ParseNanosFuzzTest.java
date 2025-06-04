@@ -56,52 +56,18 @@ public class ParseNanosFuzzTest {
             3_600_000_000_000L    // hours
     };
     private static final Rnd rnd = new Rnd();
-    private static final StringBuilder sb = new StringBuilder();
     private final boolean expectError;
     private final long expected;
     private final String input;
 
-    public ParseNanosFuzzTest(String input, long expected, boolean expectError, String caseName) {
+    public ParseNanosFuzzTest(String input, long expected, boolean expectError) {
         this.input = input;
         this.expected = expected;
         this.expectError = expectError;
     }
 
-    public static String replaceInvalidUtf8(CharSequence input) {
-        return replaceInvalidUtf8(input, '?'); // Unicode replacement character
-    }
-
-    public static String replaceInvalidUtf8(CharSequence input, char replacement) {
-        if (input == null) return null;
-        sb.setLength(0);
-
-        for (int i = 0; i < input.length(); i++) {
-            char c = input.charAt(i);
-
-            if (Character.isValidCodePoint(c) && !Character.isISOControl(c)) {
-                sb.append(c);
-            } else if (Character.isHighSurrogate(c) && i + 1 < input.length()) {
-                char low = input.charAt(i + 1);
-                if (Character.isLowSurrogate(low)) {
-                    int codePoint = Character.toCodePoint(c, low);
-                    if (Character.isValidCodePoint(codePoint)) {
-                        sb.append(c).append(low);
-                    } else {
-                        sb.append(replacement);
-                    }
-                    i++; // Skip the low surrogate
-                } else {
-                    sb.append(replacement);
-                }
-            } else {
-                sb.append(replacement);
-            }
-        }
-        return sb.toString();
-    }
-
     // Define the test data
-    @Parameterized.Parameters(name = "{3}")  // {0} refers to the first parameter (testName)
+    @Parameterized.Parameters(name = "{0}")  // {0} refers to the first parameter (testName)
     public static Collection<Object[]> testData() {
         ArrayList<Object[]> testData = new ArrayList<>();
         runFuzzTests(testData);
@@ -127,10 +93,6 @@ public class ParseNanosFuzzTest {
                 Assert.fail("Failed: Unexpected exception for input: " + input);
             }
         }
-    }
-
-    private static void addTestData(ArrayList<Object[]> testData, String input, long expectedMicros, boolean fail) {
-        testData.add(new Object[]{input, expectedMicros, fail, replaceInvalidUtf8(input)});
     }
 
     private static String generateInvalidDecimal() {
@@ -279,9 +241,6 @@ public class ParseNanosFuzzTest {
         return sb.toString();
     }
 
-    // Previous test methods remain the same...
-    // (testSimpleNumber, testNumberWithUnderscore, testNumberWithUnit, etc.)
-
     private static String generateUnitWithoutNumber() {
         return (rnd.nextBoolean() ? "-" : "") +
                 UNITS[1 + rnd.nextInt(UNITS.length - 1)];
@@ -313,6 +272,9 @@ public class ParseNanosFuzzTest {
         }
         return result.toString();
     }
+
+    // Previous test methods remain the same...
+    // (testSimpleNumber, testNumberWithUnderscore, testNumberWithUnit, etc.)
 
     private static String insertRandomUnderscores(String number) {
         if (number.length() < 2) return number;
@@ -365,53 +327,52 @@ public class ParseNanosFuzzTest {
         String unit = unitIndex > 0 ? randomizeCase(UNITS[unitIndex]) : "";
         String input = num + unit;
         long expectedMicros = value * UNIT_MULTIPLIERS[unitIndex];
-        boolean fail = false;
-        addTestData(testData, input, expectedMicros, fail);
+        testData.add(new Object[]{input, expectedMicros, false});
     }
 
     private static void testEdgeCase(int index, ArrayList<Object[]> testData) {
         switch (index) {
             case 0:
-                addTestData(testData, "0", 0L, false);
+                testData.add(new Object[]{"0", 0L, false});
                 break;
             case 1:
-                addTestData(testData, "1", 1L, false);
+                testData.add(new Object[]{"1", 1L, false});
                 break;
             case 2:
-                addTestData(testData, "-1", -1L, false);
+                testData.add(new Object[]{"-1", -1L, false});
                 break;
             case 3:
-                addTestData(testData, "1_2_3_4_5", 12345L, false);
+                testData.add(new Object[]{"1_2_3_4_5", 12345L, false});
                 break;
             case 4:
-                addTestData(testData, "-1_2_3_4_5", -12345L, false);
+                testData.add(new Object[]{"-1_2_3_4_5", -12345L, false});
                 break;
             case 5:
-                addTestData(testData, "1us", 1000L, false);
+                testData.add(new Object[]{"1us", 1000L, false});
                 break;
             case 6:
-                addTestData(testData, "1US", 1000L, false);
+                testData.add(new Object[]{"1US", 1000L, false});
                 break;
             case 7:
-                addTestData(testData, "1Ms", 1000_000L, false);
+                testData.add(new Object[]{"1Ms", 1000_000L, false});
                 break;
             case 8:
-                addTestData(testData, "1S", 1_000_000_000L, false);
+                testData.add(new Object[]{"1S", 1_000_000_000L, false});
                 break;
             case 9:
-                addTestData(testData, "1M", 60_000_000_000L, false);
+                testData.add(new Object[]{"1M", 60_000_000_000L, false});
                 break;
             case 10:
-                addTestData(testData, "1H", 3_600_000_000_000L, false);
+                testData.add(new Object[]{"1H", 3_600_000_000_000L, false});
                 break;
             case 11:
-                addTestData(testData, "-1_000_000us", -1000000000L, false);
+                testData.add(new Object[]{"-1_000_000us", -1000000000L, false});
                 break;
             case 12:
-                addTestData(testData, "-1_000_000MS", -1000000000000L, false);
+                testData.add(new Object[]{"-1_000_000MS", -1000000000000L, false});
                 break;
             case 13:
-                addTestData(testData, "-1_000_000S", -1000000000000000L, false);
+                testData.add(new Object[]{"-1_000_000S", -1000000000000000L, false});
                 break;
             default:
                 break;
@@ -420,127 +381,127 @@ public class ParseNanosFuzzTest {
 
     private static void testFuzzedInvalidCase(ArrayList<Object[]> testData) {
         String input = generateInvalidInput();
-        addTestData(testData, input, 0L, true);
+        testData.add(new Object[]{input, 0L, true});
     }
 
     private static void testInvalidCase(int index, ArrayList<Object[]> testData) {
         switch (index) {
             case 0:
-                addTestData(testData, "", 0L, true);
+                testData.add(new Object[]{"", 0L, true});
                 break;
             case 1:
-                addTestData(testData, "abc", 0L, true);
+                testData.add(new Object[]{"abc", 0L, true});
                 break;
             case 2:
-                addTestData(testData, "123abc", 0L, true);
+                testData.add(new Object[]{"123abc", 0L, true});
                 break;
             case 3:
-                addTestData(testData, "us", 0L, true);
+                testData.add(new Object[]{"us", 0L, true});
                 break;
             case 4:
-                addTestData(testData, "ms", 0L, true);
+                testData.add(new Object[]{"ms", 0L, true});
                 break;
             case 5:
-                addTestData(testData, "s", 0L, true);
+                testData.add(new Object[]{"s", 0L, true});
                 break;
             case 6:
-                addTestData(testData, "m", 0L, true);
+                testData.add(new Object[]{"m", 0L, true});
                 break;
             case 7:
-                addTestData(testData, "h", 0L, true);
+                testData.add(new Object[]{"h", 0L, true});
                 break;
             case 8:
-                addTestData(testData, "123_", 0L, true);
+                testData.add(new Object[]{"123_", 0L, true});
                 break;
             case 9:
-                addTestData(testData, "1.5s", 0L, true);
+                testData.add(new Object[]{"1.5s", 0L, true});
                 break;
             case 10:
-                addTestData(testData, "1s1", 0L, true);
+                testData.add(new Object[]{"1s1", 0L, true});
                 break;
             case 11:
-                addTestData(testData, "1ss", 0L, true);
+                testData.add(new Object[]{"1ss", 0L, true});
                 break;
             case 12:
-                addTestData(testData, "1sms", 0L, true);
+                testData.add(new Object[]{"1sms", 0L, true});
                 break;
             case 13:
-                addTestData(testData, " 1s", 0L, true);
+                testData.add(new Object[]{" 1s", 0L, true});
                 break;
             case 14:
-                addTestData(testData, "1s ", 0L, true);
+                testData.add(new Object[]{"1s ", 0L, true});
                 break;
             case 15:
-                addTestData(testData, "\t1s", 0L, true);
+                testData.add(new Object[]{"\t1s", 0L, true});
                 break;
             case 16:
-                addTestData(testData, "1s\n", 0L, true);
+                testData.add(new Object[]{"1s\n", 0L, true});
                 break;
             case 17:
-                addTestData(testData, "ms1", 0L, true);
+                testData.add(new Object[]{"ms1", 0L, true});
                 break;
             case 18:
-                addTestData(testData, "1y", 0L, true);
+                testData.add(new Object[]{"1y", 0L, true});
                 break;
             case 19:
-                addTestData(testData, "1d", 0L, true);
+                testData.add(new Object[]{"1d", 0L, true});
                 break;
             case 20:
-                addTestData(testData, "-", 0L, true);
+                testData.add(new Object[]{"-", 0L, true});
                 break;
             case 21:
-                addTestData(testData, "-us", 0L, true);
+                testData.add(new Object[]{"-us", 0L, true});
                 break;
             case 22:
-                addTestData(testData, "--1s", 0L, true);
+                testData.add(new Object[]{"--1s", 0L, true});
                 break;
             case 23:
-                addTestData(testData, "¹s", 0L, true);
+                testData.add(new Object[]{"¹s", 0L, true});  // superscript 1
                 break;
             case 24:
-                addTestData(testData, "₁s", 0L, true);
+                testData.add(new Object[]{"₁s", 0L, true});  // subscript 1
                 break;
             case 25:
-                addTestData(testData, "①s", 0L, true);
+                testData.add(new Object[]{"①s", 0L, true});       // circled 1
                 break;
             case 26:
-                addTestData(testData, "⑴s", 0L, true);
+                testData.add(new Object[]{"⑴s", 0L, true});       // parenthesized 1
                 break;
             case 27:
-                addTestData(testData, "1\u0000s", 0L, true);
+                testData.add(new Object[]{"1\u0000s", 0L, true}); // null character
                 break;
             case 28:
-                addTestData(testData, "1\u202Es", 0L, true);
+                testData.add(new Object[]{"1\u202Es", 0L, true}); // right-to-left override
                 break;
             case 29:
-                addTestData(testData, "9223372036854775808", 0L, true);
+                testData.add(new Object[]{"9223372036854775808", 0L, true}); // Long.MAX_VALUE + 1
                 break;
             case 30:
-                addTestData(testData, "-9223372036854775809", 0L, true);
+                testData.add(new Object[]{"-9223372036854775809", 0L, true}); // Long.MIN_VALUE - 1
                 break;
             case 31:
-                addTestData(testData, "1_us", 0L, true);
+                testData.add(new Object[]{"1_us", 0L, true});
                 break;
             case 32:
-                addTestData(testData, "18446744073709551616us", 0L, true);
+                testData.add(new Object[]{"18446744073709551616us", 0L, true}); // 2^64
                 break;
             case 33:
-                addTestData(testData, "1.us", 0L, true);
+                testData.add(new Object[]{"1.us", 0L, true});
                 break;
             case 34:
-                addTestData(testData, ".1us", 0L, true);
+                testData.add(new Object[]{".1us", 0L, true});
                 break;
             case 35:
-                addTestData(testData, "1e6us", 0L, true);
+                testData.add(new Object[]{"1e6us", 0L, true});
                 break;
             case 36:
-                addTestData(testData, "0x1us", 0L, true);
+                testData.add(new Object[]{"0x1us", 0L, true});
                 break;
             case 37:
-                addTestData(testData, "true", 0L, true);
+                testData.add(new Object[]{"true", 0L, true});
                 break;
             case 38:
-                addTestData(testData, "null", 0L, true);
+                testData.add(new Object[]{"null", 0L, true});
                 break;
             default:
                 break;
@@ -554,14 +515,14 @@ public class ParseNanosFuzzTest {
             String unit = randomizeCase(UNITS[unitIndex]);
             String input = value + unit;
             long expectedMicros = value * UNIT_MULTIPLIERS[unitIndex];
-            addTestData(testData, input, expectedMicros, false);
+            testData.add(new Object[]{input, expectedMicros, false});
         }
     }
 
     private static void testNegativeNumber(ArrayList<Object[]> testData) {
         int value = -rnd.nextInt(MAX_VALUE);
         String input = String.valueOf(value);
-        addTestData(testData, input, value, false);
+        testData.add(new Object[]{input, value, false});
     }
 
     private static void testNegativeNumberWithUnit(ArrayList<Object[]> testData) {
@@ -569,23 +530,23 @@ public class ParseNanosFuzzTest {
         int unitIndex = rnd.nextInt(UNITS.length);
         String input = value + UNITS[unitIndex];
         long expectedMicros = value * UNIT_MULTIPLIERS[unitIndex];
-        addTestData(testData, input, expectedMicros, false);
+        testData.add(new Object[]{input, expectedMicros, false});
     }
 
     private static void testNumberWithConsecutiveUnderscores(ArrayList<Object[]> testData) {
         int value = rnd.nextInt(MAX_VALUE);
         String input = insertOptionalUnderscores(String.valueOf(value));
-        addTestData(testData, input, value, false);
+        testData.add(new Object[]{input, value, false});
     }
 
     private static void testNumberWithMultipleUnderscores(ArrayList<Object[]> testData) {
         int value = rnd.nextInt(MAX_VALUE);
-        addTestData(testData, insertMultipleUnderscores(String.valueOf(value)), value, false);
+        testData.add(new Object[]{insertMultipleUnderscores(String.valueOf(value)), value, false});
     }
 
     private static void testNumberWithUnderscore(ArrayList<Object[]> testData) {
         int value = rnd.nextInt(MAX_VALUE);
-        addTestData(testData, insertRandomUnderscores(String.valueOf(value)), value, false);
+        testData.add(new Object[]{insertRandomUnderscores(String.valueOf(value)), value, false});
     }
 
     private static void testNumberWithUnderscoreAndUnit(ArrayList<Object[]> testData) {
@@ -593,7 +554,7 @@ public class ParseNanosFuzzTest {
         int unitIndex = rnd.nextInt(UNITS.length);
         String input = insertRandomUnderscores(String.valueOf(value)) + UNITS[unitIndex];
         long expectedMicros = value * UNIT_MULTIPLIERS[unitIndex];
-        addTestData(testData, input, expectedMicros, false);
+        testData.add(new Object[]{input, expectedMicros, false});
     }
 
     private static void testNumberWithUnit(ArrayList<Object[]> testData) {
@@ -601,7 +562,7 @@ public class ParseNanosFuzzTest {
         int unitIndex = rnd.nextInt(UNITS.length);
         String input = value + UNITS[unitIndex];
         long expectedMicros = value * UNIT_MULTIPLIERS[unitIndex];
-        addTestData(testData, input, expectedMicros, false);
+        testData.add(new Object[]{input, expectedMicros, false});
     }
 
     private static void testRandomCase(ArrayList<Object[]> testData) {
@@ -643,8 +604,7 @@ public class ParseNanosFuzzTest {
 
     private static void testSimpleNumber(ArrayList<Object[]> testData) {
         final int value = rnd.nextInt(MAX_VALUE);
-        String str = String.valueOf(value);
-        testData.add(new Object[]{str, value, false, str});
+        testData.add(new Object[]{String.valueOf(value), value, false});
     }
 
     static String insertMultipleUnderscores(String number) {

@@ -79,9 +79,10 @@ public class TestListener extends RunListener {
                 sb.append(replacement);
             }
         }
-        int invalidIndex = sb.indexOf("[-]");
+        int invalidIndex = sb.indexOf("[-");
         if (invalidIndex >= 0) {
-            sb.replace(invalidIndex, invalidIndex + 4, "[<minus>]");
+            // CI seems to have hard time when test name is logged as [-] or [-us]
+            sb.replace(invalidIndex, invalidIndex + 4, "[<minus>");
         }
         return sb;
     }
