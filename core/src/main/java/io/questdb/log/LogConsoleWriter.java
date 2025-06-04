@@ -28,11 +28,7 @@ import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
-import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
@@ -69,30 +65,11 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
     }
 
     private void toStdOut(LogRecordUtf8Sink sink) {
-        try {
-            if ((sink.getLevel() & this.level) != 0) {
-                if (interceptor != null) {
-                    interceptor.onLog(sink);
-                }
-
-                long res = Files.append(fd, sink.ptr(), sink.size());
-                if (sink.size() == 127) {
-                    StringSink ss = new StringSink();
-                    for (int i = 0; i < sink.size(); i++) {
-                        byte b = Unsafe.getUnsafe().getByte(sink.ptr() + i);
-                        char c = (char) b;
-                        if (c < 127 && !Character.isISOControl(c)) {
-                            ss.put(c);
-                        } else {
-                            ss.put("\\").put(b);
-                        }
-                    }
-                    System.err.println("printed " + sink.size() + ", res " + res + ", errno " + Os.errno() + ", fd " + Files.toOsFd(fd) + ", sink " +
-                            ss);
-                }
+        if ((sink.getLevel() & this.level) != 0) {
+            if (interceptor != null) {
+                interceptor.onLog(sink);
             }
-        } catch (Throwable th) {
-            th.printStackTrace(System.err);
+            Files.append(fd, sink.ptr(), sink.size());
         }
     }
 

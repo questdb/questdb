@@ -47,6 +47,7 @@ import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
  */
 public final class Utf8s {
     private static final long ASCII_MASK = 0x8080808080808080L;
+    private static final char[] HEX_CHARS = "0123456789abcdef".toCharArray();
     private static final io.questdb.std.ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
 
     private Utf8s() {
@@ -1164,7 +1165,7 @@ public final class Utf8s {
         return 0;
     }
 
-    public static int utf8DecodeMultiByte(long lo, long hi, byte b, Utf16Sink sink) {
+    public static int utf8DecodeInvalidMultiByte(long lo, long hi, byte b, Utf16Sink sink) {
         if (b >> 5 == -2 && (b & 30) != 0) {
             return utf8Decode2Bytes(lo, hi, b, sink);
         }
@@ -1172,6 +1173,16 @@ public final class Utf8s {
             return utf8Decode3Bytes(lo, hi, b, sink);
         }
         return utf8Decode4Bytes(lo, hi, b, sink);
+    }
+
+    public static int utf8DecodeInvalidMultiByte(long lo, long hi, byte b, @NotNull Utf8Sink sink) {
+        if (b >> 5 == -2 && (b & 30) != 0) {
+            return utf8DecodeInvalid2Bytes(lo, hi, b, sink);
+        }
+        if (b >> 4 == -2) {
+            return utf8DecodeInvalid3Bytes(lo, hi, b, sink);
+        }
+        return utf8DecodeInvalid4Bytes(lo, hi, b, sink);
     }
 
     public static char utf8ToChar(byte b1, byte b2, byte b3) {
@@ -1189,7 +1200,7 @@ public final class Utf8s {
         while (p < hi) {
             byte b = Unsafe.getUnsafe().getByte(p);
             if (b < 0) {
-                int n = utf8DecodeMultiByte(p, hi, b, sink);
+                int n = utf8DecodeInvalidMultiByte(p, hi, b, sink);
                 if (n == -1) {
                     // UTF8 error
                     return false;
@@ -1218,7 +1229,7 @@ public final class Utf8s {
         while (i < seqHi) {
             byte b = seq.byteAt(i);
             if (b < 0) {
-                int n = utf8DecodeMultiByte(seq, i, b, sink);
+                int n = utf8DecodeInvalidMultiByte(seq, i, b, sink);
                 if (n == -1) {
                     // UTF-8 error
                     return false;
@@ -1273,7 +1284,7 @@ public final class Utf8s {
                 return i;
             }
             if (b < 0) {
-                int n = utf8DecodeMultiByte(seq, i, b, sink);
+                int n = utf8DecodeInvalidMultiByte(seq, i, b, sink);
                 if (n == -1) {
                     // UTF-8 error
                     return -1;
@@ -1302,7 +1313,7 @@ public final class Utf8s {
         while (p < hi) {
             byte b = Unsafe.getUnsafe().getByte(p);
             if (b < 0) {
-                int n = utf8DecodeMultiByte(p, hi, b, sink);
+                int n = utf8DecodeInvalidMultiByte(p, hi, b, sink);
                 if (n == -1) {
                     // UTF-8 error
                     return false;
@@ -1422,6 +1433,13 @@ public final class Utf8s {
             result |= (seq.byteAt(i) & 0xffL) << (8 * i);
         }
         return result;
+    }
+
+    private static void appendHex(@NotNull Utf8Sink sink, byte b) {
+        sink.put(((byte) '\\'));
+        sink.put(((byte) 'x'));
+        sink.put(HEX_CHARS[b >>> 4]);
+        sink.put(HEX_CHARS[b & 0x0F]);
     }
 
     private static boolean dataEquals(@NotNull Utf8Sequence l, @NotNull Utf8Sequence r, int start, int limit) {
@@ -1627,11 +1645,11 @@ public final class Utf8s {
         return -1;
     }
 
-    private static int utf8Decode2Bytes(@NotNull Utf8Sequence seq, int index, int b1, @NotNull Utf16Sink sink) {
-        if (seq.size() - index < 2) {
+    private static int utf8Decode2Bytes(long lo, long hi, int b1, @NotNull Utf16Sink sink) {
+        if (hi - lo < 2) {
             return -1;
         }
-        byte b2 = seq.byteAt(index + 1);
+        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
         if (isNotContinuation(b2)) {
             return -1;
         }
@@ -1639,11 +1657,11 @@ public final class Utf8s {
         return 2;
     }
 
-    private static int utf8Decode2Bytes(long lo, long hi, int b1, @NotNull Utf16Sink sink) {
-        if (hi - lo < 2) {
+    private static int utf8Decode2Bytes(@NotNull Utf8Sequence seq, int index, int b1, @NotNull Utf16Sink sink) {
+        if (seq.size() - index < 2) {
             return -1;
         }
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        byte b2 = seq.byteAt(index + 1);
         if (isNotContinuation(b2)) {
             return -1;
         }
@@ -1715,16 +1733,6 @@ public final class Utf8s {
         return utf8Decode4Bytes0(b, sink, b2, b3, b4);
     }
 
-    private static int utf8Decode4Bytes(@NotNull Utf8Sequence seq, int index, int b, @NotNull Utf16Sink sink) {
-        if (b >> 3 != -2 || seq.size() - index < 4) {
-            return -1;
-        }
-        byte b2 = seq.byteAt(index + 1);
-        byte b3 = seq.byteAt(index + 2);
-        byte b4 = seq.byteAt(index + 3);
-        return utf8Decode4Bytes0(b, sink, b2, b3, b4);
-    }
-
     private static int utf8Decode4Bytes0(int b, @NotNull Utf16Sink sink, byte b2, byte b3, byte b4) {
         if (isMalformed4(b2, b3, b4)) {
             return -1;
@@ -1757,7 +1765,110 @@ public final class Utf8s {
         return utf8Decode4Bytes0(b, sink, b2, b3, b4);
     }
 
-    private static int utf8DecodeMultiByte(Utf8Sequence seq, int index, byte b, @NotNull Utf16Sink sink) {
+    private static int utf8DecodeInvalid2Bytes(long lo, long hi, byte b1, @NotNull Utf8Sink sink) {
+        if (hi - lo < 2) {
+            appendHex(sink, b1);
+            return 1;
+        }
+        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        if (isNotContinuation(b2)) {
+            appendHex(sink, b1);
+            appendHex(sink, b2);
+            return 2;
+        }
+        sink.put(b1);
+        sink.put(b2);
+        return 2;
+    }
+
+    private static int utf8DecodeInvalid3Byte0(byte b1, @NotNull Utf8Sink sink, byte b2, byte b3) {
+        if (!isMalformed3(b1, b2, b3)) {
+            char c = utf8ToChar(b1, b2, b3);
+            if (!Character.isSurrogate(c)) {
+                sink.put(b1);
+                sink.put(b2);
+                sink.put(b3);
+            }
+            return 3;
+        }
+
+        appendHex(sink, b1);
+        appendHex(sink, b2);
+        appendHex(sink, b3);
+        return 3;
+    }
+
+    private static int utf8DecodeInvalid3Bytes(long lo, long hi, byte b1, @NotNull Utf8Sink sink) {
+        if (hi - lo < 3) {
+            appendHex(sink, b1);
+            if (hi - lo > 1) {
+                appendHex(sink, Unsafe.getUnsafe().getByte(lo + 1));
+                return 2;
+            }
+            return 1;
+        }
+        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+        return utf8DecodeInvalid3Byte0(b1, sink, b2, b3);
+    }
+
+    private static int utf8DecodeInvalid4Bytes(long lo, long hi, byte b, @NotNull Utf8Sink sink) {
+        if (b >> 3 != -2 || hi - lo < 4) {
+            return -1;
+        }
+        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+        byte b4 = Unsafe.getUnsafe().getByte(lo + 3);
+        return utf8DecodeInvalidBytes0(b, sink, b2, b3, b4);
+    }
+
+    private static int utf8DecodeInvalid4Bytes(@NotNull Utf8Sequence seq, int index, byte b, @NotNull Utf8Sink sink) {
+        if (b >> 3 != -2 || seq.size() - index < 4) {
+            return -1;
+        }
+        byte b2 = seq.byteAt(index + 1);
+        byte b3 = seq.byteAt(index + 2);
+        byte b4 = seq.byteAt(index + 3);
+        return utf8DecodeInvalid4Bytes0(b, sink, b2, b3, b4);
+    }
+
+    private static int utf8DecodeInvalid4Bytes0(byte b, @NotNull Utf8Sink sink, byte b2, byte b3, byte b4) {
+        if (!isMalformed4(b2, b3, b4)) {
+            final int codePoint = getUtf8Codepoint(b, b2, b3, b4);
+            if (Character.isSupplementaryCodePoint(codePoint)) {
+                sink.put(b);
+                sink.put(b2);
+                sink.put(b3);
+                sink.put(b4);
+                return 4;
+            }
+        }
+
+        appendHex(sink, b);
+        appendHex(sink, b2);
+        appendHex(sink, b3);
+        appendHex(sink, b4);
+        return 4;
+    }
+
+    private static int utf8DecodeInvalidBytes0(byte b, @NotNull Utf8Sink sink, byte b2, byte b3, byte b4) {
+        if (isMalformed4(b2, b3, b4)) {
+            return 3;
+        }
+        final int codePoint = getUtf8Codepoint(b, b2, b3, b4);
+        if (Character.isSupplementaryCodePoint(codePoint)) {
+            sink.put(Character.highSurrogate(codePoint));
+            sink.put(Character.lowSurrogate(codePoint));
+            return 4;
+        }
+        appendHex(sink, b);
+        appendHex(sink, b2);
+        appendHex(sink, b3);
+        appendHex(sink, b4);
+        return 4;
+    }
+
+    private static int utf8DecodeInvalidMultiByte(Utf8Sequence seq, int index, byte b, @NotNull Utf16Sink sink) {
         if (b >> 5 == -2 && (b & 30) != 0) {
             // we should allow 11000001, as it is a valid UTF8 byte?
             return utf8Decode2Bytes(seq, index, b, sink);

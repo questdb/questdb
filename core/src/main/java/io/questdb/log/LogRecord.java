@@ -39,6 +39,8 @@ public interface LogRecord extends Utf8Sink {
 
     LogRecord $(@Nullable CharSequence sequence);
 
+    LogRecord $invalid(@Nullable DirectUtf8Sequence sequence);
+
     LogRecord $(@Nullable Utf8Sequence sequence);
 
     LogRecord $(@Nullable DirectUtf8Sequence sequence);

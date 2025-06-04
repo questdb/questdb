@@ -26,12 +26,10 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.network.NetworkFacade;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
 
-@Ignore
 public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTest {
 
     @Test

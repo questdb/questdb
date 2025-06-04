@@ -221,7 +221,7 @@ public class LineUdpLexer implements Mutable, Closeable {
             long errorLen = utf8ErrorPos - utf8ErrorTop;
             if (errorLen > 1) {
                 dstPos = utf8ErrorTop - 1;
-                n = Utf8s.utf8DecodeMultiByte(utf8ErrorTop, utf8ErrorPos, Unsafe.getUnsafe().getByte(utf8ErrorTop), sink);
+                n = Utf8s.utf8DecodeInvalidMultiByte(utf8ErrorTop, utf8ErrorPos, Unsafe.getUnsafe().getByte(utf8ErrorTop), sink);
             }
 
             if (n == -1 && errorLen > 3) {
@@ -254,7 +254,7 @@ public class LineUdpLexer implements Mutable, Closeable {
             return repairMultiByteChar(lo, hi, b);
         }
 
-        int n = Utf8s.utf8DecodeMultiByte(lo, hi, b, sink);
+        int n = Utf8s.utf8DecodeInvalidMultiByte(lo, hi, b, sink);
         if (n == -1) {
             return repairMultiByteChar(lo, hi, b);
         } else {

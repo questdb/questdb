@@ -29,7 +29,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -37,7 +36,6 @@ import org.junit.runners.Parameterized;
 import java.util.ArrayList;
 import java.util.Collection;
 
-@Ignore
 @RunWith(Parameterized.class)
 public class ParseNanosFuzzTest {
     private static final char[] INVALID_CHARS = "abcdefgijklopqrtwxyz#$%^&*()+={}[]|\\:;\"'<>,.?/".toCharArray();

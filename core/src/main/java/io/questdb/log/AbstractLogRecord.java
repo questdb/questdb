@@ -30,10 +30,12 @@ import io.questdb.network.Net;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
@@ -43,6 +45,7 @@ import java.io.File;
 import java.util.Set;
 
 import static io.questdb.ParanoiaState.LOG_PARANOIA_MODE;
+import static io.questdb.std.str.Utf8s.utf8DecodeInvalidMultiByte;
 
 abstract class AbstractLogRecord implements LogRecord, Log {
     private static final java.lang.ThreadLocal<RuntimeException> tlRecordLeakHelper = LOG_PARANOIA_MODE ? new java.lang.ThreadLocal<>() : null;
@@ -120,6 +123,29 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         }
         return this;
     }
+
+    @Override
+    public LogRecord $invalid(@Nullable DirectUtf8Sequence sequence) {
+        if (sequence == null) {
+            sink().putAscii("null");
+        } else {
+            var sink = sink();
+            long p = sequence.lo();
+            long hi = sequence.hi();
+            while (p < hi) {
+                byte b = Unsafe.getUnsafe().getByte(p);
+                if (b < 0) {
+                    int n = utf8DecodeInvalidMultiByte(p, hi, b, sink);
+                    p += n;
+                } else {
+                    sink.put((char) b);
+                    ++p;
+                }
+            }
+        }
+        return this;
+    }
+
 
     @Override
     public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
