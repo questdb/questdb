@@ -2286,4 +2286,18 @@ public class SqlKeywords {
         KEYWORDS.add("within");
         KEYWORDS.add("with");
     }
+
+
+    public static boolean isRightParen(CharSequence tok) {
+        return tok.length() == 1 && tok.charAt(0) == ')';
+    }
+
+    public static boolean isLeftParen(CharSequence tok) {
+        return tok.length() == 1 && tok.charAt(0) == '(';
+    }
+
+    public static boolean isComma(CharSequence tok) {
+        return tok.length() == 1 && tok.charAt(0) == ',';
+    }
+
 }
