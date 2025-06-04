@@ -143,17 +143,17 @@ public class TimestampSamplerFactoryTest {
 
     @Test
     public void testParseInterval() throws SqlException {
-        Assert.assertEquals(1, TimestampSamplerFactory.parseInterval("1m", 1, 0));
+        Assert.assertEquals(1, TimestampSamplerFactory.parseInterval("1m", 1, 0, "sample"));
 
         try {
-            TimestampSamplerFactory.parseInterval("0m", 1, 0);
+            TimestampSamplerFactory.parseInterval("0m", 1, 0, "sample");
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "zero is not a valid sample value");
         }
 
         try {
-            TimestampSamplerFactory.parseInterval("fm", 1, 0);
+            TimestampSamplerFactory.parseInterval("fm", 1, 0, "sample");
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "invalid sample value");

@@ -2605,11 +2605,18 @@ public class SqlParser {
         }
 
         final ExpressionNode n = expr(lexer, null, sqlParserCallback, decls);
-        if (isFullTolerancePeriod(n)) {
-            joinModel.setAsOfJoinTolerance(n);
-            return joinModel;
+        if (n == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "ASOF JOIN tolerance period expected");
         }
-        throw SqlException.$(lexer.lastTokenPosition(), "invalid tolerance period");
+        if (n.type == ExpressionNode.OPERATION && n.token != null && Chars.equals(n.token, "-")) {
+            throw SqlException.$(lexer.lastTokenPosition(), "ASOF JOIN tolerance must not be negative");
+        }
+        if (n.type != ExpressionNode.CONSTANT) {
+            throw SqlException.$(lexer.lastTokenPosition(), "ASOF JOIN tolerance must be a constant");
+        }
+
+        joinModel.setAsOfJoinTolerance(n);
+        return joinModel;
     }
 
     private void parseLatestBy(GenericLexer lexer, QueryModel model) throws SqlException {
