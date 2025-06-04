@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -48,7 +49,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
 
 import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
-import static io.questdb.griffin.model.TimestampUtils.parseAndApplyIntervalEx;
+import static io.questdb.griffin.model.IntervalUtils.parseAndApplyInterval;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
@@ -214,7 +215,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 int rightPosition
         ) throws SqlException {
             this.left = left;
-            parseAndApplyIntervalEx(ColumnType.TIMESTAMP, right, intervals, rightPosition);
+            parseAndApplyInterval(ColumnType.getTimestampDriver(ColumnType.TIMESTAMP), right, intervals, rightPosition);
         }
 
         @Override
@@ -241,6 +242,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         private final LongList intervals = new LongList();
         private final Function left;
         private final Function right;
+        private final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
 
         public EqTimestampStrFunction(Function left, Function right) {
             this.left = left;
@@ -260,7 +262,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             intervals.clear();
             try {
                 // we are ignoring exception contents here, so we do not need the exact position
-                parseAndApplyIntervalEx(ColumnType.TIMESTAMP, timestampAsString, intervals, 0);
+                parseAndApplyInterval(timestampDriver, timestampAsString, intervals, 0);
             } catch (SqlException e) {
                 return negated;
             }
@@ -421,14 +423,14 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             BinaryFunction.super.init(symbolTableSource, executionContext);
             intervals.clear();
             // This is a specific function, which accepts "in interval" as bind variable.
-            // For this reason only STRING and VARCHAR bind variables are supported. Other
+            // For this reason, only STRING and VARCHAR bind variables are supported. Other
             // types,
             // such as INT, LONG etc. will require two or move values to represent the
             // interval
             switch (intervalFunc.getType()) {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
-                    parseAndApplyIntervalEx(ColumnType.TIMESTAMP, intervalFunc.getStrA(null), intervals, 0);
+                    parseAndApplyInterval(ColumnType.getTimestampDriver(ColumnType.TIMESTAMP), intervalFunc.getStrA(null), intervals, 0);
                     break;
                 default:
                     throw SqlException

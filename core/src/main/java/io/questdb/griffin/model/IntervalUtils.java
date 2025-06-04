@@ -24,11 +24,13 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import org.jetbrains.annotations.Nullable;
 
 public final class IntervalUtils {
     public static final int HI_INDEX = 1;
@@ -37,7 +39,7 @@ public final class IntervalUtils {
     public static final int PERIOD_COUNT_INDEX = 3;
     public static final int STATIC_LONGS_PER_DYNAMIC_INTERVAL = 4;
 
-    public static void applyLastEncodedIntervalEx(int timestampType, LongList intervals) {
+    public static void applyLastEncodedInterval(TimestampDriver timestampDriver, LongList intervals) {
         int index = intervals.size() - 4;
         long lo = decodeIntervalLo(intervals, index);
         long hi = decodeIntervalHi(intervals, index);
@@ -51,7 +53,6 @@ public final class IntervalUtils {
             intervals.setQuick(index, lo);
             return;
         }
-        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         apply(timestampDriver, intervals, lo, hi, period, periodType, count);
     }
 
@@ -298,6 +299,94 @@ public final class IntervalUtils {
         return findInterval(intervals, timestamp) != -1;
     }
 
+    public static void parseAndApplyInterval(TimestampDriver timestampDriver, @Nullable CharSequence seq, LongList out, int position) throws SqlException {
+        if (seq != null) {
+            parseInterval(timestampDriver, seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
+        } else {
+            encodeInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, out);
+        }
+        applyLastEncodedInterval(timestampDriver, out);
+    }
+
+    public static void parseInterval(TimestampDriver timestampDriver, CharSequence seq, int lo, int lim, int position, LongList out, short operation) throws SqlException {
+        int writeIndex = out.size();
+        int[] pos = new int[3];
+        int p = -1;
+        for (int i = lo; i < lim; i++) {
+            if (seq.charAt(i) == ';') {
+                if (p > 1) {
+                    throw SqlException.$(position, "Invalid interval format");
+                }
+                pos[++p] = i;
+            }
+        }
+
+        switch (p) {
+            case -1:
+                // no semicolons, just date part, which can be the interval in itself
+                try {
+                    timestampDriver.parseInterval(seq, lo, lim, operation, out);
+                    break;
+                } catch (NumericException ignore) {
+                    // this must be a date then?
+                }
+
+                try {
+                    long timestamp = timestampDriver.parseFloor(seq, lo, lim);
+                    encodeInterval(timestamp, timestamp, operation, out);
+                    break;
+                } catch (NumericException e) {
+                    try {
+                        final long timestamp = Numbers.parseLong(seq);
+                        encodeInterval(timestamp, timestamp, operation, out);
+                        break;
+                    } catch (NumericException e2) {
+                        throw SqlException.$(position, "Invalid date");
+                    }
+                }
+            case 0:
+                // single semicolon, expect a period format after date
+                parseRange(timestampDriver, seq, lo, pos[0], lim, position, operation, out);
+                break;
+            case 2:
+                // 2018-01-10T10:30:00.000Z;30m;2d;2
+                // means 10:30-11:00 every second day starting 2018-01-10
+                int period;
+                try {
+                    period = Numbers.parseInt(seq, pos[1] + 1, pos[2] - 1);
+                } catch (NumericException e) {
+                    throw SqlException.$(position, "Period not a number");
+                }
+                int count;
+                try {
+                    count = Numbers.parseInt(seq, pos[2] + 1, lim);
+                } catch (NumericException e) {
+                    throw SqlException.$(position, "Count not a number");
+                }
+
+                parseRange(timestampDriver, seq, lo, pos[0], pos[1], position, operation, out);
+                char type = seq.charAt(pos[2] - 1);
+                long low = decodeIntervalLo(out, writeIndex);
+                long hi = decodeIntervalHi(out, writeIndex);
+
+                replaceHiLoInterval(low, hi, period, type, count, operation, out);
+                switch (type) {
+                    case PeriodType.YEAR:
+                    case PeriodType.MONTH:
+                    case PeriodType.HOUR:
+                    case PeriodType.MINUTE:
+                    case PeriodType.SECOND:
+                    case PeriodType.DAY:
+                        break;
+                    default:
+                        throw SqlException.$(position, "Unknown period: " + type + " at " + (p - 1));
+                }
+                break;
+            default:
+                throw SqlException.$(position, "Invalid interval format");
+        }
+    }
+
     public static void replaceHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, short operation, LongList out) {
         int lastIndex = out.size() - 4;
         out.setQuick(lastIndex, lo);
@@ -376,7 +465,7 @@ public final class IntervalUtils {
             if (writePoint > 0) {
                 long prevHi = intervals.getQuick(writePoint - 1);
                 if (nextLo <= prevHi) {
-                    // Intersection with previously safed interval
+                    // Intersection with a previously saved interval
                     intervals.setQuick(writePoint - 1, Math.max(nextHi, prevHi));
                     continue;
                 }
@@ -487,6 +576,49 @@ public final class IntervalUtils {
                     addLinearInterval(timestampDriver.fromDays(period), count, temp);
                     break;
             }
+        }
+    }
+
+    private static void parseRange(
+            TimestampDriver timestampDriver,
+            CharSequence seq,
+            int lo,
+            int p,
+            int lim,
+            int position,
+            short operation,
+            LongList out
+    ) throws SqlException {
+        char type = seq.charAt(lim - 1);
+        int period;
+        try {
+            period = Numbers.parseInt(seq, p + 1, lim - 1);
+        } catch (NumericException e) {
+            throw SqlException.$(position, "Range not a number");
+        }
+        try {
+            int index = out.size();
+            timestampDriver.parseInterval(seq, lo, p, operation, out);
+            long low = decodeIntervalLo(out, index);
+            long hi = decodeIntervalHi(out, index);
+            hi = timestampDriver.addPeriod(hi, type, period);
+            if (hi < low) {
+                throw SqlException.invalidDate(position);
+            }
+            replaceHiLoInterval(low, hi, operation, out);
+            return;
+        } catch (NumericException ignore) {
+            // try date instead
+        }
+        try {
+            long loMicros = timestampDriver.parseAnyFormat(seq, lo, p);
+            long hiMicros = timestampDriver.addPeriod(loMicros, type, period);
+            if (hiMicros < loMicros) {
+                throw SqlException.invalidDate(position);
+            }
+            encodeInterval(loMicros, hiMicros, operation, out);
+        } catch (NumericException e) {
+            throw SqlException.invalidDate(position);
         }
     }
 

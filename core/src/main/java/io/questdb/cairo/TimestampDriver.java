@@ -36,9 +36,9 @@ import org.jetbrains.annotations.Nullable;
 
 public interface TimestampDriver {
 
-    void parseInterval(CharSequence input, int pos, int lim, short operation, LongList out) throws NumericException;
-
     long addMonths(long timestamp, int months);
+
+    long addPeriod(long lo, char type, int period);
 
     long addYears(long timestamp, int years);
 
@@ -94,6 +94,8 @@ public interface TimestampDriver {
     default long parseFloorLiteral(@Nullable Utf8Sequence timestampLiteral) throws NumericException {
         return timestampLiteral != null ? parseFloor(timestampLiteral, 0, timestampLiteral.size()) : Numbers.LONG_NULL;
     }
+
+    void parseInterval(CharSequence input, int pos, int lim, short operation, LongList out) throws NumericException;
 
     long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi);
 

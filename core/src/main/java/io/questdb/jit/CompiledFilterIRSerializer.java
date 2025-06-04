@@ -46,7 +46,6 @@ import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntStack;
@@ -185,14 +184,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      *
      * @param node       filter expression tree's root node.
      * @param scalar     set use only scalar instruction set execution hint in the returned options.
-     * @param debug      set enable debug flag in the returned options.
+     * @param debug      set enable the debug flag in the returned options.
      * @param nullChecks a flag for JIT, allowing or disallowing generation of null check
      * @return JIT compiler options stored in a single int in the following way:
      * <ul>
      * <li>1 LSB - debug flag</li>
      * <li>2-4 LSBs - filter's arithmetic type size (widest type size): 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B, 4 - 16B</li>
      * <li>5-6 LSBs - filter's execution hint: 0 - scalar, 1 - single size (SIMD-friendly), 2 - mixed sizes</li>
-     * <li>7 LSB - flag to include null checks for column values into compiled filter</li>
+     * <li>7 LSB - flag to include null checks for column values in compiled filter</li>
      * </ul>
      * <p>
      * Examples:
@@ -211,7 +210,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         int options = debug ? 1 : 0;
         int typeSize = typesObserver.maxSize();
         if (typeSize > 0) {
-            // typeSize is 2^n, so number of trailing zeros is equal to log2
+            // typeSize is 2^n, so the number of trailing zeros is equal to log2
             int log2 = Integer.numberOfTrailingZeros(typeSize);
             options = options | (log2 << 1);
         }
@@ -283,7 +282,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case ColumnType.INT:
             case ColumnType.IPv4:
             case ColumnType.GEOINT:
-            case ColumnType.STRING: // symbol variables are represented with string type
+            case ColumnType.STRING: // symbol variables are represented with the string type
                 return I4_TYPE;
             case ColumnType.FLOAT:
                 return F4_TYPE;
@@ -422,7 +421,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         int position = node.position;
         CharSequence token = node.token;
         boolean negate = false;
-        // Check for negation case
+        // Check for the negation case
         if (node.type == ExpressionNode.OPERATION) {
             ExpressionNode nextNode = node.lhs != null ? node.lhs : node.rhs;
             if (nextNode != null) {
@@ -465,7 +464,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         Function varFunction = getBindVariableFunction(node.position, node.token);
 
         final int columnType = varFunction.getType();
-        // Treat string bind variable to be of symbol type
+        // Treat string bind variable to be of the symbol type
         if (columnType != ColumnType.STRING) {
             throw SqlException.position(node.position)
                     .put("unexpected symbol bind variable type: ")
@@ -574,7 +573,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private boolean isInTimestampPredicate() throws SqlException {
-        // visit inOperationNode to get expression type
+        // visit inOperationNode to get an expression type
         predicateContext.onNodeVisited(predicateContext.inOperationNode.rhs);
         predicateContext.onNodeVisited(predicateContext.inOperationNode.lhs);
 
@@ -642,10 +641,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             Function varFunction = getBindVariableFunction(node.position, node.token);
 
             final int columnType = varFunction.getType();
-            // Treat string bind variable to be of symbol type
+            // Treat string bind variable to be of the symbol type
             if (columnType == ColumnType.STRING) {
                 // We're going to backfill this variable later since we may
-                // not have symbol column index at this point
+                // not have a symbol column index at this point
                 long offset = memory.getAppendOffset();
                 backfillNodes.put(offset, node);
                 putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);
@@ -686,7 +685,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         .put(ColumnType.nameOf(columnTypeTag));
             }
 
-            // In case of a top level boolean column, expand it to "boolean_column = true" expression.
+            // In the case of a top level boolean column, expand it to "boolean_column = true" expression.
             if (predicateContext.singleBooleanColumn && columnTypeTag == ColumnType.BOOLEAN) {
                 // "true" constant
                 putOperand(IMM, I1_TYPE, 1);
@@ -736,7 +735,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 return;
             } else if (predicateContext.columnType == ColumnType.DATE) {
                 try {
-                    // This is a hack for DATA column type. We use TIMESTAMP specific driver to
+                    // This is a hack for DATA column type. We use a TIMESTAMP specific driver to
                     // do the work and then derive millis
                     putOperand(offset, IMM, I8_TYPE, ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).parseFloorConstant(token) / Timestamps.MILLI_MICROS);
                 } catch (NumericException e) {
@@ -870,7 +869,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
 
         final LongList intervals = predicateContext.inIntervals;
-        TimestampUtils.parseAndApplyIntervalEx(predicateContext.columnType, intervalEx, intervals, position);
+        IntervalUtils.parseAndApplyInterval(
+                ColumnType.getTimestampDriver(predicateContext.columnType),
+                intervalEx,
+                intervals,
+                position
+        );
 
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
 
@@ -1249,7 +1253,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     sizes[BINARY_HEADER_INDEX] = 8;
                     break;
                 case VARCHAR_HEADER_TYPE:
-                    // We only read first 8 bytes from the aux vector.
+                    // We only read the first 8 bytes from the aux vector.
                     sizes[VARCHAR_HEADER_TYPE] = 8;
                     break;
             }
@@ -1376,7 +1380,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // We treat bind variables as columns here for the sake of simplicity
             final int columnType = varFunction.getType();
             int columnTypeTag = ColumnType.tagOf(columnType);
-            // Treat string bind variable to be of symbol type
+            // Treat string bind variable to be of a symbol type
             if (columnTypeTag == ColumnType.STRING) {
                 columnTypeTag = ColumnType.SYMBOL;
             }

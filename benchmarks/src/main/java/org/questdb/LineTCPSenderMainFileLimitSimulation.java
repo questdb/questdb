@@ -24,11 +24,9 @@
 
 package org.questdb;
 
-import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cutlass.line.AbstractLineTcpSender;
 import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.network.Net;
-import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -111,18 +109,6 @@ public class LineTCPSenderMainFileLimitSimulation {
                 ts += 1000_000L;
             }
         }
-    }
-
-    private static void fillDates(Rnd rnd, AbstractLineTcpSender sender) throws NumericException {
-        long period = Timestamps.MINUTE_MICROS * 1000L * 10;
-        long ts = MicrosTimestampDriver.floor("2022-02-25") * 1000L;
-        long endTs = MicrosTimestampDriver.floor("2022-03-26T20") * 1000L;
-
-        while (ts < endTs) {
-            sendLine(rnd, sender, ts);
-            ts += period + rnd.nextLong(Timestamps.MINUTE_MICROS * 1000L);
-        }
-        sender.flush();
     }
 
     private static void generateStrings(Rnd rnd, String[] auui, int length) {

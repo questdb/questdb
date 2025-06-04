@@ -25,16 +25,21 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
-import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.Nullable;
 
 public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
 
@@ -70,24 +75,22 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
-                return null;
-            }
-            sinkA.clear();
-            TimestampFormatUtils.appendDateTimeUSec(sinkA, value);
-            return sinkA;
+            return toSink(rec, sinkA);
         }
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
+            return toSink(rec, sinkB);
+        }
+
+        private @Nullable Utf8StringSink toSink(Record rec, Utf8StringSink sink) {
             final long value = arg.getTimestamp(rec);
             if (value == Numbers.LONG_NULL) {
                 return null;
             }
-            sinkB.clear();
-            TimestampFormatUtils.appendDateTimeUSec(sinkB, value);
-            return sinkB;
+            sink.clear();
+            MicrosTimestampDriver.INSTANCE.append(sink, value);
+            return sink;
         }
     }
 }

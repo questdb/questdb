@@ -26,10 +26,10 @@ package io.questdb.test.griffin.model;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -54,31 +54,6 @@ public class IntrinsicModelTest {
         out.clear();
     }
 
-    @Test(expected = NumericException.class)
-    public void testDateCeilFails() throws NumericException {
-        assertDateCeil("", "2015-01-01T00:00:00.000000-1");
-    }
-
-    @Test(expected = NumericException.class)
-    public void testDateCeilFails2() throws NumericException {
-        assertDateCeil("", "2015-01-01T00:00:00.000000-0");
-    }
-
-    @Test(expected = NumericException.class)
-    public void testDateCeilFails3() throws NumericException {
-        assertDateCeil("", "2015-01-01T00:00:00.000000-");
-    }
-
-    @Test(expected = NumericException.class)
-    public void testDateCeilFailsOnTooManyMicros() throws NumericException {
-        assertDateCeil("", "2015-01-01T00:00:00.00000010");
-    }
-
-    @Test(expected = NumericException.class)
-    public void testDateCeilFailsOnTzSign() throws NumericException {
-        assertDateCeil("", "2015-01-01T00:00:00.000000≠10");
-    }
-
     @Test
     public void testDateCeilMicroWithDiffFraction() throws NumericException {
         assertDateFloor("2015-02-28T08:22:44.556012Z", "2015-02-28T08:22:44.556012");
@@ -87,82 +62,6 @@ public class IntrinsicModelTest {
         assertDateFloor("2015-02-28T08:22:44.556000Z", "2015-02-28T08:22:44.556");
         assertDateFloor("2015-02-28T08:22:44.550000Z", "2015-02-28T08:22:44.55");
         assertDateFloor("2015-02-28T08:22:44.500000Z", "2015-02-28T08:22:44.5");
-    }
-
-    @Test
-    public void testDateCeilMicroWithTzHrs() throws NumericException {
-        assertDateCeil("2015-02-28T09:22:44.556012Z", "2015-02-28T08:22:44.556011-01");
-        assertDateCeil("2015-02-28T09:22:44.556012Z", "2015-02-28 08:22:44.556011-01");
-    }
-
-    @Test
-    public void testDateCeilMicroWithTzHrsMins() throws NumericException {
-        assertDateCeil("2015-02-28T04:38:44.556012Z", "2015-02-28T06:00:44.556011+01:22");
-        assertDateCeil("2015-02-28T04:38:44.556012Z", "2015-02-28T06:00:44.556011+0122");
-        assertDateCeil("2015-02-28T04:38:44.556012Z", "2015-02-28 06:00:44.556011+0122");
-    }
-
-    @Test
-    public void testDateCeilMilsWithTzHrsMins() throws NumericException {
-        assertDateCeil("2015-02-28T05:00:44.557000Z", "2015-02-28T06:00:44.556+01:00");
-        assertDateCeil("2015-02-28T05:00:44.557000Z", "2015-02-28T06:00:44.556+0100");
-    }
-
-    @Test
-    public void testDateCeilSecsWithTzHrsMins() throws NumericException {
-        assertDateCeil("2015-02-28T05:00:45.000000Z", "2015-02-28T06:00:44+01:00");
-        assertDateCeil("2015-02-28T05:00:45.000000Z", "2015-02-28T06:00:44+0100");
-        assertDateCeil("2015-02-28T05:00:45.000000Z", "2015-02-28 06:00:44+0100");
-    }
-
-    @Test
-    public void testDateCeilYYYY() throws NumericException {
-        assertDateCeil("2016-01-01T00:00:00.000000Z", "2015");
-    }
-
-    @Test
-    public void testDateCeilYYYYMM() throws NumericException {
-        assertDateCeil("2015-03-01T00:00:00.000000Z", "2015-02");
-    }
-
-    @Test
-    public void testDateCeilYYYYMMDD() throws NumericException {
-        assertDateCeil("2016-02-29T00:00:00.000000Z", "2016-02-28");
-    }
-
-    @Test
-    public void testDateCeilYYYYMMDDH() throws NumericException {
-        assertDateCeil("2015-02-28T08:00:00.000000Z", "2015-02-28T07");
-    }
-
-    @Test
-    public void testDateCeilYYYYMMDDHm() throws NumericException {
-        assertDateCeil("2015-02-28T07:22:00.000000Z", "2015-02-28T07:21");
-    }
-
-    @Test
-    public void testDateCeilYYYYMMDDHms() throws NumericException {
-        assertDateCeil("2015-02-28T07:21:45.000000Z", "2015-02-28T07:21:44");
-    }
-
-    @Test
-    public void testDateCeilYYYYMMDDHmsS() throws NumericException {
-        assertDateCeil("2015-02-28T07:21:44.557000Z", "2015-02-28T07:21:44.556");
-    }
-
-    @Test
-    public void testDateCeilYYYYMMDDHmsSU() throws NumericException {
-        assertDateCeil("2015-02-28T07:21:44.556012Z", "2015-02-28T07:21:44.556011");
-    }
-
-    @Test
-    public void testDateCeilYYYYMMDDNonLeap() throws NumericException {
-        assertDateCeil("2017-03-01T00:00:00.000000Z", "2017-02-28");
-    }
-
-    @Test
-    public void testDateCeilYYYYMMOverflow() throws NumericException {
-        assertDateCeil("2016-01-01T00:00:00.000000Z", "2015-12");
     }
 
     @Test(expected = NumericException.class)
@@ -323,8 +222,9 @@ public class IntrinsicModelTest {
     public void testInvert() throws SqlException {
         final String intervalStr = "2018-01-10T10:30:00.000Z;30m;2d;2";
         LongList out = new LongList();
-        TimestampUtils.parseIntervalEx(ColumnType.TIMESTAMP, intervalStr, 0, intervalStr.length(), 0, out, IntervalOperation.INTERSECT);
-        IntervalUtils.applyLastEncodedIntervalEx(ColumnType.TIMESTAMP, out);
+        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
+        IntervalUtils.parseInterval(timestampDriver, intervalStr, 0, intervalStr.length(), 0, out, IntervalOperation.INTERSECT);
+        IntervalUtils.applyLastEncodedInterval(timestampDriver, out);
         IntervalUtils.invert(out);
         TestUtils.assertEquals(
                 "[{lo=, hi=2018-01-10T10:29:59.999999Z},{lo=2018-01-10T11:00:00.000001Z, hi=2018-01-12T10:29:59.999999Z},{lo=2018-01-12T11:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
@@ -478,16 +378,10 @@ public class IntrinsicModelTest {
 
     private static void assertShortInterval(String expected, String interval) throws SqlException {
         LongList out = new LongList();
-        TimestampUtils.parseIntervalEx(ColumnType.TIMESTAMP, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        IntervalUtils.applyLastEncodedIntervalEx(ColumnType.TIMESTAMP, out);
+        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
+        IntervalUtils.parseInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        IntervalUtils.applyLastEncodedInterval(timestampDriver, out);
         TestUtils.assertEquals(expected, intervalToString(out));
-    }
-
-    private void assertDateCeil(String expected, String value) throws NumericException {
-        sink.clear();
-        long t = TimestampUtils.parseCCPartialDate(value);
-        TimestampFormatUtils.appendDateTimeUSec(sink, t);
-        TestUtils.assertEquals(expected, sink);
     }
 
     private void assertDateFloor(String expected, String value) throws NumericException {
@@ -506,8 +400,9 @@ public class IntrinsicModelTest {
 
     private void assertIntervalError(String interval) {
         try {
-            TimestampUtils.parseIntervalEx(ColumnType.TIMESTAMP, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-            IntervalUtils.applyLastEncodedIntervalEx(ColumnType.TIMESTAMP, out);
+            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
+            IntervalUtils.parseInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            IntervalUtils.applyLastEncodedInterval(timestampDriver, out);
             Assert.fail();
         } catch (SqlException ignore) {
         }

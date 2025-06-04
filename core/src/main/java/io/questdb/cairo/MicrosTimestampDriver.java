@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.ptt.PartitionDateParseUtil;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -115,149 +114,14 @@ public class MicrosTimestampDriver implements TimestampDriver {
         return INSTANCE.parseFloorLiteral(value);
     }
 
-    private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
-        if (p >= lim || s.charAt(p) != c) {
-            throw NumericException.INSTANCE;
-        }
-    }
-
-    public void parseInterval(CharSequence input, int pos, int lim, short operation, LongList out) throws NumericException {
-        if (lim - pos < 4) {
-            throw NumericException.INSTANCE;
-        }
-        int p = pos;
-        int year = Numbers.parseInt(input, p, p += 4);
-        boolean l = Timestamps.isLeapYear(year);
-        if (checkLen(p, lim)) {
-            checkChar(input, p++, lim, '-');
-            int month = Numbers.parseInt(input, p, p += 2);
-            checkRange(month, 1, 12);
-            if (checkLen(p, lim)) {
-                checkChar(input, p++, lim, '-');
-                int day = Numbers.parseInt(input, p, p += 2);
-                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
-                if (checkLen(p, lim)) {
-                    checkChar(input, p++, lim, 'T');
-                    int hour = Numbers.parseInt(input, p, p += 2);
-                    checkRange(hour, 0, 23);
-                    if (checkLen(p, lim)) {
-                        checkChar(input, p++, lim, ':');
-                        int min = Numbers.parseInt(input, p, p += 2);
-                        checkRange(min, 0, 59);
-                        if (checkLen(p, lim)) {
-                            checkChar(input, p++, lim, ':');
-                            int sec = Numbers.parseInt(input, p, p += 2);
-                            checkRange(sec, 0, 59);
-                            if (p < lim) {
-                                throw NumericException.INSTANCE;
-                            } else {
-                                // seconds
-                                IntervalUtils.encodeInterval(Timestamps.yearMicros(year, l)
-                                                + Timestamps.monthOfYearMicros(month, l)
-                                                + (day - 1) * Timestamps.DAY_MICROS
-                                                + hour * Timestamps.HOUR_MICROS
-                                                + min * Timestamps.MINUTE_MICROS
-                                                + sec * Timestamps.SECOND_MICROS,
-                                        Timestamps.yearMicros(year, l)
-                                                + Timestamps.monthOfYearMicros(month, l)
-                                                + (day - 1) * Timestamps.DAY_MICROS
-                                                + hour * Timestamps.HOUR_MICROS
-                                                + min * Timestamps.MINUTE_MICROS
-                                                + sec * Timestamps.SECOND_MICROS
-                                                + 999999,
-                                        operation,
-                                        out);
-                            }
-                        } else {
-                            // minute
-                            IntervalUtils.encodeInterval(
-                                    Timestamps.yearMicros(year, l)
-                                            + Timestamps.monthOfYearMicros(month, l)
-                                            + (day - 1) * Timestamps.DAY_MICROS
-                                            + hour * Timestamps.HOUR_MICROS
-                                            + min * Timestamps.MINUTE_MICROS,
-                                    Timestamps.yearMicros(year, l)
-                                            + Timestamps.monthOfYearMicros(month, l)
-                                            + (day - 1) * Timestamps.DAY_MICROS
-                                            + hour * Timestamps.HOUR_MICROS
-                                            + min * Timestamps.MINUTE_MICROS
-                                            + 59 * Timestamps.SECOND_MICROS
-                                            + 999999,
-                                    operation,
-                                    out
-                            );
-                        }
-                    } else {
-                        // year + month + day + hour
-                        IntervalUtils.encodeInterval(
-                                Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS,
-                                Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + 59 * Timestamps.MINUTE_MICROS
-                                        + 59 * Timestamps.SECOND_MICROS
-                                        + 999999,
-                                operation,
-                                out
-                        );
-                    }
-                } else {
-                    // year + month + day
-                    IntervalUtils.encodeInterval(
-                            Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS,
-                            Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS
-                                    + 23 * Timestamps.HOUR_MICROS
-                                    + 59 * Timestamps.MINUTE_MICROS
-                                    + 59 * Timestamps.SECOND_MICROS
-                                    + 999999,
-                            operation,
-                            out
-                    );
-                }
-            } else {
-                // year + month
-                IntervalUtils.encodeInterval(
-                        Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l),
-                        Timestamps.yearMicros(year, l)
-                                + Timestamps.monthOfYearMicros(month, l)
-                                + (Timestamps.getDaysPerMonth(month, l) - 1) * Timestamps.DAY_MICROS
-                                + 23 * Timestamps.HOUR_MICROS
-                                + 59 * Timestamps.MINUTE_MICROS
-                                + 59 * Timestamps.SECOND_MICROS
-                                + 999999,
-                        operation,
-                        out
-                );
-            }
-        } else {
-            // year
-            IntervalUtils.encodeInterval(
-                    Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l),
-                    Timestamps.yearMicros(year, l)
-                            + Timestamps.monthOfYearMicros(12, l)
-                            + (Timestamps.getDaysPerMonth(12, l) - 1) * Timestamps.DAY_MICROS
-                            + 23 * Timestamps.HOUR_MICROS
-                            + 59 * Timestamps.MINUTE_MICROS
-                            + 59 * Timestamps.SECOND_MICROS
-                            + 999999,
-                    operation,
-                    out
-            );
-        }
-    }
-
-
     @Override
     public long addMonths(long timestamp, int months) {
         return Timestamps.addMonths(timestamp, months);
+    }
+
+    @Override
+    public long addPeriod(long lo, char type, int period) {
+        return Timestamps.addPeriod(lo, type, period);
     }
 
     @Override
@@ -556,7 +420,243 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long parseFloor(CharSequence str, int lo, int hi) throws NumericException {
-        return TimestampUtils.parseFloorPartialTimestamp(str, lo, hi);
+        long ts;
+        if (hi - lo < 4) {
+            throw NumericException.INSTANCE;
+        }
+        int p = lo;
+        int year = Numbers.parseInt(str, p, p += 4);
+        boolean l = Timestamps.isLeapYear(year);
+        if (checkLen(p, hi)) {
+            checkChar(str, p++, hi, '-');
+            int month = Numbers.parseInt(str, p, p += 2);
+            checkRange(month, 1, 12);
+            if (checkLen(p, hi)) {
+                checkChar(str, p++, hi, '-');
+                int day = Numbers.parseInt(str, p, p += 2);
+                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
+                if (checkLen(p, hi)) {
+                    checkSpecialChar(str, p++, hi);
+                    int hour = Numbers.parseInt(str, p, p += 2);
+                    checkRange(hour, 0, 23);
+                    if (checkLen(p, hi)) {
+                        checkChar(str, p++, hi, ':');
+                        int min = Numbers.parseInt(str, p, p += 2);
+                        checkRange(min, 0, 59);
+                        if (checkLen(p, hi)) {
+                            checkChar(str, p++, hi, ':');
+                            int sec = Numbers.parseInt(str, p, p += 2);
+                            checkRange(sec, 0, 59);
+                            if (p < hi && str.charAt(p) == '.') {
+                                p++;
+                                // varlen milli and micros
+                                int micrLim = p + 6;
+                                int mlim = Math.min(hi, micrLim);
+                                int micr = 0;
+                                for (; p < mlim; p++) {
+                                    char c = str.charAt(p);
+                                    if (Numbers.notDigit(c)) {
+                                        // Timezone
+                                        break;
+                                    }
+                                    micr *= 10;
+                                    micr += c - '0';
+                                }
+                                micr *= tenPow(micrLim - p);
+
+                                // truncate remaining nanos if any
+                                for (int nlim = Math.min(hi, p + 3); p < nlim; p++) {
+                                    char c = str.charAt(p);
+                                    if (Numbers.notDigit(c)) {
+                                        // Timezone
+                                        break;
+                                    }
+                                }
+
+                                // micros
+                                ts = Timestamps.yearMicros(year, l)
+                                        + Timestamps.monthOfYearMicros(month, l)
+                                        + (day - 1) * Timestamps.DAY_MICROS
+                                        + hour * Timestamps.HOUR_MICROS
+                                        + min * Timestamps.MINUTE_MICROS
+                                        + sec * Timestamps.SECOND_MICROS
+                                        + micr
+                                        + checkTimezoneTail(str, p, hi);
+                            } else {
+                                // seconds
+                                ts = Timestamps.yearMicros(year, l)
+                                        + Timestamps.monthOfYearMicros(month, l)
+                                        + (day - 1) * Timestamps.DAY_MICROS
+                                        + hour * Timestamps.HOUR_MICROS
+                                        + min * Timestamps.MINUTE_MICROS
+                                        + sec * Timestamps.SECOND_MICROS
+                                        + checkTimezoneTail(str, p, hi);
+                            }
+                        } else {
+                            // minute
+                            ts = Timestamps.yearMicros(year, l)
+                                    + Timestamps.monthOfYearMicros(month, l)
+                                    + (day - 1) * Timestamps.DAY_MICROS
+                                    + hour * Timestamps.HOUR_MICROS
+                                    + min * Timestamps.MINUTE_MICROS;
+
+                        }
+                    } else {
+                        // year + month + day + hour
+                        ts = Timestamps.yearMicros(year, l)
+                                + Timestamps.monthOfYearMicros(month, l)
+                                + (day - 1) * Timestamps.DAY_MICROS
+                                + hour * Timestamps.HOUR_MICROS;
+
+                    }
+                } else {
+                    // year + month + day
+                    ts = Timestamps.yearMicros(year, l)
+                            + Timestamps.monthOfYearMicros(month, l)
+                            + (day - 1) * Timestamps.DAY_MICROS;
+                }
+            } else {
+                // year + month
+                ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));
+            }
+        } else {
+            // year
+            ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));
+        }
+        return ts;
+    }
+
+    public void parseInterval(CharSequence input, int pos, int lim, short operation, LongList out) throws NumericException {
+        if (lim - pos < 4) {
+            throw NumericException.INSTANCE;
+        }
+        int p = pos;
+        int year = Numbers.parseInt(input, p, p += 4);
+        boolean l = Timestamps.isLeapYear(year);
+        if (checkLen(p, lim)) {
+            checkChar(input, p++, lim, '-');
+            int month = Numbers.parseInt(input, p, p += 2);
+            checkRange(month, 1, 12);
+            if (checkLen(p, lim)) {
+                checkChar(input, p++, lim, '-');
+                int day = Numbers.parseInt(input, p, p += 2);
+                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
+                if (checkLen(p, lim)) {
+                    checkChar(input, p++, lim, 'T');
+                    int hour = Numbers.parseInt(input, p, p += 2);
+                    checkRange(hour, 0, 23);
+                    if (checkLen(p, lim)) {
+                        checkChar(input, p++, lim, ':');
+                        int min = Numbers.parseInt(input, p, p += 2);
+                        checkRange(min, 0, 59);
+                        if (checkLen(p, lim)) {
+                            checkChar(input, p++, lim, ':');
+                            int sec = Numbers.parseInt(input, p, p += 2);
+                            checkRange(sec, 0, 59);
+                            if (p < lim) {
+                                throw NumericException.INSTANCE;
+                            } else {
+                                // seconds
+                                IntervalUtils.encodeInterval(Timestamps.yearMicros(year, l)
+                                                + Timestamps.monthOfYearMicros(month, l)
+                                                + (day - 1) * Timestamps.DAY_MICROS
+                                                + hour * Timestamps.HOUR_MICROS
+                                                + min * Timestamps.MINUTE_MICROS
+                                                + sec * Timestamps.SECOND_MICROS,
+                                        Timestamps.yearMicros(year, l)
+                                                + Timestamps.monthOfYearMicros(month, l)
+                                                + (day - 1) * Timestamps.DAY_MICROS
+                                                + hour * Timestamps.HOUR_MICROS
+                                                + min * Timestamps.MINUTE_MICROS
+                                                + sec * Timestamps.SECOND_MICROS
+                                                + 999999,
+                                        operation,
+                                        out);
+                            }
+                        } else {
+                            // minute
+                            IntervalUtils.encodeInterval(
+                                    Timestamps.yearMicros(year, l)
+                                            + Timestamps.monthOfYearMicros(month, l)
+                                            + (day - 1) * Timestamps.DAY_MICROS
+                                            + hour * Timestamps.HOUR_MICROS
+                                            + min * Timestamps.MINUTE_MICROS,
+                                    Timestamps.yearMicros(year, l)
+                                            + Timestamps.monthOfYearMicros(month, l)
+                                            + (day - 1) * Timestamps.DAY_MICROS
+                                            + hour * Timestamps.HOUR_MICROS
+                                            + min * Timestamps.MINUTE_MICROS
+                                            + 59 * Timestamps.SECOND_MICROS
+                                            + 999999,
+                                    operation,
+                                    out
+                            );
+                        }
+                    } else {
+                        // year + month + day + hour
+                        IntervalUtils.encodeInterval(
+                                Timestamps.yearMicros(year, l)
+                                        + Timestamps.monthOfYearMicros(month, l)
+                                        + (day - 1) * Timestamps.DAY_MICROS
+                                        + hour * Timestamps.HOUR_MICROS,
+                                Timestamps.yearMicros(year, l)
+                                        + Timestamps.monthOfYearMicros(month, l)
+                                        + (day - 1) * Timestamps.DAY_MICROS
+                                        + hour * Timestamps.HOUR_MICROS
+                                        + 59 * Timestamps.MINUTE_MICROS
+                                        + 59 * Timestamps.SECOND_MICROS
+                                        + 999999,
+                                operation,
+                                out
+                        );
+                    }
+                } else {
+                    // year + month + day
+                    IntervalUtils.encodeInterval(
+                            Timestamps.yearMicros(year, l)
+                                    + Timestamps.monthOfYearMicros(month, l)
+                                    + (day - 1) * Timestamps.DAY_MICROS,
+                            Timestamps.yearMicros(year, l)
+                                    + Timestamps.monthOfYearMicros(month, l)
+                                    + (day - 1) * Timestamps.DAY_MICROS
+                                    + 23 * Timestamps.HOUR_MICROS
+                                    + 59 * Timestamps.MINUTE_MICROS
+                                    + 59 * Timestamps.SECOND_MICROS
+                                    + 999999,
+                            operation,
+                            out
+                    );
+                }
+            } else {
+                // year + month
+                IntervalUtils.encodeInterval(
+                        Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l),
+                        Timestamps.yearMicros(year, l)
+                                + Timestamps.monthOfYearMicros(month, l)
+                                + (Timestamps.getDaysPerMonth(month, l) - 1) * Timestamps.DAY_MICROS
+                                + 23 * Timestamps.HOUR_MICROS
+                                + 59 * Timestamps.MINUTE_MICROS
+                                + 59 * Timestamps.SECOND_MICROS
+                                + 999999,
+                        operation,
+                        out
+                );
+            }
+        } else {
+            // year
+            IntervalUtils.encodeInterval(
+                    Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l),
+                    Timestamps.yearMicros(year, l)
+                            + Timestamps.monthOfYearMicros(12, l)
+                            + (Timestamps.getDaysPerMonth(12, l) - 1) * Timestamps.DAY_MICROS
+                            + 23 * Timestamps.HOUR_MICROS
+                            + 59 * Timestamps.MINUTE_MICROS
+                            + 59 * Timestamps.SECOND_MICROS
+                            + 999999,
+                    operation,
+                    out
+            );
+        }
     }
 
     @Override
@@ -622,6 +722,12 @@ public class MicrosTimestampDriver implements TimestampDriver {
         return Timestamps.MICRO_NANOS;
     }
 
+    private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
+        if (p >= lim || s.charAt(p) != c) {
+            throw NumericException.INSTANCE;
+        }
+    }
+
     private static void checkChar(Utf8Sequence s, int p, int lim, char c) throws NumericException {
         if (p >= lim || s.byteAt(p) != c) {
             throw NumericException.INSTANCE;
@@ -656,10 +762,47 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
     }
 
+    private static void checkSpecialChar(CharSequence s, int p, int lim) throws NumericException {
+        if (p >= lim || (s.charAt(p) != 'T' && s.charAt(p) != ' ')) {
+            throw NumericException.INSTANCE;
+        }
+    }
+
     private static void checkSpecialChar(Utf8Sequence s, int p, int lim) throws NumericException {
         if (p >= lim || (s.byteAt(p) != 'T' && s.byteAt(p) != ' ')) {
             throw NumericException.INSTANCE;
         }
+    }
+
+    private static long checkTimezoneTail(CharSequence seq, int p, int lim) throws NumericException {
+        if (lim == p) {
+            return 0;
+        }
+
+        if (lim - p < 2) {
+            checkChar(seq, p, lim, 'Z');
+            return 0;
+        }
+
+        if (lim - p > 2) {
+            int tzSign = parseSign(seq.charAt(p++));
+            int hour = Numbers.parseInt(seq, p, p += 2);
+            checkRange(hour, 0, 23);
+
+            if (lim - p == 3) {
+                // Optional : separator between hours and mins in timezone
+                checkChar(seq, p++, lim, ':');
+            }
+
+            if (checkLenStrict(p, lim)) {
+                int min = Numbers.parseInt(seq, p, p + 2);
+                checkRange(min, 0, 59);
+                return tzSign * (hour * Timestamps.HOUR_MICROS + min * Timestamps.MINUTE_MICROS);
+            } else {
+                return tzSign * (hour * Timestamps.HOUR_MICROS);
+            }
+        }
+        throw NumericException.INSTANCE;
     }
 
     private static long checkTimezoneTail(Utf8Sequence seq, int p, int lim) throws NumericException {

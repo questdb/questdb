@@ -25,6 +25,7 @@
 package io.questdb.griffin.model;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
@@ -34,12 +35,12 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 /**
- * Collects interval during query parsing
+ * Collects the interval during query parsing
  * and records them as 2 types:
  * - static list of intervals as 2 long points [lo, hi] in staticIntervals list
  * - dynamic list of functions.
  * <p>
- * When first interval involving function is added all data starts to be encoded in 4 longs in staticPeriods
+ * When the first interval involving function is added, all data starts to be encoded in 4 longs in staticPeriods
  * 0: lo (long)
  * 1: hi (long)
  * 2: operation (short), period type (short), adjustment (short), dynamicIndicator (short)
@@ -60,10 +61,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private boolean betweenNegated;
     private boolean intervalApplied = false;
     private int partitionBy;
-    private int timestampType;
+    private TimestampDriver timestampDriver;
 
     public RuntimeIntrinsicIntervalModel build() {
-        return new RuntimeIntervalModel(timestampType, partitionBy, new LongList(staticIntervals), new ObjList<>(dynamicRangeList));
+        return new RuntimeIntervalModel(timestampDriver, partitionBy, new LongList(staticIntervals), new ObjList<>(dynamicRangeList));
     }
 
     @Override
@@ -132,9 +133,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         int size = staticIntervals.size();
-        TimestampUtils.parseIntervalEx(timestampType, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
+        IntervalUtils.parseInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
         if (dynamicRangeList.size() == 0) {
-            IntervalUtils.applyLastEncodedIntervalEx(timestampType, staticIntervals);
+            IntervalUtils.applyLastEncodedInterval(timestampDriver, staticIntervals);
             if (intervalApplied) {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
             }
@@ -173,7 +174,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         final int intersectDividerIndex = staticIntervals.size();
         long timestamp;
         try {
-            timestamp = ColumnType.getTimestampDriver(timestampType).parseFloor(seq, lo, lim);
+            timestamp = timestampDriver.parseFloor(seq, lo, lim);
         } catch (NumericException e) {
             try {
                 timestamp = Numbers.parseLong(seq);
@@ -189,7 +190,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         IntervalUtils.encodeInterval(timestamp, timestamp, IntervalOperation.INTERSECT, staticIntervals);
 
         if (dynamicRangeList.size() == 0) {
-            IntervalUtils.applyLastEncodedIntervalEx(timestampType, staticIntervals);
+            IntervalUtils.applyLastEncodedInterval(timestampDriver, staticIntervals);
             if (intervalApplied) {
                 IntervalUtils.intersectInPlace(staticIntervals, intersectDividerIndex);
             }
@@ -205,7 +206,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void of(int timestampType, int partitionBy) {
-        this.timestampType = timestampType;
+        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
         this.partitionBy = partitionBy;
     }
 
@@ -294,9 +295,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         int size = staticIntervals.size();
-        TimestampUtils.parseIntervalEx(timestampType, seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT);
+        IntervalUtils.parseInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT);
         if (dynamicRangeList.size() == 0) {
-            IntervalUtils.applyLastEncodedIntervalEx(timestampType, staticIntervals);
+            IntervalUtils.applyLastEncodedInterval(timestampDriver, staticIntervals);
             IntervalUtils.invert(staticIntervals, size);
             if (intervalApplied) {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
