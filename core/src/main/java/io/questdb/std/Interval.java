@@ -24,9 +24,6 @@
 
 package io.questdb.std;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalOperation;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
@@ -80,16 +77,6 @@ public class Interval implements Sinkable, Mutable {
         this.lo = lo;
         this.hi = hi;
         return this;
-    }
-
-    public void of(CharSequence seq, LongList list) throws NumericException, SqlException {
-        TimestampUtils.parseInterval(seq, 0, seq.length(), IntervalOperation.NONE, list);
-        assert list.size() != 0;
-        if (list.size() != 2) {
-            throw SqlException.$(-1, "only compatible with simple intervals");
-        }
-        lo = list.get(0);
-        hi = list.get(1);
     }
 
     @Override

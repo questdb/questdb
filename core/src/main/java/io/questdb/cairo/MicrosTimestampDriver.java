@@ -126,15 +126,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public void appendMem(CharSequence value, MemoryA mem) {
-        if (value != null) {
-            try {
-                mem.putLong(TimestampUtils.parseFloorPartialTimestamp(value));
-                return;
-            } catch (NumericException e) {
-                // Fall through
-            }
+        try {
+            mem.putLong(parseFloorLiteral(value));
+        } catch (NumericException e) {
+            mem.putLong(Numbers.LONG_NULL);
         }
-        mem.putLong(Numbers.LONG_NULL);
     }
 
     @Override
@@ -285,7 +281,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
             // Parse as ISO with variable length.
             try {
-                return TimestampUtils.parseFloorPartialTimestamp(value);
+                return parseFloorLiteral(value);
             } catch (NumericException ignore) {
             }
 
@@ -301,6 +297,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     @Override
     public long parseAnyFormat(CharSequence token, int start, int len) throws NumericException {
         return TimestampFormatUtils.tryParse(token, start, len);
+    }
+
+    @Override
+    public long parseFloor(Utf8Sequence str, int lo, int hi) throws NumericException {
+        return TimestampUtils.parseFloorPartialTimestamp(str, lo, hi);
     }
 
     @Override

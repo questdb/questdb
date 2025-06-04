@@ -48,6 +48,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.FlyweightCharSequence;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 
@@ -269,14 +270,14 @@ public final class WhereClauseParser implements Mutable {
 
     private static long parseStringAsTimestamp(
             TimestampDriver timestampDriver,
-            CharSequence str,
+            @Nullable CharSequence str,
             int position,
             boolean detectIntervals
     ) throws SqlException {
         try {
             return timestampDriver.parseFloorLiteral(str);
         } catch (NumericException ignore) {
-            if (detectIntervals) {
+            if (detectIntervals && str != null) {
                 for (int i = 0, lim = str.length(); i < lim; i++) {
                     if (str.charAt(i) == ';') {
                         throw SqlException.$(position, "Not a date, use IN keyword with intervals");

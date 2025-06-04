@@ -25,11 +25,11 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -53,9 +53,8 @@ public class CastStrToTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            final CharSequence value = arg.getStrA(rec);
             try {
-                return value == null ? Numbers.LONG_NULL : TimestampUtils.parseFloorPartialTimestamp(value);
+                return MicrosTimestampDriver.INSTANCE.parseFloorLiteral(arg.getStrA(rec));
             } catch (NumericException e) {
                 return Numbers.LONG_NULL;
             }

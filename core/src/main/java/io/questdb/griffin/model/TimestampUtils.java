@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
@@ -150,10 +149,6 @@ public class TimestampUtils {
 
     public static long parseFloorPartialTimestamp(CharSequence seq) throws NumericException {
         return parseFloorPartialTimestamp(seq, 0, seq.length());
-    }
-
-    public static long parseFloorPartialTimestamp(Utf8Sequence seq) throws NumericException {
-        return parseFloorPartialTimestamp(seq, 0, seq.size());
     }
 
     public static long parseFloorPartialTimestamp(CharSequence seq, final int pos, int lim) throws NumericException {
@@ -576,14 +571,6 @@ public class TimestampUtils {
                 break;
             default:
                 throw SqlException.$(position, "Invalid interval format");
-        }
-    }
-
-    public static long tryParseTimestamp(CharSequence seq) throws CairoException {
-        try {
-            return parseFloorPartialTimestamp(seq, 0, seq.length());
-        } catch (NumericException e) {
-            throw CairoException.nonCritical().put("Invalid timestamp: ").put(seq);
         }
     }
 

@@ -25,11 +25,13 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public interface TimestampDriver {
 
@@ -76,12 +78,18 @@ public interface TimestampDriver {
 
     long parseFloor(CharSequence str, int lo, int hi) throws NumericException;
 
-    default long parseFloorConstant(CharSequence quotedTimestampStr) throws NumericException {
+    long parseFloor(Utf8Sequence str, int lo, int hi) throws NumericException;
+
+    default long parseFloorConstant(@NotNull CharSequence quotedTimestampStr) throws NumericException {
         return parseFloor(quotedTimestampStr, 1, quotedTimestampStr.length() - 1);
     }
 
-    default long parseFloorLiteral(CharSequence timestampLiteral) throws NumericException {
-        return parseFloor(timestampLiteral, 0, timestampLiteral.length());
+    default long parseFloorLiteral(@Nullable CharSequence timestampLiteral) throws NumericException {
+        return timestampLiteral != null ? parseFloor(timestampLiteral, 0, timestampLiteral.length()) : Numbers.LONG_NULL;
+    }
+
+    default long parseFloorLiteral(@Nullable Utf8Sequence timestampLiteral) throws NumericException {
+        return timestampLiteral != null ? parseFloor(timestampLiteral, 0, timestampLiteral.size()) : Numbers.LONG_NULL;
     }
 
     long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi);

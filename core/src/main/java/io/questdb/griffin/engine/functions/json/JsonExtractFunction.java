@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.json;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
@@ -33,7 +34,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -363,7 +363,7 @@ public class JsonExtractFunction implements Function {
             case SimdJsonType.STRING:
                 assert stateA.destUtf8Sink != null;
                 try {
-                    return TimestampUtils.parseFloorPartialTimestamp(stateA.destUtf8Sink.asAsciiCharSequence());
+                    return MicrosTimestampDriver.INSTANCE.parseFloorLiteral(stateA.destUtf8Sink);
                 } catch (NumericException e) {
                     return Numbers.LONG_NULL;
                 }
