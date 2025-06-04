@@ -8608,7 +8608,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(partitionLen);
         }
-//2025-06-03T11:37:24.321696Z I i.q.c.TableWriter splitting last line of the partition [table=testWalWriteRollbackHeavy_wal_parallel~4, partition=2022-02-25T03:06:23.170634Z, oldSize=1, newSize=0, splitPartition=2022-02-25T03:06:23.170634Z, deletedSplitPartition=2022-02-25T04:17:50.004575Z
+
         if (attachMinTimestamp < 0 || attachMaxTimestamp < 0) {
             throw CairoException.critical(ff.errno())
                     .put("cannot read min, max timestamp from the [path=").put(path)

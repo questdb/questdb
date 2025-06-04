@@ -233,8 +233,13 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 final String sql = tableName + " where timestamp > " + timestampMark;
                 try (RecordCursorFactory factory = select(sql)) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
-                                .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
+                        // Extract for safe logging
+                        CharSequence name = table.getName();
+                        int size = table.size();
+                        long cursorSize = cursor.size();
+
+                        getLog().info().$("table.getName(): ").$(name).$(", tableName: ").$(tableName)
+                                .$(", table.size(): ").$(size).$(", cursor.size(): ").$(cursorSize).$();
                         assertCursorTwoPass(expected, cursor, metadata);
                     }
                 }
