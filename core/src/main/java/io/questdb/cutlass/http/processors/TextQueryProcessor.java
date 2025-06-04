@@ -41,6 +41,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
@@ -570,8 +571,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         state.skip = skip;
         state.count = 0L;
         state.stop = stop;
-        state.noMeta = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_NM));
-        state.countRows = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_COUNT));
+        state.noMeta = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_NM));
+        state.countRows = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_COUNT));
         return true;
     }
 
@@ -607,12 +608,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 break;
             case ColumnType.DOUBLE:
                 double d = rec.getDouble(columnIndex);
+                //noinspection ExpressionComparedToItself
                 if (d == d) {
                     response.put(d);
                 }
                 break;
             case ColumnType.FLOAT:
                 float f = rec.getFloat(columnIndex);
+                //noinspection ExpressionComparedToItself
                 if (f == f) {
                     response.put(f);
                 }
