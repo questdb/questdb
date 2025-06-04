@@ -132,7 +132,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         int size = staticIntervals.size();
-        TimestampUtils.parseIntervalEx(seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
+        TimestampUtils.parseIntervalEx(timestampType, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
         if (dynamicRangeList.size() == 0) {
             IntervalUtils.applyLastEncodedIntervalEx(timestampType, staticIntervals);
             if (intervalApplied) {
@@ -294,7 +294,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         int size = staticIntervals.size();
-        TimestampUtils.parseIntervalEx(seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT);
+        TimestampUtils.parseIntervalEx(timestampType, seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT);
         if (dynamicRangeList.size() == 0) {
             IntervalUtils.applyLastEncodedIntervalEx(timestampType, staticIntervals);
             IntervalUtils.invert(staticIntervals, size);

@@ -82,7 +82,8 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 case ColumnType.INTERVAL:
                     return new InTimestampIntervalFunctionFactory.Func(args.getQuick(0), args.getQuick(1));
                 default:
-                    throw SqlException.position(argPositions.getQuick(i)).put("cannot compare TIMESTAMP with type ")
+                    throw SqlException.position(argPositions.getQuick(i))
+                            .put("cannot compare TIMESTAMP with type ")
                             .put(ColumnType.nameOf(func.getType()));
             }
             if (!func.isConstant()) {
@@ -107,8 +108,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         if (allRuntimeConst) {
             if (intervalSearch) {
-                return new InTimestampRuntimeConstIntervalFunction(args.getQuick(0), args.getQuick(1),
-                        argPositions.getQuick(1));
+                return new InTimestampRuntimeConstIntervalFunction(
+                        args.getQuick(0),
+                        args.getQuick(1),
+                        argPositions.getQuick(1)
+                );
 
             }
             return new InTimestampManyRuntimeConstantsFunction(new ObjList<>(args));
@@ -207,9 +211,10 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         public EqTimestampStrConstantFunction(
                 Function left,
                 CharSequence right,
-                int rightPosition) throws SqlException {
+                int rightPosition
+        ) throws SqlException {
             this.left = left;
-            parseAndApplyIntervalEx(right, intervals, rightPosition);
+            parseAndApplyIntervalEx(ColumnType.TIMESTAMP, right, intervals, rightPosition);
         }
 
         @Override
@@ -255,7 +260,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             intervals.clear();
             try {
                 // we are ignoring exception contents here, so we do not need the exact position
-                parseAndApplyIntervalEx(timestampAsString, intervals, 0);
+                parseAndApplyIntervalEx(ColumnType.TIMESTAMP, timestampAsString, intervals, 0);
             } catch (SqlException e) {
                 return negated;
             }
@@ -423,7 +428,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             switch (intervalFunc.getType()) {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
-                    parseAndApplyIntervalEx(intervalFunc.getStrA(null), intervals, 0);
+                    parseAndApplyIntervalEx(ColumnType.TIMESTAMP, intervalFunc.getStrA(null), intervals, 0);
                     break;
                 default:
                     throw SqlException

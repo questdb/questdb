@@ -26,9 +26,9 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
@@ -358,7 +358,7 @@ public class PartitionByTest {
         checkPartitionPartialParseMonth(PartitionBy.MONTH);
         checkPartitionPartialParseMonth(PartitionBy.YEAR);
         Assert.assertEquals(
-                TimestampUtils.parseFloorPartialTimestamp("2013"),
+                MicrosTimestampDriver.floor("2013"),
                 PartitionBy.parsePartitionDirName("2013", ColumnType.TIMESTAMP, PartitionBy.YEAR)
         );
     }
@@ -652,44 +652,43 @@ public class PartitionByTest {
 
     private static void checkPartitionPartialParseDay(int day) throws NumericException {
         checkPartitionPartialParseHour(day);
-        Assert.assertEquals(TimestampUtils.parseFloorPartialTimestamp("2013-03-31"), PartitionBy.parsePartitionDirName("2013-03-31", ColumnType.TIMESTAMP, day));
+        Assert.assertEquals(MicrosTimestampDriver.floor("2013-03-31"), PartitionBy.parsePartitionDirName("2013-03-31", ColumnType.TIMESTAMP, day));
     }
 
     private static void checkPartitionPartialParseHour(int partBy) throws NumericException {
-        Assert.assertEquals(TimestampUtils.parseFloorPartialTimestamp(
-                        "2013-03-31T17:55:01.123021"),
+        Assert.assertEquals(MicrosTimestampDriver.floor("2013-03-31T17:55:01.123021"),
                 PartitionBy.parsePartitionDirName("2013-03-31T175501-123021", ColumnType.TIMESTAMP, partBy)
         );
         Assert.assertEquals(
-                TimestampUtils.parseFloorPartialTimestamp("2013-03-31T17:55:01.12302"),
+                MicrosTimestampDriver.floor("2013-03-31T17:55:01.12302"),
                 PartitionBy.parsePartitionDirName("2013-03-31T175501-12302", ColumnType.TIMESTAMP, partBy)
         );
         Assert.assertEquals(
-                TimestampUtils.parseFloorPartialTimestamp("2013-03-31T17:55:01.1230"),
+                MicrosTimestampDriver.floor("2013-03-31T17:55:01.1230"),
                 PartitionBy.parsePartitionDirName("2013-03-31T175501-1230", ColumnType.TIMESTAMP, partBy)
         );
         Assert.assertEquals(
-                TimestampUtils.parseFloorPartialTimestamp("2013-03-31T17:55:01.123"),
+                MicrosTimestampDriver.floor("2013-03-31T17:55:01.123"),
                 PartitionBy.parsePartitionDirName("2013-03-31T175501-123", ColumnType.TIMESTAMP, partBy)
         );
         Assert.assertEquals(
-                TimestampUtils.parseFloorPartialTimestamp("2013-03-31T17:55:01.12"),
+                MicrosTimestampDriver.floor("2013-03-31T17:55:01.12"),
                 PartitionBy.parsePartitionDirName("2013-03-31T175501-12", ColumnType.TIMESTAMP, partBy)
         );
         Assert.assertEquals(
-                TimestampUtils.parseFloorPartialTimestamp("2013-03-31T17:55:01.1"),
+                MicrosTimestampDriver.floor("2013-03-31T17:55:01.1"),
                 PartitionBy.parsePartitionDirName("2013-03-31T175501-1", ColumnType.TIMESTAMP, partBy)
         );
         Assert.assertEquals(
-                TimestampUtils.parseFloorPartialTimestamp("2013-03-31T17:55:01"),
+                MicrosTimestampDriver.floor("2013-03-31T17:55:01"),
                 PartitionBy.parsePartitionDirName("2013-03-31T175501", ColumnType.TIMESTAMP, partBy)
         );
         Assert.assertEquals(
-                TimestampUtils.parseFloorPartialTimestamp("2013-03-31T17:55"),
+                MicrosTimestampDriver.floor("2013-03-31T17:55"),
                 PartitionBy.parsePartitionDirName("2013-03-31T1755", ColumnType.TIMESTAMP, partBy)
         );
         Assert.assertEquals(
-                TimestampUtils.parseFloorPartialTimestamp("2013-03-31T17"),
+                MicrosTimestampDriver.floor("2013-03-31T17"),
                 PartitionBy.parsePartitionDirName("2013-03-31T17", ColumnType.TIMESTAMP, partBy)
         );
     }
@@ -697,7 +696,7 @@ public class PartitionByTest {
     private static void checkPartitionPartialParseMonth(int partitionBy) throws NumericException {
         checkPartitionPartialParseDay(partitionBy);
         Assert.assertEquals(
-                TimestampUtils.parseFloorPartialTimestamp("2013-03"),
+                MicrosTimestampDriver.floor("2013-03"),
                 PartitionBy.parsePartitionDirName("2013-03", ColumnType.TIMESTAMP, partitionBy)
         );
     }

@@ -43,6 +43,7 @@ import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MapWriter;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
@@ -105,7 +106,6 @@ import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -1672,7 +1672,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         if (isStartKeyword(tok)) {
                             tok = expectToken(lexer, "START timestamp");
                             try {
-                                start = TimestampUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                                start = MicrosTimestampDriver.floor(GenericLexer.unquote(tok));
                             } catch (NumericException e) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                             }
@@ -2686,14 +2686,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             expectKeyword(lexer, "from");
             tok = expectToken(lexer, "FROM timestamp");
             try {
-                from = TimestampUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                from = MicrosTimestampDriver.floor(GenericLexer.unquote(tok));
             } catch (NumericException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), "invalid FROM timestamp value");
             }
             expectKeyword(lexer, "to");
             tok = expectToken(lexer, "TO timestamp");
             try {
-                to = TimestampUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                to = MicrosTimestampDriver.floor(GenericLexer.unquote(tok));
             } catch (NumericException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), "invalid TO timestamp value");
             }

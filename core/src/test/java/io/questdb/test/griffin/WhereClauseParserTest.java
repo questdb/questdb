@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
@@ -40,7 +41,6 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -544,7 +544,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testBetweenINowAndOneDayBefore() throws SqlException, NumericException {
-        setCurrentMicros(TimestampUtils.parseFloorPartialTimestamp("2014-01-03T12:30:00.000000Z"));
+        setCurrentMicros(MicrosTimestampDriver.floor("2014-01-03T12:30:00.000000Z"));
         runWhereTest("timestamp between now() and dateadd('d', -1, now())",
                 "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-03T12:30:00.000000Z}]");
     }

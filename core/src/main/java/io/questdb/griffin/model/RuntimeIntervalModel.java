@@ -316,7 +316,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     private boolean tryParseInterval(LongList outIntervals, CharSequence strInterval) {
         if (strInterval != null) {
             try {
-                TimestampUtils.parseIntervalEx(strInterval, 0, strInterval.length(), 0, outIntervals, IntervalOperation.INTERSECT);
+                TimestampUtils.parseIntervalEx(timestampType, strInterval, 0, strInterval.length(), 0, outIntervals, IntervalOperation.INTERSECT);
                 IntervalUtils.applyLastEncodedIntervalEx(timestampType, outIntervals);
             } catch (SqlException e) {
                 return true;

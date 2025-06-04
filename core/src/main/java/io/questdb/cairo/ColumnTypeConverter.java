@@ -33,7 +33,6 @@ import io.questdb.griffin.ColumnConversionOffsetSink;
 import io.questdb.griffin.ConvertersNative;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SymbolMapWriterLite;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
@@ -906,7 +905,7 @@ public class ColumnTypeConverter {
     private static void str2Date(CharSequence str, MemoryA mem) {
         if (str != null) {
             try {
-                mem.putLong(TimestampUtils.parseFloorPartialTimestamp(str) / 1000);
+                mem.putLong(MicrosTimestampDriver.floor(str) / 1000);
                 return;
             } catch (NumericException e) {
                 // Fall through

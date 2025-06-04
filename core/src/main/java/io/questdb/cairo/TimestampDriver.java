@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
@@ -34,6 +35,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public interface TimestampDriver {
+
+    void parseInterval(CharSequence input, int pos, int lim, short operation, LongList out) throws NumericException;
 
     long addMonths(long timestamp, int months);
 

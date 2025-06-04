@@ -25,9 +25,9 @@
 package io.questdb.test.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.Interval;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
@@ -297,7 +297,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     public void testTimezoneDSTSwitch() throws Exception {
         // Last Sunday of March, e.g. 2024-03-31, is the DST (daylight saving time) switch day in Bulgaria (UTC+02 to UTC+03).
         assertMemoryLeak(() -> {
-            setCurrentMicros(TimestampUtils.parseFloorPartialTimestamp("2024-04-01T06:00:00.000000Z"));
+            setCurrentMicros(MicrosTimestampDriver.floor("2024-04-01T06:00:00.000000Z"));
             String expected = "yesterday\n" +
                     "('2024-03-30T22:00:00.000Z', '2024-03-31T20:59:59.999Z')\n";
             assertSql(expected, "select yesterday('Europe/Sofia')");
@@ -305,7 +305,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             bindVariableService.setStr("tz", "Europe/Sofia");
             assertSql(expected, "select yesterday(:tz)");
 
-            setCurrentMicros(TimestampUtils.parseFloorPartialTimestamp("2024-03-31T06:00:00.000000Z"));
+            setCurrentMicros(MicrosTimestampDriver.floor("2024-03-31T06:00:00.000000Z"));
             expected = "today\n" +
                     "('2024-03-30T22:00:00.000Z', '2024-03-31T20:59:59.999Z')\n";
             assertSql(expected, "select today('Europe/Sofia')");
@@ -313,7 +313,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             bindVariableService.setStr("tz", "Europe/Sofia");
             assertSql(expected, "select today(:tz)");
 
-            setCurrentMicros(TimestampUtils.parseFloorPartialTimestamp("2024-03-30T06:00:00.000000Z"));
+            setCurrentMicros(MicrosTimestampDriver.floor("2024-03-30T06:00:00.000000Z"));
             expected = "tomorrow\n" +
                     "('2024-03-30T22:00:00.000Z', '2024-03-31T20:59:59.999Z')\n";
             assertSql(expected, "select tomorrow('Europe/Sofia')");

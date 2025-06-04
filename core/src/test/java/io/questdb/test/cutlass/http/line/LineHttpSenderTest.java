@@ -28,6 +28,7 @@ import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
@@ -35,7 +36,6 @@ import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.cutlass.line.http.LineHttpSenderV2;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
@@ -1060,7 +1060,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
-        long timestamp = TimestampUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
+        long timestamp = MicrosTimestampDriver.floor("2023-11-27T18:53:24.834Z");
         int i = 0;
 
         int port = serverMain.getHttpServerPort();

@@ -24,8 +24,8 @@
 
 package io.questdb.test.log;
 
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.griffin.engine.QueryProgress;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.log.GuaranteedLogger;
 import io.questdb.log.Log;
 import io.questdb.log.LogConsoleWriter;
@@ -573,7 +573,7 @@ public class LogFactoryTest {
         String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         String expectedLogFile = base + "mylog-2015-05-03.log";
 
-        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, TimestampUtils.parseFloorPartialTimestamp("2019-12-31"));
+        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, MicrosTimestampDriver.floor("2019-12-31"));
 
         try (Path path = new Path()) {
             // create rogue file that would be in a way of logger rolling existing files
@@ -661,7 +661,7 @@ public class LogFactoryTest {
         String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         String expectedLogFile = base + "mylog-2015-05-03.log";
         try (LogFactory factory = new LogFactory()) {
-            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T11:35:00.000Z"), 1, TimestampUtils.parseFloorPartialTimestamp("2015-05-04"));
+            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T11:35:00.000Z"), 1, MicrosTimestampDriver.floor("2015-05-04"));
 
             factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
                 LogRollingFileWriter w = new LogRollingFileWriter(TestFilesFacadeImpl.INSTANCE, clock, ring, seq, level);
@@ -690,7 +690,7 @@ public class LogFactoryTest {
 
             String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
 
-            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, TimestampUtils.parseFloorPartialTimestamp("2015-05-04"));
+            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, MicrosTimestampDriver.floor("2015-05-04"));
 
             try (Path path = new Path()) {
 
@@ -973,7 +973,7 @@ public class LogFactoryTest {
         final MicrosecondClock clock = new TestMicrosecondClock(
                 TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
                 1,
-                TimestampUtils.parseFloorPartialTimestamp("2019-12-31")
+                MicrosTimestampDriver.floor("2019-12-31")
         );
 
         final RingQueue<LogRecordUtf8Sink> queue = new RingQueue<>(
@@ -1108,7 +1108,7 @@ public class LogFactoryTest {
         final MicrosecondClock clock = new TestMicrosecondClock(
                 TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
                 speed,
-                TimestampUtils.parseFloorPartialTimestamp("2019-12-31")
+                MicrosTimestampDriver.floor("2019-12-31")
         );
 
         long nSizeLimit = sizeLimit != null ? Numbers.parseLongSize(sizeLimit) : 0;
@@ -1247,7 +1247,7 @@ public class LogFactoryTest {
         final MicrosecondClock clock = new TestMicrosecondClock(
                 TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
                 speed,
-                TimestampUtils.parseFloorPartialTimestamp("2019-12-31")
+                MicrosTimestampDriver.floor("2019-12-31")
         );
 
         final long expectedFileCount = Files.getOpenFileCount();

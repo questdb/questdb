@@ -27,6 +27,7 @@ package io.questdb.test.cairo.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -47,7 +48,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.mp.Job;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -692,7 +692,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "able does not exist");
                 }
 
-                TableWriter.Row row = walWriter1.newRow(TimestampUtils.parseFloorPartialTimestamp("2022-02-24T01"));
+                TableWriter.Row row = walWriter1.newRow(MicrosTimestampDriver.floor("2022-02-24T01"));
                 row.putLong(1, 1);
                 row.append();
 
@@ -716,7 +716,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 // Nonstructural change
                 try {
                     AlterOperationBuilder dropPartition = new AlterOperationBuilder().ofDropPartition(0, tableToken, 1);
-                    dropPartition.addPartitionToList(TimestampUtils.parseFloorPartialTimestamp("2022-02-24"), 0);
+                    dropPartition.addPartitionToList(MicrosTimestampDriver.floor("2022-02-24"), 0);
                     AlterOperation dropAlter = dropPartition.build();
                     dropAlter.withContext(sqlExecutionContext);
                     dropAlter.withSqlStatement("alter table " + tableName + " drop partition list '2022-02-24'");
@@ -1963,8 +1963,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 Assert.assertEquals(2, txReader.getLagTxnCount());
                 Assert.assertEquals(2, txReader.getLagRowCount());
                 Assert.assertFalse(txReader.isLagOrdered());
-                Assert.assertEquals(TimestampUtils.parseFloorPartialTimestamp("2022-02-24T00"), txReader.getLagMinTimestamp());
-                Assert.assertEquals(TimestampUtils.parseFloorPartialTimestamp("2022-02-24T01"), txReader.getLagMaxTimestamp());
+                Assert.assertEquals(MicrosTimestampDriver.floor("2022-02-24T00"), txReader.getLagMinTimestamp());
+                Assert.assertEquals(MicrosTimestampDriver.floor("2022-02-24T01"), txReader.getLagMaxTimestamp());
 
                 runApplyOnce(token);
                 txReader.unsafeLoadAll();

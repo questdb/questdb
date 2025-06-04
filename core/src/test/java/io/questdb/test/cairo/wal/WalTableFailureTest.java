@@ -29,6 +29,7 @@ import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.BitmapIndexUtils;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -50,7 +51,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.UpdateOperation;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntHashSet;
@@ -299,7 +299,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     TestUtils.assertContains(ex.getFlyweightMessage(), "Column not found: non_existing_column");
                 }
 
-                TableWriter.Row row = insertWriter.newRow(TimestampUtils.parseFloorPartialTimestamp("2022-02-25"));
+                TableWriter.Row row = insertWriter.newRow(MicrosTimestampDriver.floor("2022-02-25"));
                 row.putLong(0, 123L);
                 row.append();
                 insertWriter.commit();
@@ -374,7 +374,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 alterOp = alterBuilder.build();
                 alterWriter.apply(alterOp, true);
 
-                TableWriter.Row row = insertWriter.newRow(TimestampUtils.parseFloorPartialTimestamp("2022-02-25"));
+                TableWriter.Row row = insertWriter.newRow(MicrosTimestampDriver.floor("2022-02-25"));
                 row.putLong(0, 123L);
                 row.append();
 
@@ -532,7 +532,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "from long_sequence(10 * 4)");
             drainWalQueue();
             Path tempPath = Path.getThreadLocal(root).concat(tableName);
-            long initialTs = TimestampUtils.parseFloorPartialTimestamp("2022-02-24");
+            long initialTs = MicrosTimestampDriver.floor("2022-02-24");
             FilesFacade ff = engine.getConfiguration().getFilesFacade();
 
             int dropPartitions = 5;
@@ -717,7 +717,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             drainWalQueue();
 
             Path tempPath = Path.getThreadLocal(root).concat(tableName);
-            long initialTs = TimestampUtils.parseFloorPartialTimestamp("2022-02-24");
+            long initialTs = MicrosTimestampDriver.floor("2022-02-24");
             FilesFacade ff = engine.getConfiguration().getFilesFacade();
 
             int dropPartitions = 5;

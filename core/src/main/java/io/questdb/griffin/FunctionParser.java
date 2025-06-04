@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.sql.BindVariableService;
@@ -101,7 +102,6 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -1270,7 +1270,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private long parseTimestamp(CharSequence str, int position) throws SqlException {
         try {
-            return TimestampUtils.parseFloorPartialTimestamp(str);
+            return MicrosTimestampDriver.floor(str);
         } catch (NumericException e) {
             throw SqlException.invalidDate(str, position);
         }

@@ -27,6 +27,7 @@ package io.questdb.test.cairo.o3;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriter.Row;
@@ -35,7 +36,6 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
@@ -232,7 +232,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                     }
 
                     for (int i = 0; i < length; i++) {
-                        long ts = TimestampUtils.parseFloorPartialTimestamp(dates[i]);
+                        long ts = MicrosTimestampDriver.floor(dates[i]);
                         Row r = writer.newRow(ts);
                         r.append();
 
@@ -423,7 +423,7 @@ public class O3MaxLagTest extends AbstractO3Test {
     private void appendRows(TableWriter tw, int count, Rnd rnd) throws NumericException {
         TableMetadata metadata = tw.getMetadata();
         for (int i = 0; i < count; i++) {
-            long timestamp = TimestampUtils.parseFloorPartialTimestamp("1970-01-01T11:00:00.000000Z") + rnd.nextLong(Timestamps.DAY_MICROS);
+            long timestamp = MicrosTimestampDriver.floor("1970-01-01T11:00:00.000000Z") + rnd.nextLong(Timestamps.DAY_MICROS);
             Row row = tw.newRow(timestamp);
 
             putVariantStr(metadata, row, 0, "cc");
@@ -432,7 +432,7 @@ public class O3MaxLagTest extends AbstractO3Test {
             row.putLong(4, 22222L);
             row.append();
 
-            row = tw.newRow(TimestampUtils.parseFloorPartialTimestamp("1970-01-02T11:00:00.000000Z"));
+            row = tw.newRow(MicrosTimestampDriver.floor("1970-01-02T11:00:00.000000Z"));
             putVariantStr(metadata, row, 0, "cc");
             row.putLong(2, 333333L);
             putVariantStr(metadata, row, 3, "dd");
@@ -444,7 +444,7 @@ public class O3MaxLagTest extends AbstractO3Test {
     private void appendRowsWithDroppedColumn(TableWriter tw, int count, Rnd rnd) throws NumericException {
         TableMetadata metadata = tw.getMetadata();
         for (int i = 0; i < count; i++) {
-            long timestamp = TimestampUtils.parseFloorPartialTimestamp("1970-01-01") + rnd.nextLong(Timestamps.DAY_MICROS);
+            long timestamp = MicrosTimestampDriver.floor("1970-01-01") + rnd.nextLong(Timestamps.DAY_MICROS);
             Row row = tw.newRow(timestamp);
 
             putVariantStr(metadata, row, 0, "cc");
@@ -453,7 +453,7 @@ public class O3MaxLagTest extends AbstractO3Test {
             row.putLong(5, 22222L);
             row.append();
 
-            row = tw.newRow(TimestampUtils.parseFloorPartialTimestamp("1970-01-02T10:00:01.000000Z"));
+            row = tw.newRow(MicrosTimestampDriver.floor("1970-01-02T10:00:01.000000Z"));
             putVariantStr(metadata, row, 0, "cc");
             row.putLong(2, 333333L);
             putVariantStr(metadata, row, 4, "dd");
@@ -521,7 +521,7 @@ public class O3MaxLagTest extends AbstractO3Test {
             }
         }
 
-        long start = TimestampUtils.parseFloorPartialTimestamp("2021-04-27T08:00:00");
+        long start = MicrosTimestampDriver.floor("2021-04-27T08:00:00");
         long[] testCounts = new long[]{2 * 1024 * 1024, 16 * 8 * 1024 * 5, 2_000_000};
         //noinspection ForLoopReplaceableByForEach
         for (int c = 0; c < testCounts.length; c++) {

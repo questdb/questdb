@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.mp.Sequence;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
@@ -313,7 +312,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 TableToken tn1 = new TableToken("tbl_name", "tbl_name", 123, false, false, false);
                 ColumnPurgeTask task = createTask(tn1, "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
-                task.appendColumnInfo(-1, TimestampUtils.parseFloorPartialTimestamp("2022-04-05"), 2);
+                task.appendColumnInfo(-1, MicrosTimestampDriver.floor("2022-04-05"), 2);
                 appendTaskToQueue(task);
 
                 TableToken tn2 = new TableToken("tbl_name2", "tbl_name2", 123, false, false, false);
@@ -970,7 +969,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 TableToken tn1 = new TableToken("tbl_name", "tbl_name", 123, false, false, false);
                 ColumnPurgeTask task = createTask(tn1, "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
-                task.appendColumnInfo(-1, TimestampUtils.parseFloorPartialTimestamp("2022-04-05"), 2);
+                task.appendColumnInfo(-1, MicrosTimestampDriver.floor("2022-04-05"), 2);
                 appendTaskToQueue(task);
 
 
@@ -1074,7 +1073,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     ) throws NumericException {
         ColumnPurgeTask tsk = new ColumnPurgeTask();
         tsk.of(tblName, colName, tableId, 0, columnType, ColumnType.TIMESTAMP, PartitionBy.NONE, updateTxn, new LongList());
-        tsk.appendColumnInfo(columnVersion, TimestampUtils.parseFloorPartialTimestamp(partitionTs), partitionNameTxn);
+        tsk.appendColumnInfo(columnVersion, MicrosTimestampDriver.floor(partitionTs), partitionNameTxn);
         return tsk;
     }
 

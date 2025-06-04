@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -63,7 +64,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
@@ -335,7 +335,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     .wal()
             );
 
-            long initialTimestamp = TimestampUtils.parseFloorPartialTimestamp("2022-02-24T00:40:00.000Z");
+            long initialTimestamp = MicrosTimestampDriver.floor("2022-02-24T00:40:00.000Z");
             long tsIncrement = 1000_0000L;
 
             int varcharSize = 20 * Numbers.SIZE_1MB;
@@ -393,7 +393,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             AtomicInteger error = new AtomicInteger();
 
-            long initialTimestamp = TimestampUtils.parseFloorPartialTimestamp("2022-02-24T00:40:00.000Z");
+            long initialTimestamp = MicrosTimestampDriver.floor("2022-02-24T00:40:00.000Z");
             long tsIncrement = rnd.nextLong(1000_0000L);
             for (int th = 0; th < threadCount; th++) {
                 Rnd threadRnd = new Rnd(rnd.nextLong(), rnd.nextLong());
@@ -1067,7 +1067,7 @@ public class WalWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
-            long startTs = TimestampUtils.parseFloorPartialTimestamp("2022-02-24");
+            long startTs = MicrosTimestampDriver.floor("2022-02-24");
             long tsIncrement = Timestamps.MINUTE_MICROS;
 
             long ts = startTs;
@@ -4292,7 +4292,7 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
 
-            long ts = TimestampUtils.parseFloorPartialTimestamp("2022-02-24");
+            long ts = MicrosTimestampDriver.floor("2022-02-24");
             int symbolCount = 75;
 
             Utf8StringSink sink = new Utf8StringSink();

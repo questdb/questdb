@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -44,7 +45,6 @@ import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.griffin.model.WithClauseModel;
 import io.questdb.std.BufferWindowCharSequence;
@@ -899,7 +899,7 @@ public class SqlParser {
             if (isStartKeyword(tok)) {
                 tok = tok(lexer, "START timestamp");
                 try {
-                    start = TimestampUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                    start = MicrosTimestampDriver.floor(unquote(tok));
                 } catch (NumericException e) {
                     throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                 }

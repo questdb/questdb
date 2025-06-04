@@ -26,8 +26,8 @@ package io.questdb.compat;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -654,7 +654,7 @@ public class InfluxDBClientTest extends AbstractTest {
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
 
-                long milliTime = TimestampUtils.parseFloorPartialTimestamp("2022-02-24T05:00:00.000001Z");
+                long milliTime = MicrosTimestampDriver.floor("2022-02-24T05:00:00.000001Z");
                 influxDB.write(Point.measurement("m1")
                         .tag("tag1", "\"value1\"")
                         .addField("f1", 1)
@@ -682,33 +682,33 @@ public class InfluxDBClientTest extends AbstractTest {
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
 
-                long microTime = TimestampUtils.parseFloorPartialTimestamp("2022-02-24T04:00:00.000001Z");
+                long microTime = MicrosTimestampDriver.floor("2022-02-24T04:00:00.000001Z");
                 List<String> points = new ArrayList<>();
                 points.add("m1,tag1=value1 f1=1i,y=12i " + microTime);
                 influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.MICROSECONDS, points);
                 points.clear();
 
-                long milliTime = TimestampUtils.parseFloorPartialTimestamp("2022-02-24T05:00:00.001001Z") / 1000L;
+                long milliTime = MicrosTimestampDriver.floor("2022-02-24T05:00:00.001001Z") / 1000L;
                 points.add("m1,tag1=value1 f1=1i,y=12i " + milliTime);
                 influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.MILLISECONDS, points);
                 points.clear();
 
-                long nanoTime = TimestampUtils.parseFloorPartialTimestamp("2022-02-24T06:00:00.000001") * 1000L;
+                long nanoTime = MicrosTimestampDriver.floor("2022-02-24T06:00:00.000001") * 1000L;
                 points.add("m1,tag1=value1 f1=1i,y=12i " + nanoTime);
                 influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.NANOSECONDS, points);
                 points.clear();
 
-                long secondTime = TimestampUtils.parseFloorPartialTimestamp("2022-02-24T07:00:01") / 1000L / 1000L;
+                long secondTime = MicrosTimestampDriver.floor("2022-02-24T07:00:01") / 1000L / 1000L;
                 points.add("m1,tag1=value1 f1=1i,y=12i " + secondTime);
                 influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.SECONDS, points);
                 points.clear();
 
-                long minuteTime = TimestampUtils.parseFloorPartialTimestamp("2022-02-24T08:01") / 1000L / 1000L / 60L;
+                long minuteTime = MicrosTimestampDriver.floor("2022-02-24T08:01") / 1000L / 1000L / 60L;
                 points.add("m1,tag1=value1 f1=1i,y=12i " + minuteTime);
                 influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.MINUTES, points);
                 points.clear();
 
-                long hourTime = TimestampUtils.parseFloorPartialTimestamp("2022-02-24T09") / 1000L / 1000L / 60L / 60L;
+                long hourTime = MicrosTimestampDriver.floor("2022-02-24T09") / 1000L / 1000L / 60L / 60L;
                 points.add("m1,tag1=value1 f1=1i,y=12i " + hourTime);
                 influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.HOURS, points);
                 points.clear();
@@ -731,7 +731,7 @@ public class InfluxDBClientTest extends AbstractTest {
     }
 
     private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
-        long timestamp = TimestampUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
+        long timestamp = MicrosTimestampDriver.floor("2023-11-27T18:53:24.834Z");
         int i = 0;
 
         try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {

@@ -870,7 +870,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
 
         final LongList intervals = predicateContext.inIntervals;
-        TimestampUtils.parseAndApplyIntervalEx(intervalEx, intervals, position);
+        TimestampUtils.parseAndApplyIntervalEx(predicateContext.columnType, intervalEx, intervals, position);
 
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
 

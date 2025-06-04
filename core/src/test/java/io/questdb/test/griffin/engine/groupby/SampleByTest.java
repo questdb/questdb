@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
@@ -45,7 +46,6 @@ import io.questdb.griffin.engine.groupby.MicroTimestampSampler;
 import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -2864,7 +2864,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIntervalAllVirtual() throws Exception {
-        setCurrentMicros(TimestampUtils.parseFloorPartialTimestamp("2023-01-01T11:22:33.000000Z"));
+        setCurrentMicros(MicrosTimestampDriver.floor("2023-01-01T11:22:33.000000Z"));
         assertMemoryLeak(() -> assertSql(
                 "first\tcount\tts\n" +
                         "('2023-01-01T06:00:00.000Z', '2023-01-02T05:59:59.999Z')\t60\t2022-02-24T00:00:00.000000Z\n" +

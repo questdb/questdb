@@ -36,6 +36,7 @@ import io.questdb.cairo.DefaultDdlListener;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.LogRecordSinkAdapter;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -65,7 +66,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
-import io.questdb.griffin.model.TimestampUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
@@ -1092,7 +1092,7 @@ public final class TestUtils {
             String startDate,
             int partitionCount
     ) throws NumericException {
-        long fromTimestamp = TimestampUtils.parseFloorPartialTimestamp(startDate);
+        long fromTimestamp = MicrosTimestampDriver.floor(startDate);
         int timestampType = TableUtils.getTimestampType(tableModel);
         int partitionBy = tableModel.getPartitionBy();
         long increment = partitionIncrement(
@@ -1515,7 +1515,7 @@ public final class TestUtils {
             String startDate,
             int partitionCount
     ) throws NumericException {
-        long fromTimestamp = TimestampUtils.parseFloorPartialTimestamp(startDate);
+        long fromTimestamp = MicrosTimestampDriver.floor(startDate);
         long increment = partitionIncrement(
                 TableUtils.getTimestampType(tableModel),
                 tableModel.getPartitionBy(),
