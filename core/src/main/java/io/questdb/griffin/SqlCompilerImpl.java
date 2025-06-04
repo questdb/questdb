@@ -357,17 +357,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @Override
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) throws SqlException {
-        return compile(sqlText, executionContext, false);
-    }
-
-    @NotNull
-    public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext, boolean generateProgressLogger) throws SqlException {
         clear();
         // these are quick executions that do not require building of a model
         lexer.of(sqlText);
         isSingleQueryMode = true;
 
-        compileInner(executionContext, sqlText, generateProgressLogger);
+        compileInner(executionContext, sqlText, true);
         return compiledQuery;
     }
 
@@ -2306,9 +2301,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executor.execute(executionContext, sqlText);
                 // executor might decide that SQL contains secret, otherwise we're logging it
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy **" : sqlText;
-                if (!generateProgressLogger) {
-                    QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
-                }
+                QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
             } catch (Throwable th) {
                 // Executor is all-in-one, it parses SQL text and executes it right away. The convention is
                 // that before parsing secrets the executor will notify the execution context. In that, even if
@@ -3998,6 +3991,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @FunctionalInterface
     public interface KeywordBasedExecutor {
         void execute(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException;
+
+        default boolean shouldLogEnd() {
+            return true;
+        }
     }
 
     public final static class PartitionAction {
