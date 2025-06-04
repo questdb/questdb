@@ -422,7 +422,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     // re-position lexer pointer to where sqlText just began
                     lexer.backTo(position, null);
-                    compileInner(executionContext, sqlText, false);
+                    compileInner(executionContext, sqlText, true);
 
                     // consume residual text, such as semicolon
                     goToQueryEnd();
@@ -2315,7 +2315,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         // executor is allowed to give up on the execution and fall back to standard behaviour
         if (executor == null || compiledQuery.getType() == CompiledQuery.NONE) {
-            compileUsingModel(executionContext, beginNanos);
+            compileUsingModel(executionContext, beginNanos, generateProgressLogger);
         }
         final short type = compiledQuery.getType();
         if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) && !executionContext.isWalApplication()) {
@@ -2443,7 +2443,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try (TableRecordMetadata writerMetadata = executionContext.getMetadataForWrite(tableToken)) {
             QueryModel queryModel = model.getQueryModel();
             final long metadataVersion = writerMetadata.getMetadataVersion();
-            factory = generateSelectWithRetries(queryModel, executionContext, false);
+            factory = generateSelectWithRetries(queryModel, executionContext, true);
             final RecordMetadata cursorMetadata = factory.getMetadata();
             // Convert sparse writer metadata into dense
             final int writerTimestampIndex = writerMetadata.getTimestampIndex();
@@ -2886,7 +2886,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofTruncate();
     }
 
-    private void compileUsingModel(SqlExecutionContext executionContext, long beginNanos) throws SqlException {
+    private void compileUsingModel(SqlExecutionContext executionContext, long beginNanos, boolean generateProgressLogger) throws SqlException {
         // This method will not populate sql cache directly; factories are assumed to be non-reentrant, and once
         // factory is out of this method, the caller assumes full ownership over it. However, the caller may
         // choose to return the factory back to this or any other instance of compiler for safekeeping
@@ -2905,7 +2905,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             generateSelectWithRetries(
                                     (QueryModel) executionModel,
                                     executionContext,
-                                    true
+                                    generateProgressLogger
                             )
                     );
                     break;
@@ -3991,10 +3991,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @FunctionalInterface
     public interface KeywordBasedExecutor {
         void execute(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException;
-
-        default boolean shouldLogEnd() {
-            return true;
-        }
     }
 
     public final static class PartitionAction {

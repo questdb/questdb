@@ -10,7 +10,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class SqlLoggingTest extends AbstractCairoTest {
-
     private static final LogCapture capture = new LogCapture();
 
     @Before
