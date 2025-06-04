@@ -24,6 +24,9 @@
 
 package io.questdb.std.datetime;
 
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+
 public class CommonFormatUtils {
     public static final int DAY_HOURS = 24;
     public static final String DAY_PATTERN = "yyyy-MM-dd";
@@ -45,4 +48,15 @@ public class CommonFormatUtils {
     public static final String USEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUz";
     public static final String NSEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz";
     public static final int YEAR_MONTHS = 12;
+
+    public static int getStrideMultiple(CharSequence str) {
+        if (str != null && str.length() > 1) {
+            try {
+                final int multiple = Numbers.parseInt(str, 0, str.length() - 1);
+                return multiple <= 0 ? 1 : multiple;
+            } catch (NumericException ignored) {
+            }
+        }
+        return 1;
+    }
 }

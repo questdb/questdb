@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.ptt.PartitionDateParseUtil;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
@@ -114,6 +113,72 @@ public class MicrosTimestampDriver implements TimestampDriver {
         return INSTANCE.parseFloorLiteral(value);
     }
 
+    public static long parseDayTime(CharSequence seq, int lim, int pos, long ts, int dayRange, int dayDigits) throws NumericException {
+        checkChar(seq, pos++, lim, '-');
+        int day = Numbers.parseInt(seq, pos, pos += dayDigits);
+        checkRange(day, 1, dayRange);
+        if (checkLen(pos, lim)) {
+            checkChar(seq, pos++, lim, 'T');
+            int hour = Numbers.parseInt(seq, pos, pos += 2);
+            checkRange(hour, 0, 23);
+            if (checkLen(pos, lim)) {
+                int min = Numbers.parseInt(seq, pos, pos += 2);
+                checkRange(min, 0, 59);
+                if (checkLen(pos, lim)) {
+                    int sec = Numbers.parseInt(seq, pos, pos += 2);
+                    checkRange(sec, 0, 59);
+                    if (pos < lim && seq.charAt(pos) == '-') {
+                        pos++;
+                        // varlen milli and micros
+                        int micrLim = pos + 6;
+                        int mlim = Math.min(lim, micrLim);
+                        int micr = 0;
+                        for (; pos < mlim; pos++) {
+                            char c = seq.charAt(pos);
+                            if (c < '0' || c > '9') {
+                                throw NumericException.INSTANCE;
+                            }
+                            micr *= 10;
+                            micr += c - '0';
+                        }
+                        micr *= tenPow(micrLim - pos);
+
+                        // micros
+                        ts += (day - 1) * Timestamps.DAY_MICROS
+                                + hour * Timestamps.HOUR_MICROS
+                                + min * Timestamps.MINUTE_MICROS
+                                + sec * Timestamps.SECOND_MICROS
+                                + micr;
+                    } else {
+                        if (pos == lim) {
+                            // seconds
+                            ts += (day - 1) * Timestamps.DAY_MICROS
+                                    + hour * Timestamps.HOUR_MICROS
+                                    + min * Timestamps.MINUTE_MICROS
+                                    + sec * Timestamps.SECOND_MICROS;
+                        } else {
+                            throw NumericException.INSTANCE;
+                        }
+                    }
+                } else {
+                    // minute
+                    ts += (day - 1) * Timestamps.DAY_MICROS
+                            + hour * Timestamps.HOUR_MICROS
+                            + min * Timestamps.MINUTE_MICROS;
+
+                }
+            } else {
+                // year + month + day + hour
+                ts += (day - 1) * Timestamps.DAY_MICROS
+                        + hour * Timestamps.HOUR_MICROS;
+            }
+        } else {
+            // year + month + day
+            ts += (day - 1) * Timestamps.DAY_MICROS;
+        }
+        return ts;
+    }
+
     @Override
     public long addMonths(long timestamp, int months) {
         return Timestamps.addMonths(timestamp, months);
@@ -174,6 +239,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long fromHours(int hours) {
+        return hours * Timestamps.HOUR_MICROS;
+    }
+
+    @Override
+    public long fromHours(long hours) {
         return hours * Timestamps.HOUR_MICROS;
     }
 
@@ -302,6 +372,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.TIMESTAMP);
         }
         return Numbers.LONG_NULL;
+    }
+
+    @Override
+    public int monthsBetween(long hi, long lo) {
+        return 0;
     }
 
     @Override
@@ -722,6 +797,13 @@ public class MicrosTimestampDriver implements TimestampDriver {
         return Timestamps.MICRO_NANOS;
     }
 
+    @Override
+    public void validateBounds(long timestamp) {
+        if (Long.compareUnsigned(timestamp, Timestamps.YEAR_10000) >= 0) {
+            validateBounds0(timestamp);
+        }
+    }
+
     private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
         if (p >= lim || s.charAt(p) != c) {
             throw NumericException.INSTANCE;
@@ -870,6 +952,18 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
     }
 
+    private static void validateBounds0(long timestamp) {
+        if (timestamp == Long.MIN_VALUE) {
+            throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+        }
+        if (timestamp < TableWriter.TIMESTAMP_EPOCH) {
+            throw CairoException.nonCritical().put("designated timestamp before 1970-01-01 is not allowed");
+        }
+        if (timestamp >= Timestamps.YEAR_10000) {
+            throw CairoException.nonCritical().put("designated timestamp beyond 9999-12-31 is not allowed");
+        }
+    }
+
     public static class IsoDatePartitionFormat implements DateFormat {
         private final DateFormat baseFormat;
         private final PartitionFloorMethod floorMethod;
@@ -913,12 +1007,35 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
         @Override
         public long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException {
-            return PartitionDateParseUtil.parseFloorPartialTimestamp(in, 0, in.length());
+            return parse(in, 0, in.length(), locale);
         }
 
         @Override
         public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
-            return PartitionDateParseUtil.parseFloorPartialTimestamp(in, lo, hi);
+            long ts;
+            if (hi - lo < 4 || hi - lo > 25) {
+                throw NumericException.INSTANCE;
+            }
+            int p = lo;
+            int year = Numbers.parseInt(in, p, p += 4);
+            boolean l = Timestamps.isLeapYear(year);
+            if (checkLen(p, hi)) {
+                checkChar(in, p++, hi, '-');
+                int month = Numbers.parseInt(in, p, p += 2);
+                checkRange(month, 1, 12);
+                if (checkLen(p, hi)) {
+                    int dayRange = Timestamps.getDaysPerMonth(month, l);
+                    ts = Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l);
+                    ts = parseDayTime(in, hi, p, ts, dayRange, 2);
+                } else {
+                    // year + month
+                    ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));
+                }
+            } else {
+                // year
+                ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));
+            }
+            return ts;
         }
     }
 
@@ -966,7 +1083,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
             long baseTs = WEEK_FORMAT.parse(in, lo, lo + 8, locale);
             lo += 8;
             if (lo < hi) {
-                return PartitionDateParseUtil.parseDayTime(in, hi, lo, baseTs, 7, 1);
+                return parseDayTime(in, hi, lo, baseTs, 7, 1);
             }
             return baseTs;
         }

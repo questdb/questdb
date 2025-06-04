@@ -148,6 +148,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int O3_BLOCK_MERGE = 3;
     public static final int O3_BLOCK_NONE = -1;
     public static final int O3_BLOCK_O3 = 1;
+    public static final long TIMESTAMP_EPOCH = 0L;
     // Oversized partitionUpdateSink (offset, description):
     // 0, partitionTimestamp
     // 1, timestampMin
@@ -244,6 +245,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
     private final int timestampType;
+    private final TimestampDriver timestampDriver;
     private final MemoryMARW todoMem = Vm.getCMARWInstance();
     private final TxWriter txWriter;
     private final TxnScoreboard txnScoreboard;
@@ -404,6 +406,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.metadata = new TableWriterMetadata(this.tableToken);
             openMetaFile(ff, path, pathSize, ddlMem, metadata);
             this.timestampType = metadata.getTimestampType();
+            this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             this.partitionBy = metadata.getPartitionBy();
             this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$(), timestampType, partitionBy);
             this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
@@ -518,19 +521,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public static long getTimestampIndexValue(long timestampIndexAddr, long indexRow) {
         return Unsafe.getUnsafe().getLong(timestampIndexAddr + indexRow * 16);
-    }
-
-    public static void validateDesignatedTimestampBounds(long timestamp) {
-        if (timestamp == Numbers.LONG_NULL) {
-            throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
-        }
-        if (timestamp < Timestamps.O3_MIN_TS) {
-            throw CairoException.nonCritical().put("designated timestamp before 1970-01-01 is not allowed");
-        }
-        if (timestamp >= Timestamps.YEAR_10000) {
-            throw CairoException.nonCritical().put(
-                    "designated timestamp beyond 9999-12-31 is not allowed");
-        }
     }
 
     @Override
@@ -2090,11 +2080,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             Timestamps.toString(partitionTimestamp),
                             Timestamps.toString(floorTimestamp),
                             Timestamps.toString(evictedPartitionTimestamp));
+
             long partitionCeiling = ceilFn.ceil(partitionTimestamp);
             // TTL < 0 means it's in months
             boolean shouldEvict = ttl > 0
-                    ? maxTimestamp - partitionCeiling >= Timestamps.HOUR_MICROS * ttl
-                    : Timestamps.getMonthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
+                    ? maxTimestamp - partitionCeiling >= timestampDriver.fromHours(ttl)
+                    : timestampDriver.monthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
             if (shouldEvict) {
                 LOG.info()
                         .$("Partition's TTL expired, evicting. table=").$(metadata.getTableName())
@@ -2457,7 +2448,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public Row newRow(long timestamp) {
         if (rowAction != ROW_ACTION_NO_TIMESTAMP) {
-            validateDesignatedTimestampBounds(timestamp);
+            timestampDriver.validateBounds(timestamp);
         }
         switch (rowAction) {
             case ROW_ACTION_NO_PARTITION:
@@ -3238,7 +3229,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * the performance of some applications. UDP receivers use this in order to avoid initial receive buffer contention.
      */
     public void warmUp() {
-        Row r = newRow(Math.max(Timestamps.O3_MIN_TS, txWriter.getMaxTimestamp()));
+        Row r = newRow(Math.max(TIMESTAMP_EPOCH, txWriter.getMaxTimestamp()));
         try {
             for (int i = 0; i < columnCount; i++) {
                 r.putByte(i, (byte) 0);
@@ -5979,13 +5970,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             long srcOooMax;
             final long o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
-            if (o3TimestampMin < Timestamps.O3_MIN_TS) {
+            if (o3TimestampMin < TIMESTAMP_EPOCH) {
                 o3InError = true;
                 throw CairoException.nonCritical().put("O3 commit encountered timestamp before 1970-01-01");
             }
 
             long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
-            if (o3TimestampMax < Timestamps.O3_MIN_TS) {
+            if (o3TimestampMax < TIMESTAMP_EPOCH) {
                 o3InError = true;
                 throw CairoException.nonCritical().put("O3 commit encountered timestamp before 1970-01-01");
             }

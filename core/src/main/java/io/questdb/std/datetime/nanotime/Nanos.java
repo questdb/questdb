@@ -676,17 +676,6 @@ public final class Nanos {
         return Math.abs(nanosA - nanosB) / SECOND_NANOS;
     }
 
-    public static int getStrideMultiple(CharSequence str) {
-        if (str != null && str.length() > 1) {
-            try {
-                final int multiple = Numbers.parseInt(str, 0, str.length() - 1);
-                return multiple <= 0 ? 1 : multiple;
-            } catch (NumericException ignored) {
-            }
-        }
-        return 1;
-    }
-
     public static char getStrideUnit(CharSequence str) throws SqlException {
         assert str.length() > 0;
         final char unit = str.charAt(str.length() - 1);

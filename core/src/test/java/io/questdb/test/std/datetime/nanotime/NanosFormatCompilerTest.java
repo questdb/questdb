@@ -32,7 +32,6 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.datetime.nanotime.NanosFormatCompiler;
 import io.questdb.std.datetime.nanotime.NanosFormatUtils;
@@ -54,9 +53,8 @@ public class NanosFormatCompilerTest {
 
     private final static DateFormat REFERENCE = NanosFormatUtils.NSEC_UTC_FORMAT;
     private static final NanosFormatCompiler compiler = new NanosFormatCompiler();
-    private final static StringSink sink = new StringSink();
     private final static DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getLocale("en-GB");
-
+    private final static StringSink sink = new StringSink();
 
     @BeforeClass
     public static void setUp() {
@@ -593,7 +591,7 @@ public class NanosFormatCompilerTest {
             assertThat("y-MM", "2055-03-01T00:00:00.000000000Z", "55-03");
             assertThat("y-MM", "1678-03-01T00:00:00.000000000Z", "1678-03");
         } finally {
-            TimestampFormatUtils.updateReferenceYear(referenceYear);
+            NanosFormatUtils.updateReferenceYear(referenceYear);
         }
     }
 
@@ -896,7 +894,7 @@ public class NanosFormatCompilerTest {
 
     @Test
     public void testTimeZone4() throws Exception {
-        assertThat("dd-MM-yy HH:m z", "2010-09-03T21:01:00.000000000Z", "03-09-10 23:01 Hora de verano de Sudáfrica", "es-PA");
+        assertThat("dd-MM-yy HH:m z", "2003-10-23T04:01:00.000000000Z", "23-10-03 06:01 Hora de verano de Sudáfrica", "es-PA");
     }
 
     @Test

@@ -56,7 +56,6 @@ public final class Timestamps {
     public static final long MINUTE_MICROS = 60000000;
     public static final long MINUTE_SECONDS = 60;
     public static final long MONTH_MICROS_APPROX = 30 * DAY_MICROS;
-    public static final long O3_MIN_TS = 0L;
     public static final long SECOND_MICROS = 1000000;
     public static final int SECOND_MILLIS = 1000;
     public static final long SECOND_NANOS = 1000000000;
@@ -762,17 +761,6 @@ public final class Timestamps {
 
     public static long getSecondsBetween(long a, long b) {
         return Math.abs(a - b) / SECOND_MICROS;
-    }
-
-    public static int getStrideMultiple(CharSequence str) {
-        if (str != null && str.length() > 1) {
-            try {
-                final int multiple = Numbers.parseInt(str, 0, str.length() - 1);
-                return multiple <= 0 ? 1 : multiple;
-            } catch (NumericException ignored) {
-            }
-        }
-        return 1;
     }
 
     public static char getStrideUnit(CharSequence str, int position) throws SqlException {
