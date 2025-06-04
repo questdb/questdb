@@ -6219,7 +6219,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             break;
                         }
                     }
-                    // Use attachMinTimestamp feild to pass new partition size
+                    // Use attachMinTimestamp field to pass new partition size
                     attachMinTimestamp = row + 1;
                     // Use attachMaxTimestamp field to pass new partition max timestamp
                     attachMaxTimestamp = row > -1 ? currentTs + 1 : partitionTimestamp;
@@ -6236,7 +6236,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void o3ConsumePartitionUpdateSink_processSplitPartitionRemoval() {
         // Process all the partitions with 0 sizes
-        // after running 3ConsumePartitionUpdateSink()
+        // after running o3ConsumePartitionUpdateSink()
         // 0 size partition means that the partition cannot be removed
         // straight away because it is
         // - split partition, say 2024-02-24T1258
