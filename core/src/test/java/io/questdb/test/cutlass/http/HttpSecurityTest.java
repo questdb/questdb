@@ -80,6 +80,7 @@ public class HttpSecurityTest extends AbstractTest {
         }
     };
     private static final String VALID_BASIC_AUTH_CREDENTIALS_HEADER = "Authorization: " + VALID_BASIC_AUTH_CREDENTIALS;
+    private static final String VALID_BASIC_AUTH_CREDENTIALS_HEADER_RANDOM_CASE = "aUThOriZATiOn: " + VALID_BASIC_AUTH_CREDENTIALS;
     private static final String VALID_REST_TOKEN_AUTH_CREDENTIALS = "Bearer validToken-XubtaE";
     private static final HttpAuthenticatorFactory SINGLE_USER_REST_TOKEN_AUTH_FACTORY = () -> new HttpAuthenticator() {
         @Override
@@ -362,6 +363,50 @@ public class HttpSecurityTest extends AbstractTest {
                         "\r\n" +
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
                 UNAUTHORIZED_RESPONSE
+        ));
+    }
+
+    @Test
+    public void testImplCheckAuthorizationHeaderIsCaseInsensitive() throws Exception {
+        testHttpEndpoint(SINGLE_USER_BASIC_AUTH_FACTORY, (engine, sqlExecutionContext) -> sendAndReceive(
+                "POST /upload?name=test HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "User-Agent: curl/7.71.1\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Length: 243\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        VALID_BASIC_AUTH_CREDENTIALS_HEADER_RANDOM_CASE + "\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "col_a,ts\r\n" +
+                        "1000,1000\r\n" +
+                        "2000,2000\r\n" +
+                        "3000,3000\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "0507\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                        "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                        "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|   Rows handled  |                                                 3  |                 |         |              |\r\n" +
+                        "|  Rows imported  |                                                 3  |                 |         |              |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|              0  |                                             col_a  |                      INT  |           0  |\r\n" +
+                        "|              1  |                                                ts  |                      INT  |           0  |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
         ));
     }
 

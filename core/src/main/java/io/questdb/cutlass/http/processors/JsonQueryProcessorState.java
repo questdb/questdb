@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.text.Utf8Exception;
@@ -148,7 +149,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         resumeActions.extendAndSet(QUERY_RECORD, this::onQueryRecord);
         resumeActions.extendAndSet(QUERY_RECORD_SUFFIX, this::onQueryRecordSuffix);
         resumeActions.extendAndSet(QUERY_SUFFIX, this::doQuerySuffix);
-
         this.nanosecondClock = nanosecondClock;
         this.statementTimeout = httpConnectionContext.getRequestHeader().getStatementTimeout();
         this.keepAliveHeader = keepAliveHeader;
@@ -224,12 +224,12 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.stop = stop;
         count = 0L;
         counter.clear();
-        noMeta = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_NM));
-        countRows = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_COUNT));
-        timings = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_TIMINGS));
-        explain = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_EXPLAIN));
-        quoteLargeNum = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_QUOTE_LARGE_NUM))
-                || Utf8s.equalsNcAscii("con", request.getUrlParam(URL_PARAM_SRC));
+        noMeta = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_NM));
+        countRows = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_COUNT));
+        timings = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_TIMINGS));
+        explain = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_EXPLAIN));
+        quoteLargeNum = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_QUOTE_LARGE_NUM))
+                || HttpKeywords.isCon(request.getUrlParam(URL_PARAM_SRC));
         apiVersion = parseApiVersion(request);
     }
 
