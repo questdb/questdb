@@ -554,7 +554,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             if (stats != null) {
                 loadByWriterThread[stats.getWriterThreadId()] += stats.getEventsProcessedSinceReshuffle();
             } else {
-                LOG.error().$("could not find statistic for table [name=").$(tableName).I$();
+                LOG.error().$("could not find statistic for table [name=").utf8(tableName).I$();
             }
         }
     }

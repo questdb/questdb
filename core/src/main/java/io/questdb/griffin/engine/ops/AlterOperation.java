@@ -241,7 +241,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             final LogRecord log = isInfo ? LOG.info() : (isCritical ? LOG.critical() : LOG.error());
             log.$("could not alter table [table=").$(svc.getTableToken())
                     .$(", command=").$(command)
-                    .$(", msg=").$(e.getFlyweightMessage())
+                    .$(", msg=").utf8(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
             throw e;
@@ -612,7 +612,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             svc.setMetaO3MaxLag(o3MaxLag);
         } catch (CairoException e) {
             LOG.error().$("could not change o3MaxLag [table=").utf8(getTableToken().getTableName())
-                    .$(", msg=").$(e.getFlyweightMessage())
+                    .$(", msg=").utf8(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
             throw e;

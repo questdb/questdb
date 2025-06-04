@@ -1646,7 +1646,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     }
                     throw SqlException.$(0, e.getFlyweightMessage());
                 }
-                LOG.info().$(e.getFlyweightMessage()).$();
+                LOG.info().utf8(e.getFlyweightMessage()).$();
                 typesAndUpdate = Misc.free(typesAndUpdate);
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
@@ -1799,7 +1799,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     securityContext.checkEntityEnabled();
                     r = authenticator.loginOK();
                 } catch (CairoException e) {
-                    LOG.error().$("failed to authenticate [error=").$(e.getFlyweightMessage()).I$();
+                    LOG.error().$("failed to authenticate [error=").utf8(e.getFlyweightMessage()).I$();
                     r = authenticator.denyAccess(e.getFlyweightMessage());
                 }
             }
@@ -2869,7 +2869,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     if (retries == maxRecompileAttempts) {
                         throw SqlException.$(0, e.getFlyweightMessage());
                     }
-                    LOG.info().$(e.getFlyweightMessage()).$("setupFactoryAndCursor [retries=").$(retries).I$();
+                    LOG.info().utf8(e.getFlyweightMessage()).$("setupFactoryAndCursor [retries=").$(retries).I$();
                     freeFactory();
                     if (!compileQuery()) {
                         // when we get a query from cache then we don't count it as

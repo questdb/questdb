@@ -625,7 +625,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // Scoreboard can be over allocated
                 LOG.critical().$("cannot lock txn in scoreboard [table=").$(tableToken)
                         .$(", txn=").$(txn)
-                        .$(", error=").$(ex.getFlyweightMessage())
+                        .$(", error=").utf8(ex.getFlyweightMessage())
                         .I$();
                 throw ex;
             }

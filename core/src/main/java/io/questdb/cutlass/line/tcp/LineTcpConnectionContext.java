@@ -280,7 +280,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                     try {
                         securityContext.checkEntityEnabled();
                     } catch (CairoException e) {
-                        LOG.error().$('[').$(getFd()).$("] ").$(e.getFlyweightMessage()).$();
+                        LOG.error().$('[').$(getFd()).$("] ").utf8(e.getFlyweightMessage()).$();
                         return IOContextResult.NEEDS_DISCONNECT;
                     }
 
@@ -377,8 +377,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             } catch (CairoException ex) {
                 LogRecord error = ex.isCritical() ? LOG.critical() : LOG.error();
                 error
-                        .$('[').$(getFd()).$("] could not process line data [table=").$(parser.getMeasurementName())
-                        .$(", msg=").$(ex.getFlyweightMessage())
+                        .$('[').$(getFd()).$("] could not process line data 1 [table=").$(parser.getMeasurementName())
+                        .$(", msg=").utf8(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 if (disconnectOnError) {
@@ -390,7 +390,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 goodMeasurement = false;
             } catch (Throwable ex) {
                 LOG.critical()
-                        .$('[').$(getFd()).$("] could not process line data [table=").$(parser.getMeasurementName())
+                        .$('[').$(getFd()).$("] could not process line data 2 [table=").$(parser.getMeasurementName())
                         .$(", ex=").$(ex)
                         .I$();
                 // This is a critical error, so we treat it as an unhandled one.

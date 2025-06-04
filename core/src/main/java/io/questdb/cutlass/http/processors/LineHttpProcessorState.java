@@ -345,7 +345,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         errorId = ERROR_COUNT.incrementAndGet();
         final LogRecord errorRec = ex.isCritical() ? LOG.critical() : LOG.error();
         errorRec
-                .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
+                .$('[').$(fd).$("] could not process line data 4 [table=").$(parser.getMeasurementName())
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
                 .$(", errno=").$(ex.getErrno());
         if (logMessageOnError) {
@@ -363,7 +363,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private Status handleUnknownParseError(Throwable ex) {
         errorId = ERROR_COUNT.incrementAndGet();
         final LogRecord errorRec = LOG.critical()
-                .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
+                .$('[').$(fd).$("] could not process line data 3 [table=").$(parser.getMeasurementName())
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId);
         if (logMessageOnError) {
             errorRec.$(", mangledLine=`").$utf8(recvBuffer.getBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');

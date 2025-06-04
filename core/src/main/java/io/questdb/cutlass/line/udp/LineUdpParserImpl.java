@@ -248,7 +248,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             this.tableToken = tableToken;
             this.tableName = tableName.getCacheAddress();
             createState(entry);
-            LOG.info().$("cached writer [name=").$(tableName).$(']').$();
+            LOG.info().$("cached writer [name=").utf8(tableName).$(']').$();
         } catch (CairoException ex) {
             LOG.error().$((Sinkable) ex).$();
             switchModeToSkipLine();

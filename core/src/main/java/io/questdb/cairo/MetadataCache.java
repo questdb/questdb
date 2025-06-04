@@ -101,7 +101,7 @@ public class MetadataCache implements QuietCloseable {
             }
         } catch (CairoException e) {
             LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
-            l.$(e.getFlyweightMessage()).$();
+            l.utf8(e.getFlyweightMessage()).$();
         } finally {
             Path.clearThreadLocals();
         }

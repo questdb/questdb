@@ -218,7 +218,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                     sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_JSON);
                     executeCachedSelect(state, factory);
                 } catch (TableReferenceOutOfDateException e) {
-                    LOG.info().$(e.getFlyweightMessage()).$();
+                    LOG.info().utf8(e.getFlyweightMessage()).$();
                     compileAndExecuteQuery(state);
                 }
             } else {
@@ -531,7 +531,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                     if (retries == maxSqlRecompileAttempts) {
                         throw SqlException.$(0, e.getFlyweightMessage());
                     }
-                    LOG.info().$(e.getFlyweightMessage()).$();
+                    LOG.info().utf8(e.getFlyweightMessage()).$();
                     // will recompile
                 }
             }

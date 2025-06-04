@@ -223,10 +223,10 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             // so it can be not too bad. Log error and continue work on the queue
             LOG.error()
                     .$("could not purge partition open [table=`").utf8(tableToken.getDirName())
-                    .$("`, msg=").$(ex.getFlyweightMessage())
+                    .$("`, msg=").utf8(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
-            LOG.error().$(ex.getFlyweightMessage()).$();
+            LOG.error().utf8(ex.getFlyweightMessage()).$();
         } finally {
             txReader.clear();
             Misc.free(txnScoreboard);

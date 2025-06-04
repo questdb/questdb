@@ -357,7 +357,7 @@ public class CleartextPasswordPgWireAuthenticator implements SocketAuthenticator
         try {
             registry.cancel(pid, secret);
         } catch (CairoException e) { // error message should not be sent to client
-            LOG.error().$(e.getFlyweightMessage()).$();
+            LOG.error().utf8(e.getFlyweightMessage()).$();
         }
     }
 

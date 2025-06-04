@@ -668,7 +668,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.fsyncAndClose(openRO(ff, path.$(), LOG));
                 } catch (CairoException e) {
                     LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
-                            .$(", msg=").$(e.getFlyweightMessage())
+                            .$(", msg=").utf8(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())
                             .I$();
                 }
@@ -1099,7 +1099,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // It is possible in concurrent schema modification that SQL compiler allowed
             // this alter, but by the time it is applied, the colum type has changed.
             LOG.error().$("cannot symbol capacity, column is not symbol [table=").$(tableToken)
-                    .$(", column=").$(columnName).$(", columnType=").$(ColumnType.nameOf(existingType)).I$();
+                    .$(", column=").utf8(columnName).$(", columnType=").$(ColumnType.nameOf(existingType)).I$();
             return;
         }
 
@@ -1452,7 +1452,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxVectorAddr, columnRowCount - 1);
                             if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
-                                LOG.critical().$("Invalid var len column size [column=").$(columnName)
+                                LOG.critical().$("Invalid var len column size [column=").utf8(columnName)
                                         .$(", size=").$(dataSize)
                                         .$(", path=").$(path)
                                         .I$();
@@ -4356,7 +4356,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // let's not leave a half-baked file sitting around
                 LOG.error()
                         .$("could not create index [name=").$(path)
-                        .$(", msg=").$(e.getFlyweightMessage())
+                        .$(", msg=").utf8(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .I$();
                 if (!ff.removeQuiet(path.$())) {
@@ -8763,7 +8763,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (quiet) {
                     distressed = true;
                     CharSequence columnName = metadata.getColumnName(i);
-                    LOG.error().$("could not rollback symbol table [table=").$(tableToken).$(", columnName=").$(columnName)
+                    LOG.error().$("could not rollback symbol table [table=").$(tableToken).$(", columnName=").utf8(columnName)
                             .$(", exception=").$(th)
                             .I$();
                 } else {

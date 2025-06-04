@@ -166,7 +166,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                             if (retries == maxSqlRecompileAttempts) {
                                 throw SqlException.$(0, e.getFlyweightMessage());
                             }
-                            info(state).$(e.getFlyweightMessage()).$();
+                            info(state).utf8(e.getFlyweightMessage()).$();
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);
                             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);

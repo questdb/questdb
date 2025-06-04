@@ -461,7 +461,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             try {
                 parseMessage(recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
             } catch (BadProtocolException e) {
-                LOG.error().$("failed to parse message [err: `").$(e.getFlyweightMessage()).$("`]").$();
+                LOG.error().$("failed to parse message [err: `").utf8(e.getFlyweightMessage()).$("`]").$();
                 // ignore, we are interrupting the current message processing, but have to continue processing other
                 // messages
             }
@@ -633,7 +633,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     securityContext.checkEntityEnabled();
                     r = authenticator.loginOK();
                 } catch (CairoException e) {
-                    LOG.error().$("failed to authenticate [error=").$(e.getFlyweightMessage()).I$();
+                    LOG.error().$("failed to authenticate [error=").utf8(e.getFlyweightMessage()).I$();
                     r = authenticator.denyAccess(e.getFlyweightMessage());
                 }
             }

@@ -512,7 +512,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             logRecord.$(", error=").$(throwable).I$();
             engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
         } catch (CairoException e) {
-            LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName()).$(", error=").$(e.getFlyweightMessage()).I$();
+            LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName()).$(", error=").utf8(e.getFlyweightMessage()).I$();
         }
     }
 
@@ -569,7 +569,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 );
                             } catch (CairoException e) {
                                 LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
-                                        .$(", msg=").$(e.getFlyweightMessage())
+                                        .$(", msg=").utf8(e.getFlyweightMessage())
                                         .$(", errno=").$(e.getErrno())
                                         .I$();
                             }
@@ -622,7 +622,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     );
                 } catch (CairoException e) {
                     LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
-                            .$(", msg=").$(e.getFlyweightMessage())
+                            .$(", msg=").utf8(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())
                             .I$();
                 }
@@ -668,7 +668,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         LOG.info().$("recoverable error applying SQL to wal table [table=").$(tableWriter.getTableToken())
                                 .$(", sql=").$(sql)
                                 .$(", position=").$(ex.getPosition())
-                                .$(", error=").$(ex.getFlyweightMessage())
+                                .$(", error=").utf8(ex.getFlyweightMessage())
                                 .I$();
 
                         return;
@@ -712,7 +712,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             LogRecord log = !e.isWALTolerable() ? LOG.error() : LOG.info();
             log.$("error applying SQL to wal table [table=")
                     .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql)
-                    .$(", msg=").$(e.getFlyweightMessage())
+                    .$(", msg=").utf8(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
 
