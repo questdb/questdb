@@ -752,10 +752,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
 
-    private static boolean isStringyType(int colType) {
-        return colType == ColumnType.VARCHAR || colType == ColumnType.STRING;
-    }
-
     private static long tolerance(QueryModel slaveModel) throws SqlException {
         ExpressionNode tolerance = slaveModel.getAsOfJoinTolerance();
         long toleranceInterval = Numbers.LONG_NULL;
