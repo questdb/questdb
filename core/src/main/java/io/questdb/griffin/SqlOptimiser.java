@@ -7222,6 +7222,8 @@ public class SqlOptimiser implements Mutable {
             IntList forDepths = intListPool.next();
             ObjList<ExpressionNode> pivotForNames = expressionNodeListPool.next();
             IntList forDepthsBackup = intListPool.next();
+            CharSequenceHashSet aggregateFunctionNames = csHashSetPool.next();
+            CharSequenceIntHashMap aliasCounters = csIntHashMapPool.next();
 
             try {
                 int expectedPivotColumnsPerAggregateFunction =
@@ -7239,7 +7241,7 @@ public class SqlOptimiser implements Mutable {
                 This is used in part of the fallback naming logic, to ensure unique column names.
              */
                 boolean duplicateAggregateFunctions = false;
-                CharSequenceHashSet aggregateFunctionNames = csHashSetPool.next();
+
                 for (int i = 0, n = nested.getPivotColumns().size(); i < n; i++) {
                     final CharSequence funcName = nested.getPivotColumns().get(i).getAst().token;
                     if (!aggregateFunctionNames.add(funcName)) {
@@ -7248,17 +7250,16 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
 
-                csHashSetPool.release(aggregateFunctionNames);
                 int numberOfCols = expectedPivotColumnsPerAggregateFunction * nested.getPivotColumns().size();
 
             /*
                 An artificial limit is set on output pivot columns. This is consistent with other implementations,
                 and prevents queries hanging.
              */
-//                if (numberOfCols > PIVOT_COLUMN_OUTPUT_LIMIT) {
-//                    throw SqlException.$(nested.getModelPosition(),
-//                            "too many columns in PIVOT output: " + numberOfCols + " > " + PIVOT_COLUMN_OUTPUT_LIMIT);
-//                }
+                if (numberOfCols > PIVOT_COLUMN_OUTPUT_LIMIT) {
+                    throw SqlException.$(nested.getModelPosition(),
+                            "too many columns in PIVOT output: " + numberOfCols + " > " + PIVOT_COLUMN_OUTPUT_LIMIT);
+                }
 
             /*
                 For each aggregate function, we will need to loop over all combinations of the `FOR` expressions.
@@ -7368,16 +7369,35 @@ public class SqlOptimiser implements Mutable {
                     /*
                         If there is a duplicate, then we tag on a number here to make it unique.
                      */
-                        // todo(nwoolmer): use hash map to scrap this n^2 rubbish
                         if (model.getColumnAliasIndex(name) >= 0) {
-                            for (int _i = 0; _i < PIVOT_COLUMN_OUTPUT_LIMIT; _i++) {
+                            CharSequence nameDup;
+                            int _i;
+                            int idx = aliasCounters.keyIndex(name);
+                            if (idx < 0) {
+                                _i = aliasCounters.valueAt(idx);
+                                nameDup = aliasCounters.keyAt(idx);
+                            } else {
+                                _i = 0;
+                                nameDup = String.valueOf(name); // todo: reduce string allocations in extreme aliasing case
+                            }
+
+                            for (; _i < PIVOT_MAX_ALIAS_INTEGER; _i++) {
                                 final int startLen = nameSink.length();
                                 nameSink.put(_i);
                                 if (model.getColumnAliasIndex(nameSink.toImmutable()) < 0) {
+
+                                    if (_i != aliasCounters.incrementAndReturnValue(nameDup)) {
+                                        throw new UnsupportedOperationException();
+                                    }
                                     break;
                                 } else {
                                     nameSink.trimTo(nameSink.length() - (nameSink.length() - startLen));
                                 }
+                            }
+
+                            if (_i == PIVOT_MAX_ALIAS_INTEGER) {
+                                throw SqlException.$(forName != null ? forName.position : 0, "exceeded number of allowed aliases for this column name [base=")
+                                        .put(nameDup).put(", count=").put(PIVOT_MAX_ALIAS_INTEGER).put(']');
                             }
                         }
 
@@ -7483,6 +7503,9 @@ public class SqlOptimiser implements Mutable {
                 intListPool.release(forDepths);
                 expressionNodeListPool.release(pivotForNames);
                 intListPool.release(forDepthsBackup);
+                csHashSetPool.release(aggregateFunctionNames);
+
+                csIntHashMapPool.release(aliasCounters);
             }
 
 
