@@ -151,15 +151,15 @@ public class AbstractTest {
         return Bootstrap.getServerMainArgs(root);
     }
 
-    protected static TableReader newOffPoolReader(CairoConfiguration configuration, CharSequence tableName, CairoEngine engine) {
-        return new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, engine.verifyTableName(tableName), engine.getTxnScoreboardPool());
-    }
-
     protected static HttpQueryTestBuilder getSimpleTester() {
         return new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false);
+    }
+
+    protected static TableReader newOffPoolReader(CairoConfiguration configuration, CharSequence tableName, CairoEngine engine) {
+        return new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, engine.verifyTableName(tableName), engine.getTxnScoreboardPool());
     }
 }
