@@ -7504,7 +7504,6 @@ public class SqlOptimiser implements Mutable {
                 expressionNodeListPool.release(pivotForNames);
                 intListPool.release(forDepthsBackup);
                 csHashSetPool.release(aggregateFunctionNames);
-
                 csIntHashMapPool.release(aliasCounters);
             }
 
@@ -7524,6 +7523,8 @@ public class SqlOptimiser implements Mutable {
             groupByModel.setNestedModel(nested);
             bonusModel.setNestedModel(groupByModel);
             model.setNestedModel(bonusModel);
+
+            nested.setNestedModel(rewritePivot(nested.getNestedModel()));
         } else {
             /*
                 We only allow wildcard selects of subqueries, so error out if we see a model with a projection.
@@ -7535,6 +7536,11 @@ public class SqlOptimiser implements Mutable {
 
             // recurse downwards
             model.setNestedModel(rewritePivot(model.getNestedModel()));
+            for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
+                model.getJoinModels().set(i, rewritePivot(model.getJoinModels().getQuick(i)));
+            }
+
+
         }
 
         return model;
