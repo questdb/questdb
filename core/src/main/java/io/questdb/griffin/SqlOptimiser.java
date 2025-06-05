@@ -7255,10 +7255,10 @@ public class SqlOptimiser implements Mutable {
                 An artificial limit is set on output pivot columns. This is consistent with other implementations,
                 and prevents queries hanging.
              */
-                if (numberOfCols > PIVOT_COLUMN_OUTPUT_LIMIT) {
-                    throw SqlException.$(nested.getModelPosition(),
-                            "too many columns in PIVOT output: " + numberOfCols + " > " + PIVOT_COLUMN_OUTPUT_LIMIT);
-                }
+//                if (numberOfCols > PIVOT_COLUMN_OUTPUT_LIMIT) {
+//                    throw SqlException.$(nested.getModelPosition(),
+//                            "too many columns in PIVOT output: " + numberOfCols + " > " + PIVOT_COLUMN_OUTPUT_LIMIT);
+//                }
 
             /*
                 For each aggregate function, we will need to loop over all combinations of the `FOR` expressions.
@@ -7368,13 +7368,15 @@ public class SqlOptimiser implements Mutable {
                     /*
                         If there is a duplicate, then we tag on a number here to make it unique.
                      */
+                        // todo(nwoolmer): use hash map to scrap this n^2 rubbish
                         if (model.getColumnAliasIndex(name) >= 0) {
                             for (int _i = 0; _i < PIVOT_COLUMN_OUTPUT_LIMIT; _i++) {
+                                final int startLen = nameSink.length();
                                 nameSink.put(_i);
                                 if (model.getColumnAliasIndex(nameSink.toImmutable()) < 0) {
                                     break;
                                 } else {
-                                    nameSink.trimTo(nameSink.length() - 1);
+                                    nameSink.trimTo(nameSink.length() - (nameSink.length() - startLen));
                                 }
                             }
                         }
