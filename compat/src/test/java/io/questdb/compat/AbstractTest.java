@@ -120,13 +120,13 @@ public class AbstractTest {
 
     @Before
     public void setUp() {
-        LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
+        LOG.info().$("Starting test ").utf8(getClass().getSimpleName()).$('#').utf8(testName.getMethodName()).$();
         createTestPath();
     }
 
     @After
     public void tearDown() {
-        LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
+        LOG.info().$("Finished test ").utf8(getClass().getSimpleName()).$('#').utf8(testName.getMethodName()).$();
         removeTestPath();
     }
 }
