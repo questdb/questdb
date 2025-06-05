@@ -40,7 +40,6 @@ import org.junit.Test;
 import java.util.Arrays;
 
 public class DirectLongListTest {
-
     private static final Log LOG = LogFactory.getLog(DirectLongListTest.class);
 
     @Test
