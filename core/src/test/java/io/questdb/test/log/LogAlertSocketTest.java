@@ -562,6 +562,11 @@ public class LogAlertSocketTest {
         }
 
         @Override
+        public LogRecord $invalid(@Nullable DirectUtf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
         public LogRecord $(@Nullable Utf8Sequence sequence) {
             throw new UnsupportedOperationException();
         }

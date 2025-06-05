@@ -338,7 +338,7 @@ public class JsonLexer implements Mutable, Closeable {
         while (p < lim) {
             byte b = Unsafe.getUnsafe().getByte(p);
             if (b < 0) {
-                int len = Utf8s.utf8DecodeInvalidMultiByte(p, lim, b, sink);
+                int len = Utf8s.utf8DecodeMultiByte(p, lim, b, sink);
                 if (len != -1) {
                     p += len;
                 } else {
@@ -355,7 +355,7 @@ public class JsonLexer implements Mutable, Closeable {
                         addToStash(lo, lo + n);
                         assert offset < cacheSize;
                         assert cacheSize <= cacheCapacity;
-                        len = Utf8s.utf8DecodeInvalidMultiByte(cache + offset, cache + cacheSize, b, sink);
+                        len = Utf8s.utf8DecodeMultiByte(cache + offset, cache + cacheSize, b, sink);
                         if (len == -1) {
                             // definitely UTF8 error
                             throw unsupportedEncoding(position);
@@ -376,7 +376,7 @@ public class JsonLexer implements Mutable, Closeable {
         while (p < hi) {
             byte b = Unsafe.getUnsafe().getByte(p);
             if (b < 0) {
-                int len = Utf8s.utf8DecodeInvalidMultiByte(p, hi, b, sink);
+                int len = Utf8s.utf8DecodeMultiByte(p, hi, b, sink);
                 if (len == -1) {
                     throw unsupportedEncoding(position);
                 }
