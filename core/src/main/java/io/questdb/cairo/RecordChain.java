@@ -24,6 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -31,8 +34,8 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -50,18 +53,18 @@ import java.io.Closeable;
 
 public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, WindowSPI, Reopenable {
     protected final int columnCount;
-    private final long[] columnOffsets;
     protected final long fixOffset;
     protected final MemoryCARW mem;
     protected final RecordChainRecord recordA;
     protected final RecordChainRecord recordB;
     protected final RecordSink recordSink;
     protected final long varOffset;
+    private final long[] columnOffsets;
+    protected long recordOffset;
+    protected long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
     private RecordChainRecord recordC;
-    protected long recordOffset;
     private SymbolTableSource symbolTableResolver;
-    protected long varAppendOffset = 0L;
 
     public RecordChain(
             @Transient @NotNull ColumnTypes columnTypes,
@@ -186,6 +189,17 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         long offset = beginRecord(prevRecordOffset);
         recordSink.copy(record, this);
         return offset;
+    }
+
+    @Override
+    public void putArray(@NotNull ArrayView value) {
+        mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
+        recordOffset += 8;
+        // appendAddressFor grows the memory if necessary
+        long byteCount = ArrayTypeDriver.getPlainValueSize(value);
+        final long appendAddress = mem.appendAddressFor(varAppendOffset, byteCount);
+        ArrayTypeDriver.appendPlainValue(appendAddress, value);
+        varAppendOffset += byteCount;
     }
 
     @Override
@@ -352,21 +366,22 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         }
     }
 
-    protected long rowToDataOffset(long row) {
-        return row + 8;
+    private void putNull() {
+        mem.putLong(rowToDataOffset(recordOffset), TableUtils.NULL_LEN);
+        recordOffset += 8;
     }
 
     protected RecordChainRecord newChainRecord() {
         return new RecordChainRecord(columnCount);
     }
 
-    private void putNull() {
-        mem.putLong(rowToDataOffset(recordOffset), TableUtils.NULL_LEN);
-        recordOffset += 8;
+    protected long rowToDataOffset(long row) {
+        return row + 8;
     }
 
     protected class RecordChainRecord implements Record {
-        private final ObjList<MemoryCR.ByteSequenceView> bsViews;
+        private final ObjList<BorrowedArray> arrays;
+        private final ObjList<DirectByteSequenceView> bsViews;
         private final ObjList<DirectString> csViewsA;
         private final ObjList<DirectString> csViewsB;
         private final ObjList<Interval> intervals;
@@ -386,6 +401,14 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
             this.longs256B = new ObjList<>(columnCount);
             this.utf8ViewsA = new ObjList<>(columnCount);
             this.utf8ViewsB = new ObjList<>(columnCount);
+            this.arrays = new ObjList<>(columnCount);
+        }
+
+        @Override
+        public ArrayView getArray(int col, int columnType) {
+            long offset = varWidthColumnOffset(col);
+            long addr = mem.addressOf(offset);
+            return ArrayTypeDriver.getPlainValue(addr, array(col));
         }
 
         @Override
@@ -576,9 +599,16 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
             return TableUtils.NULL_LEN;
         }
 
-        private MemoryCR.ByteSequenceView bsView(int columnIndex) {
+        private BorrowedArray array(int columnIndex) {
+            if (arrays.getQuiet(columnIndex) == null) {
+                arrays.extendAndSet(columnIndex, new BorrowedArray());
+            }
+            return arrays.getQuick(columnIndex);
+        }
+
+        private DirectByteSequenceView bsView(int columnIndex) {
             if (bsViews.getQuiet(columnIndex) == null) {
-                bsViews.extendAndSet(columnIndex, new MemoryCR.ByteSequenceView());
+                bsViews.extendAndSet(columnIndex, new DirectByteSequenceView());
             }
             return bsViews.getQuick(columnIndex);
         }
@@ -622,11 +652,6 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
             return longs256B.getQuick(columnIndex);
         }
 
-        protected void of(long offset) {
-            this.baseOffset = offset;
-            this.fixedOffset = offset + varOffset;
-        }
-
         private DirectUtf8String utf8ViewA(int columnIndex) {
             if (utf8ViewsA.getQuiet(columnIndex) == null) {
                 utf8ViewsA.extendAndSet(columnIndex, new DirectUtf8String());
@@ -643,6 +668,11 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
 
         private long varWidthColumnOffset(int index) {
             return mem.getLong(baseOffset + columnOffsets[index]);
+        }
+
+        protected void of(long offset) {
+            this.baseOffset = offset;
+            this.fixedOffset = offset + varOffset;
         }
     }
 }

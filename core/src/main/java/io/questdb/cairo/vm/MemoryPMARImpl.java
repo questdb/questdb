@@ -144,6 +144,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         }
     }
 
+    @Override
     public void truncate() {
         if (fd == -1) {
             // are we closed ?

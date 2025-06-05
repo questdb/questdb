@@ -30,6 +30,7 @@ import io.questdb.HttpClientConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.HttpConstants;
+import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
@@ -40,10 +41,14 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.bytes.DirectByteSlice;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -55,7 +60,7 @@ import java.io.Closeable;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
-public final class LineHttpSender implements Sender {
+public abstract class AbstractLineHttpSender implements Sender {
     private static final String PATH = "/write?precision=n";
     private static final int RETRY_BACKOFF_MULTIPLIER = 2;
     private static final int RETRY_INITIAL_BACKOFF_MS = 10;
@@ -64,28 +69,30 @@ public final class LineHttpSender implements Sender {
     private final String authToken;
     private final int autoFlushRows;
     private final int baseTimeoutMillis;
+    private final DirectByteSlice bufferView = new DirectByteSlice();
     private final long flushIntervalNanos;
     private final String host;
+    private final int maxNameLength;
     private final long maxRetriesNanos;
     private final long minRequestThroughput;
     private final String password;
     private final String path;
     private final int port;
-    private final CharSequence questdbVersion;
+    private final CharSequence questDBVersion;
     private final Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
     private final StringSink sink = new StringSink();
     private final String url;
     private final String username;
+    protected HttpClient.Request request;
     private HttpClient client;
     private boolean closed;
     private long flushAfterNanos = Long.MAX_VALUE;
     private JsonErrorParser jsonErrorParser;
     private long pendingRows;
-    private HttpClient.Request request;
     private int rowBookmark;
     private RequestState state = RequestState.EMPTY;
 
-    public LineHttpSender(
+    protected AbstractLineHttpSender(
             String host,
             int port,
             HttpClientConfiguration clientConfiguration,
@@ -94,6 +101,7 @@ public final class LineHttpSender implements Sender {
             String authToken,
             String username,
             String password,
+            int maxNameLength,
             long maxRetriesNanos,
             long minRequestThroughput,
             long flushIntervalNanos
@@ -104,26 +112,30 @@ public final class LineHttpSender implements Sender {
                 PATH,
                 clientConfiguration,
                 tlsConfig,
+                null,
                 autoFlushRows,
                 authToken,
                 username,
                 password,
+                maxNameLength,
                 maxRetriesNanos,
                 minRequestThroughput,
                 flushIntervalNanos
         );
     }
 
-    public LineHttpSender(
+    protected AbstractLineHttpSender(
             String host,
             int port,
             String path,
             HttpClientConfiguration clientConfiguration,
             ClientTlsConfiguration tlsConfig,
+            HttpClient client,
             int autoFlushRows,
             String authToken,
             String username,
             String password,
+            int maxNameLength,
             long maxRetriesNanos,
             long minRequestThroughput,
             long flushIntervalNanos
@@ -141,14 +153,106 @@ public final class LineHttpSender implements Sender {
         this.flushIntervalNanos = flushIntervalNanos;
         this.baseTimeoutMillis = clientConfiguration.getTimeout();
         if (tlsConfig != null) {
-            this.client = HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig);
+            this.client = client == null ? HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig) : client;
             this.url = "https://" + host + ":" + port + this.path;
         } else {
-            this.client = HttpClientFactory.newPlainTextInstance(clientConfiguration);
+            this.client = client == null ? HttpClientFactory.newPlainTextInstance(clientConfiguration) : client;
             this.url = "http://" + host + ":" + port + this.path;
         }
-        this.questdbVersion = new BuildInformationHolder().getSwVersion();
+        this.questDBVersion = new BuildInformationHolder().getSwVersion();
         this.request = newRequest();
+        this.maxNameLength = maxNameLength;
+    }
+
+    public static AbstractLineHttpSender createLineSender(
+            String host,
+            int port,
+            String path,
+            HttpClientConfiguration clientConfiguration,
+            ClientTlsConfiguration tlsConfig,
+            int autoFlushRows,
+            String authToken,
+            String username,
+            String password,
+            int maxNameLength,
+            long maxRetriesNanos,
+            long minRequestThroughput,
+            long flushIntervalNanos,
+            int protocolVersion
+    ) {
+        HttpClient cli = null;
+
+        // if user does not set protocol version explicit, client will try to detect it from server
+        if (protocolVersion == PROTOCOL_VERSION_NOT_SET_EXPLICIT) {
+            if (tlsConfig != null) {
+                cli = HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig);
+            } else {
+                cli = HttpClientFactory.newPlainTextInstance(clientConfiguration);
+            }
+            try {
+                HttpClient.Request req = cli.newRequest(host, port).GET();
+                HttpClient.ResponseHeaders responseHeaders = req.url(clientConfiguration.getSettingsPath()).send();
+                responseHeaders.await();
+                if (Utf8s.equalsNcAscii("200", responseHeaders.getStatusCode())) {
+                    try (JsonSettingsParser parser = new JsonSettingsParser()) {
+                        parser.parse(responseHeaders.getResponse());
+                        protocolVersion = parser.getDefaultProtocolVersion();
+                        if (parser.getMaxNameLen() != 0) {
+                            maxNameLength = parser.getMaxNameLen();
+                        }
+                    }
+                } else if (Utf8s.equalsNcAscii("404", responseHeaders.getStatusCode())) {
+                    // The client is unable to differentiate between a server shutdown and connecting to an older version.
+                    // So, the protocol is set to PROTOCOL_VERSION_V1 here for both scenarios.
+                    protocolVersion = PROTOCOL_VERSION_V1;
+                } else {
+                    throw new LineSenderException("Failed to detect server line protocol version, http status code: ")
+                            .put(responseHeaders.getStatusCode());
+                }
+            } catch (LineSenderException e) {
+                Misc.free(cli);
+                throw e;
+            } catch (Throwable e) {
+                Misc.free(cli);
+                throw new LineSenderException("Failed to detect server line protocol version", e);
+            }
+        }
+
+        if (protocolVersion == PROTOCOL_VERSION_V1) {
+            return new LineHttpSenderV1(
+                    host,
+                    port,
+                    path,
+                    clientConfiguration,
+                    tlsConfig,
+                    cli,
+                    autoFlushRows,
+                    authToken,
+                    username,
+                    password,
+                    maxNameLength,
+                    maxRetriesNanos,
+                    minRequestThroughput,
+                    flushIntervalNanos
+            );
+        } else {
+            return new LineHttpSenderV2(
+                    host,
+                    port,
+                    path,
+                    clientConfiguration,
+                    tlsConfig,
+                    cli,
+                    autoFlushRows,
+                    authToken,
+                    username,
+                    password,
+                    maxNameLength,
+                    maxRetriesNanos,
+                    minRequestThroughput,
+                    flushIntervalNanos
+            );
+        }
     }
 
     @Override
@@ -180,7 +284,6 @@ public final class LineHttpSender implements Sender {
         if (rowAdded()) {
             flush();
         }
-        rowBookmark = request.getContentLength();
     }
 
     @Override
@@ -188,6 +291,10 @@ public final class LineHttpSender implements Sender {
         writeFieldName(name);
         request.put(value ? 't' : 'f');
         return this;
+    }
+
+    public DirectByteSlice bufferView() {
+        return bufferView.of(request.getContentStart(), request.getContentLength());
     }
 
     @Override
@@ -213,13 +320,6 @@ public final class LineHttpSender implements Sender {
             closed = true;
             client = Misc.free(client);
         }
-    }
-
-    @Override
-    public Sender doubleColumn(CharSequence name, double value) {
-        writeFieldName(name);
-        request.put(value);
-        return this;
     }
 
     @Override
@@ -288,6 +388,8 @@ public final class LineHttpSender implements Sender {
         if (table.length() == 0) {
             throw new LineSenderException("table name cannot be empty");
         }
+        // set bookmark at start of the line.
+        rowBookmark = request.getContentLength();
         state = RequestState.TABLE_NAME_SET;
         escapeQuotedString(table);
         return this;
@@ -303,7 +405,9 @@ public final class LineHttpSender implements Sender {
     @Override
     public Sender timestampColumn(CharSequence name, Instant value) {
         // micros
-        writeFieldName(name).put((value.getEpochSecond() * Timestamps.SECOND_MICROS + value.getNano() / 1000L)).put('t');
+        writeFieldName(name)
+                .put((value.getEpochSecond() * Timestamps.SECOND_MICROS + value.getNano() / 1000L))
+                .put('t');
         return this;
     }
 
@@ -324,8 +428,9 @@ public final class LineHttpSender implements Sender {
 
     private static boolean keepAliveDisabled(HttpClient.ResponseHeaders response) {
         DirectUtf8Sequence connectionHeader = response.getHeader(HttpConstants.HEADER_CONNECTION);
-        return connectionHeader != null && Utf8s.equalsAscii("close", connectionHeader);
+        return HttpKeywords.isClose(connectionHeader);
     }
+
 
     private int backoff(int retryBackoff) {
         int jitter = rnd.nextInt(RETRY_MAX_JITTER_MS);
@@ -339,27 +444,9 @@ public final class LineHttpSender implements Sender {
             return;
         }
         Response chunkedRsp = response.getResponse();
+        //noinspection StatementWithEmptyBody
         while ((chunkedRsp.recv()) != null) {
             // we don't care about the response, just consume it, so it won't stay in the socket receive buffer
-        }
-    }
-
-    private void escapeQuotedString(CharSequence name) {
-        for (int i = 0, n = name.length(); i < n; i++) {
-            char c = name.charAt(i);
-            switch (c) {
-                case ' ':
-                case ',':
-                case '=':
-                case '\n':
-                case '\r':
-                case '\\':
-                    request.put((byte) '\\').put((byte) c);
-                    break;
-                default:
-                    request.put(c);
-                    break;
-            }
         }
     }
 
@@ -382,7 +469,9 @@ public final class LineHttpSender implements Sender {
 
     private void flush0(boolean closing) {
         if (state != RequestState.EMPTY && !closing) {
-            throw new LineSenderException("Cannot flush buffer while row is in progress. Use sender.at() or sender.atNow() to finish the current row first.");
+            throw new LineSenderException(
+                    "Cannot flush buffer while row is in progress. " +
+                            "Use sender.at() or sender.atNow() to finish the current row first.");
         }
         if (pendingRows == 0) {
             return;
@@ -423,7 +512,10 @@ public final class LineHttpSender implements Sender {
                 assert response.isChunked();
                 if (isRetryableHttpStatus(statusCode)) {
                     long nowNanos = System.nanoTime();
-                    retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE && !closing) ? nowNanos + maxRetriesNanos : retryingDeadlineNanos;
+                    retryingDeadlineNanos =
+                            (retryingDeadlineNanos == Long.MIN_VALUE && !closing)
+                                    ? nowNanos + maxRetriesNanos
+                                    : retryingDeadlineNanos;
                     if (nowNanos >= retryingDeadlineNanos) {
                         throwOnHttpErrorResponse(statusCode, response);
                     }
@@ -436,13 +528,17 @@ public final class LineHttpSender implements Sender {
                 // this is a network error, we can retry
                 client.disconnect(); // forces reconnect
                 long nowNanos = System.nanoTime();
-                retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE && !closing) ? nowNanos + maxRetriesNanos : retryingDeadlineNanos;
+                retryingDeadlineNanos =
+                        (retryingDeadlineNanos == Long.MIN_VALUE && !closing)
+                                ? nowNanos + maxRetriesNanos
+                                : retryingDeadlineNanos;
                 if (nowNanos >= retryingDeadlineNanos) {
                     // we did our best, give up
                     pendingRows = 0;
                     flushAfterNanos = Long.MAX_VALUE;
                     request = newRequest();
-                    throw new LineSenderException("Could not flush buffer: ").put(url).put(" Connection Failed").put(": ").put(e.getMessage());
+                    throw new LineSenderException("Could not flush buffer: ").put(url)
+                            .put(" Connection Failed").put(": ").put(e.getMessage());
                 }
                 retryBackoff = backoff(retryBackoff);
             }
@@ -483,7 +579,7 @@ public final class LineHttpSender implements Sender {
         HttpClient.Request r = client.newRequest(host, port)
                 .POST()
                 .url(path)
-                .header("User-Agent", "QuestDB/java/" + questdbVersion);
+                .header("User-Agent", "QuestDB/java/" + questDBVersion);
         if (username != null) {
             r.authBasic(username, password);
         } else if (authToken != null) {
@@ -493,6 +589,7 @@ public final class LineHttpSender implements Sender {
         rowBookmark = r.getContentLength();
         return r;
     }
+
 
     /**
      * @return true if flush is required
@@ -550,13 +647,6 @@ public final class LineHttpSender implements Sender {
         throw new LineSenderException(sink);
     }
 
-    private void validateColumnName(CharSequence name) {
-        if (!TableUtils.isValidColumnName(name, Integer.MAX_VALUE)) {
-            throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
-                    ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
-        }
-    }
-
     private void validateNotClosed() {
         if (closed) {
             throw new LineSenderException("sender already closed");
@@ -564,13 +654,55 @@ public final class LineHttpSender implements Sender {
     }
 
     private void validateTableName(CharSequence name) {
-        if (!TableUtils.isValidTableName(name, Integer.MAX_VALUE)) {
+        if (!TableUtils.isValidTableName(name, maxNameLength)) {
+            if (name.length() > maxNameLength) {
+                throw new LineSenderException("table name is too long: [name = ")
+                        .putAsPrintable(name)
+                        .put(", maxNameLength=")
+                        .put(maxNameLength)
+                        .put(']');
+            }
             throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
-                    "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
+                    "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ")
+                    .putAsPrintable(name);
         }
     }
 
-    private HttpClient.Request writeFieldName(CharSequence name) {
+    protected void escapeQuotedString(CharSequence name) {
+        for (int i = 0, n = name.length(); i < n; i++) {
+            char c = name.charAt(i);
+            switch (c) {
+                case ' ':
+                case ',':
+                case '=':
+                case '\n':
+                case '\r':
+                case '\\':
+                    request.put((byte) '\\').put((byte) c);
+                    break;
+                default:
+                    request.put(c);
+                    break;
+            }
+        }
+    }
+
+    protected void validateColumnName(CharSequence name) {
+        if (!TableUtils.isValidColumnName(name, maxNameLength)) {
+            if (name.length() > maxNameLength) {
+                throw new LineSenderException("column name is too long: [name = ")
+                        .putAsPrintable(name)
+                        .put(", maxNameLength=")
+                        .put(maxNameLength)
+                        .put(']');
+            }
+            throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
+                    ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ")
+                    .putAsPrintable(name);
+        }
+    }
+
+    protected HttpClient.Request writeFieldName(CharSequence name) {
         validateColumnName(name);
         switch (state) {
             case EMPTY:
@@ -737,6 +869,80 @@ public final class LineHttpSender implements Sender {
             NEXT_LINE_NUMBER_VALUE,
             NEXT_ERROR_ID_VALUE,
             DONE
+        }
+    }
+
+    public static class JsonSettingsParser implements JsonParser, Closeable {
+        private final static byte LINE_PROTO_SUPPORT_VERSIONS = 1;
+        private final static byte MAX_NAME_LEN = 2;
+        private final JsonLexer lexer = new JsonLexer(1024, 1024);
+        private final IntList supportVersions = new IntList(8);
+        private int maxNameLen = 0;
+        private byte nextJsonValueFlag = 0;
+
+        @Override
+        public void close() {
+            Misc.free(lexer);
+        }
+
+        public int getDefaultProtocolVersion() {
+            if (supportVersions.size() == 0) {
+                return PROTOCOL_VERSION_V1;
+            }
+            if (supportVersions.contains(PROTOCOL_VERSION_V2)) {
+                return PROTOCOL_VERSION_V2;
+            } else if (supportVersions.contains(PROTOCOL_VERSION_V1)) {
+                return PROTOCOL_VERSION_V1;
+            } else {
+                throw new LineSenderException("Server does not support current client");
+            }
+        }
+
+        public int getMaxNameLen() {
+            return maxNameLen;
+        }
+
+        @Override
+        public void onEvent(int code, CharSequence tag, int position) {
+            switch (code) {
+                case JsonLexer.EVT_NAME:
+                    if (tag.equals("line.proto.support.versions")) {
+                        nextJsonValueFlag = LINE_PROTO_SUPPORT_VERSIONS;
+                    } else if (tag.equals("cairo.max.file.name.length")) {
+                        nextJsonValueFlag = MAX_NAME_LEN;
+                    } else {
+                        nextJsonValueFlag = 0;
+                    }
+                    break;
+                case JsonLexer.EVT_VALUE:
+                    if (nextJsonValueFlag == MAX_NAME_LEN) {
+                        try {
+                            maxNameLen = Numbers.parseInt(tag);
+                        } catch (NumericException ignored) {
+                        }
+                    }
+                    break;
+                case JsonLexer.EVT_ARRAY_VALUE:
+                    if (nextJsonValueFlag == LINE_PROTO_SUPPORT_VERSIONS) {
+                        try {
+                            supportVersions.add(Numbers.parseInt(tag));
+                        } catch (NumericException e) {
+                            // ignore it
+                        }
+                    }
+                    break;
+                case JsonLexer.EVT_ARRAY_END:
+                    if (nextJsonValueFlag == LINE_PROTO_SUPPORT_VERSIONS) {
+                        nextJsonValueFlag = 0;
+                    }
+            }
+        }
+
+        public void parse(Response chunkedRsp) throws JsonException {
+            Fragment fragment;
+            while ((fragment = chunkedRsp.recv()) != null) {
+                lexer.parse(fragment.lo(), fragment.hi(), this);
+            }
         }
     }
 }

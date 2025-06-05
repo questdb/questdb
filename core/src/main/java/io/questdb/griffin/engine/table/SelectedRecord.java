@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
@@ -38,6 +39,11 @@ class SelectedRecord implements Record {
 
     public SelectedRecord(IntList columnCrossIndex) {
         this.columnCrossIndex = columnCrossIndex;
+    }
+
+    @Override
+    public ArrayView getArray(int col, int columnType) {
+        return base.getArray(getColumnIndex(col), columnType);
     }
 
     @Override

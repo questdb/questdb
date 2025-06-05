@@ -24,19 +24,19 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class ShortColumn extends ShortFunction implements ScalarFunction {
+public class ShortColumn extends ShortFunction implements Function {
     private static final ObjList<ShortColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public ShortColumn(int columnIndex) {
+    private ShortColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

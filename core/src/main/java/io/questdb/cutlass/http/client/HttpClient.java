@@ -26,6 +26,8 @@ package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
+import io.questdb.cutlass.line.array.ArrayBufferAppender;
+import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOOperation;
@@ -155,7 +157,12 @@ public abstract class HttpClient implements QuietCloseable {
 
     private void growBuffer(long requiredSize) {
         if (requiredSize > maxBufferSize) {
-            throw new HttpClientException("maximum buffer size exceeded [maxBufferSize=").put(maxBufferSize).put(", requiredSize=").put(requiredSize).put(']');
+            throw new HttpClientException("transaction is too large, either flush more frequently or " +
+                    "increase buffer size \"max_buf_size\" [maxBufferSize=")
+                    .putSize(maxBufferSize)
+                    .put(", transactionSize=")
+                    .putSize(requiredSize)
+                    .put(']');
         }
         long newBufferSize = Math.min(Numbers.ceilPow2((int) requiredSize), maxBufferSize);
         long newBufLo = Unsafe.realloc(bufLo, bufferSize, newBufferSize, MemoryTag.NATIVE_DEFAULT);
@@ -261,7 +268,7 @@ public abstract class HttpClient implements QuietCloseable {
         }
     }
 
-    public class Request implements Utf8Sink {
+    public class Request implements Utf8Sink, ArrayBufferAppender {
         private static final int STATE_CONTENT = 5;
         private static final int STATE_HEADER = 4;
         private static final int STATE_QUERY = 3;
@@ -332,6 +339,14 @@ public abstract class HttpClient implements QuietCloseable {
             }
         }
 
+        public long getContentStart() {
+            return contentStart;
+        }
+
+        public long getPtr() {
+            return ptr;
+        }
+
         public Request header(CharSequence name, CharSequence value) {
             beforeHeader();
             put(name).putAsciiInternal(": ").put(value);
@@ -389,6 +404,39 @@ public abstract class HttpClient implements QuietCloseable {
         public Request putAsciiQuoted(@NotNull CharSequence cs) {
             putAsciiInternal('\"').putAscii(cs).putAsciiInternal('\"');
             return this;
+        }
+
+        @Override
+        public void putBlockOfBytes(long from, long len) {
+            checkCapacity(len);
+            Vect.memcpy(ptr, from, len);
+            ptr += len;
+        }
+
+        @Override
+        public void putByte(byte value) {
+            put(value);
+        }
+
+        @Override
+        public void putDouble(double value) {
+            checkCapacity(Double.BYTES);
+            Unsafe.getUnsafe().putDouble(ptr, value);
+            ptr += Double.BYTES;
+        }
+
+        @Override
+        public void putInt(int value) {
+            checkCapacity(Integer.BYTES);
+            Unsafe.getUnsafe().putInt(ptr, value);
+            ptr += Integer.BYTES;
+        }
+
+        @Override
+        public void putLong(long value) {
+            checkCapacity(Long.BYTES);
+            Unsafe.getUnsafe().putLong(ptr, value);
+            ptr += Long.BYTES;
         }
 
         @Override
@@ -475,6 +523,10 @@ public abstract class HttpClient implements QuietCloseable {
 
         public void trimContentToLen(int contentLen) {
             ptr = contentStart + contentLen;
+        }
+
+        public void truncate() {
+            throw new UnsupportedOperationException();
         }
 
         public Request url(CharSequence url) {
@@ -804,7 +856,7 @@ public abstract class HttpClient implements QuietCloseable {
             if (isIncomplete()) {
                 throw new HttpClientException("http response headers not yet received");
             }
-            return Utf8s.equalsNcAscii("chunked", getHeader(HEADER_TRANSFER_ENCODING));
+            return HttpKeywords.isChunked(getHeader(HEADER_TRANSFER_ENCODING));
         }
 
         private void free() {

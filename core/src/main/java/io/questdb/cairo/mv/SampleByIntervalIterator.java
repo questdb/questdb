@@ -73,6 +73,13 @@ public abstract class SampleByIntervalIterator {
     public abstract long getTimestampLo();
 
     /**
+     * Returns true if the current interval is the last interval.
+     */
+    public boolean isLast() {
+        return getTimestampHi() >= getMaxTimestamp();
+    }
+
+    /**
      * Iterates to the next interval.
      *
      * @return true if the iterator moved to the next interval; false if the iteration has ended

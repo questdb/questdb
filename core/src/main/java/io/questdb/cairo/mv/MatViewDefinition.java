@@ -56,7 +56,7 @@ public class MatViewDefinition implements Mutable {
     // Not persisted, parsed from timeZoneOffset.
     private long fixedOffset;
     private String matViewSql;
-    private TableToken matViewToken;
+    private volatile TableToken matViewToken;
     private int refreshType = -1;
     // Not persisted, parsed from timeZone.
     private @Nullable TimeZoneRules rules;
@@ -215,6 +215,10 @@ public class MatViewDefinition implements Mutable {
         } else {
             this.fixedOffset = 0;
         }
+    }
+
+    public void updateToken(TableToken updatedToken) {
+        this.matViewToken = updatedToken;
     }
 
     private static void readDefinitionBlock(

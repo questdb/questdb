@@ -288,8 +288,7 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrDouble() {
-        //noinspection SimplifiableAssertion
-        Assert.assertFalse(SqlUtil.implicitCastStrAsDouble(null) == SqlUtil.implicitCastStrAsDouble(null));
+        Assert.assertNotSame(SqlUtil.implicitCastStrAsDouble(null), SqlUtil.implicitCastStrAsDouble(null));
         Assert.assertEquals(9.901E62, SqlUtil.implicitCastStrAsDouble("990.1e60"), 0.001);
 
         // overflow
@@ -311,8 +310,7 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrFloat() {
-        //noinspection SimplifiableAssertion
-        Assert.assertFalse(SqlUtil.implicitCastStrAsFloat(null) == SqlUtil.implicitCastStrAsFloat(null));
+        Assert.assertNotSame(SqlUtil.implicitCastStrAsFloat(null), SqlUtil.implicitCastStrAsFloat(null));
         Assert.assertEquals(990.1, SqlUtil.implicitCastStrAsFloat("990.1"), 0.001);
         Assert.assertEquals(-899.23, SqlUtil.implicitCastStrAsFloat("-899.23"), 0.001);
 

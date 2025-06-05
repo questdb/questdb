@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
@@ -64,7 +65,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             FuzzTransaction tx = transactions.getQuick(i);
             ObjList<FuzzTransactionOperation> ops = tx.operationList;
             for (int j = 0, k = ops.size(); j < k; j++) {
-                ops.getQuick(j).apply(rnd, engine, w, -1);
+                ops.getQuick(j).apply(rnd, engine, w, -1, null);
             }
             w.ic();
         }
@@ -161,30 +162,35 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
                     0,
                     0,
                     0.0,
+                    0.0,
                     5,
                     new String[]{"ABC", "CDE", "XYZ"},
                     0
             );
 
-            Rnd rnd2 = new Rnd();
-            replayTransactions(rnd2, engine, yw, transactions);
-            yw.commit();
+            try {
+                Rnd rnd2 = new Rnd();
+                replayTransactions(rnd2, engine, yw, transactions);
+                yw.commit();
 
-            Rnd rnd1 = new Rnd();
-            replayTransactions(rnd1, engine, xw, transactions);
-            xw.commit();
+                Rnd rnd1 = new Rnd();
+                replayTransactions(rnd1, engine, xw, transactions);
+                xw.commit();
 
-            Path parquet2 = Path.getThreadLocal(root).concat(tt.getDirName());
-            TableUtils.setPathForParquetPartition(parquet2, xw.getPartitionBy(), partitionTs, xw.getPartitionNameTxnByPartitionTimestamp(partitionTs));
+                Path parquet2 = Path.getThreadLocal(root).concat(tt.getDirName());
+                TableUtils.setPathForParquetPartition(parquet2, xw.getPartitionBy(), partitionTs, xw.getPartitionNameTxnByPartitionTimestamp(partitionTs));
 
-            final long fileSize2 = Files.length(parquet2.$());
-            Assert.assertTrue(fileSize2 >= fileSize);
-            final long checksumAfter = calcChecksum(parquet2.toString(), fileSize);
-            Assert.assertEquals(checksumBefore, checksumAfter);
+                final long fileSize2 = Files.length(parquet2.$());
+                Assert.assertTrue(fileSize2 >= fileSize);
+                final long checksumAfter = calcChecksum(parquet2.toString(), fileSize);
+                Assert.assertEquals(checksumBefore, checksumAfter);
 
-            String y = "select * from y where ts in '" + partitionName + "'";
-            String x = "select * from read_parquet('" + parquet2 + "')";
-            assertEquals(compiler, sqlExecutionContext, y, x);
+                String y = "select * from y where ts in '" + partitionName + "'";
+                String x = "select * from read_parquet('" + parquet2 + "')";
+                assertEquals(compiler, sqlExecutionContext, y, x);
+            } finally {
+                Misc.freeObjListAndClear(transactions);
+            }
         }
     }
 

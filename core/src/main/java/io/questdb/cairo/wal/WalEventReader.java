@@ -33,6 +33,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -181,11 +182,14 @@ public class WalEventReader implements Closeable {
                 eventCursor.openOffset(-1);
             }
 
-            final int formatVersion = eventMem.getInt(WAL_FORMAT_OFFSET_32);
+            // Check only lower short to match the version
+            // Higher short can be used to make a forward compatible change
+            // by adding more data at the footer of each record
+            final short formatVersion = Numbers.decodeLowShort(eventMem.getInt(WAL_FORMAT_OFFSET_32));
             if (WALE_FORMAT_VERSION != formatVersion && WALE_MAT_VIEW_FORMAT_VERSION != formatVersion && WALE_VIEW_FORMAT_VERSION != formatVersion) {
                 throw TableUtils.validationException(eventMem)
                         .put("Wal events file version does not match runtime version [expected=")
-                        .put(WALE_FORMAT_VERSION).put(",r ").put(WALE_MAT_VIEW_FORMAT_VERSION).put(" or ").put(WALE_MAT_VIEW_FORMAT_VERSION)
+                        .put(WALE_FORMAT_VERSION).put(", ").put(WALE_MAT_VIEW_FORMAT_VERSION).put(" or ").put(WALE_MAT_VIEW_FORMAT_VERSION)
                         .put(", actual=").put(formatVersion)
                         .put(']');
             }

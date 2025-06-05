@@ -48,7 +48,6 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
@@ -76,15 +75,11 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
  * - in volume
  * <p>
  * Other than that, at the execution phase the query is compiled and optimized
- * and validated. All columns are added to the create table operation
- * and key SAMPLE BY columns and timestamp are marked as dedup keys. Sampling interval
+ * and validated. Sampling interval
  * and unit are also parsed at this stage as we want to support GROUP BY timestamp_floor(ts)
  * queries.
  */
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
-    private final IntList baseKeyColumnNamePositions = new IntList();
-    private final ObjList<String> baseKeyColumnNames = new ObjList<>();
-    private final CharSequenceHashSet baseTableDedupKeys = new CharSequenceHashSet();
     private final String baseTableName;
     private final int baseTableNamePosition;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -351,7 +346,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         .put("TIMESTAMP column expected [actual=")
                         .put(ColumnType.nameOf(timestampType)).put(']');
             }
-            timestampModel.setIsDedupKey(); // set dedup for timestamp column
         }
 
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
@@ -397,7 +391,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                                 .put("TIMESTAMP column does not exist or not present in select list [name=")
                                 .put(queryColumn.getName()).put(']');
                     }
-                    timestampModel.setIsDedupKey(); // set dedup for timestamp column
                 }
             }
         }
@@ -435,31 +428,15 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
         }
 
-        // Mark key columns as dedup keys.
-        baseKeyColumnNames.clear();
-        baseKeyColumnNamePositions.clear();
-
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
         try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 if (hasNoAggregates(functionFactoryCache, queryModel, i)) {
-                    // SAMPLE BY/GROUP BY key, add as dedup key.
                     final CreateTableColumnModel columnModel = createColumnModelMap.get(column.getName());
                     if (columnModel == null) {
                         throw SqlException.$(0, "missing column [name=").put(column.getName()).put(']');
                     }
-                    columnModel.setIsDedupKey();
-                    // Copy column names into builder to be validated later.
-                    copyBaseTableColumnNames(
-                            column.getAst(),
-                            queryModel,
-                            baseTableName,
-                            baseKeyColumnNames,
-                            baseKeyColumnNamePositions,
-                            selectTextPosition
-                    );
-
                     copyBaseTableSymbolColumnCapacity(column.getAst(), queryModel, columnModel, baseTableName, baseTableMetadata);
                 }
             }
@@ -483,108 +460,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
         }
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata);
-        // Key column validation (best-effort):
-        // Option 1. Base table has no dedup.
-        //           Any key columns are fine in this case.
-        // Option 2. Base table has dedup columns.
-        //           Key columns in mat view query must be a subset of the base table's dedup columns.
-        //           That's to avoid situation when dedup upsert rewrites key column values leading to
-        //           inconsistent mat view data.
-        baseTableDedupKeys.clear();
-        for (int i = 0, n = baseTableMetadata.getColumnCount(); i < n; i++) {
-            if (baseTableMetadata.isDedupKey(i)) {
-                baseTableDedupKeys.add(baseTableMetadata.getColumnName(i));
-            }
-        }
-        if (baseTableDedupKeys.size() > 0) {
-            for (int i = 0, n = baseKeyColumnNames.size(); i < n; i++) {
-                final CharSequence baseKeyColumnName = baseKeyColumnNames.get(i);
-                final int baseKeyColumnIndex = baseTableMetadata.getColumnIndexQuiet(baseKeyColumnName);
-                if (baseKeyColumnIndex > -1 && !baseTableMetadata.isDedupKey(baseKeyColumnIndex)) {
-                    throw SqlException.position(baseKeyColumnNamePositions.get(i) + selectTextPosition)
-                            .put("key column must be one of the base table's dedup keys")
-                            .put(" [columnName=").put(baseKeyColumnName)
-                            .put(", baseTableName=").put(baseTableName)
-                            .put(", baseTableDedupKeys=").put(baseTableDedupKeys)
-                            .put(']');
-                }
-            }
-        }
-    }
-
-    /**
-     * Copies base table column names present in the given node into the target set.
-     * The node may contain multiple columns/aliases, e.g. `concat(sym1, sym2)`, which are searched
-     * down to their names in the base table.
-     * <p>
-     * Used to find the list of base table columns used in mat view query keys (best-effort validation).
-     */
-    private static void copyBaseTableColumnNames(
-            ExpressionNode node,
-            QueryModel model,
-            CharSequence baseTableName,
-            ObjList<String> baseKeyColumnNames,
-            IntList baseKeyColumnNamePositions,
-            int selectTextPosition
-    ) throws SqlException {
-        if (node != null && model != null) {
-            if (node.type == ExpressionNode.LITERAL) {
-                if (model.getTableName() != null) {
-                    // We've found a lowest-level model. Let's check if the column belongs to it.
-                    final int dotIndex = Chars.indexOfLastUnquoted(node.token, '.');
-                    if (dotIndex > -1) {
-                        if (Chars.equalsIgnoreCase(model.getName(), node.token, 0, dotIndex)) {
-                            if (!Chars.equalsIgnoreCase(model.getTableName(), baseTableName)) {
-                                throw SqlException.position(node.position + selectTextPosition)
-                                        .put("only base table columns can be used as materialized view keys")
-                                        .put(" [invalid key=").put(node.token)
-                                        .put(']');
-                            }
-                            baseKeyColumnNames.add(Chars.toString(node.token, dotIndex + 1, node.token.length()));
-                            baseKeyColumnNamePositions.add(node.position);
-                            return;
-                        }
-                    } else {
-                        if (!Chars.equalsIgnoreCase(model.getTableName(), baseTableName)) {
-                            throw SqlException.position(node.position + selectTextPosition)
-                                    .put("only base table columns can be used as materialized view keys")
-                                    .put(" [invalid key=").put(node.token)
-                                    .put(']');
-                        }
-                        baseKeyColumnNames.add(Chars.toString(node.token));
-                        baseKeyColumnNamePositions.add(node.position);
-                        return;
-                    }
-                } else {
-                    // Check nested model.
-                    final QueryColumn column = model.getAliasToColumnMap().get(node.token);
-                    copyBaseTableColumnNames(
-                            column != null ? column.getAst() : node,
-                            model.getNestedModel(),
-                            baseTableName,
-                            baseKeyColumnNames,
-                            baseKeyColumnNamePositions,
-                            selectTextPosition
-                    );
-                }
-            }
-
-            // Check node children for functions/operators.
-            for (int i = 0, n = node.args.size(); i < n; i++) {
-                copyBaseTableColumnNames(node.args.getQuick(i), model, baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
-            }
-            if (node.lhs != null) {
-                copyBaseTableColumnNames(node.lhs, model, baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
-            }
-            if (node.rhs != null) {
-                copyBaseTableColumnNames(node.rhs, model, baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
-            }
-
-            // Check join models.
-            for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
-                copyBaseTableColumnNames(node, model.getJoinModels().getQuick(i), baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
-            }
-        }
     }
 
     private static void copyBaseTableSymbolColumnCapacity(

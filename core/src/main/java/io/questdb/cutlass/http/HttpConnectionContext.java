@@ -267,6 +267,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return responseSink.getRawSocket();
     }
 
+    @SuppressWarnings("unused")
     public RejectProcessor getRejectProcessor() {
         return rejectProcessor;
     }
@@ -404,6 +405,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return responseSink.simpleResponse();
     }
 
+    @Override
     public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, PeerIsSlowToWriteException, ServerDisconnectException {
         if (pendingRetry) {
             pendingRetry = false;
@@ -903,15 +905,15 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     }
                 }
 
-                if (!connectionCounted) {
+                if (!connectionCounted && !processor.ignoreConnectionLimitCheck()) {
                     processor = checkConnectionLimit(processor);
                     connectionCounted = true;
                 }
 
                 final long contentLength = headerParser.getContentLength();
-                final boolean chunked = Utf8s.equalsNcAscii("chunked", headerParser.getHeader(HEADER_TRANSFER_ENCODING));
-                final boolean multipartRequest = Utf8s.equalsNcAscii("multipart/form-data", headerParser.getContentType())
-                        || Utf8s.equalsNcAscii("multipart/mixed", headerParser.getContentType());
+                final boolean chunked = HttpKeywords.isChunked(headerParser.getHeader(HEADER_TRANSFER_ENCODING));
+                final boolean multipartRequest = HttpKeywords.isContentTypeMultipartFormData(headerParser.getContentType())
+                        || HttpKeywords.isContentTypeMultipartMixed(headerParser.getContentType());
 
                 if (multipartRequest) {
                     busyRecv = consumeMultipart(socket, (HttpMultipartContentProcessor) processor, headerEnd, read, newRequest, rescheduleContext);

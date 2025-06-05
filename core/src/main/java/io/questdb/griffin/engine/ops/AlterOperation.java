@@ -348,9 +348,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         if (keepMatViewsValid) {
             return null;
         }
+        // Table rename is not in the list since it's handled by the engine directly. That's because the invalidation
+        // looks up dependent views by table name which has already changed at this point, not directory name.
         switch (command) {
-            case RENAME_TABLE:
-                return "table rename operation";
             case DROP_COLUMN:
                 return "drop column operation";
             case RENAME_COLUMN:
@@ -363,10 +363,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 return "detach partition operation";
             case ATTACH_PARTITION:
                 return "attach partition operation";
-            case SET_DEDUP_ENABLE:
-                // We disallow creation of mat views with keys outside the base table's dedup columns.
-                // So, we invalidate mat views when user enables dedup on the base table, not to break this restriction.
-                return "enable deduplication operation";
             default:
                 return null;
         }
