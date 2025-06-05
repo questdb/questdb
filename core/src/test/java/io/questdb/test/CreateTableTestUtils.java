@@ -56,7 +56,7 @@ public class CreateTableTestUtils {
     }
 
     public static void createTableWithVersionAndId(TableModel model, CairoEngine engine, int version, int tableId) {
-        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false, false);
+        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false, false, false);
         if (tableToken == null) {
             throw CairoException.critical(0).put("table already exists: ").put(model.getTableName());
         }

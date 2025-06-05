@@ -124,4 +124,5 @@ open module io.questdb {
     exports io.questdb.cutlass.pgwire.modern;
     exports io.questdb.cairo.file;
     exports io.questdb.preferences;
+    exports io.questdb.cairo.view;
 }

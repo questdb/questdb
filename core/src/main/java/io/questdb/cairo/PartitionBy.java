@@ -57,6 +57,7 @@ public final class PartitionBy {
      * Data is not partitioned at all, all data is stored in a single directory
      */
     public static final int NONE = 3;
+    public static final int NOT_APPLICABLE = 6;
     public static final int WEEK = 5;
     public static final int YEAR = 2;
     private static final PartitionAddMethod ADD_DD = Timestamps::addDays;
@@ -157,6 +158,7 @@ public final class PartitionBy {
             case WEEK:
                 return PARTITION_WEEK_FORMAT;
             case NONE:
+            case NOT_APPLICABLE:
                 return DEFAULT_FORMAT;
             default:
                 throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
@@ -214,6 +216,7 @@ public final class PartitionBy {
                     fmtStr = WEEK_PATTERN;
                     break;
                 case NONE:
+                case NOT_APPLICABLE:
                     fmtMethod = DEFAULT_FORMAT;
                     fmtStr = partitionName;
                     break;
@@ -267,6 +270,8 @@ public final class PartitionBy {
                 return "WEEK";
             case NONE:
                 return "NONE";
+            case NOT_APPLICABLE:
+                return "N/A";
             default:
                 return "UNKNOWN";
         }
@@ -279,6 +284,7 @@ public final class PartitionBy {
     public static void validateTtlGranularity(int partitionBy, int ttlHoursOrMonths, int ttlValuePos) throws SqlException {
         switch (partitionBy) {
             case NONE:
+            case NOT_APPLICABLE:
                 throw SqlException.position(ttlValuePos).put("cannot set TTL on a non-partitioned table");
             case DAY:
                 if (ttlHoursOrMonths < 0 || ttlHoursOrMonths % 24 == 0) {
@@ -353,6 +359,7 @@ public final class PartitionBy {
         nameToIndexMap.put("hour", HOUR);
         nameToIndexMap.put("week", WEEK);
         nameToIndexMap.put("none", NONE);
+        nameToIndexMap.put("n/a", NOT_APPLICABLE);
 
         nameToIndexMapUtf8.put(new Utf8String("day"), DAY);
         nameToIndexMapUtf8.put(new Utf8String("month"), MONTH);
@@ -360,6 +367,7 @@ public final class PartitionBy {
         nameToIndexMapUtf8.put(new Utf8String("hour"), HOUR);
         nameToIndexMapUtf8.put(new Utf8String("week"), WEEK);
         nameToIndexMapUtf8.put(new Utf8String("none"), NONE);
+        nameToIndexMapUtf8.put(new Utf8String("n/a"), NOT_APPLICABLE);
 
         ttlUnitToIndexMap.put("h", HOUR);
         ttlUnitToIndexMap.put("hour", HOUR);

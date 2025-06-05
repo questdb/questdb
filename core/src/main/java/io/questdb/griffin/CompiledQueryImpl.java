@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
+import io.questdb.griffin.engine.ops.CreateViewOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
@@ -247,6 +248,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     public void ofCreateUser() {
         of(CREATE_USER);
         this.isExecutedAtParseTime = true;
+    }
+
+    public void ofCreateView(CreateViewOperation createViewOp) {
+        of(CREATE_VIEW);
+        this.operation = createViewOp;
+        this.isExecutedAtParseTime = false;
     }
 
     public void ofDeallocate(CharSequence statementName) {

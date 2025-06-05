@@ -1204,7 +1204,7 @@ public final class TestUtils {
             int tableId,
             CharSequence tableName
     ) {
-        TableToken token = engine.lockTableName(tableName, tableId, structure.isMatView(), structure.isWalEnabled());
+        TableToken token = engine.lockTableName(tableName, tableId, structure.isView(), structure.isMatView(), structure.isWalEnabled());
         if (token == null) {
             throw new RuntimeException("table already exists: " + tableName);
         }

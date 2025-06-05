@@ -22,18 +22,37 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo.view;
 
-public class WalTxnType {
-    public static final byte DATA = 0;
-    public static final byte MAT_VIEW_DATA = 3;
-    public static final byte MAT_VIEW_INVALIDATE = 4;
-    public static final byte NONE = -1;
-    public static final byte SQL = 1;
-    public static final byte TRUNCATE = 2;
-    public static final byte VIEW_INVALIDATE = 5;
+import io.questdb.cairo.TableToken;
+import io.questdb.std.Mutable;
+import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
-    public static boolean isDataType(byte type) {
-        return type == DATA || type == MAT_VIEW_DATA;
-    }
+// TODO: do we need this store ???
+
+/**
+ * It holds per-view states.
+ * <p>
+ * The actual implementation may be no-op in case of disabled views or read-only replica.
+ */
+public interface ViewStateStore extends QuietCloseable, Mutable {
+
+    // Only creates the view state, no telemetry event logged.
+    ViewState addViewState(ViewDefinition viewDefinition);
+
+    @TestOnly
+    @Override
+    void clear();
+
+    // Creates the view state, logs telemetry event.
+    void createViewState(ViewDefinition viewDefinition);
+
+    void enqueueInvalidate(TableToken viewToken, String invalidationReason);
+
+    @Nullable
+    ViewState getViewState(TableToken viewToken);
+
+    void removeViewState(TableToken viewToken);
 }

@@ -37,7 +37,8 @@ import org.jetbrains.annotations.Nullable;
 public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final int EXCEPTION_TABLE_DOES_NOT_EXIST = -105;
-    private static final int EXCEPTION_MAT_VIEW_DOES_NOT_EXIST = EXCEPTION_TABLE_DOES_NOT_EXIST - 1;
+    private static final int EXCEPTION_VIEW_DOES_NOT_EXIST = EXCEPTION_TABLE_DOES_NOT_EXIST - 1;
+    private static final int EXCEPTION_MAT_VIEW_DOES_NOT_EXIST = EXCEPTION_VIEW_DOES_NOT_EXIST - 1;
     private static final int EXCEPTION_WAL_RECOVERABLE = EXCEPTION_MAT_VIEW_DOES_NOT_EXIST - 1;
     private static final ThreadLocal<SqlException> tlException = new ThreadLocal<>(SqlException::new);
     private final StringSink message = new StringSink();
@@ -149,6 +150,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 .put(", from=").put(ColumnType.nameOf(fromType))
                 .put(", to=").put(ColumnType.nameOf(toType))
                 .put(']');
+    }
+
+    public static SqlException viewDoesNotExist(int position, CharSequence tableName) {
+        return position(position).errorCode(EXCEPTION_VIEW_DOES_NOT_EXIST).put("view does not exist [view=").put(tableName).put(']');
     }
 
     public static SqlException walRecoverable(int position) {

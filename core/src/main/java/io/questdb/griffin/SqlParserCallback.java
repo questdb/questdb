@@ -30,6 +30,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.engine.table.ShowCreateMatViewRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
@@ -89,6 +90,18 @@ public interface SqlParserCallback {
             GenericLexer lexer,
             SecurityContext securityContext,
             CreateTableOperationBuilder builder,
+            @Nullable CharSequence tok
+    ) throws SqlException {
+        if (tok != null) {
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+        }
+        return builder;
+    }
+
+    default CreateViewOperationBuilder parseCreateViewExt(
+            GenericLexer lexer,
+            SecurityContext securityContext,
+            CreateViewOperationBuilder builder,
             @Nullable CharSequence tok
     ) throws SqlException {
         if (tok != null) {

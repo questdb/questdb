@@ -56,7 +56,7 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
     @Test
     public void testAddSameViewTwice() {
         TableToken table1 = newTableToken("table1");
-        TableToken view1 = newViewToken("view1");
+        TableToken view1 = newMatViewToken("view1");
 
         MatViewDefinition viewDefinition = createDefinition(view1, table1);
         try {
@@ -74,7 +74,7 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
     // loops
     @Test
     public void testDirectSelfLoop() {
-        TableToken viewA = newViewToken("viewA");
+        TableToken viewA = newMatViewToken("viewA");
 
         MatViewDefinition viewDefinition = createDefinition(viewA, viewA);
         try {
@@ -88,7 +88,7 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
     @Test
     public void testDroppedState() {
         TableToken table1 = newTableToken("table1");
-        TableToken view1 = newViewToken("view1");
+        TableToken view1 = newMatViewToken("view1");
         MatViewDefinition viewDefinition = createDefinition(view1, table1);
         graph.addView(viewDefinition);
         MatViewState state = stateStore.addViewState(viewDefinition);
@@ -111,10 +111,10 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
         //v3
         newTableToken("table2");
         newTableToken("table3");
-        TableToken view1 = newViewToken("view1");
+        TableToken view1 = newMatViewToken("view1");
         addDefinition(view1, newTableToken("table1"));
-        addDefinition(newViewToken("view2"), newTableToken("table1"));
-        addDefinition(newViewToken("view3"), view1);
+        addDefinition(newMatViewToken("view2"), newTableToken("table1"));
+        addDefinition(newMatViewToken("view3"), view1);
 
         graph.orderByDependentViews(tableTokens, ordered);
         Assert.assertEquals(6, ordered.size());
@@ -129,9 +129,9 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
 
     @Test
     public void testIndirectLoopViaSharedDependency() {
-        TableToken viewA = newViewToken("viewA");
-        TableToken viewB = newViewToken("viewB");
-        TableToken viewC = newViewToken("viewC");
+        TableToken viewA = newMatViewToken("viewA");
+        TableToken viewB = newMatViewToken("viewB");
+        TableToken viewC = newMatViewToken("viewC");
 
         addDefinition(viewA, viewB);
         addDefinition(viewC, viewB);
@@ -164,7 +164,7 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
     @Test
     public void testSingleView() {
         TableToken table1 = newTableToken("table1");
-        TableToken view1 = newViewToken("view1");
+        TableToken view1 = newMatViewToken("view1");
         addDefinition(view1, table1);
         graph.orderByDependentViews(tableTokens, ordered);
         Assert.assertEquals(2, ordered.size());
@@ -174,9 +174,9 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
 
     @Test
     public void testThreeLevelLoop() {
-        TableToken viewA = newViewToken("viewA");
-        TableToken viewB = newViewToken("viewB");
-        TableToken viewC = newViewToken("viewC");
+        TableToken viewA = newMatViewToken("viewA");
+        TableToken viewB = newMatViewToken("viewB");
+        TableToken viewC = newMatViewToken("viewC");
 
         addDefinition(viewA, viewB);
         addDefinition(viewB, viewC);
@@ -192,8 +192,8 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
 
     @Test
     public void testTwoLevelLoop() {
-        TableToken viewA = newViewToken("viewA");
-        TableToken viewB = newViewToken("viewB");
+        TableToken viewA = newMatViewToken("viewA");
+        TableToken viewB = newMatViewToken("viewB");
 
         addDefinition(viewA, viewB);
         MatViewDefinition viewDefinition = createDefinition(viewB, viewA);
@@ -227,15 +227,15 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
         return viewDefinition;
     }
 
-    private TableToken newTableToken(String tableName) {
-        TableToken t = new TableToken(tableName, tableName, 0, false, true, false, false, true);
-        tableTokens.add(t);
-        return t;
-    }
-
-    private TableToken newViewToken(String tableName) {
-        TableToken v = new TableToken(tableName, tableName, 0, true, true, false, false, true);
+    private TableToken newMatViewToken(String tableName) {
+        TableToken v = new TableToken(tableName, tableName, 0, false, true, true, false, false, true);
         tableTokens.add(v);
         return v;
+    }
+
+    private TableToken newTableToken(String tableName) {
+        TableToken t = new TableToken(tableName, tableName, 0, false, false, true, false, false, true);
+        tableTokens.add(t);
+        return t;
     }
 }

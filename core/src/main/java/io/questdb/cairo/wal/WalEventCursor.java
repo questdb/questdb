@@ -47,6 +47,7 @@ public class WalEventCursor {
     private final MatViewDataInfo mvDataInfo = new MatViewDataInfo();
     private final MatViewInvalidationInfo mvInvalidationInfo = new MatViewInvalidationInfo();
     private final SqlInfo sqlInfo = new SqlInfo();
+    private final ViewInvalidationInfo viewInvalidationInfo = new ViewInvalidationInfo();
     private long memSize;
     private long nextOffset = Integer.BYTES;
     private long offset = Integer.BYTES; // skip wal meta version
@@ -112,6 +113,13 @@ public class WalEventCursor {
 
     public byte getType() {
         return type;
+    }
+
+    public ViewInvalidationInfo getViewInvalidationInfo() {
+        if (type != VIEW_INVALIDATE) {
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not VIEW_INVALIDATION, type=").put(type);
+        }
+        return viewInvalidationInfo;
     }
 
     public boolean hasNext() {
@@ -221,6 +229,9 @@ public class WalEventCursor {
                 sqlInfo.read();
                 break;
             case TRUNCATE:
+                break;
+            case VIEW_INVALIDATE:
+                viewInvalidationInfo.read();
                 break;
             case MAT_VIEW_INVALIDATE:
                 mvInvalidationInfo.read();
@@ -567,6 +578,25 @@ public class WalEventCursor {
             sql.put(readStr());
             rndSeed0 = readLong();
             rndSeed1 = readLong();
+        }
+    }
+
+    public class ViewInvalidationInfo {
+        private final StringSink error = new StringSink();
+        private boolean invalid;
+
+        public CharSequence getInvalidationReason() {
+            return error;
+        }
+
+        public boolean isInvalid() {
+            return invalid;
+        }
+
+        private void read() {
+            invalid = readBool();
+            error.clear();
+            error.put(readStr());
         }
     }
 }

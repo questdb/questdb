@@ -723,6 +723,11 @@ public interface CairoConfiguration {
         return true;
     }
 
+    default boolean isViewEnabled() {
+        // TODO: implement the config flag
+        return true;
+    }
+
     boolean isWalApplyEnabled();
 
     boolean isWalApplyParallelSqlEnabled();
