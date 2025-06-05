@@ -108,7 +108,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -149,7 +148,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int O3_BLOCK_MERGE = 3;
     public static final int O3_BLOCK_NONE = -1;
     public static final int O3_BLOCK_O3 = 1;
-    public static final long TIMESTAMP_EPOCH = 0L;
     // Oversized partitionUpdateSink (offset, description):
     // 0, partitionTimestamp
     // 1, timestampMin
@@ -162,6 +160,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // ... column top for every column
     public static final int PARTITION_SINK_SIZE_LONGS = 8;
     public static final int PARTITION_SINK_COL_TOP_OFFSET = PARTITION_SINK_SIZE_LONGS * Long.BYTES;
+    public static final long TIMESTAMP_EPOCH = 0L;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
@@ -245,8 +244,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final TxReader slaveTxReader;
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
-    private final int timestampType;
     private final TimestampDriver timestampDriver;
+    private final int timestampType;
     private final MemoryMARW todoMem = Vm.getCMARWInstance();
     private final TxWriter txWriter;
     private final TxnScoreboard txnScoreboard;
@@ -6160,7 +6159,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // We need to read the min timestamp from the next partition
                         long firstPartitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
                         long partitionSize = txWriter.getPartitionSize(0);
-                        setPathForNativePartition(path, partitionBy, firstPartitionTimestamp, txWriter.getPartitionNameTxn(0));
+                        setPathForNativePartition(path, timestampType, partitionBy, firstPartitionTimestamp, txWriter.getPartitionNameTxn(0));
                         readPartitionMinMaxTimestamps(firstPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), -1, partitionSize);
                         txWriter.minTimestamp = attachMinTimestamp;
                     }
@@ -6169,7 +6168,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         int lastPartitionIndex = txWriter.getPartitionCount() - 1;
                         long lastPartitionTimestamp = txWriter.getPartitionTimestampByIndex(lastPartitionIndex);
                         long partitionSize = txWriter.getPartitionSize(lastPartitionIndex);
-                        setPathForNativePartition(path.trimTo(pathSize), partitionBy, lastPartitionTimestamp, txWriter.getPartitionNameTxn(lastPartitionIndex));
+                        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, lastPartitionTimestamp, txWriter.getPartitionNameTxn(lastPartitionIndex));
                         readPartitionMinMaxTimestamps(lastPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), -1, partitionSize);
                         txWriter.maxTimestamp = attachMaxTimestamp;
                     }
@@ -7115,7 +7114,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 pressureControl.updateInflightPartitions(--inflightPartitions);
                                 throw CairoException.critical(0)
                                         .put("commit replace mode is not supported for Parquet partitions [table=").put(getTableToken().getTableName())
-                                        .put(", partition=").ts(partitionTimestamp).put(']');
+                                        .put(", partition=").ts(timestampType, partitionTimestamp).put(']');
                             }
                             o3TimestampLo = (partitionTimestamp == minO3PartitionTimestamp) ? o3TimestampMin : partitionTimestamp;
                             o3TimestampHi = (partitionTimestamp == maxO3PartitionTimestamp) ? o3TimestampMax :
@@ -9372,6 +9371,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void setAppendPosition(final long rowCount, boolean doubleAllocate) {
         engine.getPartitionOverwriteControl().notifyPartitionMutates(
                 tableToken,
+                timestampType,
                 lastOpenPartitionTs,
                 lastOpenPartitionTxnName,
                 rowCount

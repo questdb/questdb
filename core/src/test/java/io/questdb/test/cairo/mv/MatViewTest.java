@@ -27,6 +27,7 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewRefreshExecutionContext;
@@ -789,7 +790,44 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableInvalidateOnDedupEnable() throws Exception {
-        testBaseTableNoInvalidateOnOperation("alter table base_price dedup enable upsert keys(ts);");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, amount int, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainQueues();
+
+            currentMicros = MicrosTimestampDriver.floor("2024-10-24T17:22:09.842574Z");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\tbase_table_name\tview_status\n" +
+                            "price_1h\tbase_price\tvalid\n",
+                    "select view_name, base_table_name, view_status from materialized_views",
+                    null,
+                    false
+            );
+
+            execute("alter table base_price dedup enable upsert keys(ts);");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
+                            "price_1h\tbase_price\tvalid\t\n",
+                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
+                    null,
+                    false
+            );
+        });
     }
 
     @Test
@@ -898,7 +936,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:00')"
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            currentMicros = MicrosTimestampDriver.floor("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -916,8 +954,8 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.assertNotNull(baseToken);
             try (WalWriter writer = engine.getWalWriter(baseToken)) {
                 writer.commitWithParams(
-                        parseFloorPartialTimestamp("2024-09-10T00:00:00.000000Z"),
-                        parseFloorPartialTimestamp("2024-09-10T13:00"),
+                        MicrosTimestampDriver.floor("2024-09-10T00:00:00.000000Z"),
+                        MicrosTimestampDriver.floor("2024-09-10T13:00"),
                         WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
                 );
             }
@@ -1554,17 +1592,17 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testEnableDedupWithFewerKeysDoesNotInvalidateMatViews() throws Exception {
-        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts);", false);
+        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts);");
     }
 
     @Test
     public void testEnableDedupWithMoreKeysInvalidatesMatViews() throws Exception {
-        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, amount);", false);
+        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, amount);");
     }
 
     @Test
     public void testEnableDedupWithSameKeysDoesNotInvalidateMatViews() throws Exception {
-        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, sym);", false);
+        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, sym);");
     }
 
     @Test
@@ -2351,7 +2389,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            currentMicros = MicrosTimestampDriver.floor("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -3914,48 +3952,7 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
-    private void testBaseTableNoInvalidateOnOperation(String operationSql) throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table base_price (" +
-                            "sym varchar, price double, amount int, ts timestamp" +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
-
-            execute(
-                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
-            );
-            drainQueues();
-
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
-            drainQueues();
-
-            assertQueryNoLeakCheck(
-                    "view_name\tbase_table_name\tview_status\n" +
-                            "price_1h\tbase_price\tvalid\n",
-                    "select view_name, base_table_name, view_status from materialized_views",
-                    null,
-                    false
-            );
-
-            execute(operationSql);
-            drainQueues();
-
-            assertQueryNoLeakCheck(
-                    "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
-                            "price_1h\tbase_price\tvalid\t\n",
-                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
-                    null,
-                    false
-            );
-        });
-    }
-
-    private void testEnableDedupWithSubsetKeys(String enableDedupSql, boolean expectInvalid) throws Exception {
+    private void testEnableDedupWithSubsetKeys(String enableDedupSql) throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE base_price (" +
@@ -3989,7 +3986,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "view_name\tbase_table_name\tview_status\n" +
-                            "price_1h\tbase_price\t" + (expectInvalid ? "invalid" : "valid") + "\n",
+                            "price_1h\tbase_price\t" + ("valid") + "\n",
                     "select view_name, base_table_name, view_status from materialized_views",
                     null,
                     false
