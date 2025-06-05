@@ -24,6 +24,7 @@
 
 package io.questdb.test.fuzz;
 
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -35,6 +36,35 @@ public class FuzzTransaction implements QuietCloseable {
     public int structureVersion;
     public boolean waitAllDone;
     public int waitBarrierVersion;
+    private LongList noCommitIntervals;
+    private long replaceHiTs;
+    private long replaceLoTs;
+
+    public LongList getNoCommitIntervals() {
+        return noCommitIntervals;
+    }
+
+    public long getReplaceHiTs() {
+        return replaceHiTs;
+    }
+
+    public long getReplaceLoTs() {
+        return replaceLoTs;
+    }
+
+    public boolean hasReplaceRange() {
+        return replaceHiTs > replaceLoTs;
+    }
+
+    public void setNoCommitIntervals(LongList excludedIntervals) {
+        this.noCommitIntervals = excludedIntervals;
+    }
+
+    public void setReplaceRange(long replaceLoTs, long replaceHiTs) {
+        this.replaceLoTs = replaceLoTs;
+        this.replaceHiTs = replaceHiTs;
+        waitAllDone = true;
+    }
 
     @Override
     public void close() {

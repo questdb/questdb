@@ -63,6 +63,7 @@ public class FuzzTransactionGenerator {
             double probabilityOfTruncate,
             double probabilityOfDropTable,
             double probabilityOfSetTtl,
+            double replaceInsertProb,
             int maxStrLenForStrColumns,
             String[] symbols,
             int metaVersion
@@ -213,7 +214,7 @@ public class FuzzTransactionGenerator {
                 }
                 stopTs = Math.min(startTs + size, maxTimestamp);
 
-                generateDataBlock(
+                waitBarrierVersion = generateDataBlock(
                         transactionList,
                         rnd,
                         metaVersion,
@@ -228,7 +229,8 @@ public class FuzzTransactionGenerator {
                         probabilityOfTransactionRollback,
                         maxStrLenForStrColumns,
                         symbols,
-                        probabilityOfSameTimestamp
+                        probabilityOfSameTimestamp,
+                        rnd.nextDouble() < replaceInsertProb
                 );
                 rowCount -= blockRows;
                 lastTimestamp = stopTs;
@@ -429,7 +431,7 @@ public class FuzzTransactionGenerator {
         return newMeta;
     }
 
-    static void generateDataBlock(
+    static int generateDataBlock(
             ObjList<FuzzTransaction> transactionList,
             Rnd rnd,
             int metadataVersion,
@@ -444,11 +446,15 @@ public class FuzzTransactionGenerator {
             double rollback,
             int strLen,
             String[] symbols,
-            double probabilityOfRowsSameTimestamp
+            double probabilityOfRowsSameTimestamp,
+            boolean replaceInsert
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
         long timestamp = startTs;
         final long delta = stopTs - startTs;
+        long minTs = Long.MAX_VALUE;
+        long maxTs = Long.MIN_VALUE;
+
         for (int i = 0; i < rowCount; i++) {
             // Don't change timestamp sometimes with probabilityOfRowsSameTimestamp
             if (rnd.nextDouble() >= probabilityOfRowsSameTimestamp) {
@@ -461,12 +467,34 @@ public class FuzzTransactionGenerator {
             long seed1 = rnd.nextLong();
             long seed2 = rnd.nextLong();
             transaction.operationList.add(new FuzzInsertOperation(seed1, seed2, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
+            minTs = Math.min(minTs, timestamp);
+            maxTs = Math.max(maxTs, timestamp);
         }
 
         transaction.rollback = rnd.nextDouble() < rollback;
         transaction.structureVersion = metadataVersion;
         transaction.waitBarrierVersion = waitBarrierVersion;
         transactionList.add(transaction);
+
+        if (replaceInsert) {
+            minTs = minTs - (long) Math.exp(24);
+            maxTs = maxTs + (long) Math.exp(24);
+            if (!transaction.rollback) {
+                // Add up to 2 partition to the range from each side to make things more interesting
+                transaction.setReplaceRange(minTs, maxTs);
+
+                return waitBarrierVersion + 1;
+            } else if (rnd.nextBoolean()) {
+                // Instead of rollback, insert empty replace range
+                transaction.operationList.clear();
+                transaction.rollback = false;
+                transaction.setReplaceRange(minTs, maxTs);
+
+                return waitBarrierVersion + 1;
+            }
+        }
+
+        return waitBarrierVersion;
     }
 
     static RecordMetadata generateDropColumn(

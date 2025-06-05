@@ -35,6 +35,7 @@ import io.questdb.std.str.Path;
 public class FrameImpl implements Frame {
     private final FrameColumnPool columnPool;
     private boolean canWrite = false;
+    private boolean create = false;
     private ColumnVersionReader crv;
     private RecycleBin<FrameImpl> frameRecycleBin;
     private RecordMetadata metadata;
@@ -74,7 +75,7 @@ public class FrameImpl implements Frame {
         long columnTxn = crv.getColumnNameTxn(partitionTimestamp, columnIndex);
 
         FrameColumnTypePool columnTypePool = canWrite ? columnPool.getPoolRW(columnType) : columnPool.getPoolRO(columnType);
-        boolean createNew = columnTop >= rowCount;
+        boolean createNew = columnTop >= rowCount || create;
         columnTop = Math.min(columnTop, rowCount);
         return columnTypePool.create(partitionPath, metadata.getColumnName(columnIndex), columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex, createNew);
     }
@@ -89,13 +90,24 @@ public class FrameImpl implements Frame {
         return rowCount;
     }
 
+    public void createRW(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionWriter cvw, long size) {
+        this.metadata = metadata;
+        this.crv = cvw;
+        this.rowCount = size;
+        this.partitionTimestamp = partitionTimestamp;
+        this.partitionPath.of(partitionPath);
+        this.canWrite = true;
+        this.create = true;
+    }
+
     public void openRO(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionReader cvr, long partitionRowCount) {
         this.metadata = metadata;
         this.crv = cvr;
         this.rowCount = partitionRowCount;
         this.partitionTimestamp = partitionTimestamp;
         this.partitionPath.of(partitionPath);
-        canWrite = false;
+        this.canWrite = false;
+        this.create = false;
     }
 
     public void openRW(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionWriter cvw, long size) {
@@ -104,7 +116,8 @@ public class FrameImpl implements Frame {
         this.rowCount = size;
         this.partitionTimestamp = partitionTimestamp;
         this.partitionPath.of(partitionPath);
-        canWrite = true;
+        this.canWrite = true;
+        this.create = false;
     }
 
     public void saveChanges(FrameColumn frameColumn) {

@@ -59,7 +59,8 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0,
                 0,
-                0.0
+                0.0,
+                0.1
         );
 
         // Basic load to keep the test lite, we just want to fuzz different transaction types, not intensive inserting
@@ -98,7 +99,7 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
             node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
 
             String tableName = testName.getMethodName();
-            TableToken tableToken = fuzzer.createInitialTable(tableName, true, 100);
+            TableToken tableToken = fuzzer.createInitialTableWal(tableName, 100);
 
             execute("insert into " + tableName + " (ts) values ('2000-01-01')");
             drainWalQueue();

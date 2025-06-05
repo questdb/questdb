@@ -246,7 +246,11 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
 
     protected long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
         if (currentBaseAddress != 0) {
-            return Unsafe.realloc(currentBaseAddress, currentSize, newSize, memoryTag);
+            if (currentSize != newSize) {
+                return Unsafe.realloc(currentBaseAddress, currentSize, newSize, memoryTag);
+            } else {
+                return currentBaseAddress;
+            }
         }
         return Unsafe.malloc(newSize, memoryTag);
     }
