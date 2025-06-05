@@ -137,7 +137,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Filtered AsOf Join Fast Scan");
-        sink.attr("filter").val(slaveRecordFilter);
+        sink.attr("filter").val(slaveRecordFilter, slaveFactory);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
