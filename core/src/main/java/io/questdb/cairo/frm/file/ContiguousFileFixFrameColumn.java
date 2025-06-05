@@ -79,13 +79,13 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
 
             if (sourceHi > 0) {
                 long sourceFd = sourceColumn.getPrimaryFd();
-                long length = sourceHi << shl;
-                TableUtils.allocateDiskSpaceToPage(ff, fd, (appendOffsetRowCount + sourceHi) << shl);
+                long size = (sourceHi - sourceLo) << shl;
+                TableUtils.allocateDiskSpaceToPage(ff, fd, (appendOffsetRowCount << shl) + size);
                 if (mixedIOFlag) {
-                    if (ff.copyData(sourceFd, fd, sourceLo << shl, appendOffsetRowCount << shl, length) != length) {
+                    if (ff.copyData(sourceFd, fd, sourceLo << shl, appendOffsetRowCount << shl, size) != size) {
                         throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
                                 .put(", destOffset=").put(appendOffsetRowCount << shl)
-                                .put(", size=").put(length)
+                                .put(", size=").put(size)
                                 .put(", fileSize=").put(ff.length(fd))
                                 .put(", srcFd=").put(sourceFd)
                                 .put(", srcOffset=").put(sourceLo << shl)
@@ -99,20 +99,20 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                     long srcAddress = 0;
                     long dstAddress = 0;
                     try {
-                        srcAddress = TableUtils.mapAppendColumnBuffer(ff, sourceFd, sourceLo << shl, length, false, MEMORY_TAG);
-                        dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, appendOffsetRowCount << shl, length, true, MEMORY_TAG);
+                        srcAddress = TableUtils.mapAppendColumnBuffer(ff, sourceFd, sourceLo << shl, size, false, MEMORY_TAG);
+                        dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, appendOffsetRowCount << shl, size, true, MEMORY_TAG);
 
-                        Vect.memcpy(dstAddress, srcAddress, length);
+                        Vect.memcpy(dstAddress, srcAddress, size);
 
                         if (commitMode != CommitMode.NOSYNC) {
-                            TableUtils.msync(ff, dstAddress, length, commitMode == CommitMode.ASYNC);
+                            TableUtils.msync(ff, dstAddress, size, commitMode == CommitMode.ASYNC);
                         }
                     } finally {
                         if (srcAddress != 0) {
-                            TableUtils.mapAppendColumnBufferRelease(ff, srcAddress, sourceLo << shl, length, MEMORY_TAG);
+                            TableUtils.mapAppendColumnBufferRelease(ff, srcAddress, sourceLo << shl, size, MEMORY_TAG);
                         }
                         if (dstAddress != 0) {
-                            TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, appendOffsetRowCount << shl, length, MEMORY_TAG);
+                            TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, appendOffsetRowCount << shl, size, MEMORY_TAG);
                         }
                     }
                 }

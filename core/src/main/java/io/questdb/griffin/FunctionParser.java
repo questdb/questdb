@@ -588,6 +588,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             Misc.freeObjList(args);
             throw SqlException.nonDeterministicColumn(node.position, node.token);
         }
+        if (args != null) {
+            args.clear(); // To enforce that args are not used after this point
+        }
         return function;
     }
 

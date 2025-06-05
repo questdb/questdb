@@ -3581,13 +3581,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long firstPartition = reader.getTxFile().getPartitionFloor(reader.getPartitionTimestampByIndex(0));
             long lastPartition = reader.getTxFile().getPartitionFloor(reader.getPartitionTimestampByIndex(partitionCount - 1));
 
+            long lastLogicalPartition = Long.MIN_VALUE;
             for (int partitionIndex = 1; partitionIndex < partitionCount - 1; partitionIndex++) {
                 long physicalTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
                 long logicalTimestamp = reader.getTxFile().getPartitionFloor(physicalTimestamp);
-                if (physicalTimestamp != logicalTimestamp || logicalTimestamp == firstPartition || logicalTimestamp == lastPartition) {
-                    continue;
+                if (logicalTimestamp != lastLogicalPartition && logicalTimestamp != firstPartition && logicalTimestamp != lastPartition) {
+                    if (filterApply(filter, filterPosition, changePartitionStatement, logicalTimestamp) > 0) {
+                        affectedPartitions++;
+                        lastLogicalPartition = logicalTimestamp;
+                    }
                 }
-                affectedPartitions += filterApply(filter, filterPosition, changePartitionStatement, logicalTimestamp);
             }
 
             // perform the action on the first and last partition, dropping them have to read min/max timestamp of the next first/last partition

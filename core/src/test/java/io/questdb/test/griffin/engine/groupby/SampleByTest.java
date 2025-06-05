@@ -3113,8 +3113,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "2874\t2890\t2021-03-27T23:53:00.000000Z\n" +
                             "2891\t2907\t2021-03-28T00:10:00.000000Z\n" +
                             "2908\t2924\t2021-03-28T00:27:00.000000Z\n" +
-                            "2925\t2940\t2021-03-28T00:44:00.000000Z\n" +
-                            "2941\t2949\t2021-03-28T00:52:00.000000Z\n" +
+                            "2925\t2949\t2021-03-28T00:44:00.000000Z\n" +
                             "2950\t2966\t2021-03-28T01:09:00.000000Z\n" +
                             "2967\t2983\t2021-03-28T01:26:00.000000Z\n",
                     "select min(i), max(i), ts from x " +
@@ -3477,6 +3476,54 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByAlignToCalendarDSTGapNoBackwardJumpsWithFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (i int, ts timestamp) timestamp(ts) PARTITION by day;");
+            execute(
+                    "insert into x " +
+                            "select x, timestamp_sequence('2021-03-26', 60 * 1000000) " +
+                            "from long_sequence(4 * 24 * 60);"
+            );
+
+            assertQueryNoLeakCheck(
+                    "min\tmax\tcount\tts\n" +
+                            "2926\t2952\t27\t2021-03-28T00:45:00.000000Z\n" +
+                            "2953\t2981\t29\t2021-03-28T01:12:00.000000Z\n" +
+                            "2982\t3010\t29\t2021-03-28T01:41:00.000000Z\n" +
+                            "3011\t3039\t29\t2021-03-28T02:10:00.000000Z\n" +
+                            "3040\t3068\t29\t2021-03-28T02:39:00.000000Z\n" +
+                            "3069\t3097\t29\t2021-03-28T03:08:00.000000Z\n" +
+                            "3098\t3126\t29\t2021-03-28T03:37:00.000000Z\n" +
+                            "3127\t3155\t29\t2021-03-28T04:06:00.000000Z\n" +
+                            "3156\t3184\t29\t2021-03-28T04:35:00.000000Z\n" +
+                            "3185\t3213\t29\t2021-03-28T05:04:00.000000Z\n" +
+                            "3214\t3242\t29\t2021-03-28T05:33:00.000000Z\n" +
+                            "3243\t3271\t29\t2021-03-28T06:02:00.000000Z\n" +
+                            "3272\t3300\t29\t2021-03-28T06:31:00.000000Z\n",
+                    "select min(i), max(i), count(), ts from  x " +
+                            "where ts between '2021-03-28T00:45:00.000000Z' and '2021-03-28T06:59:59.999999Z' " +
+                            "sample by 29m align to calendar time zone 'Europe/Berlin' " +
+                            "with offset '00:15';",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "min\tmax\tcount\tts\n" +
+                            "2718\t3163\t446\t2021-03-27T21:17:00.000000Z\n",
+                    "select min(i), max(i), count(), ts from  x " +
+                            "where ts between '2021-03-27T21:17:00' and '2021-03-28T04:42:59.999999' " +
+                            "sample by 253m align to calendar time zone 'Europe/Berlin' " +
+                            "with offset '00:15';",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testSampleByAlignToCalendarDSTGapNoBackwardJumpsWithFrom() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (i int, ts timestamp) timestamp(ts) PARTITION by day;");
@@ -3495,8 +3542,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "2877\t2893\t2021-03-27T23:56:00.000000Z\n" +
                             "2894\t2910\t2021-03-28T00:13:00.000000Z\n" +
                             "2911\t2927\t2021-03-28T00:30:00.000000Z\n" +
-                            "2928\t2940\t2021-03-28T00:47:00.000000Z\n" +
-                            "2941\t2952\t2021-03-28T00:55:00.000000Z\n" +
+                            "2928\t2952\t2021-03-28T00:47:00.000000Z\n" +
                             "2953\t2969\t2021-03-28T01:12:00.000000Z\n" +
                             "2970\t2983\t2021-03-28T01:29:00.000000Z\n",
                     "select min(i), max(i), ts from x " +

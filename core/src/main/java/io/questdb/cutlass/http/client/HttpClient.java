@@ -511,6 +511,16 @@ public abstract class HttpClient implements QuietCloseable {
             sendHeaderAndContent(maxContentLen, timeout);
         }
 
+        public Request setCookie(CharSequence name, CharSequence value) {
+            beforeHeader();
+            put(HEADER_COOKIE).putAscii(": ").put(name);
+            if (value != null) {
+                putAscii(COOKIE_VALUE_SEPARATOR).put(value);
+            }
+            eol();
+            return this;
+        }
+
         public void trimContentToLen(int contentLen) {
             ptr = contentStart + contentLen;
         }
