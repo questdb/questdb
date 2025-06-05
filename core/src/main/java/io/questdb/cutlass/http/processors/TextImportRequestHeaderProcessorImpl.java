@@ -2,6 +2,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextLoader;
@@ -10,7 +11,6 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.Utf8SequenceIntHashMap;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -21,7 +21,6 @@ import static io.questdb.cutlass.http.processors.TextImportProcessor.sendErrorAn
 
 public class TextImportRequestHeaderProcessorImpl implements TextImportRequestHeaderProcessor {
     private static final Utf8String PARTITION_BY_NONE = new Utf8String("NONE");
-    private static final Utf8SequenceIntHashMap atomicityParamMap = new Utf8SequenceIntHashMap();
 
     @Override
     public void processRequestHeader(HttpRequestHeader partHeader, HttpConnectionContext transientContext, TextImportProcessorState transientState)
@@ -30,10 +29,13 @@ public class TextImportRequestHeaderProcessorImpl implements TextImportRequestHe
         DirectUtf8Sequence name = rh.getUrlParam(URL_PARAM_NAME);
         if (name == null) {
             name = partHeader.getContentDispositionFilename();
+
         }
         if (name == null) {
             sendErrorAndThrowDisconnect("no file name given", transientContext, transientState);
         }
+
+        assert name != null;
 
         Utf8Sequence partitionedBy = rh.getUrlParam(URL_PARAM_PARTITION_BY);
         if (partitionedBy == null) {
@@ -50,9 +52,10 @@ public class TextImportRequestHeaderProcessorImpl implements TextImportRequestHe
         }
 
         transientState.analysed = false;
+
         transientState.textLoader.configureDestination(
                 name,
-                Utf8s.equalsNcAscii("true", rh.getUrlParam(URL_PARAM_OVERWRITE)),
+                HttpKeywords.isTrue(rh.getUrlParam(URL_PARAM_OVERWRITE)),
                 getAtomicity(rh.getUrlParam(URL_PARAM_ATOMICITY)),
                 partitionBy,
                 timestampColumn,
@@ -83,10 +86,10 @@ public class TextImportRequestHeaderProcessorImpl implements TextImportRequestHe
             }
         }
 
-        boolean create = !Utf8s.equalsNcAscii("false", rh.getUrlParam(URL_PARAM_CREATE));
+        boolean create = !HttpKeywords.isFalse(rh.getUrlParam(URL_PARAM_CREATE));
         transientState.textLoader.setCreate(create);
 
-        boolean forceHeader = Utf8s.equalsNcAscii("true", rh.getUrlParam(URL_PARAM_FORCE_HEADER));
+        boolean forceHeader = HttpKeywords.isTrue(rh.getUrlParam(URL_PARAM_FORCE_HEADER));
         transientState.textLoader.setForceHeaders(forceHeader);
         transientState.textLoader.setSkipLinesWithExtraValues(Utf8s.equalsNcAscii("true", rh.getUrlParam(URL_PARAM_SKIP_LEV)));
         DirectUtf8Sequence delimiter = rh.getUrlParam(URL_PARAM_DELIMITER);
@@ -103,12 +106,14 @@ public class TextImportRequestHeaderProcessorImpl implements TextImportRequestHe
             return Atomicity.SKIP_COL;
         }
 
-        int atomicity = atomicityParamMap.get(name);
-        return atomicity == -1 ? Atomicity.SKIP_COL : atomicity;
-    }
+        if (HttpKeywords.isSkipRow(name)) {
+            return Atomicity.SKIP_ROW;
+        }
 
-    static {
-        atomicityParamMap.put(new Utf8String("skipRow"), Atomicity.SKIP_ROW);
-        atomicityParamMap.put(new Utf8String("abort"), Atomicity.SKIP_ALL);
+        if (HttpKeywords.isAbort(name)) {
+            return Atomicity.SKIP_ALL;
+        }
+
+        return Atomicity.SKIP_COL;
     }
 }

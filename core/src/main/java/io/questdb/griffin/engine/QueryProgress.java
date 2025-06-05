@@ -467,6 +467,13 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                     isOpen = false;
                     base = Misc.free(base);
                 }
+            } catch (Throwable th0) {
+                LOG.critical()
+                        .$("could not close record cursor")
+                        .$(" [id=").$(sqlId)
+                        .$(", sql=`").utf8(queryTrace.queryText)
+                        .$(", error=").$(th0)
+                        .I$();
             } finally {
                 // When execution context is null, the cursor has never been opened.
                 // Otherwise, cursor open attempt has been made, but may not have fully succeeded.

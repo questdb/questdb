@@ -197,7 +197,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         frameRowCounts.clear();
         frameAddressCache.clear();
         atom.clear();
-        frameCursor = Misc.freeIfCloseable(frameCursor);
+        frameCursor = Misc.free(frameCursor);
         // collect sequence may not be set here when
         // factory is closed without using cursor
         if (collectSubSeq != null) {
@@ -405,7 +405,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         } catch (Throwable th) {
             // Log the OG exception as the below frame cursor close call may throw.
             LOG.error().$("could not initialize page frame sequence [error=").$(th).I$();
-            frameCursor = Misc.freeIfCloseable(frameCursor);
+            frameCursor = Misc.free(frameCursor);
             throw th;
         }
         return this;

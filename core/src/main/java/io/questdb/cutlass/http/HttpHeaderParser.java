@@ -278,6 +278,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
      * @param err return of the latest read operation
      * @return true if error is recoverable, false if not
      */
+    @SuppressWarnings("unused")
     public boolean onRecvError(int err) {
         return false;
     }
@@ -320,7 +321,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                         parseKnownHeaders();
                         return p;
                     }
-                    if (Utf8s.equals(HEADER_SET_COOKIE, headerName)) {
+                    if (HttpKeywords.isHeaderSetCookie(headerName)) {
                         cookieParse(_lo, _wptr - 1);
                     } else {
                         headers.put(headerName, csPool.next().of(_lo, _wptr - 1));
@@ -792,9 +793,9 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     methodLine = csPool.next().of(method.lo(), _wptr);
                     needMethod = false;
 
-                    getRequest = Utf8s.equalsNcAscii(METHOD_GET, method);
-                    postRequest = Utf8s.equalsNcAscii(METHOD_POST, method);
-                    putRequest = Utf8s.equalsNcAscii(METHOD_PUT, method);
+                    getRequest = HttpKeywords.isGET(method);
+                    postRequest = HttpKeywords.isPOST(method);
+                    putRequest = HttpKeywords.isPUT(method);
 
                     // parse and decode query string
                     if (query != null) {

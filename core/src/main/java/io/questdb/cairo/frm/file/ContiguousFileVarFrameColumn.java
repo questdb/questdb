@@ -87,21 +87,21 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
             // Map source offset file, it will be used to copy data from anyway.
             // sourceHi is exclusive
-            long srcAuxMemSize = columnTypeDriver.getAuxVectorSize(sourceHi - sourceLo);
+            long srcAuxMemSize = columnTypeDriver.getAuxVectorSize(sourceHi);
 
             final long srcAuxMemAddr = TableUtils.mapAppendColumnBuffer(
                     ff,
                     sourceColumn.getSecondaryFd(),
-                    columnTypeDriver.getAuxVectorOffset(sourceLo),
+                    0,
                     srcAuxMemSize,
                     false,
                     MEMORY_TAG
             );
 
             try {
-                long srcDataOffset = columnTypeDriver.getDataVectorOffset(srcAuxMemAddr, 0);
-                assert (sourceLo == 0 && srcDataOffset == 0) || (sourceLo > 0 && srcDataOffset > 0 && srcDataOffset < 1L << 40);
-                long srcDataSize = columnTypeDriver.getDataVectorSize(srcAuxMemAddr, 0, sourceHi - 1);
+                long srcDataOffset = columnTypeDriver.getDataVectorOffset(srcAuxMemAddr, sourceLo);
+                assert (sourceLo == 0 && srcDataOffset == 0) || (sourceLo > 0 && srcDataOffset >= columnTypeDriver.getDataVectorMinEntrySize() && srcDataOffset < 1L << 40);
+                long srcDataSize = columnTypeDriver.getDataVectorSize(srcAuxMemAddr, sourceLo, sourceHi - 1);
                 if (srcDataSize > 0) {
                     assert srcDataSize < 1L << 40;
                     TableUtils.allocateDiskSpaceToPage(ff, dataFd, targetDataOffset + srcDataSize);
@@ -150,7 +150,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                     columnTypeDriver.shiftCopyAuxVector(
                             srcDataOffset - targetDataOffset,
                             srcAuxMemAddr,
-                            0,
+                            sourceLo,
                             sourceHi - 1, // inclusive
                             dstAuxAddr,
                             srcAuxMemSize
@@ -169,7 +169,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 TableUtils.mapAppendColumnBufferRelease(
                         ff,
                         srcAuxMemAddr,
-                        columnTypeDriver.getAuxVectorOffset(sourceLo),
+                        0,
                         srcAuxMemSize,
                         MEMORY_TAG
                 );

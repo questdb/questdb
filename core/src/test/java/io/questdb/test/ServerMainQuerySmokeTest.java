@@ -110,6 +110,49 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "9999999\n";
                 try (PreparedStatement stmt = conn.prepareStatement("select count() from x where x != 1")) {
                     // Set RSS limit, so that the SELECT will fail with OOM.
+                    // The limit should be high enough to let worker threads fail on reduce.
+                    Unsafe.setRssMemLimit(39 * Numbers.SIZE_1MB);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, rs);
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        assertContains(e.getMessage(), "global RSS memory limit exceeded");
+                    }
+
+                    // Remove the limit, this time the query should succeed.
+                    Unsafe.setRssMemLimit(0);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, rs);
+                    }
+                } finally {
+                    Unsafe.setRssMemLimit(0);
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testParallelGroupByOomError() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+        try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+            serverMain.start();
+            try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
+                try (Statement stat = conn.createStatement()) {
+                    stat.execute(
+                            "create table x as (" +
+                                    " select timestamp_sequence(0, 1000000) ts, x::varchar as x" +
+                                    " from long_sequence(10000000)" +
+                                    ") timestamp(ts);"
+                    );
+                }
+
+                final String expected = "count[BIGINT]\n" +
+                        "10000000\n";
+                try (PreparedStatement stmt = conn.prepareStatement("select count() from (select x from x group by x)")) {
+                    // Set RSS limit, so that the SELECT will fail with OOM.
+                    // The limit should be high enough to let worker threads fail on reduce.
                     Unsafe.setRssMemLimit(39 * Numbers.SIZE_1MB);
                     try (ResultSet rs = stmt.executeQuery()) {
                         sink.clear();
