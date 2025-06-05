@@ -2660,7 +2660,7 @@ public class SqlParser {
             The list is terminated by `FOR`.
          */
         do {
-            final QueryColumn nextAggregateCol = parsePivotParseColumn(lexer, model, sqlParserCallback);
+            final QueryColumn nextAggregateCol = parsePivotParseColumn(lexer, model, sqlParserCallback, "'FOR' or ',' or ')'", "missing aggregate function expression");
 
             if (nextAggregateCol.getAst().type != ExpressionNode.FUNCTION) {
                 throw SqlException.$(lexer.lastTokenPosition(), "expected aggregate function");
@@ -2689,7 +2689,16 @@ public class SqlParser {
         while (true) {
 
             // Get name of FOR
-            tok = tok(lexer, "LHS of IN expr");
+            if (model.getPivotFor() == null || model.getPivotFor().size() == 0) {
+                tok = tok(lexer, "LHS of IN expr");
+            } else {
+                tok = tok(lexer, "')' or 'LHS of IN expr'");
+            }
+
+
+            if (isForKeyword(tok) || isRightParen(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected column name for IN expression");
+            }
 
             /*
                 We need to construct a placeholder for the name of the `FOR` expr i.e LHS of the `IN`.
@@ -2790,7 +2799,7 @@ public class SqlParser {
                 lexer.unparseLast();
 
                 do {
-                    final QueryColumn nextFor = parsePivotParseColumn(lexer, model, sqlParserCallback);
+                    final QueryColumn nextFor = parsePivotParseColumn(lexer, model, sqlParserCallback, "',' or ')'", "missing constant");
 
                     if (nextFor.getAst().type != ExpressionNode.CONSTANT) {
                         throw SqlException.$(lexer.lastTokenPosition(), "expected constant, did you provide an empty IN list?");
@@ -2825,9 +2834,6 @@ public class SqlParser {
             }
 
             if (tok != null && pivotForStop.contains(tok)) {
-                if (isRightParen(tok)) {
-                    tok = optTok(lexer);
-                }
                 break;
             } else {
                 lexer.unparseLast();
@@ -2901,7 +2907,7 @@ public class SqlParser {
      * @return
      * @throws SqlException
      */
-    private QueryColumn parsePivotParseColumn(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+    private QueryColumn parsePivotParseColumn(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback, String expectedList, String expressionMessage) throws SqlException {
         CharSequence tok;
         ExpressionNode expr = null;
         QueryColumn col;
@@ -2914,11 +2920,11 @@ public class SqlParser {
         }
 
         if (expr == null) {
-            throw SqlException.$(lexer.lastTokenPosition(), "missing column expression");
+            throw SqlException.$(lexer.lastTokenPosition(), expressionMessage);
         }
 
         CharSequence alias;
-        tok = tok(lexer, "column");
+        tok = tok(lexer, expectedList);
 
         col = queryColumnPool.next().of(null, expr);
 
@@ -2945,10 +2951,9 @@ public class SqlParser {
                 tok = optTok(lexer);
                 col.setAlias(alias);
             }
-
         }
 
-        if (isForKeyword(tok) || isComma(tok) || isRightParen(tok)) {
+        if (tok != null && (isForKeyword(tok) || isComma(tok) || isRightParen(tok))) {
             lexer.unparseLast();
         }
         return col;

@@ -554,6 +554,48 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWithDynamicInListMultipleForAndMultipleAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+
+            String query =
+                    "cities\n" +
+                            "PIVOT (\n" +
+                            "    SUM(population),\n" +
+                            "    AVG(population)\n" +
+                            "    FOR\n" +
+                            "        year IN (SELECT DISTINCT year FROM cities ORDER BY year)\n" +
+                            "        name IN (SELECT DISTINCT name FROM cities ORDER BY name)\n" +
+                            ");\n";
+
+            assertException(query, 81, "query returned no results");
+
+            execute(dmlCities);
+
+            assertQueryNoLeakCheck(
+                    "2000_Amsterdam_SUM\t2000_Amsterdam_AVG\t2000_New York City_SUM\t2000_New York City_AVG\t2000_Seattle_SUM\t2000_Seattle_AVG\t2010_Amsterdam_SUM\t2010_Amsterdam_AVG\t2010_New York City_SUM\t2010_New York City_AVG\t2010_Seattle_SUM\t2010_Seattle_AVG\t2020_Amsterdam_SUM\t2020_Amsterdam_AVG\t2020_New York City_SUM\t2020_New York City_AVG\t2020_Seattle_SUM\t2020_Seattle_AVG\n" +
+                            "1005\t1005.0\t8015\t8015.0\t564\t564.0\t1065\t1065.0\t8175\t8175.0\t608\t608.0\t1158\t1158.0\t8772\t8772.0\t738\t738.0\n",
+                    query,
+                    null,
+                    false,
+                    true,
+                    false
+            );
+
+            assertPlanNoLeakCheck(query,
+                    "GroupBy vectorized: false\n" +
+                            "  values: [sum(case([(year=2000 and name='Amsterdam'),SUM,null])),avg(case([(year=2000 and name='Amsterdam'),AVG,null])),sum(case([(year=2000 and name='New York City'),SUM,null])),avg(case([(year=2000 and name='New York City'),AVG,null])),sum(case([(year=2000 and name='Seattle'),SUM,null])),avg(case([(year=2000 and name='Seattle'),AVG,null])),sum(case([(year=2010 and name='Amsterdam'),SUM,null])),avg(case([(year=2010 and name='Amsterdam'),AVG,null])),sum(case([(year=2010 and name='New York City'),SUM,null])),avg(case([(year=2010 and name='New York City'),AVG,null])),sum(case([(year=2010 and name='Seattle'),SUM,null])),avg(case([(year=2010 and name='Seattle'),AVG,null])),sum(case([(year=2020 and name='Amsterdam'),SUM,null])),avg(case([(year=2020 and name='Amsterdam'),AVG,null])),sum(case([(year=2020 and name='New York City'),SUM,null])),avg(case([(year=2020 and name='New York City'),AVG,null])),sum(case([(year=2020 and name='Seattle'),SUM,null])),avg(case([(year=2020 and name='Seattle'),AVG,null]))]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [year,name]\n" +
+                            "      values: [sum(population),avg(population)]\n" +
+                            "      filter: (year in [2000,2010,2020] and name in [Amsterdam,New York City,Seattle])\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: cities\n");
+        });
+    }
+
+    @Test
     public void testPivotWithElse() throws Exception {
         assertQueryAndPlan(
                 "country\t2000\tother_years\n",
@@ -616,6 +658,77 @@ public class PivotTest extends AbstractSqlParserTest {
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: cities\n");
+    }
+
+    @Test
+    public void testPivotWithElseMultipleForAndAggregates() throws Exception {
+        assertQueryAndPlan(
+                "country\t2000_NL_SUM\t2000_NL_AVG\t2000_USA_SUM\t2000_USA_AVG\tother_years_NL_SUM\tother_years_NL_AVG\tother_years_USA_SUM\tother_years_USA_AVG\n",
+                "cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population),\n" +
+                        "    AVG(population)" +
+                        "    FOR\n" +
+                        "        year IN (2000) ELSE other_years\n" +
+                        "        country IN ('NL') ELSE USA\n" +
+                        "    GROUP BY country\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "country\t2000_NL_SUM\t2000_NL_AVG\t2000_USA_SUM\t2000_USA_AVG\tother_years_NL_SUM\tother_years_NL_AVG\tother_years_USA_SUM\tother_years_USA_AVG\n" +
+                        "NL\t1005\t1005.0\tnull\tnull\t2223\t1111.5\tnull\tnull\n" +
+                        "US\tnull\tnull\t8579\t4289.5\tnull\tnull\t18293\t4573.25\n",
+                true,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  keys: [country]\n" +
+                        "  values: [sum(case([(year=2000 and country='NL'),SUM,null])),avg(case([(year=2000 and country='NL'),AVG,null])),sum(case([(year=2000 and not (country in [NL])),SUM,null])),avg(case([(year=2000 and not (country in [NL])),AVG,null])),sum(case([(not (year in [2000]) and country='NL'),SUM,null])),avg(case([(not (year in [2000]) and country='NL'),AVG,null])),sum(case([(not (year in [2000]) and not (country in [NL])),SUM,null])),avg(case([(not (year in [2000]) and not (country in [NL])),AVG,null]))]\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [country,year]\n" +
+                        "      values: [sum(population),avg(population)]\n" +
+                        "      filter: null\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: cities\n");
+    }
+
+    @Test
+    public void testPivotWithElseMultipleForAndAggregatesOrderedAndLimited() throws Exception {
+        assertQueryAndPlan(
+                "country\t2000_NL_SUM\t2000_NL_AVG\t2000_USA_SUM\t2000_USA_AVG\tother_years_NL_SUM\tother_years_NL_AVG\tother_years_USA_SUM\tother_years_USA_AVG\n",
+                "cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population),\n" +
+                        "    AVG(population)" +
+                        "    FOR\n" +
+                        "        year IN (2000) ELSE other_years\n" +
+                        "        country IN ('NL') ELSE USA\n" +
+                        "    GROUP BY country\n" +
+                        "    ORDER BY country DESC\n" +
+                        "    LIMIT 1\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "country\t2000_NL_SUM\t2000_NL_AVG\t2000_USA_SUM\t2000_USA_AVG\tother_years_NL_SUM\tother_years_NL_AVG\tother_years_USA_SUM\tother_years_USA_AVG\n" +
+                        "US\tnull\tnull\t8579\t4289.5\tnull\tnull\t18293\t4573.25\n",
+                true,
+                true,
+                false,
+                "Sort light lo: 1\n" +
+                        "  keys: [country desc]\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [country]\n" +
+                        "      values: [sum(case([(year=2000 and country='NL'),SUM,null])),avg(case([(year=2000 and country='NL'),AVG,null])),sum(case([(year=2000 and not (country in [NL])),SUM,null])),avg(case([(year=2000 and not (country in [NL])),AVG,null])),sum(case([(not (year in [2000]) and country='NL'),SUM,null])),avg(case([(not (year in [2000]) and country='NL'),AVG,null])),sum(case([(not (year in [2000]) and not (country in [NL])),SUM,null])),avg(case([(not (year in [2000]) and not (country in [NL])),AVG,null]))]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [country,year]\n" +
+                        "          values: [sum(population),avg(population)]\n" +
+                        "          filter: null\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: cities\n");
     }
 
     @Test

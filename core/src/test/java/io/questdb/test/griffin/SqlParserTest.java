@@ -975,6 +975,158 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
 
+    static TableModel citiesModel = modelOf("cities")
+            .col("country", ColumnType.VARCHAR)
+            .col("name", ColumnType.VARCHAR)
+            .col("year", ColumnType.INT)
+            .col("population", ColumnType.INT);
+
+    @Test
+    public void testPivotNoBody() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT", 12, "'(' expected", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotOpenBracketNoBody() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (", 13, "missing aggregate function expression", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotPartialAggregateName() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (su", 16, "'FOR' or ',' or ')' expected", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotAggregateNameNoParam() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum", 17, "'FOR' or ',' or ')' expected", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotAggregateNameParamNoCloseBracket() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population", 17, "unbalanced (", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotFullAggregateNoCloseBracket() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population)", 29, "'FOR' or ',' or ')' expected", citiesModel
+        );
+    }
+
+
+    @Test
+    public void testPivotFullAggregateCloseBracket() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population))", 29, "expected FOR", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotFullAggregatePartialAlias() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) as)", 32, "identifier should start with a letter or '_'", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotFullAggregateFullAlias() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) as total)", 38, "expected FOR", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotFullAggregateFullAliasNoAs() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) total)", 35, "expected FOR", citiesModel
+        );
+    }
+
+
+    @Test
+    public void testPivotFullAggregateCommaAndCloseBracket() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population),)", 30, "missing aggregate function expression", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotFullAggregateAndFor() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR)", 33, "expected column name for IN expression", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotFullAggregateAndForWithName() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year)", 38, "'in' expected", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotFullAggregateAndForWithNameAndPartialIn() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year I)", 39, "'in' expected", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotFullAggregateAndForWithNameAndIn() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year IN)", 41, "'(' expected", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotFullAggregateAndForWithNameAndInOpenBracket() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year IN (", 43, "'select' or constant expected", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotFullAggregateAndForWithNameAndInOpenBracketAndValue() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year IN (2000", 47, "',' or ')' expected", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotFullAggregateAndForWithNameAndInOpenBracketAndValueAndComma() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year IN (2000,", 47, "missing constant", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotFullAggregateAndForComplete() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year IN (2000,2010)", 53, "')' or 'LHS of IN expr", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotFull() throws Exception {
+        assertQuery(
+                "select-group-by sum(switch(year,2000,sum,null)) 2000, sum(switch(year,2010,sum,null)) 2010 from (select-choose [sum, year] from (select-group-by [sum(population) sum, year] year, sum(population) sum from (select [population, year] from cities where year in (2000,2010))) _xQdbA1)",
+                "cities PIVOT (sum(population) FOR year IN (2000,2010))",
+                citiesModel
+        );
+    }
+
+
+
     @Test
     public void testAsOfJoin() throws SqlException {
         assertQuery(
