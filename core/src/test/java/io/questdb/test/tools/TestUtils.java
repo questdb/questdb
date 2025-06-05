@@ -985,6 +985,19 @@ public final class TestUtils {
         }
     }
 
+    // Useful for debugging
+    @SuppressWarnings("unused")
+    public static long beHexToLong(String hex) {
+        return Long.parseLong(reverseBeHex(hex), 16);
+    }
+
+    // Useful for debugging
+    @SuppressWarnings("unused")
+    public static String beHexToTs(String hex) {
+        long l = beHexToLong(hex);
+        return Timestamps.toUSecString(l);
+    }
+
     /**
      * Generates a cartesian product from multiple sets of values.
      * <p>
@@ -1829,6 +1842,17 @@ public final class TestUtils {
         return sink.toString();
     }
 
+    // Useful for debugging
+    @SuppressWarnings("unused")
+    public static String reverseBeHex(String hex) {
+        var sb = new char[hex.length()];
+        for (int i = 0; i < hex.length(); i += 2) {
+            sb[hex.length() - i - 1] = hex.charAt(i + 1);
+            sb[hex.length() - i - 2] = hex.charAt(i);
+        }
+        return new String(sb);
+    }
+
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
         WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine);
         WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
@@ -1981,7 +2005,6 @@ public final class TestUtils {
                         break;
                 }
             } catch (AssertionError e) {
-                e.printStackTrace();
                 String expected = recordToString(rr, metadataExpected, genericStringMatch);
                 String actual = recordToString(lr, metadataActual, genericStringMatch);
                 Assert.assertEquals(

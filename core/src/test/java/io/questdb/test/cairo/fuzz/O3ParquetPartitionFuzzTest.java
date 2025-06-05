@@ -65,7 +65,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             FuzzTransaction tx = transactions.getQuick(i);
             ObjList<FuzzTransactionOperation> ops = tx.operationList;
             for (int j = 0, k = ops.size(); j < k; j++) {
-                ops.getQuick(j).apply(rnd, engine, w, -1);
+                ops.getQuick(j).apply(rnd, engine, w, -1, null);
             }
             w.ic();
         }
@@ -161,6 +161,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
                     0.0,
                     0,
                     0,
+                    0.0,
                     0.0,
                     5,
                     new String[]{"ABC", "CDE", "XYZ"},
