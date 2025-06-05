@@ -477,22 +477,22 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         if (e instanceof CairoException) {
             CairoException ce = (CairoException) e;
             if (ce.isInterruption()) {
-                info(state).$("query cancelled [reason=`").$(((CairoException) e).getFlyweightMessage())
+                info(state).$("query cancelled [reason=`").utf8(((CairoException) e).getFlyweightMessage())
                         .$("`, q=`").utf8(state.query)
                         .$("`]").$();
             } else if (ce.isCritical()) {
-                critical(state).$("error [msg=`").$(ce.getFlyweightMessage())
+                critical(state).$("error [msg=`").utf8(ce.getFlyweightMessage())
                         .$("`, errno=").$(ce.getErrno())
                         .$("`, q=`").utf8(state.query)
                         .$("`]").$();
             } else {
-                error(state).$("error [msg=`").$(ce.getFlyweightMessage())
+                error(state).$("error [msg=`").utf8(ce.getFlyweightMessage())
                         .$("`, errno=").$(ce.getErrno())
                         .$("`, q=`").utf8(state.query)
                         .$("`]").$();
             }
         } else if (e instanceof HttpException) {
-            error(state).$("internal HTTP server error [reason=`").$(((HttpException) e).getFlyweightMessage())
+            error(state).$("internal HTTP server error [reason=`").utf8(((HttpException) e).getFlyweightMessage())
                     .$("`, q=`").utf8(state.query)
                     .$("`]").$();
         } else {
@@ -734,7 +734,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         info(state).$("syntax-error [q=`").utf8(state.query)
                 .$("`, at=").$(container.getPosition())
-                .$(", message=`").$(container.getFlyweightMessage()).$('`').I$();
+                .$(", message=`").utf8(container.getFlyweightMessage()).$('`').I$();
         sendException(response, container.getPosition(), container.getFlyweightMessage(), state);
     }
 

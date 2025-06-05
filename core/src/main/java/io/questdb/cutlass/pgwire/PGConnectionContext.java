@@ -1584,7 +1584,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     }
                     throw SqlException.$(0, ex.getFlyweightMessage());
                 }
-                LOG.info().$(ex.getFlyweightMessage()).$();
+                LOG.info().utf8(ex.getFlyweightMessage()).$();
                 Misc.free(typesAndInsert);
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);

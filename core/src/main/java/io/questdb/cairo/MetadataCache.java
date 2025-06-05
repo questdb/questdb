@@ -277,7 +277,7 @@ public class MetadataCache implements QuietCloseable {
                         .$("could not hydrate metadata [table=").$(token)
                         .$(", msg=");
                 if (e instanceof FlyweightMessageContainer) {
-                    log.$(((FlyweightMessageContainer) e).getFlyweightMessage());
+                    log.utf8(((FlyweightMessageContainer) e).getFlyweightMessage());
                 } else {
                     log.$(e.getMessage());
                 }

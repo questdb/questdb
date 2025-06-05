@@ -1469,7 +1469,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.ofTableResume();
         } catch (CairoException ex) {
             LOG.critical().$("table resume failed [table=").$(tableToken)
-                    .$(", msg=").$(ex.getFlyweightMessage())
+                    .$(", msg=").utf8(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             ex.position(tableNamePosition);
@@ -1537,7 +1537,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.ofTableSuspend();
         } catch (CairoException ex) {
             LOG.critical().$("table suspend failed [table=").$(tableToken)
-                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", error=").utf8(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             ex.position(tableNamePosition);

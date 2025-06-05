@@ -453,7 +453,7 @@ public class LineWalAppender {
             throw commitFailedException;
         } catch (CairoException th) {
             LOG.error().$("could not write line protocol measurement [tableName=")
-                    .$(tud.getTableNameUtf16()).$(", message=").$(th.getFlyweightMessage()).I$();
+                    .$(tud.getTableNameUtf16()).$(", message=").utf8(th.getFlyweightMessage()).I$();
             if (r != null) {
                 r.cancel();
             }

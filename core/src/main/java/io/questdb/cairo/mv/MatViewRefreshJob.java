@@ -494,7 +494,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         intervalStep /= 2;
                         LOG.info().$("query failed with out-of-memory, retrying with a reduced intervalStep [view=").$(viewTableToken)
                                 .$(", intervalStep=").$(intervalStep)
-                                .$(", error=").$(((CairoException) th).getFlyweightMessage())
+                                .$(", error=").utf8(((CairoException) th).getFlyweightMessage())
                                 .I$();
                         Os.sleep(oomRetryTimeout);
                         continue;
