@@ -5152,7 +5152,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     DedupColumnCommitAddresses.getAddress(dedupCommitAddr)
             );
 
-            LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken.getDirName())
+            LOG.info().$("WAL dedup sorted commit index [table=").utf8(tableToken.getDirName())
                     .$(", totalRows=").$(longIndexLength)
                     .$(", lagRows=").$(lagRows)
                     .$(", dups=")
@@ -7151,7 +7151,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        LOG.info().$("processing WAL transaction block [table=").$(tableToken.getDirName())
+        LOG.info().$("processing WAL transaction block [table=").utf8(tableToken.getDirName())
                 .$(", seqTxn=").$(startSeqTxn).$("..").$(startSeqTxn + blockTransactionCount - 1)
                 .$(", rows=").$(segmentCopyInfo.getTotalRows())
                 .$(", segments=").$(segmentCopyInfo.getSegmentCount())
@@ -7172,7 +7172,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3LoHi;
 
             if (!isDeduplicationEnabled() && segmentCopyInfo.getAllTxnDataInOrder() && segmentCopyInfo.getSegmentCount() == 1) {
-                LOG.info().$("all data in order, single segment, processing optimised [table=").$(tableToken.getDirName()).I$();
+                LOG.info().$("all data in order, single segment, processing optimised [table=").utf8(tableToken.getDirName()).I$();
                 // all data comes from a single segment and is already sorted
                 if (denseSymbolMapWriters.size() > 0) {
                     segmentFileCache.mmapWalColsEager();
@@ -7337,7 +7337,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             tsAddresses.set(0, 0L);
 
             if (!Vect.isIndexSuccess(indexFormat)) {
-                LOG.info().$("transaction sort error, will switch to 1 commit [table=").$(tableToken.getDirName())
+                LOG.info().$("transaction sort error, will switch to 1 commit [table=").utf8(tableToken.getDirName())
                         .$(", totalRows=").$(totalRows)
                         .$(", indexFormat=").$(indexFormat)
                         .I$();
@@ -7372,7 +7372,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // to understand the difference
 
                 if (!Vect.isIndexSuccess(indexFormat)) {
-                    LOG.critical().$("WAL dedup sorted index failed will switch to 1 commit [table=").$(tableToken.getDirName())
+                    LOG.critical().$("WAL dedup sorted index failed will switch to 1 commit [table=").utf8(tableToken.getDirName())
                             .$(", totalRows=").$(totalRows)
                             .$(", indexFormat=").$(indexFormat)
                             .I$();
@@ -7381,7 +7381,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 long dedupedRowCount = Vect.readIndexResultRowCount(indexFormat);
-                LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken.getDirName())
+                LOG.info().$("WAL dedup sorted commit index [table=").utf8(tableToken.getDirName())
                         .$(", totalRows=").$(totalRows)
                         .$(", dups=").$(totalRows - dedupedRowCount)
                         .I$();
@@ -7391,7 +7391,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 totalRows = dedupedRowCount;
             }
 
-            LOG.debug().$("shuffling [table=").$(tableToken.getDirName()).$(", columCount=")
+            LOG.debug().$("shuffling [table=").utf8(tableToken.getDirName()).$(", columCount=")
                     .$(metadata.getColumnCount() - 1)
                     .$(", rows=").$(totalRows)
                     .$(", indexFormat=").$(indexFormat).I$();
