@@ -1624,7 +1624,7 @@ public class SqlParser {
             }
         }
         tok = sansPublicSchema(tok, lexer);
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
         tableOpBuilder.setTableNameExpr(nextLiteral(
                 assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()
         ));
