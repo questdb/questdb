@@ -2116,7 +2116,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (isTableKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("IF EXISTS table-name");
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("[IF EXISTS] table-name");
                 }
                 boolean hasIfExists = false;
                 int tableNamePosition = lexer.lastTokenPosition();
@@ -2135,14 +2135,54 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence tableName = GenericLexer.unquote(tok);
-                // define operation to make sure we generate correct errors in case
-                // of syntax check failure.
-                final TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
-                checkMatViewModification(tableToken);
+                // define operation to make sure we generate correct errors in case of syntax check failure
+                final TableToken tt = executionContext.getTableTokenIfExists(tableName);
+                if (tt != null && (tt.isView() || tt.isMatView())) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "table name expected, got view or materialized view name");
+                }
                 dropOperationBuilder.clear();
                 dropOperationBuilder.setOperationCode(OperationCodes.DROP_TABLE);
                 dropOperationBuilder.setEntityName(tableName);
                 dropOperationBuilder.setEntityNamePosition(tableNamePosition);
+                dropOperationBuilder.setIfExists(hasIfExists);
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    compileDropExt(executionContext, dropOperationBuilder, tok, lexer.lastTokenPosition());
+                }
+                dropOperationBuilder.setSqlText(sqlText);
+                compiledQuery.ofDrop(dropOperationBuilder.build());
+                // DROP VIEW [ IF EXISTS ] name [;]
+            } else if (isViewKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("[IF EXISTS] view-name");
+                }
+                boolean hasIfExists = false;
+                int viewNamePosition = lexer.lastTokenPosition();
+                if (isIfKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null || !isExistsKeyword(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS view-name");
+                    }
+                    hasIfExists = true;
+                    viewNamePosition = lexer.getPosition();
+                } else {
+                    lexer.unparseLast(); // tok has table name
+                }
+
+                tok = expectToken(lexer, "view name");
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
+                final CharSequence viewName = GenericLexer.unquote(tok);
+                // define operation to make sure we generate correct errors in case of syntax check failure
+                final TableToken tt = executionContext.getTableTokenIfExists(viewName);
+                if (tt != null && !tt.isView()) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "view name expected, got table or materialized view name");
+                }
+                dropOperationBuilder.clear();
+                dropOperationBuilder.setOperationCode(OperationCodes.DROP_VIEW);
+                dropOperationBuilder.setEntityName(viewName);
+                dropOperationBuilder.setEntityNamePosition(viewNamePosition);
                 dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
@@ -2158,35 +2198,34 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("IF EXISTS mat-view-name");
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("[IF EXISTS] mat-view-name");
                 }
                 boolean hasIfExists = false;
-                int tableNamePosition = lexer.lastTokenPosition();
+                int matViewNamePosition = lexer.lastTokenPosition();
                 if (isIfKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || !isExistsKeyword(tok)) {
                         throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS mat-view-name");
                     }
                     hasIfExists = true;
-                    tableNamePosition = lexer.getPosition();
+                    matViewNamePosition = lexer.getPosition();
                 } else {
                     lexer.unparseLast(); // tok has table name
                 }
 
-                tok = expectToken(lexer, "view name");
+                tok = expectToken(lexer, "materialized view name");
                 assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence matViewName = GenericLexer.unquote(tok);
-                // define operation to make sure we generate correct errors in case
-                // of syntax check failure.
-                final TableToken tableToken = executionContext.getTableTokenIfExists(matViewName);
-                if (tableToken != null && !tableToken.isMatView()) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table name");
+                // define operation to make sure we generate correct errors in case of syntax check failure
+                final TableToken tt = executionContext.getTableTokenIfExists(matViewName);
+                if (tt != null && !tt.isMatView()) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table or view name");
                 }
                 dropOperationBuilder.clear();
                 dropOperationBuilder.setOperationCode(OperationCodes.DROP_MAT_VIEW);
                 dropOperationBuilder.setEntityName(matViewName);
-                dropOperationBuilder.setEntityNamePosition(tableNamePosition);
+                dropOperationBuilder.setEntityNamePosition(matViewNamePosition);
                 dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {

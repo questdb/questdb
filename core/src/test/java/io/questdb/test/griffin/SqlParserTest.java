@@ -3889,7 +3889,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop materialized view",
                 18,
-                "expected IF EXISTS mat-view-name"
+                "expected [IF EXISTS] mat-view-name"
         );
     }
 
