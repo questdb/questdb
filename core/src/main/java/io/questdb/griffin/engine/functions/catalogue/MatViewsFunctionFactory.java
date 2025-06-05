@@ -60,6 +60,25 @@ import io.questdb.std.str.StringSink;
 public class MatViewsFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(MatViewsFunctionFactory.class);
 
+    public static String getTimerIntervalUnit(char unit) {
+        switch (unit) {
+            case 'm':
+                return "MINUTE";
+            case 'h':
+                return "HOUR";
+            case 'd':
+                return "DAY";
+            case 'w':
+                return "WEEK";
+            case 'y':
+                return "YEAR";
+            case 'M':
+                return "MONTH";
+            default:
+                return null;
+        }
+    }
+
     @Override
     public String getSignature() {
         return "materialized_views()";
@@ -81,25 +100,6 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         };
     }
 
-    private static String getTimerIntervalUnit(char unit) {
-        switch (unit) {
-            case 'm':
-                return "MINUTE";
-            case 'h':
-                return "HOUR";
-            case 'd':
-                return "DAY";
-            case 'w':
-                return "WEEK";
-            case 'y':
-                return "YEAR";
-            case 'M':
-                return "MONTH";
-            default:
-                return null;
-        }
-    }
-
     private static class MatViewsCursorFactory implements RecordCursorFactory {
         private static final int COLUMN_VIEW_NAME = 0;
         private static final int COLUMN_REFRESH_TYPE = COLUMN_VIEW_NAME + 1;
@@ -114,7 +114,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_LAST_APPLIED_BASE_TABLE_TXN = COLUMN_LAST_REFRESH_BASE_TABLE_TXN + 1;
         private static final int COLUMN_REFRESH_LIMIT_VALUE = COLUMN_LAST_APPLIED_BASE_TABLE_TXN + 1;
         private static final int COLUMN_REFRESH_LIMIT_UNIT = COLUMN_REFRESH_LIMIT_VALUE + 1;
-        private static final int COLUMN_TIMER_START = COLUMN_REFRESH_LIMIT_UNIT + 1;
+        private static final int COLUMN_TIMER_TIME_ZONE = COLUMN_REFRESH_LIMIT_UNIT + 1;
+        private static final int COLUMN_TIMER_START = COLUMN_TIMER_TIME_ZONE + 1;
         private static final int COLUMN_TIMER_INTERVAL_VALUE = COLUMN_TIMER_START + 1;
         private static final int COLUMN_TIMER_INTERVAL_UNIT = COLUMN_TIMER_INTERVAL_VALUE + 1;
         private static final RecordMetadata METADATA;
@@ -206,7 +207,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             char timerIntervalUnit = 0;
                             try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
                                 refreshLimitHoursOrMonths = matViewMeta.getMatViewRefreshLimitHoursOrMonths();
-                                if (matViewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
+                                if (matViewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
                                     timerStart = matViewMeta.getMatViewTimerStart();
                                     timerInterval = matViewMeta.getMatViewTimerInterval();
                                     timerIntervalUnit = matViewMeta.getMatViewTimerIntervalUnit();
@@ -304,10 +305,12 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             return viewDefinition.getMatViewToken().getTableName();
                         case COLUMN_REFRESH_TYPE:
                             switch (viewDefinition.getRefreshType()) {
-                                case MatViewDefinition.INCREMENTAL_REFRESH_TYPE:
-                                    return "incremental";
-                                case MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE:
-                                    return "incremental_timer";
+                                case MatViewDefinition.IMMEDIATE_REFRESH_TYPE:
+                                    return "immediate";
+                                case MatViewDefinition.TIMER_REFRESH_TYPE:
+                                    return "timer";
+                                case MatViewDefinition.MANUAL_REFRESH_TYPE:
+                                    return "manual";
                                 default:
                                     return "unknown";
                             }
@@ -328,6 +331,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             return TablesFunctionFactory.getTtlUnit(refreshLimitHoursOrMonths);
                         case COLUMN_TIMER_INTERVAL_UNIT:
                             return getTimerIntervalUnit(timerIntervalUnit);
+                        case COLUMN_TIMER_TIME_ZONE:
+                            return viewDefinition.getTimerTimeZone();
                         default:
                             return null;
                     }
@@ -396,6 +401,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("base_table_txn", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_limit_value", ColumnType.INT));
             metadata.add(new TableColumnMetadata("refresh_limit_unit", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("timer_time_zone", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("timer_start", ColumnType.TIMESTAMP));
             metadata.add(new TableColumnMetadata("timer_interval_value", ColumnType.INT));
             metadata.add(new TableColumnMetadata("timer_interval_unit", ColumnType.STRING));
