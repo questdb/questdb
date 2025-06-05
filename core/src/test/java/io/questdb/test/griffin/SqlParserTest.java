@@ -1148,7 +1148,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
         assertException("select * from trades t JOIN quotes q on tag TOLERANCE 10s",
                 44,
-                "TOLERANCE is only supported for ASOF joins");
+                "TOLERANCE is only supported for ASOF and LT joins");
     }
 
     @Test
