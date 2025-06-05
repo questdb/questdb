@@ -416,7 +416,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             rec.$(", msg=").utf8(ce.getFlyweightMessage())
                                     .$(", errno=").$(ce.getErrno());
                         } else {
-                            rec.$(", msg=").$(th.getMessage());
+                            rec.$(", msg=").utf8(th.getMessage());
                         }
                         rec.I$();
                     }
@@ -1746,7 +1746,7 @@ public class CairoEngine implements Closeable, WriterSource {
         } catch (Throwable th) {
             LOG.critical()
                     .$("table repair failed [dirName=").utf8(tableToken.getDirName())
-                    .$(", error=").$(th.getMessage())
+                    .$(", error=").utf8(th.getMessage())
                     .I$();
             throw rethrow;
         }

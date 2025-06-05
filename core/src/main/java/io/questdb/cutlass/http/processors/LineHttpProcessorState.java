@@ -284,7 +284,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
         errorRec.$('[').$(fd).$("] could not commit [table=").$(parser.getMeasurementName())
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
-                .$(", ex=").$(ex.getMessage())
+                .$(", ex=").utf8(ex.getMessage())
                 .I$();
         return status;
     }
@@ -368,7 +368,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         if (logMessageOnError) {
             errorRec.$(", mangledLine=`").$utf8(recvBuffer.getBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');
         }
-        errorRec.$(", ex=").$(ex.getMessage()).I$();
+        errorRec.$(", ex=").utf8(ex.getMessage()).I$();
 
         error.put("write error: ").put(parser.getMeasurementName())
                 .put(", error: ").put(ex.getClass().getCanonicalName());

@@ -1514,7 +1514,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (CairoException e) {
             LOG.error().$("could not convert partition to parquet [table=").utf8(tableToken.getTableName())
                     .$(", partition=").$ts(partitionTimestamp)
-                    .$(", error=").$(e.getMessage()).I$();
+                    .$(", error=").utf8(e.getMessage()).I$();
 
             // rollback
             if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
@@ -1685,7 +1685,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (CairoException e) {
             LOG.error().$("could not convert partition to native [table=").utf8(tableToken.getTableName())
                     .$(", partition=").$ts(partitionTimestamp)
-                    .$(", error=").$(e.getMessage()).I$();
+                    .$(", error=").utf8(e.getMessage()).I$();
 
             // rollback
             if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
@@ -4315,7 +4315,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (CairoException e) {
             LOG.error().$("could not copy index files [table=").utf8(tableToken.getTableName())
                     .$(", partition=").$ts(partitionTimestamp)
-                    .$(", error=").$(e.getMessage()).I$();
+                    .$(", error=").utf8(e.getMessage()).I$();
 
             // rollback
             if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {

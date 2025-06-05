@@ -383,7 +383,7 @@ public class TableUpdateDetails implements Closeable {
         } catch (Throwable th) {
             LOG.error()
                     .$("could not commit line protocol measurement [tableName=").$(writerAPI.getTableToken())
-                    .$(", message=").$(th.getMessage())
+                    .$(", message=").utf8(th.getMessage())
                     .$(th)
                     .I$();
             writerAPI.rollback();
