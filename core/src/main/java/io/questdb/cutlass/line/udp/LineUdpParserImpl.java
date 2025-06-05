@@ -270,7 +270,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             try {
                 return writer.newRow(timestampAdapter.getMicros(cache.get(columnValues.getQuick(valueCount - 1))));
             } catch (NumericException e) {
-                LOG.error().$("invalid timestamp: ").$(cache.get(columnValues.getQuick(valueCount - 1))).$();
+                LOG.error().$("invalid timestamp: ").utf8(cache.get(columnValues.getQuick(valueCount - 1))).$();
                 return null;
             }
         }
@@ -357,7 +357,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     private void parseFieldNameNewTable(CachedCharSequence token) {
         if (!TableUtils.isValidColumnName(token, udpConfiguration.getMaxFileNameLength())) {
-            LOG.error().$("invalid column name [columnName=").$(token).I$();
+            LOG.error().$("invalid column name [columnName=").utf8(token).I$();
             switchModeToSkipLine();
             return;
         }
@@ -480,7 +480,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                         .put(']');
             } else {
                 LOG.error().$("invalid column name [table=").utf8(writer.getTableToken().getTableName())
-                        .$(", columnName=").$(colNameAsChars)
+                        .$(", columnName=").utf8(colNameAsChars)
                         .$(']').$();
                 switchModeToSkipLine();
             }

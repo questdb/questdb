@@ -2294,7 +2294,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         namedPortalPool.push(namedPortalMap.valueAt(index));
                         namedPortalMap.removeAt(index);
                     } else {
-                        LOG.error().$("invalid portal name [value=").$(portalName).I$();
+                        LOG.error().$("invalid portal name [value=").utf8(portalName).I$();
                         throw BadProtocolException.INSTANCE;
                     }
                 }
@@ -2430,7 +2430,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (p != null) {
                 target = p.statementName;
             } else {
-                LOG.error().$("invalid portal [name=").$(target).I$();
+                LOG.error().$("invalid portal [name=").utf8(target).I$();
                 throw BadProtocolException.INSTANCE;
             }
         }

@@ -614,7 +614,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 if (force || state.getLastRefreshBaseTxn() != -1) {
                     final long invalidationTimestamp = microsecondClock.getTicks();
                     LOG.error().$("marking materialized view as invalid [view=").$(viewToken)
-                            .$(", reason=").$(invalidationReason)
+                            .$(", reason=").utf8(invalidationReason)
                             .$(", ts=").$ts(invalidationTimestamp)
                             .I$();
                     setInvalidState(state, walWriter, invalidationReason, invalidationTimestamp);
