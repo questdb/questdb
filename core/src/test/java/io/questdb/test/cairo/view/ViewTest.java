@@ -36,7 +36,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.*;
 
-public class CreateViewTest extends AbstractCairoTest {
+public class ViewTest extends AbstractCairoTest {
     private static final String TABLE1 = "table1";
     private static final String TABLE2 = "table2";
     private static final String VIEW1 = "view1";

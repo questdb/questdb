@@ -30,6 +30,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
+import io.questdb.cairo.view.ViewState;
+import io.questdb.cairo.view.ViewStateReader;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -39,9 +41,10 @@ import io.questdb.cairo.wal.seq.TableTransactionLogV2;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_DATA;
-import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
+import static io.questdb.cairo.wal.WalTxnType.*;
 
 public class WalUtils {
     public static final String CONVERT_FILE_NAME = "_convert";
@@ -82,11 +85,11 @@ public class WalUtils {
     // REPLACE_RANGE mode means to replacing the existing range of data with the new data.
     public static final byte WAL_DEDUP_MODE_REPLACE_RANGE = WAL_DEDUP_MODE_UPSERT_NEW + 1;
     public static final byte WAL_DEDUP_MODE_MAX = WAL_DEDUP_MODE_REPLACE_RANGE;
+    public static final int WAL_FORMAT_OFFSET_32 = Integer.BYTES;
     public static final short WAL_FORMAT_VERSION = 0;
     public static final short WALE_FORMAT_VERSION = WAL_FORMAT_VERSION;
     public static final short WALE_MAT_VIEW_FORMAT_VERSION = WALE_FORMAT_VERSION + 1;
     public static final short WALE_VIEW_FORMAT_VERSION = WALE_MAT_VIEW_FORMAT_VERSION + 1;
-    public static final int WAL_FORMAT_OFFSET_32 = Integer.BYTES;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String WAL_NAME_BASE = "wal";
     public static final String WAL_PENDING_FS_MARKER = ".pending";
@@ -135,7 +138,7 @@ public class WalUtils {
      * @param txnLogMemory       the memory to iterate over transaction logs
      * @param walEventReader     the reader to read WAL events
      * @param blockFileReader    the reader to read the state file
-     * @param matViewStateReader the reader used to collect the state
+     * @param matViewStateReader the reader used to collect the mat view state
      * @return true if the last mat view state was successfully retrieved, false otherwise
      */
     public static boolean readMatViewState(
@@ -145,8 +148,124 @@ public class WalUtils {
             MemoryCMR txnLogMemory,
             WalEventReader walEventReader,
             BlockFileReader blockFileReader,
-            MatViewStateReader matViewStateReader
+            @NotNull MatViewStateReader matViewStateReader
     ) {
+        return readViewState(
+                tablePath,
+                tableToken,
+                configuration,
+                txnLogMemory,
+                walEventReader,
+                blockFileReader,
+                null,
+                matViewStateReader
+        );
+    }
+
+    /**
+     * Retrieves the last state for a view.
+     * <p>
+     * Note: This function is intended to be used during the initialization phase only.
+     * It has been extracted into `WalUtils` solely to facilitate its usage in tests.
+     *
+     * @param tablePath       the path to the table
+     * @param tableToken      the table token
+     * @param configuration   the Cairo configuration
+     * @param txnLogMemory    the memory to iterate over transaction logs
+     * @param walEventReader  the reader to read WAL events
+     * @param blockFileReader the reader to read the state file
+     * @param viewStateReader the reader used to collect the view state
+     * @return true if the last view state was successfully retrieved, false otherwise
+     */
+    public static boolean readViewState(
+            Path tablePath,
+            TableToken tableToken,
+            CairoConfiguration configuration,
+            MemoryCMR txnLogMemory,
+            WalEventReader walEventReader,
+            BlockFileReader blockFileReader,
+            @NotNull ViewStateReader viewStateReader
+    ) {
+        return readViewState(
+                tablePath,
+                tableToken,
+                configuration,
+                txnLogMemory,
+                walEventReader,
+                blockFileReader,
+                viewStateReader,
+                null
+        );
+    }
+
+    private static boolean processTransaction(
+            MemoryCMR mem,
+            long offset,
+            Path tablePath,
+            int tablePathLen,
+            WalEventReader walEventReader,
+            BlockFileReader blockFileReader,
+            @Nullable ViewStateReader viewStateReader,
+            @Nullable MatViewStateReader matViewStateReader,
+            TableToken tableToken
+    ) {
+        final int walId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_WAL_ID_OFFSET);
+        final int segmentId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_OFFSET);
+        final int segmentTxn = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_TXN_OFFSET);
+        // Only process valid WAL IDs
+        if (walId > 0) {
+            tablePath.trimTo(tablePathLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+            // Since we are scanning the transaction log of a materialized view table,
+            // we assume the last transaction is the one we are looking for (for the most cases).
+            // As a result, fd and memory usage is not optimized.
+            try (WalEventReader eventReader = walEventReader) {
+                WalEventCursor walEventCursor = eventReader.of(tablePath, segmentTxn);
+                if (walEventCursor.getType() == VIEW_INVALIDATE && viewStateReader != null) {
+                    viewStateReader.of(walEventCursor.getViewInvalidationInfo());
+                    return true;
+                }
+                if (walEventCursor.getType() == MAT_VIEW_DATA && matViewStateReader != null) {
+                    matViewStateReader.of(walEventCursor.getMatViewDataInfo());
+                    return true;
+                }
+                if (walEventCursor.getType() == MAT_VIEW_INVALIDATE && matViewStateReader != null) {
+                    matViewStateReader.of(walEventCursor.getMvInvalidationInfo());
+                    return true;
+                }
+            } catch (Throwable th) {
+                // walEventReader may not be able to find/open the WAL-e files
+                try (BlockFileReader blockReader = blockFileReader) {
+                    if (viewStateReader != null) {
+                        tablePath.trimTo(tablePathLen).concat(ViewState.VIEW_STATE_FILE_NAME);
+                        blockReader.of(tablePath.$());
+                        viewStateReader.of(blockReader, tableToken);
+                        return true;
+                    }
+                    if (matViewStateReader != null) {
+                        tablePath.trimTo(tablePathLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+                        blockReader.of(tablePath.$());
+                        matViewStateReader.of(blockReader, tableToken);
+                        return true;
+                    }
+                } catch (Throwable ignored) {
+                }
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private static boolean readViewState(
+            Path tablePath,
+            TableToken tableToken,
+            CairoConfiguration configuration,
+            MemoryCMR txnLogMemory,
+            WalEventReader walEventReader,
+            BlockFileReader blockFileReader,
+            @Nullable ViewStateReader viewStateReader,
+            @Nullable MatViewStateReader matViewStateReader
+    ) {
+        assert (viewStateReader != null && matViewStateReader == null) || (viewStateReader == null && matViewStateReader != null);
         try (MemoryCMR mem = txnLogMemory) {
             final int tablePathLen = tablePath.size();
             mem.smallFile(configuration.getFilesFacade(), tablePath.concat(SEQ_DIR).concat(TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_TX_LOG);
@@ -170,6 +289,7 @@ public class WalUtils {
                                 tablePathLen,
                                 walEventReader,
                                 blockFileReader,
+                                viewStateReader,
                                 matViewStateReader,
                                 tableToken
                         )) {
@@ -196,6 +316,7 @@ public class WalUtils {
                                         tablePathLen,
                                         walEventReader,
                                         blockFileReader,
+                                        viewStateReader,
                                         matViewStateReader,
                                         tableToken
                                 )) {
@@ -207,50 +328,6 @@ public class WalUtils {
                 }
             } else {
                 throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
-            }
-        }
-        return false;
-    }
-
-    private static boolean processTransaction(
-            MemoryCMR mem,
-            long offset,
-            Path tablePath,
-            int tablePathLen,
-            WalEventReader walEventReader,
-            BlockFileReader blockFileReader,
-            MatViewStateReader matViewStateReader,
-            TableToken tableToken
-    ) {
-        final int walId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_WAL_ID_OFFSET);
-        final int segmentId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_OFFSET);
-        final int segmentTxn = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_TXN_OFFSET);
-        // Only process valid WAL IDs
-        if (walId > 0) {
-            tablePath.trimTo(tablePathLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-            // Since we are scanning the transaction log of a materialized view table,
-            // we assume the last transaction is the one we are looking for (for the most cases).
-            // As a result, fd and memory usage is not optimized.
-            try (WalEventReader eventReader = walEventReader) {
-                WalEventCursor walEventCursor = eventReader.of(tablePath, segmentTxn);
-                if (walEventCursor.getType() == MAT_VIEW_DATA) {
-                    matViewStateReader.of(walEventCursor.getMatViewDataInfo());
-                    return true;
-                }
-                if (walEventCursor.getType() == MAT_VIEW_INVALIDATE) {
-                    matViewStateReader.of(walEventCursor.getMvInvalidationInfo());
-                    return true;
-                }
-            } catch (Throwable th) {
-                // walEventReader may not be able to find/open the WAL-e files
-                try (BlockFileReader blockReader = blockFileReader) {
-                    tablePath.trimTo(tablePathLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
-                    blockReader.of(tablePath.$());
-                    matViewStateReader.of(blockReader, tableToken);
-                    return true;
-                } catch (Throwable ignored) {
-                }
-                return false;
             }
         }
         return false;

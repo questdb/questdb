@@ -171,6 +171,7 @@ public class TableConverter {
             switch (walType) {
                 case TABLE_TYPE_WAL:
                     // fall through
+                case TABLE_TYPE_VIEW:
                 case TABLE_TYPE_MAT:
                     return true;
                 case TABLE_TYPE_NON_WAL:

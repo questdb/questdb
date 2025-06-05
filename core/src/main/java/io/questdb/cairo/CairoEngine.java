@@ -64,6 +64,8 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.NoOpViewStateStore;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewGraph;
+import io.questdb.cairo.view.ViewState;
+import io.questdb.cairo.view.ViewStateReader;
 import io.questdb.cairo.view.ViewStateStore;
 import io.questdb.cairo.view.ViewStateStoreImpl;
 import io.questdb.cairo.vm.Vm;
@@ -339,7 +341,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 .put(", writerTxn=").put(writerTxn);
     }
 
-    public void buildMatViewGraph() {
+    public void buildViewGraphs() {
         final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
         getTableTokens(tableTokenBucket, false);
 
@@ -351,9 +353,51 @@ public class CairoEngine implements Closeable, WriterSource {
         ) {
             path.of(configuration.getDbRoot());
             final int pathLen = path.size();
+            ViewStateReader viewStateReader = new ViewStateReader();
             MatViewStateReader matViewStateReader = new MatViewStateReader();
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);
+                if (tableToken.isView() && TableUtils.isViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
+                    try {
+                        ViewDefinition viewDefinition = viewGraph.getViewDefinition(tableToken);
+                        if (viewDefinition == null) {
+                            viewDefinition = new ViewDefinition();
+                            ViewDefinition.readFrom(
+                                    viewDefinition,
+                                    reader,
+                                    path,
+                                    pathLen,
+                                    tableToken
+                            );
+                            if (viewGraph.addView(viewDefinition)) {
+                                viewStateStore.createViewState(viewDefinition);
+                            }
+                        }
+
+                        final ViewState state = viewStateStore.getViewState(tableToken);
+                        // Can be null if the graph implementation is no-op.
+                        // The no-op graph does nothing on view creation and other operations
+                        // and is used when views are disabled.
+                        if (state != null) {
+                            path.trimTo(pathLen).concat(tableToken);
+                            if (!WalUtils.readViewState(path, tableToken, configuration, txnMem, walEventReader, reader, viewStateReader)) {
+                                LOG.info().$("could not find view state, [view=").utf8(tableToken.getTableName()).I$();
+                                continue;
+                            }
+                            state.initFromReader(viewStateReader);
+                        }
+                    } catch (Throwable th) {
+                        final LogRecord rec = LOG.error().$("could not load view [view=").utf8(tableToken.getTableName());
+                        if (th instanceof CairoException) {
+                            final CairoException ce = (CairoException) th;
+                            rec.$(", msg=").$(ce.getFlyweightMessage())
+                                    .$(", errno=").$(ce.getErrno());
+                        } else {
+                            rec.$(", msg=").$(th.getMessage());
+                        }
+                        rec.I$();
+                    }
+                }
                 if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
                     try {
                         MatViewDefinition viewDefinition = matViewGraph.getViewDefinition(tableToken);
@@ -436,11 +480,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
             }
         }
-    }
-
-    public void buildViewGraph() {
-        // TODO: load views with their state (invalid/valid)
-        //  should be similar to buildMatViewGraph()
     }
 
     public void checkpointCreate(SqlExecutionContext executionContext) throws SqlException {
@@ -1702,7 +1741,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             createTableOrViewOrMatViewUnsafe(mem, blockFileWriter, path, struct, tableToken);
                         }
 
-                        if (struct.isWalEnabled() || struct.isView()) {
+                        if (struct.isWalEnabled()) {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
                         }
                         if (!keepLock) {
@@ -1729,7 +1768,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 }
             } catch (Throwable th) {
-                if (struct.isWalEnabled() || struct.isView()) {
+                if (struct.isWalEnabled()) {
                     // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
                     tableSequencerAPI.dropTable(tableToken, true);
                 }
