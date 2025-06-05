@@ -124,9 +124,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 break;
             case LT_NONKEYD:
                 join = " LT";
-                if (maxTolerance != -1) {
-                    return; // LT join does not support tolerance
-                }
+//                if (maxTolerance != -1) {
+//                    return; // LT join does not support tolerance
+//                }
                 break;
             default:
                 throw new IllegalArgumentException("Unexpected join type: " + joinType);

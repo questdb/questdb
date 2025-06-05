@@ -724,7 +724,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             long toleranceIntervalMicros,
             int slaveValueTimestampIndex
     ) {
-        assert toleranceIntervalMicros == Numbers.LONG_NULL : "Tolerance interval for LT JOIN is not implemented";
         return new LtJoinRecordCursorFactory(
                 configuration,
                 metadata,
@@ -739,7 +738,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 slaveValueSink,
                 columnIndex,
                 joinContext,
-                masterTableKeyColumns
+                masterTableKeyColumns,
+                toleranceIntervalMicros,
+                slaveValueTimestampIndex
         );
     }
 
@@ -1394,7 +1395,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory slave,
             RecordSink slaveKeySink,
             int columnSplit,
-            JoinContext joinContext
+            JoinContext joinContext,
+            long toleranceInterval
     ) {
         valueTypes.clear();
         valueTypes.add(ColumnType.LONG);
@@ -1410,7 +1412,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 masterKeySink,
                 slaveKeySink,
                 columnSplit,
-                joinContext
+                joinContext,
+                toleranceInterval
         );
     }
 
@@ -2515,7 +2518,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateOuterJoinExpressions(slaveModel, "ASOF");
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
-
                                 long toleranceInterval = tolerance(slaveModel);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
@@ -2700,6 +2702,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 releaseSlave = false;
                                 break;
                             case JOIN_LT:
+                                toleranceInterval = tolerance(slaveModel);
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "LT");
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
@@ -2724,7 +2727,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         writeStringAsVarcharA
                                                 ),
                                                 masterMetadata.getColumnCount(),
-                                                slaveModel.getContext()
+                                                slaveModel.getContext(),
+                                                toleranceInterval
                                         );
                                     } else {
                                         if (slave.supportsTimeFrameCursor()) {
@@ -2733,14 +2737,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                                     master,
                                                     slave,
-                                                    masterMetadata.getColumnCount()
+                                                    masterMetadata.getColumnCount(),
+                                                    toleranceInterval
                                             );
                                         } else {
                                             master = new LtJoinNoKeyRecordCursorFactory(
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                                     master,
                                                     slave,
-                                                    masterMetadata.getColumnCount()
+                                                    masterMetadata.getColumnCount(),
+                                                    toleranceInterval
                                             );
                                         }
                                     }
@@ -2755,7 +2761,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaveModel.getJoinKeywordPosition(),
                                             CREATE_FULL_FAT_LT_JOIN,
                                             slaveModel.getContext(),
-                                            Numbers.LONG_NULL
+                                            toleranceInterval
                                     );
                                 }
                                 masterAlias = null;

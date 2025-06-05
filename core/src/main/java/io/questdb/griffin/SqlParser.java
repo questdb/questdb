@@ -2574,8 +2574,8 @@ public class SqlParser {
             lexer.unparseLast();
             return joinModel;
         }
-        if (joinType != QueryModel.JOIN_ASOF) {
-            throw SqlException.$(lexer.lastTokenPosition(), "TOLERANCE is only supported for ASOF joins");
+        if (joinType != QueryModel.JOIN_ASOF && joinType != QueryModel.JOIN_LT) {
+            throw SqlException.$(lexer.lastTokenPosition(), "TOLERANCE is only supported for ASOF and LT joins");
         }
 
         final ExpressionNode n = expr(lexer, null, sqlParserCallback, decls);
