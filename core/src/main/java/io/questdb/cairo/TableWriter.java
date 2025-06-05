@@ -1091,7 +1091,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // It is possible in concurrent schema modification that SQL compiler allowed
             // this alter, but by the time it is applied, the colum type has changed.
             LOG.error().$("cannot change column type, column does not exist [table=").$(tableToken)
-                    .$(", column=").$(colName).I$();
+                    .$(", column=").utf8(colName).I$();
             return;
         }
 

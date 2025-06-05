@@ -511,7 +511,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             int hi
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (start == hi) {
-            info().$("empty column in list '").$(columnNames).$('\'').$();
+            info().$("empty column in list '").utf8(columnNames).$('\'').$();
             HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
             JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
             response.putAscii('{')

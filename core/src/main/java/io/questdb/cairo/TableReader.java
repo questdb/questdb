@@ -1467,7 +1467,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         auxMem = openOrCreateColumnMemory(path, columns, secondaryIndex, auxMem, auxSize, lastPartition);
                         long dataSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), columnRowCount - 1);
                         if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
-                            LOG.critical().$("Invalid var len column size [column=").$(name)
+                            LOG.critical().$("Invalid var len column size [column=").utf8(name)
                                     .$(", size=").$(dataSize)
                                     .$(", path=").$(path)
                                     .I$();
