@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 
 
@@ -55,7 +56,7 @@ public class TimestampFloorFromFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final CharSequence str = args.getQuick(0).getStrA(null);
-        final int stride = Timestamps.getStrideMultiple(str);
+        final int stride = CommonFormatUtils.getStrideMultiple(str);
         final char unit = Timestamps.getStrideUnit(str, argPositions.getQuick(0));
         final Function timestampFunc = args.getQuick(1);
         long from = args.getQuick(2).getTimestamp(null);

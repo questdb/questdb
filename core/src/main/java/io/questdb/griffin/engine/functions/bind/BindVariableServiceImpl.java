@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -47,6 +48,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class BindVariableServiceImpl implements BindVariableService {
@@ -1143,8 +1145,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setStr0(Function function, CharSequence value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = ColumnType.tagOf(function.getType());
-        switch (functionType) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.BOOLEAN:
                 ((BooleanBindVariable) function).value = value != null && SqlKeywords.isTrueKeyword(value);
                 break;
@@ -1167,7 +1168,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((LongBindVariable) function).value = SqlUtil.implicitCastStrAsLong(value);
                 break;
             case ColumnType.TIMESTAMP:
-                ((TimestampBindVariable) function).value = SqlUtil.implicitCastStrAsTimestamp(value);
+                ((TimestampBindVariable) function).value = ColumnType.getTimestampDriver(function.getType()).implicitCast(value);
                 break;
             case ColumnType.DATE:
                 ((DateBindVariable) function).value = SqlUtil.implicitCastStrAsDate(value);
@@ -1288,26 +1289,15 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.TIMESTAMP:
             case ColumnType.DATE:
             case ColumnType.LONG256:
-                CharSequence charSeq;
-                if (value.isAscii()) {
-                    charSeq = value.asAsciiCharSequence();
-                } else {
-                    StringSink sink = Misc.getThreadLocalSink();
-                    sink.clear();
-                    if (!Utf8s.utf8ToUtf16(value, sink)) {
-                        throw SqlException.position(0).put("Could not update bind variable. Invalid UTF-8 encoding.");
-                    }
-                    charSeq = sink;
-                }
                 switch (functionType) {
                     case ColumnType.TIMESTAMP:
-                        ((TimestampBindVariable) function).value = SqlUtil.implicitCastVarcharAsTimestamp(charSeq);
+                        ((TimestampBindVariable) function).value = MicrosTimestampDriver.INSTANCE.implicitCastVarchar(value);
                         break;
                     case ColumnType.DATE:
-                        ((DateBindVariable) function).value = SqlUtil.implicitCastVarcharAsDate(charSeq);
+                        ((DateBindVariable) function).value = SqlUtil.implicitCastVarcharAsDate(sinkVarchar(value));
                         break;
                     case ColumnType.LONG256:
-                        SqlUtil.implicitCastStrAsLong256(charSeq, ((Long256BindVariable) function).value);
+                        SqlUtil.implicitCastStrAsLong256(sinkVarchar(value), ((Long256BindVariable) function).value);
                         break;
                 }
                 break;
@@ -1330,6 +1320,21 @@ public class BindVariableServiceImpl implements BindVariableService {
                 reportError(function, ColumnType.VARCHAR, index, name);
                 break;
         }
+    }
+
+    private static @NotNull CharSequence sinkVarchar(Utf8Sequence value) throws SqlException {
+        CharSequence charSeq;
+        if (value.isAscii()) {
+            charSeq = value.asAsciiCharSequence();
+        } else {
+            StringSink sink = Misc.getThreadLocalSink();
+            sink.clear();
+            if (!Utf8s.utf8ToUtf16(value, sink)) {
+                throw SqlException.position(0).put("Could not update bind variable. Invalid UTF-8 encoding.");
+            }
+            charSeq = sink;
+        }
+        return charSeq;
     }
 
     private void setArray(int index) throws SqlException {

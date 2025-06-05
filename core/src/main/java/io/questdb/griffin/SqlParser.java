@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -41,7 +42,6 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.InsertModel;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
@@ -60,6 +60,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.CommonFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -899,7 +900,7 @@ public class SqlParser {
             if (isStartKeyword(tok)) {
                 tok = tok(lexer, "START timestamp");
                 try {
-                    start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                    start = MicrosTimestampDriver.floor(unquote(tok));
                 } catch (NumericException e) {
                     throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                 }
@@ -912,7 +913,7 @@ public class SqlParser {
                     start = configuration.getMicrosecondClock().getTicks();
                 }
                 tok = tok(lexer, "interval");
-                final int interval = Timestamps.getStrideMultiple(tok);
+                final int interval = CommonFormatUtils.getStrideMultiple(tok);
                 final char unit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
                 refreshType = MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE;
@@ -3112,7 +3113,9 @@ public class SqlParser {
                     } else {
                         CharSequence tokenAlias = qc.getAst().token;
                         if (qc.isWindowColumn() && ((WindowColumn) qc).isIgnoreNulls()) {
-                            tokenAlias += "_ignore_nulls";
+                            CharacterStoreEntry e = characterStore.newEntry();
+                            e.put(tokenAlias).put("_ignore_nulls");
+                            tokenAlias = e.toImmutable();
                         }
                         alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
                     }

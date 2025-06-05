@@ -28,8 +28,10 @@ package io.questdb.std.datetime.microtime;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.datetime.AbstractDateFormat;
+import io.questdb.std.datetime.CommonFormatUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
@@ -693,7 +695,6 @@ public class TimestampFormatCompiler {
             int dateLocaleClassIndex,
             int charSequenceClassIndex,
             int minLongIndex,
-            int minMillisIndex,
             int matchWeekdayIndex,
             int matchMonthIndex,
             int matchZoneIndex,
@@ -788,7 +789,7 @@ public class TimestampFormatCompiler {
         asm.ldc2_w(minLongIndex);
         asm.lstore(LOCAL_OFFSET);
 
-        asm.iconst(TimestampFormatUtils.HOUR_24);
+        asm.iconst(CommonFormatUtils.HOUR_24);
         asm.istore(LOCAL_HOUR_TYPE);
 
         if ((stackState & (1 << LOCAL_ERA)) == 0) {
@@ -1159,8 +1160,6 @@ public class TimestampFormatCompiler {
 
                     decodeInt(decodeIntIndex);
                     asm.i2l();
-                    asm.ldc2_w(minMillisIndex);
-                    asm.lmul();
                     asm.lstore(LOCAL_OFFSET);
                     p = asm.position();
                     frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));
@@ -1355,7 +1354,6 @@ public class TimestampFormatCompiler {
         int dateLocaleClassIndex = asm.poolClass(DateLocale.class);
         int charSequenceClassIndex = asm.poolClass(CharSequence.class);
         int minLongIndex = asm.poolLongConst(Long.MIN_VALUE);
-        int minMillisIndex = asm.poolLongConst(Timestamps.MINUTE_MICROS);
 
         int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
         int matchWeekdayIndex = asm.poolMethod(DateLocale.class, "matchWeekday", "(Ljava/lang/CharSequence;II)J");
@@ -1399,7 +1397,7 @@ public class TimestampFormatCompiler {
         int appendYear0Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear0", "(Lio/questdb/std/str/CharSink;I)V");
         int appendYearIndex = asm.poolMethod(TimestampFormatUtils.class, "appendYear", "(Lio/questdb/std/str/CharSink;I)V");
 
-        int parseOffsetIndex = asm.poolMethod(Timestamps.class, "parseOffset", "(Ljava/lang/CharSequence;II)J");
+        int parseOffsetIndex = asm.poolMethod(Dates.class, "parseOffset", "(Ljava/lang/CharSequence;II)J");
         int getYearIndex = asm.poolMethod(Timestamps.class, "getYear", "(J)I");
         int getIsoYearIndex = asm.poolMethod(Timestamps.class, "getIsoYear", "(J)I");
         int isLeapYearIndex = asm.poolMethod(Timestamps.class, "isLeapYear", "(I)Z");
@@ -1457,7 +1455,6 @@ public class TimestampFormatCompiler {
                 dateLocaleClassIndex,
                 charSequenceClassIndex,
                 minLongIndex,
-                minMillisIndex,
                 matchWeekdayIndex,
                 matchMonthIndex,
                 matchZoneIndex,
@@ -1860,9 +1857,9 @@ public class TimestampFormatCompiler {
 
     private void setHourType(int stackState) {
         asm.iload(LOCAL_HOUR_TYPE);
-        asm.iconst(TimestampFormatUtils.HOUR_24);
+        asm.iconst(CommonFormatUtils.HOUR_24);
         int branch = asm.if_icmpne();
-        asm.iconst(TimestampFormatUtils.HOUR_AM);
+        asm.iconst(CommonFormatUtils.HOUR_AM);
         asm.istore(LOCAL_HOUR_TYPE);
         int p = asm.position();
         frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));

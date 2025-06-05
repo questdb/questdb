@@ -50,7 +50,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -71,6 +70,8 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
 
 @RunWith(Parameterized.class)
 public class TextLoaderTest extends AbstractCairoTest {
@@ -779,7 +780,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     @Test
     public void testDateFormatNoLocale() throws Exception {
-        DateLocale locale = io.questdb.std.datetime.millitime.DateFormatUtils.EN_LOCALE;
+        DateLocale locale = EN_LOCALE;
         assertNoLeak(textLoader -> {
             String csv = "\"name\",\"date\"\n" +
                     "\"Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\",\"3 " + locale.getMonth(6) + " 2017 г.\"\n" +
@@ -2590,7 +2591,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampFormatNoLocale() throws Exception {
-        DateLocale locale = DateFormatUtils.EN_LOCALE;
+        DateLocale locale = EN_LOCALE;
         assertNoLeak(textLoader -> {
             String csv = "\"name\",\"date\"\n" +
                     "\"Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\",\"3 " + locale.getMonth(6) + " 2017 г.\"\n" +

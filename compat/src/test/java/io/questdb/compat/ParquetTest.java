@@ -317,7 +317,7 @@ public class ParquetTest extends AbstractTest {
                 int partitionIndex = 0;
                 StringSink partitionName = new StringSink();
                 long timestamp = reader.getPartitionTimestampByIndex(partitionIndex);
-                PartitionBy.setSinkForPartition(partitionName, partitionBy, timestamp);
+                PartitionBy.setSinkForPartition(partitionName, reader.getMetadata().getTimestampType(), partitionBy, timestamp);
 
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
                 PartitionEncoder.encodeWithOptions(

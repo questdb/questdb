@@ -44,6 +44,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -97,7 +98,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.TableWriter.validateDesignatedTimestampBounds;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
@@ -165,6 +165,7 @@ public class WalWriter implements TableWriterAPI {
     private long txnMinTimestamp = Long.MAX_VALUE;
     private boolean txnOutOfOrder = false;
     private long walLockFd = -1;
+    private final TimestampDriver timestampDriver;
 
     public WalWriter(
             CairoConfiguration configuration,
@@ -197,8 +198,8 @@ public class WalWriter implements TableWriterAPI {
             mkWalDir();
 
             metadata = new WalWriterMetadata(ff);
-
             tableSequencerAPI.getTableMetadata(tableToken, metadata);
+            this.timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
             this.tableToken = metadata.getTableToken();
 
             columnCount = metadata.getColumnCount();
@@ -453,7 +454,7 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public TableWriter.Row newRow(long timestamp) {
         checkDistressed();
-        validateDesignatedTimestampBounds(timestamp);
+        timestampDriver.validateBounds(timestamp);
         try {
             if (rollSegmentOnNextRow) {
                 rollSegment();
@@ -1167,9 +1168,9 @@ public class WalWriter implements TableWriterAPI {
 
                         // Does not matter which PartitionBy, as long as it is partitioned
                         // WAL tables must be partitioned
-                        txReader.ofRO(path.$(), PartitionBy.DAY);
+                        txReader.ofRO(path.$(), metadata.getTimestampType(), PartitionBy.DAY);
                         path.of(configuration.getDbRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
-                        columnVersionReader.ofRO(ff, path.$());
+                        columnVersionReader.ofRO(ff, path.$(), metadata.getTimestampType());
 
                         initialized = true;
                         long structureVersion = getMetadataVersion();
@@ -1928,6 +1929,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public int getTimestampType() {
+            return metadata.getTimestampType();
+        }
+
+        @Override
         public void removeColumn(@NotNull CharSequence columnName) {
             validateExistingColumnName(columnName, "cannot remove");
             structureVersion++;
@@ -2160,6 +2166,11 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public TableToken getTableToken() {
             return tableToken;
+        }
+
+        @Override
+        public int getTimestampType() {
+            return metadata.getTimestampType();
         }
 
         @Override
