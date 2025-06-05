@@ -7256,9 +7256,6 @@ public class SqlOptimiser implements Mutable {
                 and prevents queries hanging.
              */
                 if (numberOfCols > PIVOT_COLUMN_OUTPUT_LIMIT) {
-                    intListPool.release(forDepths);
-                    intListPool.release(forMaxes);
-                    intListPool.release(forDepthsBackup);
                     throw SqlException.$(nested.getModelPosition(),
                             "too many columns in PIVOT output: " + numberOfCols + " > " + PIVOT_COLUMN_OUTPUT_LIMIT);
                 }
