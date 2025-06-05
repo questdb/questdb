@@ -550,10 +550,10 @@ public class MetadataCache implements QuietCloseable {
             table.setMatViewTimerStart(tableMetadata.getMatViewTimerStart());
             table.setMatViewTimerInterval(tableMetadata.getMatViewTimerInterval());
             table.setMatViewTimerUnit(tableMetadata.getMatViewTimerUnit());
-            table.setMatViewPeriodLength(TableUtils.getMatViewPeriodLength(metaMem));
-            table.setMatViewPeriodLengthUnit(TableUtils.getMatViewPeriodLengthUnit(metaMem));
-            table.setMatViewPeriodDelay(TableUtils.getMatViewPeriodDelay(metaMem));
-            table.setMatViewPeriodDelayUnit(TableUtils.getMatViewPeriodDelayUnit(metaMem));
+            table.setMatViewPeriodLength(tableMetadata.getMatViewPeriodLength());
+            table.setMatViewPeriodLengthUnit(tableMetadata.getMatViewPeriodLengthUnit());
+            table.setMatViewPeriodDelay(tableMetadata.getMatViewPeriodDelay());
+            table.setMatViewPeriodDelayUnit(tableMetadata.getMatViewPeriodDelayUnit());
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
             table.setSoftLinkFlag(Files.isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 
