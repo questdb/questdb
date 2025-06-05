@@ -1223,7 +1223,12 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         final int msgLen = getIntUnsafe(address + 1);
         LOG.debug().$("received msg [type=").$((char) type).$(", len=").$(msgLen).I$();
         if (msgLen < 1) {
-            LOG.error().$("invalid message length [type=").$(type).$(", msgLen=").$(msgLen).$(", recvBufferReadOffset=").$(recvBufferReadOffset).$(", recvBufferWriteOffset=").$(recvBufferWriteOffset).$(", totalReceived=").$(totalReceived).I$();
+            LOG.error().$("invalid message length [type=").$(type)
+                    .$(", msgLen=").$(msgLen)
+                    .$(", recvBufferReadOffset=").$(recvBufferReadOffset)
+                    .$(", recvBufferWriteOffset=").$(recvBufferWriteOffset)
+                    .$(", totalReceived=").$(totalReceived)
+                    .I$();
             throw BadProtocolException.INSTANCE;
         }
 

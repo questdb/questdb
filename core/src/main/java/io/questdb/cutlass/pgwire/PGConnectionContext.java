@@ -1894,7 +1894,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final int msgLen = getIntUnsafe(address + 1);
         LOG.debug().$("received msg [type=").$((char) type).$(", len=").$(msgLen).I$();
         if (msgLen < 1) {
-            LOG.error().$("invalid message length [type=").$(type).$(", msgLen=").$(msgLen).$(", recvBufferReadOffset=").$(recvBufferReadOffset).$(", recvBufferWriteOffset=").$(recvBufferWriteOffset).$(", totalReceived=").$(totalReceived).I$();
+            LOG.error().$("invalid message length [type=").$(type)
+                    .$(", msgLen=").$(msgLen)
+                    .$(", recvBufferReadOffset=").$(recvBufferReadOffset)
+                    .$(", recvBufferWriteOffset=").$(recvBufferWriteOffset)
+                    .$(", totalReceived=").$(totalReceived).I$();
             throw BadProtocolException.INSTANCE;
         }
 
@@ -2548,7 +2552,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             LOG.debug().$("params [count=").$(this.parsePhaseBindVariableCount).I$();
             setupBindVariables(lo + Short.BYTES, activeBindVariableTypes, this.parsePhaseBindVariableCount);
         } else if (this.parsePhaseBindVariableCount < 0) {
-            LOG.error().$("invalid parameter count [parameterCount=").$(this.parsePhaseBindVariableCount).$(", offset=").$(lo - address).I$();
+            LOG.error().$("invalid parameter count [parameterCount=").$(this.parsePhaseBindVariableCount)
+                    .$(", offset=").$(lo - address)
+                    .I$();
             throw BadProtocolException.INSTANCE;
         }
 
