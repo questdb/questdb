@@ -372,6 +372,50 @@ public class WalTableSqlTest extends AbstractCairoTest {
         });
     }
 
+
+    @Test
+    public void testApplyTableAll() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            execute("create table " + tableName + " (" +
+                    "x long," +
+                    "ts timestamp" +
+                    ") timestamp(ts) partition by HOUR WAL WITH maxUncommittedRows=" + rnd.nextInt(20));
+            TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull(tableToken);
+
+            int count = rnd.nextInt(22);
+            long rowCount = 0;
+            for (int i = 0; i < 2; i++) {
+                int rows = rnd.nextInt(200);
+                execute("insert into " + tableName +
+                        " select x, timestamp_sequence('2022-02-24T0" + i + "', 1000000*60) from long_sequence(" + rows + ")");
+                rowCount += rows;
+            }
+
+            // Eject after every transaction
+            Overrides overrides1 = node1.getConfigurationOverrides();
+            overrides1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1);
+
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                for (int i = 0; i < count; i++) {
+                    walApplyJob.applyTableAll(tableToken);
+                    engine.releaseInactive();
+                    int rows = rnd.nextInt(200);
+                    execute("insert into " + tableName +
+                            " select x, timestamp_sequence('2022-02-24T" + String.format("%02d", i + 2) + "', 1000000*60) from long_sequence(" + rows + ")");
+                    rowCount += rows;
+                }
+            }
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, Timestamps.MINUTE_MICROS);
+            drainWalQueue();
+
+            assertSql("count\n" + rowCount + "\n", "select count(*) from " + tableName);
+        });
+    }
+
     @Test
     public void testCanApplyTransactionWhenWritingAnotherOne() throws Exception {
         assertMemoryLeak(() -> {
