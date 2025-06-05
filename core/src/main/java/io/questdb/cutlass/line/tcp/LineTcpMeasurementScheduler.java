@@ -238,7 +238,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             idleTableUpdateDetailsUtf16.put(tableNameUtf16, tud);
                             tud.removeReference(readerWorkerId);
                             pubSeq[writerWorkerId].done(seq);
-                            LOG.info().$("active table going idle [tableName=").$(tableNameUtf16).I$();
+                            LOG.info().$("active table going idle [tableName=").utf8(tableNameUtf16).I$();
                         }
                         return true;
                     } else {
@@ -267,7 +267,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             }
             LOG.info()
                     .$("releasing writer, its been idle since ").$ts(tub.getLastMeasurementMillis() * 1_000)
-                    .$("[tableName=").$(tub.getTableNameUtf16())
+                    .$("[tableName=").utf8(tub.getTableNameUtf16())
                     .I$();
 
             event.releaseWriter();
@@ -445,7 +445,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     if (idleTudKeyIndex < 0) {
                         // TUD is found in global idle cache - this meant it is non-WAL
                         tud = idleTableUpdateDetailsUtf16.valueAt(idleTudKeyIndex);
-                        LOG.info().$("idle table going active [tableName=").$(tud.getTableNameUtf16()).I$();
+                        LOG.info().$("idle table going active [tableName=").utf8(tud.getTableNameUtf16()).I$();
                         if (tud.getWriter() == null) {
                             tud.closeNoLock();
                             // Use actual table name from the "details" to avoid case mismatches in the
@@ -541,7 +541,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 tableNameUtf8
         );
         tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);
-        LOG.info().$("assigned ").$(tableNameUtf16).$(" to thread ").$(threadId).$();
+        LOG.info().$("assigned ").utf8(tableNameUtf16).$(" to thread ").$(threadId).$();
         return tud;
     }
 
