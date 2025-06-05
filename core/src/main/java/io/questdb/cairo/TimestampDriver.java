@@ -57,8 +57,6 @@ public interface TimestampDriver {
 
     long fromHours(int hours);
 
-    long fromHours(long hours);
-
     long fromMinutes(int minutes);
 
     long fromSeconds(int seconds);
@@ -79,7 +77,7 @@ public interface TimestampDriver {
 
     long implicitCastVarchar(Utf8Sequence value);
 
-    int monthsBetween(long hi, long lo);
+    long monthsBetween(long hi, long lo);
 
     long parseAnyFormat(CharSequence token, int start, int len) throws NumericException;
 

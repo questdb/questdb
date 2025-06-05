@@ -117,14 +117,14 @@ public class MicrosTimestampDriver implements TimestampDriver {
         checkChar(seq, pos++, lim, '-');
         int day = Numbers.parseInt(seq, pos, pos += dayDigits);
         checkRange(day, 1, dayRange);
-        if (checkLen(pos, lim)) {
+        if (checkLen3(pos, lim)) {
             checkChar(seq, pos++, lim, 'T');
             int hour = Numbers.parseInt(seq, pos, pos += 2);
             checkRange(hour, 0, 23);
-            if (checkLen(pos, lim)) {
+            if (checkLen2(pos, lim)) {
                 int min = Numbers.parseInt(seq, pos, pos += 2);
                 checkRange(min, 0, 59);
-                if (checkLen(pos, lim)) {
+                if (checkLen2(pos, lim)) {
                     int sec = Numbers.parseInt(seq, pos, pos += 2);
                     checkRange(sec, 0, 59);
                     if (pos < lim && seq.charAt(pos) == '-') {
@@ -239,11 +239,6 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long fromHours(int hours) {
-        return hours * Timestamps.HOUR_MICROS;
-    }
-
-    @Override
-    public long fromHours(long hours) {
         return hours * Timestamps.HOUR_MICROS;
     }
 
@@ -375,8 +370,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public int monthsBetween(long hi, long lo) {
-        return 0;
+    public long monthsBetween(long hi, long lo) {
+        return Timestamps.getMonthsBetween(hi, lo);
     }
 
     @Override
@@ -393,23 +388,23 @@ public class MicrosTimestampDriver implements TimestampDriver {
         int p = lo;
         int year = Numbers.parseInt(str, p, p += 4);
         boolean l = Timestamps.isLeapYear(year);
-        if (checkLen(p, hi)) {
+        if (checkLen3(p, hi)) {
             checkChar(str, p++, hi, '-');
             int month = Numbers.parseInt(str, p, p += 2);
             checkRange(month, 1, 12);
-            if (checkLen(p, hi)) {
+            if (checkLen3(p, hi)) {
                 checkChar(str, p++, hi, '-');
                 int day = Numbers.parseInt(str, p, p += 2);
                 checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
-                if (checkLen(p, hi)) {
+                if (checkLen3(p, hi)) {
                     checkSpecialChar(str, p++, hi);
                     int hour = Numbers.parseInt(str, p, p += 2);
                     checkRange(hour, 0, 23);
-                    if (checkLen(p, hi)) {
+                    if (checkLen3(p, hi)) {
                         checkChar(str, p++, hi, ':');
                         int min = Numbers.parseInt(str, p, p += 2);
                         checkRange(min, 0, 59);
-                        if (checkLen(p, hi)) {
+                        if (checkLen3(p, hi)) {
                             checkChar(str, p++, hi, ':');
                             int sec = Numbers.parseInt(str, p, p += 2);
                             checkRange(sec, 0, 59);
@@ -502,23 +497,23 @@ public class MicrosTimestampDriver implements TimestampDriver {
         int p = lo;
         int year = Numbers.parseInt(str, p, p += 4);
         boolean l = Timestamps.isLeapYear(year);
-        if (checkLen(p, hi)) {
+        if (checkLen3(p, hi)) {
             checkChar(str, p++, hi, '-');
             int month = Numbers.parseInt(str, p, p += 2);
             checkRange(month, 1, 12);
-            if (checkLen(p, hi)) {
+            if (checkLen3(p, hi)) {
                 checkChar(str, p++, hi, '-');
                 int day = Numbers.parseInt(str, p, p += 2);
                 checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
-                if (checkLen(p, hi)) {
+                if (checkLen3(p, hi)) {
                     checkSpecialChar(str, p++, hi);
                     int hour = Numbers.parseInt(str, p, p += 2);
                     checkRange(hour, 0, 23);
-                    if (checkLen(p, hi)) {
+                    if (checkLen3(p, hi)) {
                         checkChar(str, p++, hi, ':');
                         int min = Numbers.parseInt(str, p, p += 2);
                         checkRange(min, 0, 59);
-                        if (checkLen(p, hi)) {
+                        if (checkLen3(p, hi)) {
                             checkChar(str, p++, hi, ':');
                             int sec = Numbers.parseInt(str, p, p += 2);
                             checkRange(sec, 0, 59);
@@ -608,23 +603,23 @@ public class MicrosTimestampDriver implements TimestampDriver {
         int p = pos;
         int year = Numbers.parseInt(input, p, p += 4);
         boolean l = Timestamps.isLeapYear(year);
-        if (checkLen(p, lim)) {
+        if (checkLen3(p, lim)) {
             checkChar(input, p++, lim, '-');
             int month = Numbers.parseInt(input, p, p += 2);
             checkRange(month, 1, 12);
-            if (checkLen(p, lim)) {
+            if (checkLen3(p, lim)) {
                 checkChar(input, p++, lim, '-');
                 int day = Numbers.parseInt(input, p, p += 2);
                 checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
-                if (checkLen(p, lim)) {
+                if (checkLen3(p, lim)) {
                     checkChar(input, p++, lim, 'T');
                     int hour = Numbers.parseInt(input, p, p += 2);
                     checkRange(hour, 0, 23);
-                    if (checkLen(p, lim)) {
+                    if (checkLen3(p, lim)) {
                         checkChar(input, p++, lim, ':');
                         int min = Numbers.parseInt(input, p, p += 2);
                         checkRange(min, 0, 59);
-                        if (checkLen(p, lim)) {
+                        if (checkLen3(p, lim)) {
                             checkChar(input, p++, lim, ':');
                             int sec = Numbers.parseInt(input, p, p += 2);
                             checkRange(sec, 0, 59);
@@ -816,7 +811,18 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
     }
 
-    private static boolean checkLen(int p, int lim) throws NumericException {
+    private static boolean checkLen2(int p, int lim) throws NumericException {
+        if (lim - p >= 2) {
+            return true;
+        }
+        if (lim <= p) {
+            return false;
+        }
+
+        throw NumericException.INSTANCE;
+    }
+
+    private static boolean checkLen3(int p, int lim) throws NumericException {
         if (lim - p > 2) {
             return true;
         }
@@ -1019,11 +1025,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             int p = lo;
             int year = Numbers.parseInt(in, p, p += 4);
             boolean l = Timestamps.isLeapYear(year);
-            if (checkLen(p, hi)) {
+            if (checkLen2(p, hi)) {
                 checkChar(in, p++, hi, '-');
                 int month = Numbers.parseInt(in, p, p += 2);
                 checkRange(month, 1, 12);
-                if (checkLen(p, hi)) {
+                if (checkLen2(p, hi)) {
                     int dayRange = Timestamps.getDaysPerMonth(month, l);
                     ts = Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l);
                     ts = parseDayTime(in, hi, p, ts, dayRange, 2);
