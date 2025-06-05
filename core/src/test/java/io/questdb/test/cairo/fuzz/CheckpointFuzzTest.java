@@ -109,7 +109,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0,
                 0,
-                0.5
+                0.5,
+                0.01
         );
 
         fuzzer.setFuzzCounts(
@@ -150,7 +151,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0,
                 1,
-                0.0
+                0.0,
+                0.01
         );
 
         fuzzer.setFuzzCounts(
@@ -288,7 +290,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.1 * rnd.nextDouble(),
                 rnd.nextDouble(),
-                0.0
+                0.0,
+                0.01
         );
 
         fuzzer.setFuzzCounts(
@@ -363,14 +366,15 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
             }
 
             String tableNameNonWal = getTestTableName() + "_non_wal";
-            fuzzer.createInitialTable(tableNameNonWal, false, fuzzer.initialRowCount);
             String tableNameWal = getTestTableName();
-            TableToken walTable = fuzzer.createInitialTable(tableNameWal, true, fuzzer.initialRowCount);
+            TableToken walTable = fuzzer.createInitialTableWal(tableNameWal, fuzzer.initialRowCount);
+            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameWal, rnd);
+
+            fuzzer.createInitialTableNonWal(tableNameNonWal, transactions);
             if (rnd.nextBoolean()) {
                 drainWalQueue();
             }
 
-            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameNonWal, rnd);
             try {
                 int snapshotIndex = 1 + rnd.nextInt(transactions.size() - 1);
 

@@ -44,6 +44,8 @@ public class O3PartitionTask {
     private long newPartitionSize;
     private O3Basket o3Basket;
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
+    private long o3TimestampHi;
+    private long o3TimestampLo;
     private long oldPartitionSize;
     private long oooTimestampMin;
     private int partitionBy;
@@ -85,6 +87,14 @@ public class O3PartitionTask {
 
     public ReadOnlyObjList<? extends MemoryCR> getO3Columns() {
         return o3Columns;
+    }
+
+    public long getO3TimestampHi() {
+        return o3TimestampHi;
+    }
+
+    public long getO3TimestampLo() {
+        return o3TimestampLo;
     }
 
     public long getOldPartitionSize() {
@@ -174,7 +184,9 @@ public class O3PartitionTask {
             long oldPartitionSize,
             long partitionUpdateSinkAddr,
             long dedupColSinkAddr,
-            boolean isParquet
+            boolean isParquet,
+            long o3TimestampLo,
+            long o3TimestampHi
     ) {
         this.pathToTable = path;
         this.txn = txn;
@@ -199,5 +211,7 @@ public class O3PartitionTask {
         this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;
         this.dedupColSinkAddr = dedupColSinkAddr;
         this.isParquet = isParquet;
+        this.o3TimestampLo = o3TimestampLo;
+        this.o3TimestampHi = o3TimestampHi;
     }
 }

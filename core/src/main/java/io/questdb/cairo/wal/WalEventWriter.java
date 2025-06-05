@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.VarcharTypeDriver;
@@ -108,7 +109,19 @@ class WalEventWriter implements Closeable {
         }
     }
 
-    private int appendData(byte txnType, long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder, long lastRefreshBaseTxn, long lastRefreshTimestamp) {
+    private int appendData(
+            byte txnType,
+            long startRowID,
+            long endRowID,
+            long minTimestamp,
+            long maxTimestamp,
+            boolean outOfOrder,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode
+    ) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(txnType);
@@ -122,7 +135,30 @@ class WalEventWriter implements Closeable {
             eventMem.putLong(lastRefreshBaseTxn);
             eventMem.putLong(lastRefreshTimestamp);
         }
+
+        if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            if (replaceRangeLowTs >= replaceRangeHiTs) {
+                throw CairoException.nonCritical().put("Replace range low timestamp must be less than replace range high timestamp.");
+            }
+            if (replaceRangeLowTs > minTimestamp) {
+                throw CairoException.nonCritical().put("Replace range low timestamp must be less than or equal to the minimum timestamp.");
+            }
+            if (replaceRangeHiTs <= maxTimestamp) {
+                throw CairoException.nonCritical().put("Replace range high timestamp must be greater than the maximum timestamp.");
+            }
+        }
+
         writeSymbolMapDiffs();
+
+        if (dedupMode != WAL_DEDUP_MODE_DEFAULT) {
+            // To test backwards compatibility and ensure that we still can read WALs
+            // written by the old QuestDB version, make the dedup mode
+            // and replace range value optional. It will then not be written for the most transactions,
+            // and it will test the reading WAL-E code to read the old format.
+            eventMem.putLong(replaceRangeLowTs);
+            eventMem.putLong(replaceRangeHiTs);
+            eventMem.putByte(dedupMode);
+        }
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
 
@@ -256,21 +292,47 @@ class WalEventWriter implements Closeable {
         eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
     }
 
-    int appendData(long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+    /**
+     * Append data to the WAL. This method is used for both regular and materialized view data.
+     * The method takes various parameters to specify the data range, timestamps, and other options.
+     *
+     * @param startRowID           the starting row ID of the data in the segment.
+     * @param endRowID             the ending row ID of the data  in the segment.
+     * @param minTimestamp         the minimum timestamp of the data, inclusive
+     * @param maxTimestamp         the maximum timestamp of the data, inclusive
+     * @param outOfOrder           indicates if the data is out of order
+     * @param lastRefreshBaseTxn   seqTxn of base transaction ID when refresh is performed
+     * @param lastRefreshTimestamp wall clock mat view refresh timestamp
+     * @param replaceRangeLowTs    the low timestamp for the range to be replaced, inclusive
+     * @param replaceRangeHiTs     the high timestamp for the range to be replaced, exclusive
+     * @param dedupMode            deduplication mode, can be DEFAULT, NO_DEDUP, UPSERT_NEW or REPLACE_RANGE.
+     */
+    int appendData(
+            long startRowID,
+            long endRowID,
+            long minTimestamp,
+            long maxTimestamp,
+            boolean outOfOrder,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode
+    ) {
+        byte msgType = lastRefreshBaseTxn != WAL_DEFAULT_BASE_TABLE_TXN ? WalTxnType.MAT_VIEW_DATA : WalTxnType.DATA;
         return appendData(
-                0,
+                msgType,
+                startRowID,
                 endRowID,
                 minTimestamp,
                 maxTimestamp,
                 outOfOrder,
-                Numbers.LONG_NULL,
-                Numbers.LONG_NULL
+                lastRefreshBaseTxn,
+                lastRefreshTimestamp,
+                replaceRangeLowTs,
+                replaceRangeHiTs,
+                dedupMode
         );
-    }
-
-    int appendData(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder, long lastRefreshBaseTxn, long lastRefreshTimestamp) {
-        byte msgType = lastRefreshBaseTxn != Numbers.LONG_NULL ? WalTxnType.MAT_VIEW_DATA : WalTxnType.DATA;
-        return appendData(msgType, startRowID, endRowID, minTimestamp, maxTimestamp, outOfOrder, lastRefreshBaseTxn, lastRefreshTimestamp);
     }
 
     int appendMatViewInvalidate(long lastRefreshBaseTxn, long lastRefreshTimestamp, boolean invalid, @Nullable CharSequence invalidationReason) {
