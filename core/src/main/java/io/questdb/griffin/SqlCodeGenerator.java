@@ -2518,7 +2518,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateOuterJoinExpressions(slaveModel, "ASOF");
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
-                                long toleranceInterval = tolerance(slaveModel);
+                                long asOfToleranceInterval = tolerance(slaveModel);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                                         RecordSink masterSink = RecordSinkFactory.getInstance(
@@ -2560,7 +2560,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     masterMetadata.getColumnCount(),
                                                     symbolShortCircuit,
                                                     slaveModel.getContext(),
-                                                    toleranceInterval
+                                                    asOfToleranceInterval
                                             );
                                         } else {
                                             master = createAsOfJoin(
@@ -2571,7 +2571,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     slaveSink,
                                                     masterMetadata.getColumnCount(),
                                                     slaveModel.getContext(),
-                                                    toleranceInterval
+                                                    asOfToleranceInterval
                                             );
                                         }
                                     } else {
@@ -2585,7 +2585,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         master,
                                                         slave,
                                                         masterMetadata.getColumnCount(),
-                                                        toleranceInterval
+                                                        asOfToleranceInterval
                                                 );
                                                 created = true;
                                             }
@@ -2623,7 +2623,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         NullRecordFactory.getInstance(slaveMetadata),
                                                         null,
                                                         slaveTimestampIndex,
-                                                        toleranceInterval
+                                                        asOfToleranceInterval
                                                 );
                                                 created = true;
                                             }
@@ -2663,7 +2663,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                                 NullRecordFactory.getInstance(slaveMetadata),
                                                                 stolenCrossIndex,
                                                                 slaveTimestampIndex,
-                                                                toleranceInterval
+                                                                asOfToleranceInterval
                                                         );
                                                         created = true;
                                                     }
@@ -2678,7 +2678,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     master,
                                                     slave,
                                                     masterMetadata.getColumnCount(),
-                                                    toleranceInterval
+                                                    asOfToleranceInterval
                                             );
                                         }
                                     }
@@ -2693,7 +2693,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaveModel.getJoinKeywordPosition(),
                                             CREATE_FULL_FAT_AS_OF_JOIN,
                                             slaveModel.getContext(),
-                                            toleranceInterval
+                                            asOfToleranceInterval
                                     );
                                 }
                                 masterAlias = null;
@@ -2701,7 +2701,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 releaseSlave = false;
                                 break;
                             case JOIN_LT:
-                                toleranceInterval = tolerance(slaveModel);
+                                long ltToleranceInterval = tolerance(slaveModel);
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "LT");
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
@@ -2727,7 +2727,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 ),
                                                 masterMetadata.getColumnCount(),
                                                 slaveModel.getContext(),
-                                                toleranceInterval
+                                                ltToleranceInterval
                                         );
                                     } else {
                                         if (slave.supportsTimeFrameCursor()) {
@@ -2737,7 +2737,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     master,
                                                     slave,
                                                     masterMetadata.getColumnCount(),
-                                                    toleranceInterval
+                                                    ltToleranceInterval
                                             );
                                         } else {
                                             master = new LtJoinNoKeyRecordCursorFactory(
@@ -2745,7 +2745,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     master,
                                                     slave,
                                                     masterMetadata.getColumnCount(),
-                                                    toleranceInterval
+                                                    ltToleranceInterval
                                             );
                                         }
                                     }
@@ -2760,7 +2760,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaveModel.getJoinKeywordPosition(),
                                             CREATE_FULL_FAT_LT_JOIN,
                                             slaveModel.getContext(),
-                                            toleranceInterval
+                                            ltToleranceInterval
                                     );
                                 }
                                 masterAlias = null;
