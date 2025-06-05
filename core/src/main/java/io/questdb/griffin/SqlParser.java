@@ -116,6 +116,10 @@ public class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCaseRef = this::rewriteCase;
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
+    private final LowerCaseCharSequenceObjHashMap<ExpressionNode> viewDecl = new LowerCaseCharSequenceObjHashMap<>();
+    private final GenericLexer viewLexer;
+    private final SqlParserCallback viewSqlParserCallback = new SqlParserCallback() {
+    };
     private final ObjectPool<WindowColumn> windowColumnPool;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
     private int digit;
@@ -145,6 +149,7 @@ public class SqlParser {
         this.explainModelPool = new ObjectPool<>(ExplainModel.FACTORY, configuration.getExplainPoolCapacity());
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
+        this.viewLexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         boolean tempCairoSqlLegacyOperatorPrecedence = configuration.getCairoSqlLegacyOperatorPrecedence();
         if (tempCairoSqlLegacyOperatorPrecedence) {
             this.expressionParser = new ExpressionParser(
@@ -482,6 +487,12 @@ public class SqlParser {
         if (tok != null && (isFullKeyword(tok) || isRightKeyword(tok))) {
             throw SqlException.$((lexer.lastTokenPosition()), "unsupported join type");
         }
+    }
+
+    private QueryModel compileViewQuery(ViewDefinition viewDefinition) throws SqlException {
+        SqlCompilerImpl.configureLexer(viewLexer);
+        viewLexer.of(viewDefinition.getViewSql());
+        return parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, viewDecl);
     }
 
     private CharSequence createColumnAlias(
@@ -2102,15 +2113,8 @@ public class SqlParser {
         if (tt != null && tt.isView()) {
             final ViewDefinition viewDefinition = viewGraph.getViewDefinition(tt);
             if (viewDefinition != null) {
-                final LowerCaseCharSequenceObjHashMap<ExpressionNode> viewDecl = new LowerCaseCharSequenceObjHashMap<>();
-                final SqlParserCallback viewSqlParserCallback = new SqlParserCallback() {
-                };
-                final GenericLexer viewLexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
-                SqlCompilerImpl.configureLexer(viewLexer);
-                viewLexer.of(viewDefinition.getViewSql());
-                proposedNested = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, viewDecl);
-
-                model.setNestedModel(proposedNested);
+                final QueryModel viewModel = compileViewQuery(viewDefinition);
+                model.setNestedModel(viewModel);
                 model.setNestedModelIsSubQuery(true);
                 tok = setModelAliasAndTimestamp(lexer, model);
             }
@@ -2614,17 +2618,9 @@ public class SqlParser {
         if (tt != null && tt.isView()) {
             final ViewDefinition viewDefinition = viewGraph.getViewDefinition(tt);
             if (viewDefinition != null) {
-                final LowerCaseCharSequenceObjHashMap<ExpressionNode> viewDecl = new LowerCaseCharSequenceObjHashMap<>();
-                final SqlParserCallback viewSqlParserCallback = new SqlParserCallback() {
-                };
-                final GenericLexer viewLexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
-                SqlCompilerImpl.configureLexer(viewLexer);
-                viewLexer.of(viewDefinition.getViewSql());
-                QueryModel proposedNested = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, viewDecl);
-
-                joinModel.setNestedModel(proposedNested);
+                final QueryModel viewModel = compileViewQuery(viewDefinition);
+                joinModel.setNestedModel(viewModel);
                 joinModel.setNestedModelIsSubQuery(true);
-                //tok = setModelAliasAndTimestamp(lexer, joinModel);
             }
         } else if (Chars.equals(tok, '(')) {
             joinModel.setNestedModel(parseAsSubQueryAndExpectClosingBrace(lexer, parent, true, sqlParserCallback, decls));
