@@ -50,8 +50,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
-import static io.questdb.test.tools.TestUtils.assertEquals;
-import static io.questdb.test.tools.TestUtils.unchecked;
+import static io.questdb.test.tools.TestUtils.*;
+import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 import static java.net.HttpURLConnection.HTTP_OK;
 import static org.junit.Assert.assertTrue;
 
@@ -230,6 +230,73 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
         );
     }
 
+    @Test
+    public void testViewsAreDisabled() throws SQLException {
+        try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+            createTable(httpClient, TABLE1);
+            drainWalQueue();
+
+            final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4";
+            createView(httpClient, VIEW1, query1);
+            drainWalQueue();
+
+            assertExecRequest(
+                    httpClient,
+                    VIEW1,
+                    HTTP_OK,
+                    "{" +
+                            "\"query\":\"view1\"," +
+                            "\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"k\",\"type\":\"SYMBOL\"},{\"name\":\"v_max\",\"type\":\"LONG\"}]," +
+                            "\"timestamp\":-1," +
+                            "\"dataset\":[" +
+                            "[\"1970-01-01T00:00:50.000000Z\",\"k5\",5]," +
+                            "[\"1970-01-01T00:01:00.000000Z\",\"k6\",6]," +
+                            "[\"1970-01-01T00:01:10.000000Z\",\"k7\",7]," +
+                            "[\"1970-01-01T00:01:20.000000Z\",\"k8\",8]" +
+                            "]," +
+                            "\"count\":4" +
+                            "}"
+            );
+        }
+
+        // restart with views disabled
+        stopQuestDB();
+
+        isViewEnabled = false;
+        startQuestDB();
+
+        // existing view still readable
+        assertSqlViaPG(
+                VIEW1,
+                "ts[TIMESTAMP],k[VARCHAR],v_max[BIGINT]\n" +
+                        "1970-01-01 00:00:50.0,k5,5\n" +
+                        "1970-01-01 00:01:00.0,k6,6\n" +
+                        "1970-01-01 00:01:10.0,k7,7\n" +
+                        "1970-01-01 00:01:20.0,k8,8\n"
+        );
+
+        // cannot create new view via PG
+        final String query2 = "select ts, k2, max(v) as v_max from " + TABLE1 + " where v > 6";
+        assertSqlFailureViaPG(
+                "create view " + VIEW2 + " as (" + query2 + ")",
+                "views are disabled"
+        );
+
+        // cannot create new view via HTTP
+        try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+            assertExecRequest(
+                    httpClient,
+                    "create view " + VIEW2 + " as (" + query2 + ")",
+                    HTTP_BAD_REQUEST,
+                    "{" +
+                            "\"query\":\"create view view2 as (select ts, k2, max(v) as v_max from table2 where v > 6)\"," +
+                            "\"error\":\"views are disabled\"," +
+                            "\"position\":0" +
+                            "}"
+            );
+        }
+    }
+
     private static void assertExecRequest(
             HttpClient httpClient,
             String sql,
@@ -267,6 +334,14 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
             TestUtils.assertEquals(expectedHttpResponse, sink);
             sink.clear();
+        }
+    }
+
+    private static void assertSqlFailureViaPG(String sql, String expectedErrorMessage) {
+        try {
+            runSqlViaPG(sql);
+        } catch (SQLException e) {
+            assertContains(e.getMessage(), expectedErrorMessage);
         }
     }
 
@@ -343,7 +418,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     private void startQuestDB() {
         unchecked(() -> createDummyConfiguration(
                 PropertyKey.DEV_MODE_ENABLED + "=true",
-                //PropertyKey.CAIRO_VIEW_ENABLED + "=" + isViewEnabled,
+                PropertyKey.CAIRO_VIEW_ENABLED + "=" + isViewEnabled,
                 PropertyKey.CAIRO_WAL_ENABLED_DEFAULT + "=true"
         ));
         questdb = createServerMain();

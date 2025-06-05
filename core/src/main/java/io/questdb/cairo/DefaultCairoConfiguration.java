@@ -1316,6 +1316,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isViewEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isWalApplyEnabled() {
         return true;
     }

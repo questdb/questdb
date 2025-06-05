@@ -478,6 +478,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int utf8SinkSize;
     private final PropertyValidator validator;
     private final int vectorAggregateQueueCapacity;
+    private final boolean viewEnabled;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
@@ -1279,6 +1280,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplyWorkerSleepThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10_000);
             this.walApplySleepTimeout = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
+
+            // TODO: change default to true
+            this.viewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_VIEW_ENABLED, false);
 
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
@@ -3835,6 +3839,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isValidateSampleByFillType() {
             return sqlSampleByValidateFillType;
+        }
+
+        @Override
+        public boolean isViewEnabled() {
+            return viewEnabled;
         }
 
         @Override
