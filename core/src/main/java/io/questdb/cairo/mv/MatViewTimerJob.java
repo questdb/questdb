@@ -36,9 +36,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Queue;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -52,7 +54,7 @@ import java.util.function.Predicate;
 public class MatViewTimerJob extends SynchronizedJob {
     private static final int INITIAL_QUEUE_CAPACITY = 16;
     private static final Log LOG = LogFactory.getLog(MatViewTimerJob.class);
-    private static final Comparator<Timer> timerComparator = Comparator.comparingLong(t -> t.deadlineUtc);
+    private static final Comparator<Timer> timerComparator = Comparator.comparingLong(Timer::getDeadline);
     private final MicrosecondClock clock;
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
@@ -75,36 +77,86 @@ public class MatViewTimerJob extends SynchronizedJob {
         this.filterByDirName = this::filterByDirName;
     }
 
-    private void addTimer(TableToken viewToken, long now) {
+    public static long periodDelayMicros(int periodDelay, char periodDelayUnit) {
+        switch (periodDelayUnit) {
+            case 'm':
+                return periodDelay * Timestamps.MINUTE_MICROS;
+            case 'h':
+                return periodDelay * Timestamps.HOUR_MICROS;
+            case 'd':
+                return periodDelay * Timestamps.DAY_MICROS;
+        }
+        return 0;
+    }
+
+    private void addTimers(TableToken viewToken, long now) {
         final MatViewDefinition viewDefinition = matViewGraph.getViewDefinition(viewToken);
         if (viewDefinition == null) {
             LOG.info().$("materialized view definition not found [view=").$(viewToken).I$();
             return;
         }
         try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
-            final long start = matViewMeta.getMatViewTimerStart();
-            final int interval = matViewMeta.getMatViewTimerInterval();
-            final char unit = matViewMeta.getMatViewTimerUnit();
-            final TimestampSampler sampler;
-            try {
-                sampler = TimestampSamplerFactory.getInstance(interval, unit, 0);
-            } catch (SqlException e) {
-                throw CairoException.critical(0).put("invalid EVERY interval and/or unit: ").put(interval)
-                        .put(", ").put(unit);
+            if (viewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
+                final long start = matViewMeta.getMatViewTimerStart();
+                final int interval = matViewMeta.getMatViewTimerInterval();
+                final char unit = matViewMeta.getMatViewTimerUnit();
+                final TimestampSampler sampler;
+                try {
+                    sampler = TimestampSamplerFactory.getInstance(interval, unit, -1);
+                } catch (SqlException e) {
+                    throw CairoException.critical(0).put("invalid EVERY interval and/or unit: ").put(interval)
+                            .put(", ").put(unit);
+                }
+                final Timer timer = new Timer(
+                        Timer.INCREMENTAL_REFRESH_TYPE,
+                        viewToken,
+                        sampler,
+                        viewDefinition.getTimerTzRules(),
+                        0,
+                        start,
+                        configuration.getMatViewTimerStartEpsilon(),
+                        now
+                );
+                timerQueue.add(timer);
+                LOG.info().$("registered timer for materialized view [view=").$(viewToken)
+                        .$(", start=").$ts(start)
+                        .$(", tz=").$(viewDefinition.getTimerTimeZone())
+                        .$(", interval=").$(interval).$(unit)
+                        .I$();
             }
-            final Timer timer = new Timer(
-                    viewToken,
-                    sampler,
-                    viewDefinition.getTimerTzRules(),
-                    start,
-                    configuration.getMatViewTimerStartEpsilon(),
-                    now
-            );
-            timerQueue.add(timer);
-            LOG.info().$("registered timer for materialized view [view=").$(viewToken)
-                    .$(", start=").$ts(start)
-                    .$(", interval=").$(interval).$(unit)
-                    .I$();
+
+            if (matViewMeta.getMatViewPeriodLength() > 0) {
+                final long start = matViewMeta.getMatViewTimerStart();
+                final int periodLength = matViewMeta.getMatViewPeriodLength();
+                final char periodLengthUnit = matViewMeta.getMatViewPeriodLengthUnit();
+                final TimestampSampler sampler;
+                try {
+                    sampler = TimestampSamplerFactory.getInstance(periodLength, periodLengthUnit, -1);
+                } catch (SqlException e) {
+                    throw CairoException.critical(0).put("invalid LENGTH interval and/or unit: ").put(periodLength)
+                            .put(", ").put(periodLengthUnit);
+                }
+                final int periodDelay = matViewMeta.getMatViewPeriodDelay();
+                final char periodDelayUnit = matViewMeta.getMatViewPeriodDelayUnit();
+                final long delay = periodDelayMicros(periodDelay, periodDelayUnit);
+                final Timer timer = new Timer(
+                        Timer.PERIOD_REFRESH_TYPE,
+                        viewToken,
+                        sampler,
+                        viewDefinition.getTimerTzRules(),
+                        delay,
+                        start,
+                        0,
+                        now
+                );
+                timerQueue.add(timer);
+                LOG.info().$("registered period timer for materialized view [view=").$(viewToken)
+                        .$(", start=").$ts(start)
+                        .$(", tz=").$(viewDefinition.getTimerTimeZone())
+                        .$(", length=").$(periodLength).$(periodLengthUnit)
+                        .$(", delay=").$(periodDelay).$(periodDelayUnit)
+                        .I$();
+            }
         } catch (Throwable th) {
             LOG.critical()
                     .$("could not initialize timer for materialized view [view=").$(viewToken)
@@ -121,7 +173,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         expired.clear();
         boolean ran = false;
         Timer timer;
-        while ((timer = timerQueue.peek()) != null && timer.deadlineUtc <= now) {
+        while ((timer = timerQueue.peek()) != null && timer.getDeadline() <= now) {
             timer = timerQueue.poll();
             expired.add(timer);
             final TableToken viewToken = timer.getMatViewToken();
@@ -129,14 +181,28 @@ public class MatViewTimerJob extends SynchronizedJob {
             if (state != null) {
                 if (state.isDropped()) {
                     expired.remove(expired.size() - 1);
-                    LOG.info().$("unregistered timer for dropped materialized view [view=").$(viewToken).I$();
+                    LOG.info().$("unregistered timer for dropped materialized view [view=").$(viewToken)
+                            .$(", type=").$(timer.getType())
+                            .I$();
                 } else if (!state.isPendingInvalidation() && !state.isInvalid()) {
-                    // Check if the view has refreshed since the last timer expiration.
-                    // If not, don't schedule refresh to avoid unbounded growth of the queue.
-                    final long refreshSeq = state.getRefreshSeq();
-                    if (timer.getKnownRefreshSeq() != refreshSeq) {
-                        matViewStateStore.enqueueIncrementalRefresh(viewToken);
-                        timer.setKnownRefreshSeq(refreshSeq);
+                    switch (timer.getType()) {
+                        case Timer.INCREMENTAL_REFRESH_TYPE:
+                            // Check if the view has refreshed since the last timer expiration.
+                            // If not, don't schedule refresh to avoid unbounded growth of the queue.
+                            final long refreshSeq = state.getRefreshSeq();
+                            if (timer.getKnownRefreshSeq() != refreshSeq) {
+                                matViewStateStore.enqueueIncrementalRefresh(viewToken);
+                                timer.setKnownRefreshSeq(refreshSeq);
+                            }
+                            break;
+                        case Timer.PERIOD_REFRESH_TYPE:
+                            matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, timer.getPeriodHi());
+                            break;
+                        default:
+                            LOG.error().$("unexpected timer type [view=").$(viewToken)
+                                    .$(", type=").$(timer.getType())
+                                    .I$();
+                            break;
                     }
                 }
             } else {
@@ -153,17 +219,18 @@ public class MatViewTimerJob extends SynchronizedJob {
         return ran;
     }
 
-    private boolean removeTimer(TableToken viewToken) {
+    private boolean removeTimers(TableToken viewToken) {
         filteredDirName = viewToken.getDirName();
         try {
+            // Remove both incremental refresh and period refresh timers for the given view, if any.
             if (timerQueue.removeIf(filterByDirName)) {
-                LOG.info().$("unregistered timer for materialized view [view=").$(viewToken).I$();
+                LOG.info().$("unregistered timers for materialized view [view=").$(viewToken).I$();
                 return true;
             }
         } finally {
             filteredDirName = null;
         }
-        LOG.info().$("refresh timer for materialized view not found [view=").$(viewToken).I$();
+        LOG.info().$("timers for materialized view not found [view=").$(viewToken).I$();
         return false;
     }
 
@@ -176,14 +243,14 @@ public class MatViewTimerJob extends SynchronizedJob {
             final TableToken viewToken = timerTask.getMatViewToken();
             switch (timerTask.getOperation()) {
                 case MatViewTimerTask.ADD:
-                    addTimer(viewToken, now);
+                    addTimers(viewToken, now);
                     break;
                 case MatViewTimerTask.REMOVE:
-                    removeTimer(viewToken);
+                    removeTimers(viewToken);
                     break;
                 case MatViewTimerTask.UPDATE:
-                    if (removeTimer(viewToken)) {
-                        addTimer(viewToken, now);
+                    if (removeTimers(viewToken)) {
+                        addTimers(viewToken, now);
                     }
                     break;
                 default:
@@ -195,42 +262,44 @@ public class MatViewTimerJob extends SynchronizedJob {
         return ran;
     }
 
+    /**
+     * May stand for either incremental refresh timer or period refresh timer.
+     */
     private static class Timer {
+        private static final byte INCREMENTAL_REFRESH_TYPE = 0;
+        private static final byte PERIOD_REFRESH_TYPE = 1;
+        private final long delay; // used in period timers
         private final TableToken matViewToken;
-        private final TimeZoneRules rules;
         private final TimestampSampler sampler;
+        private final byte type;
+        private final TimeZoneRules tzRules;
         private long deadlineLocal; // used for sampler interaction only
         private long deadlineUtc;
         private long knownRefreshSeq = -1;
 
-        private Timer(
+        public Timer(
+                byte type,
                 @NotNull TableToken matViewToken,
                 @NotNull TimestampSampler sampler,
-                @Nullable TimeZoneRules rules,
+                @Nullable TimeZoneRules tzRules,
+                long delay,
                 long start,
                 long startEpsilon,
                 long now
         ) {
+            this.type = type;
             this.matViewToken = matViewToken;
             this.sampler = sampler;
-            this.rules = rules;
+            this.tzRules = tzRules;
+            this.delay = delay;
             sampler.setStart(start);
             // It's fine if the timer triggers immediately.
             deadlineUtc = now > start + startEpsilon ? sampler.nextTimestamp(sampler.round(now - 1)) : start;
-            deadlineLocal = rules != null ? deadlineUtc + rules.getOffset(deadlineUtc) : deadlineUtc;
+            deadlineLocal = tzRules != null ? deadlineUtc + tzRules.getOffset(deadlineUtc) : deadlineUtc;
         }
 
-        @Override
-        public final boolean equals(Object o) {
-            if (this == o) {
-                return true;
-            }
-            if (!(o instanceof Timer)) {
-                return false;
-            }
-
-            Timer timer = (Timer) o;
-            return matViewToken.getDirName().equals(timer.matViewToken.getDirName());
+        public long getDeadline() {
+            return deadlineUtc + delay;
         }
 
         public long getKnownRefreshSeq() {
@@ -241,9 +310,13 @@ public class MatViewTimerJob extends SynchronizedJob {
             return matViewToken;
         }
 
-        @Override
-        public int hashCode() {
-            return matViewToken.getDirName().hashCode();
+        // returns currently awaited period's right boundary, in UTC
+        public long getPeriodHi() {
+            return deadlineUtc;
+        }
+
+        public byte getType() {
+            return type;
         }
 
         public void setKnownRefreshSeq(long knownRefreshSeq) {
@@ -252,7 +325,7 @@ public class MatViewTimerJob extends SynchronizedJob {
 
         private void nextDeadline() {
             deadlineLocal = sampler.nextTimestamp(deadlineLocal);
-            deadlineUtc = rules != null ? deadlineLocal - rules.getLocalOffset(deadlineLocal) : deadlineLocal;
+            deadlineUtc = tzRules != null ? deadlineLocal - tzRules.getLocalOffset(deadlineLocal) : deadlineLocal;
         }
     }
 }

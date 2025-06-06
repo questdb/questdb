@@ -197,6 +197,24 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final TableToken baseTableToken = baseTableReader.getTableToken();
         final TableToken viewToken = viewDefinition.getMatViewToken();
 
+        final int refreshLimit;
+        final long timerStart;
+        final int periodLength;
+        final char periodLengthUnit;
+        final int periodDelay;
+        final char periodDelayUnit;
+        try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
+            refreshLimit = matViewMeta.getMatViewRefreshLimitHoursOrMonths();
+            timerStart = matViewMeta.getMatViewTimerStart();
+            periodLength = matViewMeta.getMatViewPeriodLength();
+            periodLengthUnit = matViewMeta.getMatViewPeriodLengthUnit();
+            periodDelay = matViewMeta.getMatViewPeriodDelay();
+            periodDelayUnit = matViewMeta.getMatViewPeriodDelayUnit();
+        }
+
+        final long now = microsecondClock.getTicks();
+        final boolean rangeRefresh = rangeFrom != Numbers.LONG_NULL && rangeTo != Numbers.LONG_NULL;
+
         LongList txnIntervals = null;
         long minTs;
         long maxTs;
@@ -209,18 +227,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             minTs = txnRangeLoader.getMinTimestamp();
             maxTs = txnRangeLoader.getMaxTimestamp();
             // Check if refresh limit should be applied.
-            try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
-                final int limit = matViewMeta.getMatViewRefreshLimitHoursOrMonths();
-                if (limit != 0) {
-                    final long now = microsecondClock.getTicks();
-                    if (limit > 0) { // hours
-                        minTs = Math.max(minTs, now - Timestamps.HOUR_MICROS * limit);
-                    } else { // months
-                        minTs = Math.max(minTs, Timestamps.addMonths(now, -limit));
-                    }
+            if (refreshLimit != 0) {
+                if (refreshLimit > 0) { // hours
+                    minTs = Math.max(minTs, now - Timestamps.HOUR_MICROS * refreshLimit);
+                } else { // months
+                    minTs = Math.max(minTs, Timestamps.addMonths(now, -refreshLimit));
                 }
             }
-        } else if (rangeFrom != Numbers.LONG_NULL && rangeTo != Numbers.LONG_NULL) {
+        } else if (rangeRefresh) {
             // Range refresh.
             // Consider actual min/max timestamps in the table data to avoid redundant
             // query executions.
@@ -232,6 +246,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // while max timestamp is Long.MIN_VALUE, so we end up skipping the refresh.
             minTs = baseTableReader.getMinTimestamp();
             maxTs = baseTableReader.getMaxTimestamp();
+        }
+
+        // Avoid refreshing incomplete period in case of period refresh.
+        if (!rangeRefresh && periodLength > 0) {
+            // TODO(puzpuzpuz): for manual refresh we need to store last lo range refresh boundary?
+            TimestampSampler periodSampler = viewDefinition.getPeriodSampler();
+            if (periodSampler == null) {
+                periodSampler = TimestampSamplerFactory.getInstance(periodLength, periodLengthUnit, -1);
+                viewDefinition.setPeriodSampler(periodSampler);
+            }
+            periodSampler.setStart(timerStart);
+            long nowLocal = viewDefinition.getTimerTzRules() != null
+                    ? now + viewDefinition.getTimerTzRules().getOffset(now)
+                    : now;
+            final long delay = MatViewTimerJob.periodDelayMicros(periodDelay, periodDelayUnit);
+            maxTs = Math.min(maxTs, periodSampler.previousTimestamp(nowLocal) + delay);
         }
 
         if (minTs <= maxTs) {
