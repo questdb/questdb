@@ -1037,6 +1037,28 @@ public class SqlUtil {
         }
     }
 
+    static String PIVOT_ELSE_TOKEN = "_qdb_pivot_else_";
+
+    static boolean isPivotElseToken(CharSequence tok) {
+        return tok.length() == 16
+                && (tok.charAt(0)) == '_'
+                && (tok.charAt(1) | 32) == 'q'
+                && (tok.charAt(2) | 32) == 'd'
+                && (tok.charAt(3) | 32) == 'b'
+                && (tok.charAt(4)) == '_'
+                && (tok.charAt(5) | 32) == 'p'
+                && (tok.charAt(6) | 32) == 'i'
+                && (tok.charAt(7) | 32) == 'v'
+                && (tok.charAt(8) | 32) == 'o'
+                && (tok.charAt(9) | 32) == 't'
+                && (tok.charAt(10)) == '_'
+                && (tok.charAt(11) | 32) == 'e'
+                && (tok.charAt(12) | 32) == 'l'
+                && (tok.charAt(13) | 32) == 's'
+                && (tok.charAt(14) | 32) == 'e'
+                && (tok.charAt(15)) == '_';
+    }
+
     static QueryColumn nextColumn(
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<ExpressionNode> sqlNodePool,
