@@ -1651,7 +1651,7 @@ public final class Utf8s {
             }
             putNonAsciiAsHex(sink, val);
         }
-        return i;
+        return i + 1;
     }
 
     private static int putMultibyteSafe(long lo, long hi, byte b, @NotNull Utf8Sink sink) {
