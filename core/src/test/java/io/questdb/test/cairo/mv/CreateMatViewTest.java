@@ -1176,13 +1176,13 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
                     25,
-                    "table with the requested name already exists"
+                    "table or view with the requested name already exists"
             );
 
             assertExceptionNoLeakCheck(
                     "create materialized view if not exists " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
                     39,
-                    "table with the requested name already exists"
+                    "table or view with the requested name already exists"
             );
 
             final String query = "select ts, avg(v) from " + TABLE2 + " sample by 4h";

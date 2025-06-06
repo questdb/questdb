@@ -113,6 +113,14 @@ public interface SecurityContext extends Mutable {
 
     void authorizeTableVacuum(TableToken tableToken);
 
+    default void authorizeViewCreate() {
+        // TODO: implement this on security context implementations
+    }
+
+    default void authorizeViewDrop(TableToken tableToken) {
+        // TODO: implement this on security context implementations
+    }
+
     /**
      * Should throw an exception if:
      * - logged in as a user and the user has been disabled, or it has no permissions to connect via the endpoint used,

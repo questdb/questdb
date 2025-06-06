@@ -22,18 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.griffin.engine.ops;
 
-public class WalTxnType {
-    public static final byte DATA = 0;
-    public static final byte MAT_VIEW_DATA = 3;
-    public static final byte MAT_VIEW_INVALIDATE = 4;
-    public static final byte NONE = -1;
-    public static final byte SQL = 1;
-    public static final byte TRUNCATE = 2;
-    public static final byte VIEW_INVALIDATE = 5;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.QueryModel;
 
-    public static boolean isDataType(byte type) {
-        return type == DATA || type == MAT_VIEW_DATA;
+public interface CreateViewOperationBuilder extends ExecutionModel {
+
+    CreateViewOperation build(
+            SqlCompiler sqlCompiler,
+            SqlExecutionContext executionContext,
+            CharSequence sqlText
+    ) throws SqlException;
+
+    @Override
+    default int getModelType() {
+        return CREATE_VIEW;
     }
+
+    void setSelectModel(QueryModel selectModel);
 }

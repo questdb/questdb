@@ -387,7 +387,7 @@ public class ServerMain implements Closeable {
             }
         };
 
-        engine.buildMatViewGraph();
+        engine.buildViewGraphs();
 
         if (matViewEnabled && !isReadOnly && config.getMatViewRefreshPoolConfiguration().isEnabled()) {
             // create dedicated worker pool for materialized view refresh

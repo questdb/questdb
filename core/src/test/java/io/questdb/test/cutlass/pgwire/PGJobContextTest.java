@@ -135,10 +135,10 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.*;
 import static io.questdb.test.tools.TestUtils.assertEquals;
-import static org.junit.Assert.*;
+import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -3384,16 +3384,16 @@ if __name__ == "__main__":
     public void testDropTable() throws Exception {
         String[][] sqlExpectedErrMsg = {
                 {"drop table doesnt", "ERROR: table does not exist [table=doesnt]"},
-                {"drop table", "ERROR: expected IF EXISTS table-name"},
-                {"drop doesnt", "ERROR: 'table' or 'materialized view' or 'all' expected"},
-                {"drop", "ERROR: 'table' or 'materialized view' or 'all' expected"},
+                {"drop table", "ERROR: expected [IF EXISTS] table-name"},
+                {"drop doesnt", "ERROR: 'table' or 'view' or 'materialized view' or 'all' expected"},
+                {"drop", "ERROR: 'table' or 'view' or 'materialized view' or 'all' expected"},
                 {"drop table if doesnt", "ERROR: expected EXISTS"},
                 {"drop table exists doesnt", "ERROR: table and column names that are SQL keywords have to be enclosed in double quotes, such as \"exists\""},
                 {"drop table if exists", "ERROR: table name expected"},
                 {"drop table if exists;", "ERROR: table name expected"},
                 {"drop all table if exists;", "ERROR: ';' or 'tables' expected"},
                 {"drop all tables if exists;", "ERROR: ';' or 'tables' expected"},
-                {"drop database ;", "ERROR: 'table' or 'materialized view' or 'all' expected"}
+                {"drop database ;", "ERROR: 'table' or 'view' or 'materialized view' or 'all' expected"}
         };
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             for (int i = 0, n = sqlExpectedErrMsg.length; i < n; i++) {

@@ -22,18 +22,42 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo.view;
 
-public class WalTxnType {
-    public static final byte DATA = 0;
-    public static final byte MAT_VIEW_DATA = 3;
-    public static final byte MAT_VIEW_INVALIDATE = 4;
-    public static final byte NONE = -1;
-    public static final byte SQL = 1;
-    public static final byte TRUNCATE = 2;
-    public static final byte VIEW_INVALIDATE = 5;
+import io.questdb.cairo.TableToken;
+import org.jetbrains.annotations.TestOnly;
 
-    public static boolean isDataType(byte type) {
-        return type == DATA || type == MAT_VIEW_DATA;
+public class NoOpViewStateStore implements ViewStateStore {
+    public static final NoOpViewStateStore INSTANCE = new NoOpViewStateStore();
+
+    @Override
+    public ViewState addViewState(ViewDefinition viewDefinition) {
+        return null;
+    }
+
+    @TestOnly
+    @Override
+    public void clear() {
+    }
+
+    @Override
+    public void close() {
+    }
+
+    @Override
+    public void createViewState(ViewDefinition viewDefinition) {
+    }
+
+    @Override
+    public void enqueueInvalidate(TableToken viewToken, String invalidationReason) {
+    }
+
+    @Override
+    public ViewState getViewState(TableToken viewToken) {
+        return null;
+    }
+
+    @Override
+    public void removeViewState(TableToken viewToken) {
     }
 }

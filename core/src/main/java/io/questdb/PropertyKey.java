@@ -169,6 +169,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_O3_MIN_LAG("cairo.o3.min.lag"),
     CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
     CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS("cairo.sql.max.recompile.attempts"),
+    CAIRO_VIEW_ENABLED("cairo.view.enabled"),
     CAIRO_MAT_VIEW_ENABLED("cairo.mat.view.enabled"),
     CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL("cairo.mat.view.min.refresh.interval"),
     CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES("cairo.mat.view.max.refresh.retries"),

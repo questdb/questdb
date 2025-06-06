@@ -22,18 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.griffin.engine.ops;
 
-public class WalTxnType {
-    public static final byte DATA = 0;
-    public static final byte MAT_VIEW_DATA = 3;
-    public static final byte MAT_VIEW_INVALIDATE = 4;
-    public static final byte NONE = -1;
-    public static final byte SQL = 1;
-    public static final byte TRUNCATE = 2;
-    public static final byte VIEW_INVALIDATE = 5;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.QueryModel;
 
-    public static boolean isDataType(byte type) {
-        return type == DATA || type == MAT_VIEW_DATA;
-    }
+public interface CreateViewOperation extends TableStructure, Operation {
+
+    CreateTableOperation getCreateTableOperation();
+
+    CharSequence getSqlText();
+
+    int getTableNamePosition();
+
+    boolean ignoreIfExists();
+
+    void updateOperationFutureTableToken(TableToken tableToken);
+
+    void validateAndUpdateMetadataFromModel(SqlExecutionContext sqlExecutionContext, FunctionFactoryCache functionFactoryCache, QueryModel queryModel) throws SqlException;
+
+    void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata) throws SqlException;
 }

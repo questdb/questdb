@@ -25,16 +25,22 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.view.ViewDefinition;
+import io.questdb.cairo.view.ViewGraph;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
+import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateViewOperationBuilderImpl;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExecutionModel;
@@ -92,6 +98,8 @@ public class SqlParser {
     private final CreateMatViewOperationBuilderImpl createMatViewOperationBuilder = new CreateMatViewOperationBuilderImpl();
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
+    private final CreateViewOperationBuilderImpl createViewOperationBuilder = new CreateViewOperationBuilderImpl();
+    private final CairoEngine engine;
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
@@ -108,6 +116,10 @@ public class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCaseRef = this::rewriteCase;
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
+    private final LowerCaseCharSequenceObjHashMap<ExpressionNode> viewDecl = new LowerCaseCharSequenceObjHashMap<>();
+    private final GenericLexer viewLexer;
+    private final SqlParserCallback viewSqlParserCallback = new SqlParserCallback() {
+    };
     private final ObjectPool<WindowColumn> windowColumnPool;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
     private int digit;
@@ -115,13 +127,15 @@ public class SqlParser {
     private boolean subQueryMode = false;
 
     SqlParser(
-            CairoConfiguration configuration,
+            CairoEngine engine,
             CharacterStore characterStore,
             ObjectPool<ExpressionNode> expressionNodePool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
             PostOrderTreeTraversalAlgo traversalAlgo
     ) {
+        this.engine = engine;
+        this.configuration = engine.getConfiguration();
         this.expressionNodePool = expressionNodePool;
         this.queryModelPool = queryModelPool;
         this.queryColumnPool = queryColumnPool;
@@ -133,9 +147,9 @@ public class SqlParser {
         this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, configuration.getInsertModelPoolCapacity());
         this.copyModelPool = new ObjectPool<>(CopyModel.FACTORY, configuration.getCopyPoolCapacity());
         this.explainModelPool = new ObjectPool<>(ExplainModel.FACTORY, configuration.getExplainPoolCapacity());
-        this.configuration = configuration;
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
+        this.viewLexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         boolean tempCairoSqlLegacyOperatorPrecedence = configuration.getCairoSqlLegacyOperatorPrecedence();
         if (tempCairoSqlLegacyOperatorPrecedence) {
             this.expressionParser = new ExpressionParser(
@@ -369,6 +383,17 @@ public class SqlParser {
         return sqlParserCallback.parseCreateTableExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
     }
 
+    private static CreateViewOperationBuilder parseCreateViewExt(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            CharSequence tok,
+            CreateViewOperationBuilder builder
+    ) throws SqlException {
+        CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
+        return sqlParserCallback.parseCreateViewExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
+    }
+
     private static void validateMatViewQuery(QueryModel model, String baseTableName) throws SqlException {
         for (QueryModel m = model; m != null; m = m.getNestedModel()) {
             final boolean baseTableQueried = isTableQueried(m, baseTableName);
@@ -462,6 +487,12 @@ public class SqlParser {
         if (tok != null && (isFullKeyword(tok) || isRightKeyword(tok))) {
             throw SqlException.$((lexer.lastTokenPosition()), "unsupported join type");
         }
+    }
+
+    private QueryModel compileViewQuery(ViewDefinition viewDefinition) throws SqlException {
+        SqlCompilerImpl.configureLexer(viewLexer);
+        viewLexer.of(viewDefinition.getViewSql());
+        return parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, viewDecl);
     }
 
     private CharSequence createColumnAlias(
@@ -835,7 +866,13 @@ public class SqlParser {
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized'");
+        final CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view'");
+        if (isViewKeyword(tok)) {
+            if (!configuration.isViewEnabled()) {
+                throw SqlException.$(0, "views are disabled");
+            }
+            return parseCreateView(lexer, executionContext, sqlParserCallback);
+        }
         if (isMaterializedKeyword(tok)) {
             if (!configuration.isMatViewEnabled()) {
                 throw SqlException.$(0, "materialized views are disabled");
@@ -1565,6 +1602,78 @@ public class SqlParser {
         return null;
     }
 
+    private ExecutionModel parseCreateView(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        final CreateViewOperationBuilderImpl vOpBuilder = createViewOperationBuilder;
+        final CreateTableOperationBuilderImpl tableOpBuilder = vOpBuilder.getCreateTableOperationBuilder();
+        vOpBuilder.clear(); // clears tableOpBuilder too
+        tableOpBuilder.setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
+        tableOpBuilder.setMaxUncommittedRows(configuration.getMaxUncommittedRows());
+        tableOpBuilder.setWalEnabled(true); // view is always WAL
+
+        CharSequence tok = tok(lexer, "view name or 'if'");
+        if (isIfKeyword(tok)) {
+            if (isNotKeyword(tok(lexer, "'not'")) && isExistsKeyword(tok(lexer, "'exists'"))) {
+                tableOpBuilder.setIgnoreIfExists(true);
+                tok = tok(lexer, "view name");
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'if not exists' expected");
+            }
+        }
+        tok = sansPublicSchema(tok, lexer);
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        tableOpBuilder.setTableNameExpr(nextLiteral(
+                assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()
+        ));
+
+        tok = tok(lexer, "'as'");
+
+        boolean enclosedInParentheses;
+        if (isAsKeyword(tok)) {
+            int startOfQuery = lexer.getPosition();
+            tok = tok(lexer, "'(' or 'with' or 'select'");
+            enclosedInParentheses = Chars.equals(tok, '(');
+            if (enclosedInParentheses) {
+                startOfQuery = lexer.getPosition();
+                tok = tok(lexer, "'with' or 'select'");
+            }
+
+            // Parse SELECT for the sake of basic SQL validation.
+            // It'll be compiled and optimized later, at the execution phase.
+            if (isWithKeyword(tok)) {
+                parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
+                // CTEs require SELECT to be specified
+                expectTok(lexer, "select");
+            }
+            lexer.unparseLast();
+            final QueryModel queryModel = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
+            final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
+
+            final String viewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
+            tableOpBuilder.setSelectText(viewSql, startOfQuery);
+            tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only
+
+            if (enclosedInParentheses) {
+                expectTok(lexer, ')');
+            } else {
+                // We expect nothing more when there are no parentheses.
+                tok = optTok(lexer);
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+                }
+                return vOpBuilder;
+            }
+        } else {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
+        }
+
+        tok = optTok(lexer);
+        return parseCreateViewExt(lexer, executionContext, sqlParserCallback, tok, vOpBuilder);
+    }
+
     private void parseDeclare(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         int contentLength = lexer.getContent().length();
         while (lexer.getPosition() < contentLength) {
@@ -2012,8 +2121,18 @@ public class SqlParser {
             proposedNested = variableExpr.rhs.queryModel;
         }
 
-        // expect "(" in case of sub-query
-        if (Chars.equals(tok, '(') || proposedNested != null) {
+        final ViewGraph viewGraph = engine.getViewGraph();
+        final TableToken tt = engine.getTableTokenIfExists(tok);
+        if (tt != null && tt.isView()) {
+            final ViewDefinition viewDefinition = viewGraph.getViewDefinition(tt);
+            if (viewDefinition != null) {
+                final QueryModel viewModel = compileViewQuery(viewDefinition);
+                model.setNestedModel(viewModel);
+                model.setNestedModelIsSubQuery(true);
+                tok = setModelAliasAndTimestamp(lexer, model);
+            }
+            // expect "(" in case of sub-query
+        } else if (Chars.equals(tok, '(') || proposedNested != null) {
             if (proposedNested == null) {
                 proposedNested = parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), true, sqlParserCallback, model.getDecls());
             }
@@ -2507,7 +2626,16 @@ public class SqlParser {
 
         tok = expectTableNameOrSubQuery(lexer);
 
-        if (Chars.equals(tok, '(')) {
+        final ViewGraph viewGraph = engine.getViewGraph();
+        final TableToken tt = engine.getTableTokenIfExists(tok);
+        if (tt != null && tt.isView()) {
+            final ViewDefinition viewDefinition = viewGraph.getViewDefinition(tt);
+            if (viewDefinition != null) {
+                final QueryModel viewModel = compileViewQuery(viewDefinition);
+                joinModel.setNestedModel(viewModel);
+                joinModel.setNestedModelIsSubQuery(true);
+            }
+        } else if (Chars.equals(tok, '(')) {
             joinModel.setNestedModel(parseAsSubQueryAndExpectClosingBrace(lexer, parent, true, sqlParserCallback, decls));
         } else {
             lexer.unparseLast();
