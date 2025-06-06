@@ -342,11 +342,51 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.1 * rnd.nextDouble(),
                 0.0,
-                0.5
+                0.5,
+                0.0
         );
 
         setFuzzCounts(
                 rnd.nextBoolean(),
+                rnd.nextInt(100_000),
+                rnd.nextInt(20),
+                rnd.nextInt(20),
+                rnd.nextInt(20),
+                rnd.nextInt(1000),
+                rnd.nextInt(100_000),
+                1 + rnd.nextInt(1)
+        );
+
+        runFuzzWithRandomColsDedup(rnd, -1);
+    }
+
+    @Test
+    public void testRandomColumnsDedupMultipleKeyColWithRCommits() throws Exception {
+        // Replace commits not yet supported with Parquet
+        Assume.assumeFalse(convertToParquet);
+        Rnd rnd = generateRandomAndProps();
+        setFuzzProbabilities(
+                rnd.nextDouble() / 100,
+                rnd.nextDouble(),
+                rnd.nextDouble(),
+                0.1 * rnd.nextDouble(),
+                0.1 * rnd.nextDouble(),
+                0,
+                rnd.nextDouble(),
+                0.0,
+                rnd.nextDouble(),
+                0.0,
+                0.0,
+                0.1 * rnd.nextDouble(),
+                0.0,
+                0.5,
+                0.5
+        );
+
+        // Set isO3 to false to enforce unique timestamps inside the transactions,
+        // replace commits do not run deduplication inside the transaction rows.
+        setFuzzCounts(
+                false,
                 rnd.nextInt(100_000),
                 rnd.nextInt(20),
                 rnd.nextInt(20),
@@ -378,7 +418,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.1 * rnd.nextDouble(),
                 0.0,
-                0.5
+                0.5,
+                0.0
         );
 
         setFuzzCounts(
@@ -416,7 +457,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 // This test does not support Drop Partition operations,
                 // it is not trivial to build the result set of data to assert against with drop partitions
                 0,
-                0.4
+                0.4,
+                0.0
         );
 
         setFuzzCounts(
@@ -471,7 +513,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         try {
                             assertEquals(dedupWrapper, factory.getMetadata(), actualCursor, factory2.getMetadata(), false);
                         } catch (AssertionError e) {
-                            log.error().$(e).$();
                             dedupWrapper.toTop();
                             actualCursor.toTop();
                             log.xDebugW().$();
@@ -639,6 +680,14 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         return rnd;
     }
 
+    @SuppressWarnings("unused")
+    private Rnd generateRandomAndProps(long s0, long s1) {
+        Rnd rnd = fuzzer.generateRandom(io.questdb.test.AbstractCairoTest.LOG, s0, s1);
+        setFuzzProperties(rnd);
+        setRandomAppendPageSize(rnd);
+        return rnd;
+    }
+
     private void maybeConvertToParquet(String tableName) {
         if (convertToParquet) {
             // convert to parquet, so we can test dedup with parquet
@@ -738,8 +787,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableNameDedup = tableNameBase + "_wal";
             String tableNameWalNoDedup = tableNameBase + "_nodedup";
 
-            fuzzer.createInitialTable(tableNameWalNoDedup, true);
-            fuzzer.createInitialTable(tableNameDedup, true);
+            fuzzer.createInitialTableWal(tableNameWalNoDedup);
+            fuzzer.createInitialTableWal(tableNameDedup);
             maybeConvertToParquet(tableNameDedup);
 
             // Add long256 type to have to be a chance of a dedup key
@@ -813,9 +862,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableNameDedup = tableNameBase + "_wal";
             String tableNameNoWal = tableNameBase + "_nonwal";
 
-            TableToken dedupTt = fuzzer.createInitialTable(tableNameDedup, true);
+            TableToken dedupTt = fuzzer.createInitialTableWal(tableNameDedup);
             maybeConvertToParquet(tableNameDedup);
-            fuzzer.createInitialTable(tableNameNoWal, false);
+            fuzzer.createInitialTableNonWal(tableNameNoWal, null);
 
             String timestampColumnName;
             try (TableRecordMetadata meta = engine.getSequencerMetadata(dedupTt)) {

@@ -117,7 +117,7 @@ public class TestListener extends RunListener {
                 }
             } catch (Throwable t) {
                 System.out.println("Thread dumper failed!");
-                t.printStackTrace();
+                t.printStackTrace(System.out);
             }
         });
 

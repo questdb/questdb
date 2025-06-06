@@ -230,6 +230,10 @@ public class IntervalUtilsTest {
 
         Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 125));
         Assert.assertEquals(-1, IntervalUtils.findInterval(intervals, 125));
+
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 100));
+
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 102));
     }
 
     @Test
