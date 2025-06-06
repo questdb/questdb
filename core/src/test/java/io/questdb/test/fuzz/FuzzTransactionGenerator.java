@@ -219,7 +219,7 @@ public class FuzzTransactionGenerator {
                 // Non-wal don't have the replaced data inserted, and they will not drop the partition
                 // because of TTL, and it will generate expected vs actual difference.
                 // The workaround is to not generate replace inserts on the tables with TTL set.
-                boolean replaceInsert = rnd.nextDouble() < replaceInsertProb && i < setTtlIteration;
+                boolean replaceInsert = rnd.nextDouble() < replaceInsertProb && (setTtlIteration < 0 || i < setTtlIteration);
                 waitBarrierVersion = generateDataBlock(
                         transactionList,
                         rnd,
