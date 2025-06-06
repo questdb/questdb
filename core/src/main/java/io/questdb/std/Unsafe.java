@@ -68,6 +68,8 @@ public final class Unsafe {
     private static final Method implAddExports;
     //#endif
 
+    public static MallocTracker MALLOC_TRACKER = new MallocTracker();
+
     private Unsafe() {
     }
 
@@ -164,6 +166,7 @@ public final class Unsafe {
             Unsafe.getUnsafe().freeMemory(ptr);
             incrFreeCount();
             recordMemAlloc(-size, memoryTag);
+            MALLOC_TRACKER.trackFree(ptr);
         }
         return 0;
     }
@@ -257,6 +260,7 @@ public final class Unsafe {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
             checkAllocLimit(size, memoryTag);
             long ptr = Unsafe.getUnsafe().allocateMemory(size);
+            MALLOC_TRACKER.trackMalloc(ptr, size, memoryTag);
             recordMemAlloc(size, memoryTag);
             incrMallocCount();
             return ptr;
@@ -279,6 +283,7 @@ public final class Unsafe {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
             checkAllocLimit(-oldSize + newSize, memoryTag);
             long ptr = Unsafe.getUnsafe().reallocateMemory(address, newSize);
+            MALLOC_TRACKER.trackRealloc(address, ptr, newSize, memoryTag);
             recordMemAlloc(-oldSize + newSize, memoryTag);
             incrReallocCount();
             return ptr;

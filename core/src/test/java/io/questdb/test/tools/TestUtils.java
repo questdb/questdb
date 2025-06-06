@@ -2340,6 +2340,7 @@ public final class TestUtils {
             long memAfter = Unsafe.getMemUsed();
             long memNativeSqlCompilerDiff = 0;
             Assert.assertTrue(memAfter > -1);
+            Unsafe.MALLOC_TRACKER.dumpLeaks();
             if (mem != memAfter) {
                 for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                     long actualMemByTag = Unsafe.getMemUsedByTag(i);
