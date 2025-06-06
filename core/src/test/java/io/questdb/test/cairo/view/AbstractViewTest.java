@@ -47,6 +47,13 @@ class AbstractViewTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
+
+        // enable parallel GROUP BY and filter
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "true");
+
+        // JIT does not support ARM, and we want query plans to be the same
+        setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, "off");
     }
 
     static void assertViewDefinition(String name, String query) {
