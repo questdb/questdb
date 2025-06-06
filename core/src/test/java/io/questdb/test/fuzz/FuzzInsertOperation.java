@@ -37,8 +37,8 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.TestRecord;
-import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 
 public class FuzzInsertOperation implements FuzzTransactionOperation, QuietCloseable {
     public final static int[] SUPPORTED_COLUMN_TYPES = new int[]{
@@ -65,15 +65,14 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
             ColumnType.IPv4,
             ColumnType.ARRAY
     };
-
+    private static final ThreadLocal<DirectArray> tlArray = new ThreadLocal<>(() -> {
+        DirectArray array = new DirectArray();
+        AbstractTest.CLOSEABLES.add(array);
+        return array;
+    });
     private static final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
     private static final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
     private static final ThreadLocal<Utf8StringSink> tlUtf8 = new ThreadLocal<>(Utf8StringSink::new);
-    private static final ThreadLocal<DirectArray> tlArray = new ThreadLocal<>(() -> {
-        DirectArray array = new DirectArray();
-        AbstractFuzzTest.CLOSEABLES.add(array);
-        return array;
-    });
     private final double cancelRows;
     private final double notSet;
     private final double nullSet;
