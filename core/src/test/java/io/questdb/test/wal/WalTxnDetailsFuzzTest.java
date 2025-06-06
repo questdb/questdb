@@ -271,7 +271,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
                 Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 3));
                 Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 4));
                 assertTimestampEquals("2022-02-24T13:00", walTnxDetails.getCommitToTimestamp(startTxn + 5));
-                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 6));
+                assertTimestampEquals("2022-02-24T15", walTnxDetails.getCommitToTimestamp(startTxn + 6));
                 Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 7));
             }
         }
@@ -312,6 +312,11 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
                 writer.readWalTxnDetails(cursor);
 
                 WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
+                Assert.assertEquals(Long.MIN_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 1));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 2));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 3));
+                assertTimestampEquals("2022-02-24T12:05", walTnxDetails.getCommitToTimestamp(startTxn + 4));
+                assertTimestampEquals("2022-02-24T13:00", walTnxDetails.getCommitToTimestamp(startTxn + 5));
                 assertTimestampEquals("2022-02-24T15", walTnxDetails.getCommitToTimestamp(startTxn + 6));
                 Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 7));
             }
