@@ -902,6 +902,25 @@ public final class Utf8s {
         return h;
     }
 
+    public static void putSafe(long lo, long hi, @NotNull Utf8Sink sink) {
+        long p = lo;
+        while (p < hi) {
+            byte b = Unsafe.getUnsafe().getByte(p);
+            if (b < 0) {
+                int n = putMultibyteSafe(p, hi, b, sink);
+                p += n;
+            } else {
+                char c = (char) b;
+                if (!Character.isISOControl(c)) {
+                    sink.put(c);
+                } else {
+                    appendHex(sink, b);
+                }
+                ++p;
+            }
+        }
+    }
+
     /**
      * Does not delegate to {@link #startsWith(Utf8Sequence, long, Utf8Sequence, long)} in order
      * to prevent unneeded calculation of six-prefix when an earlier check fails.
@@ -1173,35 +1192,6 @@ public final class Utf8s {
             return utf8Decode3Bytes(lo, hi, b, sink);
         }
         return utf8Decode4Bytes(lo, hi, b, sink);
-    }
-
-    public static void utf8EncodeInvalidMultiByte(long lo, long hi, @NotNull Utf8Sink sink) {
-        long p = lo;
-        while (p < hi) {
-            byte b = Unsafe.getUnsafe().getByte(p);
-            if (b < 0) {
-                int n = Utf8s.utf8EncodeInvalidMultiByte(p, hi, b, sink);
-                p += n;
-            } else {
-                char c = (char) b;
-                if (!Character.isISOControl(c)) {
-                    sink.put(c);
-                } else {
-                    appendHex(sink, b);
-                }
-                ++p;
-            }
-        }
-    }
-
-    public static int utf8EncodeInvalidMultiByte(long lo, long hi, byte b, @NotNull Utf8Sink sink) {
-        if (b >> 5 == -2 && (b & 30) != 0) {
-            return utf8EncodeInvalid2Bytes(lo, hi, b, sink);
-        }
-        if (b >> 4 == -2) {
-            return utf8EncodeInvalid3Bytes(lo, hi, b, sink);
-        }
-        return utf8EncodeInvalid4Bytes(lo, hi, b, sink);
     }
 
     public static char utf8ToChar(byte b1, byte b2, byte b3) {
@@ -1580,6 +1570,86 @@ public final class Utf8s {
         return (b & 192) != 128;
     }
 
+    private static int put2ByteSafe(long lo, long hi, byte b1, @NotNull Utf8Sink sink) {
+        if (hi - lo < 2) {
+            appendHex(sink, b1);
+            return 1;
+        }
+        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        if (isNotContinuation(b2)) {
+            appendHex(sink, b1);
+            appendHex(sink, b2);
+            return 2;
+        }
+        sink.put(b1);
+        sink.put(b2);
+        return 2;
+    }
+
+    private static int put3ByteSafe(long lo, long hi, byte b1, @NotNull Utf8Sink sink) {
+        if (hi - lo < 3) {
+            appendHex(sink, b1);
+            if (hi - lo > 1) {
+                appendHex(sink, Unsafe.getUnsafe().getByte(lo + 1));
+                return 2;
+            }
+            return 1;
+        }
+        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+        utf8Encode3ByteSafe0(b1, sink, b2, b3);
+        return 3;
+    }
+
+    private static int put4ByteSafe(long lo, long hi, byte b, @NotNull Utf8Sink sink) {
+        if (b >> 3 != -2 || hi - lo < 4) {
+            appendHex(sink, b);
+            if (hi - lo > 1) {
+                appendHex(sink, Unsafe.getUnsafe().getByte(lo + 1));
+                if (hi - lo > 2) {
+                    appendHex(sink, Unsafe.getUnsafe().getByte(lo + 2));
+                    if (hi - lo > 3) {
+                        appendHex(sink, Unsafe.getUnsafe().getByte(lo + 3));
+                        return 4;
+                    }
+                    return 3;
+                }
+                return 2;
+            }
+            return 1;
+        }
+        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+        byte b4 = Unsafe.getUnsafe().getByte(lo + 3);
+        return put4ByteSafe0(b, sink, b2, b3, b4);
+    }
+
+    private static int put4ByteSafe0(byte b, @NotNull Utf8Sink sink, byte b2, byte b3, byte b4) {
+        if (!isMalformed4(b2, b3, b4)) {
+            final int codePoint = getUtf8Codepoint(b, b2, b3, b4);
+            if (Character.isSupplementaryCodePoint(codePoint)) {
+                sink.put(Character.highSurrogate(codePoint));
+                sink.put(Character.lowSurrogate(codePoint));
+                return 4;
+            }
+        }
+        appendHex(sink, b);
+        appendHex(sink, b2);
+        appendHex(sink, b3);
+        appendHex(sink, b4);
+        return 4;
+    }
+
+    private static int putMultibyteSafe(long lo, long hi, byte b, @NotNull Utf8Sink sink) {
+        if (b >> 5 == -2 && (b & 30) != 0) {
+            return put2ByteSafe(lo, hi, b, sink);
+        }
+        if (b >> 4 == -2) {
+            return put3ByteSafe(lo, hi, b, sink);
+        }
+        return put4ByteSafe(lo, hi, b, sink);
+    }
+
     private static int strCpyNonAscii(@NotNull Utf8Sequence seq, int charLo, int charHi, @NotNull Utf8Sink sink) {
         int charPos = 0;
         int bytesCopied = 0;
@@ -1815,47 +1885,7 @@ public final class Utf8s {
         return utf8Decode4BytesZ(lo, b, sink);
     }
 
-    private static int utf8EncodeInvalid2Bytes(long lo, long hi, int b1, @NotNull Utf16Sink sink) {
-        if (hi - lo < 2) {
-            return -1;
-        }
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-        if (isNotContinuation(b2)) {
-            return -1;
-        }
-        sink.put((char) (b1 << 6 ^ b2 ^ 3968));
-        return 2;
-    }
-
-    private static int utf8EncodeInvalid2Bytes(@NotNull Utf8Sequence seq, int index, int b1, @NotNull Utf16Sink sink) {
-        if (seq.size() - index < 2) {
-            return -1;
-        }
-        byte b2 = seq.byteAt(index + 1);
-        if (isNotContinuation(b2)) {
-            return -1;
-        }
-        sink.put((char) (b1 << 6 ^ b2 ^ 3968));
-        return 2;
-    }
-
-    private static int utf8EncodeInvalid2Bytes(long lo, long hi, byte b1, @NotNull Utf8Sink sink) {
-        if (hi - lo < 2) {
-            appendHex(sink, b1);
-            return 1;
-        }
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-        if (isNotContinuation(b2)) {
-            appendHex(sink, b1);
-            appendHex(sink, b2);
-            return 2;
-        }
-        sink.put(b1);
-        sink.put(b2);
-        return 2;
-    }
-
-    private static void utf8EncodeInvalid3Byte0(byte b1, @NotNull Utf8Sink sink, byte b2, byte b3) {
+    private static void utf8Encode3ByteSafe0(byte b1, @NotNull Utf8Sink sink, byte b2, byte b3) {
         if (!isMalformed3(b1, b2, b3)) {
             char c = utf8ToChar(b1, b2, b3);
             if (!Character.isSurrogate(c)) {
@@ -1869,102 +1899,6 @@ public final class Utf8s {
         appendHex(sink, b1);
         appendHex(sink, b2);
         appendHex(sink, b3);
-    }
-
-    private static int utf8EncodeInvalid3Bytes(long lo, long hi, byte b1, @NotNull Utf8Sink sink) {
-        if (hi - lo < 3) {
-            appendHex(sink, b1);
-            if (hi - lo > 1) {
-                appendHex(sink, Unsafe.getUnsafe().getByte(lo + 1));
-                return 2;
-            }
-            return 1;
-        }
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
-        utf8EncodeInvalid3Byte0(b1, sink, b2, b3);
-        return 3;
-    }
-
-    private static int utf8EncodeInvalid4Bytes(long lo, long hi, byte b, @NotNull Utf8Sink sink) {
-        if (b >> 3 != -2 || hi - lo < 4) {
-            appendHex(sink, b);
-            if (hi - lo > 1) {
-                appendHex(sink, Unsafe.getUnsafe().getByte(lo + 1));
-                if (hi - lo > 2) {
-                    appendHex(sink, Unsafe.getUnsafe().getByte(lo + 2));
-                    if (hi - lo > 3) {
-                        appendHex(sink, Unsafe.getUnsafe().getByte(lo + 3));
-                        return 4;
-                    }
-                    return 3;
-                }
-                return 2;
-            }
-        }
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
-        byte b4 = Unsafe.getUnsafe().getByte(lo + 3);
-        return utf8EncodeInvalidBytes0(b, sink, b2, b3, b4);
-    }
-
-    private static int utf8EncodeInvalid4Bytes(@NotNull Utf8Sequence seq, int index, byte b, @NotNull Utf8Sink sink) {
-        int hi = seq.size();
-        if (b >> 3 != -2 || hi - index < 4) {
-            appendHex(sink, b);
-            if (hi - index > 1) {
-                appendHex(sink, seq.byteAt(index + 1));
-                if (hi - index > 2) {
-                    appendHex(sink, seq.byteAt(index + 2));
-                    if (hi - index > 3) {
-                        appendHex(sink, seq.byteAt(index + 3));
-                        return 4;
-                    }
-                    return 3;
-                }
-                return 2;
-            }
-        }
-        byte b2 = seq.byteAt(index + 1);
-        byte b3 = seq.byteAt(index + 2);
-        byte b4 = seq.byteAt(index + 3);
-        utf8EncodeInvalid4Bytes0(b, sink, b2, b3, b4);
-        return 4;
-    }
-
-    private static void utf8EncodeInvalid4Bytes0(byte b, @NotNull Utf8Sink sink, byte b2, byte b3, byte b4) {
-        if (!isMalformed4(b2, b3, b4)) {
-            final int codePoint = getUtf8Codepoint(b, b2, b3, b4);
-            if (Character.isSupplementaryCodePoint(codePoint)) {
-                sink.put(b);
-                sink.put(b2);
-                sink.put(b3);
-                sink.put(b4);
-                return;
-            }
-        }
-
-        appendHex(sink, b);
-        appendHex(sink, b2);
-        appendHex(sink, b3);
-        appendHex(sink, b4);
-    }
-
-    private static int utf8EncodeInvalidBytes0(byte b, @NotNull Utf8Sink sink, byte b2, byte b3, byte b4) {
-        if (isMalformed4(b2, b3, b4)) {
-            return 3;
-        }
-        final int codePoint = getUtf8Codepoint(b, b2, b3, b4);
-        if (Character.isSupplementaryCodePoint(codePoint)) {
-            sink.put(Character.highSurrogate(codePoint));
-            sink.put(Character.lowSurrogate(codePoint));
-            return 4;
-        }
-        appendHex(sink, b);
-        appendHex(sink, b2);
-        appendHex(sink, b3);
-        appendHex(sink, b4);
-        return 4;
     }
 
     private static int validateUtf8Decode2Bytes(@NotNull Utf8Sequence seq, int index) {
