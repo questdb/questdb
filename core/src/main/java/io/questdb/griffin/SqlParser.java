@@ -2569,6 +2569,27 @@ public class SqlParser {
                 break;
         }
 
+        tok = optTok(lexer);
+        if (tok == null || !SqlKeywords.isToleranceKeyword(tok)) {
+            lexer.unparseLast();
+            return joinModel;
+        }
+        if (joinType != QueryModel.JOIN_ASOF && joinType != QueryModel.JOIN_LT) {
+            throw SqlException.$(lexer.lastTokenPosition(), "TOLERANCE is only supported for ASOF and LT joins");
+        }
+
+        final ExpressionNode n = expr(lexer, null, sqlParserCallback, decls);
+        if (n == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "ASOF JOIN tolerance period expected");
+        }
+        if (n.type == ExpressionNode.OPERATION && n.token != null && Chars.equals(n.token, "-")) {
+            throw SqlException.$(lexer.lastTokenPosition(), "ASOF JOIN tolerance must not be negative");
+        }
+        if (n.type != ExpressionNode.CONSTANT) {
+            throw SqlException.$(lexer.lastTokenPosition(), "ASOF JOIN tolerance must be a constant");
+        }
+
+        joinModel.setAsOfJoinTolerance(n);
         return joinModel;
     }
 
@@ -4006,6 +4027,7 @@ public class SqlParser {
         tableAliasStop.add("except");
         tableAliasStop.add("intersect");
         tableAliasStop.add("from");
+        tableAliasStop.add("tolerance");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");

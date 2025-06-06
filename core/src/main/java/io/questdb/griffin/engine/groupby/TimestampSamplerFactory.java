@@ -134,7 +134,7 @@ public final class TimestampSamplerFactory {
         int k = findIntervalEndIndex(cs, position);
         assert cs.length() > k;
 
-        long n = parseInterval(cs, k, position);
+        long n = parseInterval(cs, k, position, "sample");
         return getInstance(n, cs.charAt(k), position + k);
     }
 
@@ -145,10 +145,11 @@ public final class TimestampSamplerFactory {
      * @param cs          token to parse interval from
      * @param intervalEnd end of interval token, exclusive
      * @param position    position in SQL text to report error against
+     * @param kind        kind of an interval we are parsing, used for error reporting
      * @return parsed interval value
      * @throws SqlException when input string is invalid
      */
-    public static long parseInterval(CharSequence cs, int intervalEnd, int position) throws SqlException {
+    public static long parseInterval(CharSequence cs, int intervalEnd, int position, String kind) throws SqlException {
         if (intervalEnd == 0) {
             // 'SAMPLE BY m' is the same as 'SAMPLE BY 1m' etc.
             return 1;
@@ -156,11 +157,11 @@ public final class TimestampSamplerFactory {
         try {
             int n = Numbers.parseInt(cs, 0, intervalEnd);
             if (n == 0) {
-                throw SqlException.$(position, "zero is not a valid sample value");
+                throw SqlException.$(position, "zero is not a valid ").put(kind).put(" value");
             }
             return n;
         } catch (NumericException e) {
-            throw SqlException.$(position, "invalid sample value [value=").put(cs).put(']');
+            throw SqlException.$(position, "invalid ").put(kind).put(" value [value=").put(cs).put(']');
         }
     }
 }

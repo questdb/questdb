@@ -407,6 +407,139 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnNullSymbolKeys() throws Exception {
+        final String expected = "tag\thi\tlo\n" +
+                "AA\t315515118\t315515118\n" +
+                "BB\t-727724771\t-727724771\n" +
+                "\t-948263339\t-948263339\n" +
+                "\t592859671\t592859671\n" +
+                "AA\t-847531048\t-847531048\n" +
+                "BB\t-2041844972\t-2041844972\n" +
+                "BB\t-1575378703\t-1575378703\n" +
+                "BB\t1545253512\t1545253512\n" +
+                "AA\t1573662097\t1573662097\n" +
+                "AA\t339631474\t339631474\n";
+
+        assertQuery(
+                "tag\thi\tlo\n",
+                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)",
+                "create table tab (\n" +
+                        "    tag symbol index,\n" +
+                        "    seq int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into tab select * from (select rnd_symbol('AA', 'BB', null) tag, \n" +
+                        "        rnd_int() seq, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                false,
+                true,
+                false
+        );
+
+        execute("create table tab2 as (select * from tab where tag is not null)");
+        assertQuery("tag\thi\tlo\n" +
+                        "AA\t315515118\t315515118\n" +
+                        "BB\t-727724771\t-727724771\n" +
+                        "\t-948263339\tnull\n" +
+                        "\t592859671\tnull\n" +
+                        "AA\t-847531048\t-847531048\n" +
+                        "BB\t-2041844972\t-2041844972\n" +
+                        "BB\t-1575378703\t-1575378703\n" +
+                        "BB\t1545253512\t1545253512\n" +
+                        "AA\t1573662097\t1573662097\n" +
+                        "AA\t339631474\t339631474\n",
+                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab2 b on (tag)", null, null, false, true);
+    }
+
+    @Test
+    public void testAsOfJoinTolerance() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 as (select x as id, (x + x*1_000_000)::timestamp ts from long_sequence(10)) timestamp(ts) partition by day;");
+
+            // x-th row in t2 is x*1 seconds before x-th row in t1
+            execute("create table t2 as (select x as id, (x)::timestamp ts from long_sequence(5)) timestamp(ts) partition by day;");
+
+
+            // keyed join and slave supports timeframe -> plan should use AsOfJoinFastRecordCursorFactory
+            String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 2s;";
+            // sanity check: uses AsOfJoinFastRecordCursorFactory
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+            String expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                    "2\t1970-01-01T00:00:02.000002Z\t2\t1970-01-01T00:00:00.000002Z\n" +
+                    "3\t1970-01-01T00:00:03.000003Z\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004Z\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005Z\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006Z\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007Z\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008Z\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009Z\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
+            assertQuery(expected, query, null, "ts", false, true);
+
+            // keyed join and slave has no timeframe support -> should use AsOfJoinLightRecordCursorFactory
+            query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) ON id TOLERANCE 2s;";
+            // sanity check: uses AsOfJoinLightRecordCursorFactory
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "AsOf Join Light");
+            assertQuery(expected, query, null, "ts", false, true);
+
+            assertQueryFullFatNoLeakCheck(expected, query, "ts", false, true, true);
+
+
+            // non-keyed join and slave supports timeframe -> should use AsOfJoinNoKeyFastRecordCursorFactory
+            query = "SELECT * FROM t1 ASOF JOIN t2 TOLERANCE 2s;";
+            expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001Z\t5\t1970-01-01T00:00:00.000005Z\n" +
+                    "2\t1970-01-01T00:00:02.000002Z\t5\t1970-01-01T00:00:00.000005Z\n" +
+                    "3\t1970-01-01T00:00:03.000003Z\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004Z\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005Z\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006Z\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007Z\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008Z\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009Z\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+            assertQuery(expected, query, null, "ts", false, true);
+
+            // non-keyed join and slave has a filter + hint -> should use FilteredAsOfJoinNoKeyFastRecordCursorFactory
+            query = "SELECT /*+ use_asof_binary_search(t1 t2) */ * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
+            assertQuery(expected, query, null, "ts", false, true);
+
+            // non-keyed join, slave has a filter, no hint -> should use AsOfJoinNoKeyRecordCursorFactory
+            query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "AsOf Join");
+            TestUtils.assertNotContains(sink, "Filtered");
+            TestUtils.assertNotContains(sink, "Fast");
+            assertQuery(expected, query, null, "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinToleranceNegative() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 as (select x as id, (x + x*1_000_000)::timestamp ts from long_sequence(10)) timestamp(ts) partition by day;");
+            execute("create table t2 as (select x as id, (x)::timestamp ts from long_sequence(5)) timestamp(ts) partition by day;");
+
+
+            String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE -2s;";
+            assertException(query, 49, "ASOF JOIN tolerance must not be negative");
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 0s;";
+            assertException(query, 46, "zero is not a valid tolerance value");
+        });
+    }
+
+    @Test
     public void testExplicitTimestampIsNotNecessaryWhenAsofJoiningExplicitlyOrderedTables() throws Exception {
         testExplicitTimestampIsNotNecessaryWhenJoining("asof join", "ts");
     }

@@ -40,12 +40,15 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
+    private final SymbolShortCircuit symbolShortCircuit;
+    private final long toleranceIntervalMicros;
 
     public AsOfJoinFastRecordCursorFactory(
             CairoConfiguration configuration,
@@ -55,7 +58,10 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             RecordCursorFactory slaveFactory,
             RecordSink slaveKeySink,
             int columnSplit,
-            JoinContext joinContext) {
+            SymbolShortCircuit symbolShortCircuit,
+            JoinContext joinContext,
+            long toleranceIntervalMicros
+    ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.masterKeySink = masterKeySink;
@@ -70,6 +76,8 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
+        this.symbolShortCircuit = symbolShortCircuit;
+        this.toleranceIntervalMicros = toleranceIntervalMicros;
     }
 
     @Override
@@ -181,25 +189,41 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 return true;
             }
 
+            // backup the original slave frame index and row id as returned from `nextSlave()`
+            long rowId = slaveRecB.getRowId();
+            int slaveFrameIndex = Rows.toPartitionIndex(rowId);
+            origSlaveFrameIndex = slaveFrameIndex;
+            long keyedRowId = Rows.toLocalRowID(rowId);
+            origSlaveRowId = keyedRowId;
+
+            if (symbolShortCircuit.isShortCircuit(masterRecord)) {
+                // the master record's symbol does not match any symbol in the slave table, so we can skip the key matching part
+                // and report no match.
+                record.hasSlave(false);
+                return true;
+            }
+
             // ok, the non-keyed matcher found a record with a matching timestamp.
             // we have to make sure the JOIN keys match as well.
             masterSinkTarget.clear();
             masterKeySink.copy(masterRecord, masterSinkTarget);
 
-            // make sure the cursor points to the right frame - since `nextSlave()` might have moved it under our feet
+            // make sure the cursor points to the frame corresponding to slaveRecB - since `nextSlave()` might have moved it under our feet
             TimeFrame timeFrame = slaveCursor.getTimeFrame();
-            long rowId = slaveRecB.getRowId();
-            int slaveFrameIndex = Rows.toPartitionIndex(rowId);
-            origSlaveFrameIndex = slaveFrameIndex;
-            int cursorFrameIndex = timeFrame.getFrameIndex();
+            final int cursorFrameIndex = timeFrame.getFrameIndex();
             slaveCursor.jumpTo(slaveFrameIndex);
             slaveCursor.open();
 
             long rowLo = timeFrame.getRowLo();
-            long keyedRowId = Rows.toLocalRowID(rowId);
-            origSlaveRowId = keyedRowId;
             int keyedFrameIndex = timeFrame.getFrameIndex();
             for (; ; ) {
+                long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                if (toleranceIntervalMicros != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceIntervalMicros) {
+                    // we are past the tolerance interval, no need to traverse the slave cursor any further
+                    record.hasSlave(false);
+                    break;
+                }
+
                 slaveSinkTarget.clear();
                 slaveKeySink.copy(slaveRecB, slaveSinkTarget);
                 if (masterSinkTarget.memeq(slaveSinkTarget)) {
@@ -237,6 +261,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor);
+            symbolShortCircuit.of(slaveCursor);
             masterSinkTarget.reopen();
             slaveSinkTarget.reopen();
             this.circuitBreaker = circuitBreaker;

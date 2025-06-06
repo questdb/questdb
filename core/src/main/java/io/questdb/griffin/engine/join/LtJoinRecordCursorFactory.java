@@ -45,6 +45,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 
 public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
@@ -52,6 +53,8 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final RecordSink masterKeySink;
     private final IntList slaveColumnIndex; // maps columns after the split to columns in the slave cursor
     private final RecordSink slaveKeySink;
+    private final int slaveValueTimestampIndex;
+    private final long toleranceIntervalMicros;
 
     public LtJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -67,7 +70,9 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             RecordValueSink slaveValueSink,
             IntList columnIndex, // this column index will be used to retrieve symbol tables from underlying slave
             JoinContext joinContext,
-            ColumnFilter masterTableKeyColumns
+            ColumnFilter masterTableKeyColumns,
+            long toleranceIntervalMicros,
+            int slaveValueTimestampIndex
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         try {
@@ -87,6 +92,8 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                     columnIndex
             );
             this.slaveColumnIndex = columnIndex;
+            this.toleranceIntervalMicros = toleranceIntervalMicros;
+            this.slaveValueTimestampIndex = slaveValueTimestampIndex;
         } catch (Throwable th) {
             close();
             throw th;
@@ -234,7 +241,13 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                 value = key.findValue();
                 if (value != null) {
                     value.setMapRecordHere();
-                    record.hasSlave(true);
+                    if (toleranceIntervalMicros == Numbers.LONG_NULL) {
+                        record.hasSlave(true);
+                    } else {
+                        long slaveRecordTimestamp = value.getTimestamp(slaveValueTimestampIndex);
+                        long minTimestamp = masterTimestamp - toleranceIntervalMicros;
+                        record.hasSlave(slaveRecordTimestamp >= minTimestamp);
+                    }
                 } else {
                     record.hasSlave(false);
                 }
