@@ -52,6 +52,7 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
@@ -92,7 +93,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new CursorFunction(new MatViewsCursorFactory()) {
+        return new CursorFunction(new MatViewsCursorFactory(sqlExecutionContext.getCairoEngine())) {
             @Override
             public boolean isRuntimeConstant() {
                 return true;
@@ -123,11 +124,15 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_PERIOD_DELAY = COLUMN_PERIOD_LENGTH_UNIT + 1;
         private static final int COLUMN_PERIOD_DELAY_UNIT = COLUMN_PERIOD_DELAY + 1;
         private static final RecordMetadata METADATA;
-        private final ViewsListCursor cursor = new ViewsListCursor();
+        private final ViewsListCursor cursor;
+
+        public MatViewsCursorFactory(CairoEngine engine) {
+            this.cursor = new ViewsListCursor(engine);
+        }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            cursor.toTop(executionContext.getCairoEngine());
+            cursor.toTop();
             return cursor;
         }
 
@@ -147,14 +152,24 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         }
 
         private static class ViewsListCursor implements NoRandomAccessRecordCursor {
+            private final CairoEngine engine;
+            private final Path path;
             private final MatViewsRecord record = new MatViewsRecord();
+            private final BlockFileReader viewStateFileReader;
             private final MatViewStateReader viewStateReader = new MatViewStateReader();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
-            private CairoEngine engine;
             private int viewIndex = 0;
+
+            public ViewsListCursor(CairoEngine engine) {
+                this.engine = engine;
+                this.viewStateFileReader = new BlockFileReader(engine.getConfiguration());
+                this.path = new Path();
+            }
 
             @Override
             public void close() {
+                Misc.free(path);
+                Misc.free(viewStateFileReader);
             }
 
             @Override
@@ -165,93 +180,88 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             @Override
             public boolean hasNext() throws DataUnavailableException {
                 final CairoConfiguration configuration = engine.getConfiguration();
-                try (
-                        final Path path = new Path();
-                        final BlockFileReader reader = new BlockFileReader(configuration)
-                ) {
-                    path.of(configuration.getDbRoot());
-                    final int pathLen = path.size();
+                path.of(configuration.getDbRoot());
+                final int pathLen = path.size();
 
-                    final int n = viewTokens.size();
-                    for (; viewIndex < n; viewIndex++) {
-                        final TableToken viewToken = viewTokens.get(viewIndex);
-                        if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
-                            final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
-                            if (matViewDefinition == null) {
-                                continue; // mat view was dropped concurrently
-                            }
-
-                            viewStateReader.clear();
-                            final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, viewToken.getDirName());
-                            if (isMatViewStateExists) {
-                                try {
-                                    reader.of(path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-                                    viewStateReader.of(reader, viewToken);
-                                } catch (CairoException e) {
-                                    LOG.info().$("could not read materialized view state file [view=").utf8(viewToken.getTableName())
-                                            .$(", msg=").$(e.getFlyweightMessage())
-                                            .$(", errno=").$(e.getErrno())
-                                            .I$();
-                                    continue;
-                                }
-                            }
-
-                            final long lastRefreshedBaseTxn = viewStateReader.getLastRefreshBaseTxn();
-                            final long lastRefreshTimestamp = viewStateReader.getLastRefreshTimestamp();
-
-                            final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
-                            // Read base table txn after mat view's last refreshed txn to avoid
-                            // showing obsolete base table txn.
-                            final long lastAppliedBaseTxn = baseTableToken != null
-                                    ? engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn() : -1;
-
-                            final int refreshLimitHoursOrMonths;
-                            final int periodLength;
-                            final char periodLengthUnit;
-                            final int periodDelay;
-                            final char periodDelayUnit;
-                            long timerStart = Numbers.LONG_NULL;
-                            int timerInterval = 0;
-                            char timerIntervalUnit = 0;
-                            try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
-                                refreshLimitHoursOrMonths = matViewMeta.getMatViewRefreshLimitHoursOrMonths();
-                                periodLength = matViewMeta.getMatViewPeriodLength();
-                                periodLengthUnit = matViewMeta.getMatViewPeriodLengthUnit();
-                                periodDelay = matViewMeta.getMatViewPeriodDelay();
-                                periodDelayUnit = matViewMeta.getMatViewPeriodDelayUnit();
-                                if (matViewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
-                                    timerStart = matViewMeta.getMatViewTimerStart();
-                                    timerInterval = matViewMeta.getMatViewTimerInterval();
-                                    timerIntervalUnit = matViewMeta.getMatViewTimerUnit();
-                                }
-                            }
-
-                            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
-                            final long lastRefreshStartTimestamp = state != null ? state.getLastRefreshStartTimestamp() : Numbers.LONG_NULL;
-
-                            record.of(
-                                    matViewDefinition,
-                                    lastRefreshStartTimestamp,
-                                    lastRefreshTimestamp,
-                                    lastRefreshedBaseTxn,
-                                    lastAppliedBaseTxn,
-                                    viewStateReader.getInvalidationReason(),
-                                    viewStateReader.isInvalid(),
-                                    refreshLimitHoursOrMonths,
-                                    timerStart,
-                                    timerInterval,
-                                    timerIntervalUnit,
-                                    periodLength,
-                                    periodLengthUnit,
-                                    periodDelay,
-                                    periodDelayUnit
-                            );
-                            viewIndex++;
-                            return true;
+                final int n = viewTokens.size();
+                for (; viewIndex < n; viewIndex++) {
+                    final TableToken viewToken = viewTokens.get(viewIndex);
+                    if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
+                        final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
+                        if (matViewDefinition == null) {
+                            continue; // mat view was dropped concurrently
                         }
+
+                        viewStateReader.clear();
+                        final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, viewToken.getDirName());
+                        if (isMatViewStateExists) {
+                            try {
+                                viewStateFileReader.of(path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                viewStateReader.of(viewStateFileReader, viewToken);
+                            } catch (CairoException e) {
+                                LOG.info().$("could not read materialized view state file [view=").utf8(viewToken.getTableName())
+                                        .$(", msg=").$(e.getFlyweightMessage())
+                                        .$(", errno=").$(e.getErrno())
+                                        .I$();
+                                continue;
+                            }
+                        }
+
+                        final long lastRefreshedBaseTxn = viewStateReader.getLastRefreshBaseTxn();
+                        final long lastRefreshTimestamp = viewStateReader.getLastRefreshTimestamp();
+
+                        final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
+                        // Read base table txn after mat view's last refreshed txn to avoid
+                        // showing obsolete base table txn.
+                        final long lastAppliedBaseTxn = baseTableToken != null
+                                ? engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn() : -1;
+
+                        final int refreshLimitHoursOrMonths;
+                        final int periodLength;
+                        final char periodLengthUnit;
+                        final int periodDelay;
+                        final char periodDelayUnit;
+                        long timerStart = Numbers.LONG_NULL;
+                        int timerInterval = 0;
+                        char timerIntervalUnit = 0;
+                        try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
+                            refreshLimitHoursOrMonths = matViewMeta.getMatViewRefreshLimitHoursOrMonths();
+                            periodLength = matViewMeta.getMatViewPeriodLength();
+                            periodLengthUnit = matViewMeta.getMatViewPeriodLengthUnit();
+                            periodDelay = matViewMeta.getMatViewPeriodDelay();
+                            periodDelayUnit = matViewMeta.getMatViewPeriodDelayUnit();
+                            if (matViewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
+                                timerStart = matViewMeta.getMatViewTimerStart();
+                                timerInterval = matViewMeta.getMatViewTimerInterval();
+                                timerIntervalUnit = matViewMeta.getMatViewTimerUnit();
+                            }
+                        }
+
+                        final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+                        final long lastRefreshStartTimestamp = state != null ? state.getLastRefreshStartTimestamp() : Numbers.LONG_NULL;
+
+                        record.of(
+                                matViewDefinition,
+                                lastRefreshStartTimestamp,
+                                lastRefreshTimestamp,
+                                lastRefreshedBaseTxn,
+                                lastAppliedBaseTxn,
+                                viewStateReader.getInvalidationReason(),
+                                viewStateReader.isInvalid(),
+                                refreshLimitHoursOrMonths,
+                                timerStart,
+                                timerInterval,
+                                timerIntervalUnit,
+                                periodLength,
+                                periodLengthUnit,
+                                periodDelay,
+                                periodDelayUnit
+                        );
+                        viewIndex++;
+                        return true;
                     }
-                    return false;
                 }
+                return false;
             }
 
             @Override
@@ -264,11 +274,6 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 viewTokens.clear();
                 engine.getMatViewGraph().getViews(viewTokens);
                 viewIndex = 0;
-            }
-
-            public void toTop(CairoEngine engine) {
-                this.engine = engine;
-                toTop();
             }
 
             private static class MatViewsRecord implements Record {
