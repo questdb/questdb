@@ -28,6 +28,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
@@ -120,6 +121,11 @@ final class NullLogRecord implements LogRecord {
 
     @Override
     public LogRecord $ip(long ip) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(@NotNull CharSequence sequence, int lo, int hi) {
         return this;
     }
 

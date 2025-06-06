@@ -42,6 +42,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -647,6 +648,11 @@ public class LogAlertSocketTest {
         @Override
         public LogRecord $ip(long ip) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $safe(@NotNull CharSequence sequence, int lo, int hi) {
+            return this;
         }
 
         @Override
