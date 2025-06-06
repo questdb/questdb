@@ -524,7 +524,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
         int columnIndex = metadata.getColumnIndexQuiet(columnNames, start, hi);
         if (columnIndex == RecordMetadata.COLUMN_NOT_FOUND) {
-            info().$("invalid column in list: '").$(columnNames, start, hi).$('\'').$();
+            info().$("invalid column in list: '").$safe(columnNames, start, hi).$('\'').$();
             HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
             JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
             response.putAscii('{')

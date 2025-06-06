@@ -384,9 +384,9 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         errorId = ERROR_COUNT.incrementAndGet();
         final LogRecord errorRec = isError ? LOG.error() : LOG.info();
         errorRec.$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
-                .$(", table=").$(parser.getMeasurementName())
+                .$(", table=").$safe(parser.getMeasurementName())
                 .$(", line=").$(errorLine)
-                .$(", error=").$(error.subSequence(errorPos, error.length()))
+                .$(", error=").utf8(error.subSequence(errorPos, error.length()))
                 .$(", fd=").$(fd);
         if (logMessageOnError) {
             errorRec.$(", mangledLine=`").$utf8(recvBuffer.getBufStartOfMeasurement(), parser.getBufferAddress()).$('`');
@@ -397,7 +397,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private void logError() {
         errorId = ERROR_COUNT.incrementAndGet();
         LOG.info().$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
-                .$(", error=").$(error)
+                .$(", error=").utf8(error)
                 .$(", fd=").$(fd)
                 .I$();
     }
