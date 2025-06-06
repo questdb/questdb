@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.wal;
+package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionBy;
