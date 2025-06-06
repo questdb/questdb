@@ -1445,8 +1445,8 @@ public final class Utf8s {
     }
 
     private static void appendHex(@NotNull Utf8Sink sink, byte b) {
-        sink.put(((byte) '\\'));
-        sink.put(((byte) 'x'));
+        sink.putAny(((byte) '\\'));
+        sink.putAny(((byte) 'x'));
         sink.put(HEX_CHARS[(b & 0xFF) >>> 4]);
         sink.put(HEX_CHARS[b & 0x0F]);
     }
