@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.wal;
+package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.MemorySerializer;
 import io.questdb.cairo.vm.api.MemoryA;

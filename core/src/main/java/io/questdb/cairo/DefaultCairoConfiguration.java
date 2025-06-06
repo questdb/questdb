@@ -201,6 +201,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getCommitLatency() {
+        return 30_000_000; // 30s
+    }
+
+    @Override
     public int getCommitMode() {
         return CommitMode.NOSYNC;
     }
