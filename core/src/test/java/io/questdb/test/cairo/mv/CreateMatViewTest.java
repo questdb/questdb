@@ -403,73 +403,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewInterval1() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable(TABLE1);
-
-            final String start = "2002-01-01T00:00:00.000000Z";
-            final long startEpoch = TimestampFormatUtils.parseTimestamp(start);
-            final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s";
-            execute(
-                    "CREATE MATERIALIZED VIEW test REFRESH START '" + start + "' TIME ZONE 'Europe/Berlin' EVERY 5m AS (" +
-                            query +
-                            ") PARTITION BY YEAR;"
-            );
-            assertMatViewDefinition(MatViewDefinition.TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, "Europe/Berlin");
-            assertMatViewDefinitionFile(MatViewDefinition.TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, "Europe/Berlin");
-
-            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
-                assertEquals(0, metadata.getTimestampIndex());
-                assertFalse(metadata.isDedupKey(0));
-                assertFalse(metadata.isDedupKey(1));
-                assertEquals(startEpoch, metadata.getMatViewTimerStart());
-                assertEquals(5, metadata.getMatViewTimerInterval());
-                assertEquals('m', metadata.getMatViewTimerUnit());
-            }
-        });
-    }
-
-    @Test
-    public void testCreateMatViewInterval2() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable(TABLE1);
-
-            final String start = "2002-01-01T00:00:00.000000Z";
-            final long startEpoch = TimestampFormatUtils.parseTimestamp(start);
-            final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s";
-            currentMicros = startEpoch;
-            execute(
-                    "CREATE MATERIALIZED VIEW test REFRESH EVERY 5m AS (" +
-                            query +
-                            ") PARTITION BY YEAR;"
-            );
-            assertMatViewDefinition(MatViewDefinition.TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, null);
-            assertMatViewDefinitionFile(MatViewDefinition.TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, null);
-
-            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
-                assertEquals(0, metadata.getTimestampIndex());
-                assertFalse(metadata.isDedupKey(0));
-                assertFalse(metadata.isDedupKey(1));
-                assertEquals(startEpoch, metadata.getMatViewTimerStart());
-                assertEquals(5, metadata.getMatViewTimerInterval());
-                assertEquals('m', metadata.getMatViewTimerUnit());
-            }
-
-            final String start2 = "2001-02-03T00:00:00.000000Z";
-            final long startEpoch2 = TimestampFormatUtils.parseTimestamp(start2);
-            currentMicros = startEpoch2;
-            execute("ALTER MATERIALIZED VIEW test SET REFRESH EVERY 15d;");
-            drainWalQueue();
-
-            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
-                assertEquals(startEpoch2, metadata.getMatViewTimerStart());
-                assertEquals(15, metadata.getMatViewTimerInterval());
-                assertEquals('d', metadata.getMatViewTimerUnit());
-            }
-        });
-    }
-
-    @Test
     public void testCreateMatViewInvalidColumn() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -1329,6 +1262,68 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreatePeriodMatView1() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String start = "2002-01-01T00:00:00.000000Z";
+            final long startEpoch = TimestampFormatUtils.parseTimestamp(start);
+            final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s";
+            execute(
+                    "CREATE MATERIALIZED VIEW test REFRESH PERIOD START '" + start + "' TIME ZONE 'Europe/Berlin' LENGTH 1d DELAY 3h EVERY 6h AS (" +
+                            query +
+                            ") PARTITION BY MONTH;"
+            );
+            assertMatViewDefinition(MatViewDefinition.TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, "Europe/Berlin");
+            assertMatViewDefinitionFile(MatViewDefinition.TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, "Europe/Berlin");
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertEquals(0, metadata.getTimestampIndex());
+                assertFalse(metadata.isDedupKey(0));
+                assertFalse(metadata.isDedupKey(1));
+                assertEquals(startEpoch, metadata.getMatViewTimerStart());
+                assertEquals(6, metadata.getMatViewTimerInterval());
+                assertEquals('h', metadata.getMatViewTimerUnit());
+                assertEquals(1, metadata.getMatViewPeriodLength());
+                assertEquals('d', metadata.getMatViewPeriodLengthUnit());
+                assertEquals(3, metadata.getMatViewPeriodDelay());
+                assertEquals('h', metadata.getMatViewPeriodDelayUnit());
+            }
+        });
+    }
+
+    @Test
+    public void testCreatePeriodMatView2() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String start = "2002-01-01T00:00:00.000000Z";
+            final long startEpoch = TimestampFormatUtils.parseTimestamp(start);
+            final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 60s";
+            execute(
+                    "CREATE MATERIALIZED VIEW test REFRESH PERIOD START '" + start + "' LENGTH 8h MANUAL AS (" +
+                            query +
+                            ") PARTITION BY MONTH;"
+            );
+            assertMatViewDefinition(MatViewDefinition.MANUAL_REFRESH_TYPE, "test", query, TABLE1, 60, 's', null, null, null);
+            assertMatViewDefinitionFile(MatViewDefinition.MANUAL_REFRESH_TYPE, "test", query, TABLE1, 60, 's', null, null, null);
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertEquals(0, metadata.getTimestampIndex());
+                assertFalse(metadata.isDedupKey(0));
+                assertFalse(metadata.isDedupKey(1));
+                assertEquals(startEpoch, metadata.getMatViewTimerStart());
+                assertEquals(0, metadata.getMatViewTimerInterval());
+                assertEquals(0, metadata.getMatViewTimerUnit());
+                assertEquals(8, metadata.getMatViewPeriodLength());
+                assertEquals('h', metadata.getMatViewPeriodLengthUnit());
+                assertEquals(0, metadata.getMatViewPeriodDelay());
+                assertEquals(0, metadata.getMatViewPeriodDelayUnit());
+            }
+        });
+    }
+
+    @Test
     public void testCreatePeriodMatViewModelToSink() throws Exception {
         final String query = "select ts, k, avg(v) from " + TABLE1 + " sample by 30s";
         final DdlSerializationTest[] tests = new DdlSerializationTest[]{
@@ -1419,6 +1414,73 @@ public class CreateMatViewTest extends AbstractCairoTest {
             refresher.join();
 
             Assert.assertEquals(0, errorCounter.get());
+        });
+    }
+
+    @Test
+    public void testCreateTimerMatView1() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String start = "2002-01-01T00:00:00.000000Z";
+            final long startEpoch = TimestampFormatUtils.parseTimestamp(start);
+            final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s";
+            execute(
+                    "CREATE MATERIALIZED VIEW test REFRESH START '" + start + "' TIME ZONE 'Europe/Berlin' EVERY 5m AS (" +
+                            query +
+                            ") PARTITION BY YEAR;"
+            );
+            assertMatViewDefinition(MatViewDefinition.TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, "Europe/Berlin");
+            assertMatViewDefinitionFile(MatViewDefinition.TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, "Europe/Berlin");
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertEquals(0, metadata.getTimestampIndex());
+                assertFalse(metadata.isDedupKey(0));
+                assertFalse(metadata.isDedupKey(1));
+                assertEquals(startEpoch, metadata.getMatViewTimerStart());
+                assertEquals(5, metadata.getMatViewTimerInterval());
+                assertEquals('m', metadata.getMatViewTimerUnit());
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTimerMatView2() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String start = "2002-01-01T00:00:00.000000Z";
+            final long startEpoch = TimestampFormatUtils.parseTimestamp(start);
+            final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s";
+            currentMicros = startEpoch;
+            execute(
+                    "CREATE MATERIALIZED VIEW test REFRESH EVERY 5m AS (" +
+                            query +
+                            ") PARTITION BY YEAR;"
+            );
+            assertMatViewDefinition(MatViewDefinition.TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, null);
+            assertMatViewDefinitionFile(MatViewDefinition.TIMER_REFRESH_TYPE, "test", query, TABLE1, 30, 's', null, null, null);
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertEquals(0, metadata.getTimestampIndex());
+                assertFalse(metadata.isDedupKey(0));
+                assertFalse(metadata.isDedupKey(1));
+                assertEquals(startEpoch, metadata.getMatViewTimerStart());
+                assertEquals(5, metadata.getMatViewTimerInterval());
+                assertEquals('m', metadata.getMatViewTimerUnit());
+            }
+
+            final String start2 = "2001-02-03T00:00:00.000000Z";
+            final long startEpoch2 = TimestampFormatUtils.parseTimestamp(start2);
+            currentMicros = startEpoch2;
+            execute("ALTER MATERIALIZED VIEW test SET REFRESH EVERY 15d;");
+            drainWalQueue();
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertEquals(startEpoch2, metadata.getMatViewTimerStart());
+                assertEquals(15, metadata.getMatViewTimerInterval());
+                assertEquals('d', metadata.getMatViewTimerUnit());
+            }
         });
     }
 

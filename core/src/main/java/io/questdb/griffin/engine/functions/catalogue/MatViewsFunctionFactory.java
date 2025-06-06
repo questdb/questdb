@@ -60,7 +60,7 @@ import io.questdb.std.str.StringSink;
 public class MatViewsFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(MatViewsFunctionFactory.class);
 
-    public static String getTimerIntervalUnit(char unit) {
+    public static String getIntervalUnit(char unit) {
         switch (unit) {
             case 'm':
                 return "MINUTE";
@@ -112,12 +112,16 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_VIEW_STATUS = COLUMN_INVALIDATION_REASON + 1;
         private static final int COLUMN_LAST_REFRESH_BASE_TABLE_TXN = COLUMN_VIEW_STATUS + 1;
         private static final int COLUMN_LAST_APPLIED_BASE_TABLE_TXN = COLUMN_LAST_REFRESH_BASE_TABLE_TXN + 1;
-        private static final int COLUMN_REFRESH_LIMIT_VALUE = COLUMN_LAST_APPLIED_BASE_TABLE_TXN + 1;
-        private static final int COLUMN_REFRESH_LIMIT_UNIT = COLUMN_REFRESH_LIMIT_VALUE + 1;
+        private static final int COLUMN_REFRESH_LIMIT = COLUMN_LAST_APPLIED_BASE_TABLE_TXN + 1;
+        private static final int COLUMN_REFRESH_LIMIT_UNIT = COLUMN_REFRESH_LIMIT + 1;
         private static final int COLUMN_TIMER_TIME_ZONE = COLUMN_REFRESH_LIMIT_UNIT + 1;
         private static final int COLUMN_TIMER_START = COLUMN_TIMER_TIME_ZONE + 1;
-        private static final int COLUMN_TIMER_INTERVAL_VALUE = COLUMN_TIMER_START + 1;
-        private static final int COLUMN_TIMER_INTERVAL_UNIT = COLUMN_TIMER_INTERVAL_VALUE + 1;
+        private static final int COLUMN_TIMER_INTERVAL = COLUMN_TIMER_START + 1;
+        private static final int COLUMN_TIMER_INTERVAL_UNIT = COLUMN_TIMER_INTERVAL + 1;
+        private static final int COLUMN_PERIOD_LENGTH = COLUMN_TIMER_INTERVAL_UNIT + 1;
+        private static final int COLUMN_PERIOD_LENGTH_UNIT = COLUMN_PERIOD_LENGTH + 1;
+        private static final int COLUMN_PERIOD_DELAY = COLUMN_PERIOD_LENGTH_UNIT + 1;
+        private static final int COLUMN_PERIOD_DELAY_UNIT = COLUMN_PERIOD_DELAY + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor = new ViewsListCursor();
 
@@ -202,11 +206,19 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                     ? engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn() : -1;
 
                             final int refreshLimitHoursOrMonths;
+                            final int periodLength;
+                            final char periodLengthUnit;
+                            final int periodDelay;
+                            final char periodDelayUnit;
                             long timerStart = Numbers.LONG_NULL;
                             int timerInterval = 0;
                             char timerIntervalUnit = 0;
                             try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
                                 refreshLimitHoursOrMonths = matViewMeta.getMatViewRefreshLimitHoursOrMonths();
+                                periodLength = matViewMeta.getMatViewPeriodLength();
+                                periodLengthUnit = matViewMeta.getMatViewPeriodLengthUnit();
+                                periodDelay = matViewMeta.getMatViewPeriodDelay();
+                                periodDelayUnit = matViewMeta.getMatViewPeriodDelayUnit();
                                 if (matViewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
                                     timerStart = matViewMeta.getMatViewTimerStart();
                                     timerInterval = matViewMeta.getMatViewTimerInterval();
@@ -228,7 +240,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                     refreshLimitHoursOrMonths,
                                     timerStart,
                                     timerInterval,
-                                    timerIntervalUnit
+                                    timerIntervalUnit,
+                                    periodLength,
+                                    periodLengthUnit,
+                                    periodDelay,
+                                    periodDelayUnit
                             );
                             viewIndex++;
                             return true;
@@ -262,6 +278,10 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 private long lastRefreshFinishTimestamp;
                 private long lastRefreshStartTimestamp;
                 private long lastRefreshTxn;
+                private int periodDelay;
+                private char periodDelayUnit;
+                private int periodLength;
+                private char periodLengthUnit;
                 private int refreshLimitHoursOrMonths;
                 private int timerInterval;
                 private char timerIntervalUnit;
@@ -271,10 +291,14 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 @Override
                 public int getInt(int col) {
                     switch (col) {
-                        case COLUMN_REFRESH_LIMIT_VALUE:
+                        case COLUMN_REFRESH_LIMIT:
                             return TablesFunctionFactory.getTtlValue(refreshLimitHoursOrMonths);
-                        case COLUMN_TIMER_INTERVAL_VALUE:
+                        case COLUMN_TIMER_INTERVAL:
                             return timerInterval;
+                        case COLUMN_PERIOD_LENGTH:
+                            return periodLength;
+                        case COLUMN_PERIOD_DELAY:
+                            return periodDelay;
                         default:
                             return 0;
                     }
@@ -330,9 +354,13 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             }
                             return TablesFunctionFactory.getTtlUnit(refreshLimitHoursOrMonths);
                         case COLUMN_TIMER_INTERVAL_UNIT:
-                            return getTimerIntervalUnit(timerIntervalUnit);
+                            return getIntervalUnit(timerIntervalUnit);
                         case COLUMN_TIMER_TIME_ZONE:
                             return viewDefinition.getTimerTimeZone();
+                        case COLUMN_PERIOD_LENGTH_UNIT:
+                            return getIntervalUnit(periodLengthUnit);
+                        case COLUMN_PERIOD_DELAY_UNIT:
+                            return getIntervalUnit(periodDelayUnit);
                         default:
                             return null;
                     }
@@ -359,7 +387,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         int refreshLimitHoursOrMonths,
                         long timerStart,
                         int timerInterval,
-                        char timerIntervalUnit
+                        char timerIntervalUnit,
+                        int periodLength,
+                        char periodLengthUnit,
+                        int periodDelay,
+                        char periodDelayUnit
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshStartTimestamp = lastRefreshStartTimestamp;
@@ -373,6 +405,10 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.timerStart = timerStart;
                     this.timerInterval = timerInterval;
                     this.timerIntervalUnit = timerIntervalUnit;
+                    this.periodLength = periodLength;
+                    this.periodLengthUnit = periodLengthUnit;
+                    this.periodDelay = periodDelay;
+                    this.periodDelayUnit = periodDelayUnit;
                 }
 
                 private CharSequence getViewStatus() {
@@ -399,12 +435,16 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("view_status", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("refresh_base_table_txn", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("base_table_txn", ColumnType.LONG));
-            metadata.add(new TableColumnMetadata("refresh_limit_value", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("refresh_limit", ColumnType.INT));
             metadata.add(new TableColumnMetadata("refresh_limit_unit", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("timer_time_zone", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("timer_start", ColumnType.TIMESTAMP));
-            metadata.add(new TableColumnMetadata("timer_interval_value", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("timer_interval", ColumnType.INT));
             metadata.add(new TableColumnMetadata("timer_interval_unit", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("period_length", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("period_length_unit", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("period_delay", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("period_delay_unit", ColumnType.STRING));
             METADATA = metadata;
         }
     }
