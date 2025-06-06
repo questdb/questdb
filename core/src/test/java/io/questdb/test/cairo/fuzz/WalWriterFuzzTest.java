@@ -127,7 +127,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testChunkedSequencerWalTransactionQueries() throws Exception {
         assertMemoryLeak(() -> {
-            int chunkSize = TestUtils.generateRandom(LOG, 639992386287L, 1749220023969L).nextInt(100) + 1;
+            int chunkSize = TestUtils.generateRandom(LOG).nextInt(100) + 1;
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSize);
             chunkSize = node1.getConfiguration().getDefaultSeqPartTxnCount();
 
@@ -241,9 +241,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.8,
                 0.05
         );
-
         setFuzzCounts(false, 1_000_000, 500, 20, 1000, 20, 0, 10);
-        runFuzz(generateRandom(LOG, 468444291967L, 1749190612770L));
+        runFuzz(generateRandom(LOG));
     }
 
     @Test
@@ -424,7 +423,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalWriteFullRandom() throws Exception {
-        Rnd rnd = generateRandom(LOG, 633535747744L, 1749218267741L);
+        Rnd rnd = generateRandom(LOG);
         setUpScoreboardVersion(rnd);
 
         setRandomAppendPageSize(rnd);
@@ -511,7 +510,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalWriteRollbackHeavy() throws Exception {
-        Rnd rnd = generateRandom(LOG, 638376502413L, 1749220022354L);
+        Rnd rnd = generateRandom(LOG);
         setUpScoreboardVersion(rnd);
         setFuzzProbabilities(
                 0.5,
