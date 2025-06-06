@@ -2519,6 +2519,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 long asOfToleranceInterval = tolerance(slaveModel);
+                                boolean avoidBinarySearch = SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                                         RecordSink masterSink = RecordSinkFactory.getInstance(
@@ -2535,7 +2536,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 writeSymbolAsString,
                                                 writeStringAsVarcharA
                                         );
-                                        if (slave.supportsTimeFrameCursor() && fastAsOfJoins) {
+                                        if (slave.supportsTimeFrameCursor() && fastAsOfJoins && !avoidBinarySearch) {
                                             // support for short-circuiting when joining on a single symbol column and the slave table does not have a matching key
                                             SymbolShortCircuit symbolShortCircuit = SymbolShortCircuit.DISABLED;
                                             if (listColumnFilterA.getColumnCount() == 1 && listColumnFilterB.getColumnCount() == 1) {
@@ -2576,7 +2577,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         }
                                     } else {
                                         boolean created = false;
-                                        if (fastAsOfJoins) {
+                                        if (fastAsOfJoins && !avoidBinarySearch) {
                                             // when slave directly supports time frame cursor then it's strictly better to use it, even without any hint
                                             if (slave.supportsTimeFrameCursor()) {
                                                 master = new AsOfJoinNoKeyFastRecordCursorFactory(

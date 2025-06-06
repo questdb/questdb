@@ -72,7 +72,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 ProjectionType.values(),
                 {true, false}, // apply outer projection
                 {-1L, 1L, 1_000L, 100_000L, 10_000_000L}, // max tolerance in seconds, -1 = no tolerance
-                {true, false} // use hint for BINARY_SEARCH
+                {true, false} // AVOID BINARY_SEARCH hint
         });
         for (int i = 0, n = allParameterPermutations.length; i < n; i++) {
             Object[] params = allParameterPermutations[i];
@@ -83,9 +83,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             ProjectionType projectionType = (ProjectionType) params[4];
             boolean applyOuterProjection = (boolean) params[5];
             long maxTolerance = (long) params[6];
-            boolean useBinarySearchHint = (boolean) params[7];
+            boolean avoidBinarySearchHint = (boolean) params[7];
             try {
-                assertResultSetsMatch0(joinType, exerciseIntervals, limitType, exerciseFilters, projectionType, applyOuterProjection, maxTolerance, useBinarySearchHint, rnd);
+                assertResultSetsMatch0(joinType, exerciseIntervals, limitType, exerciseFilters, projectionType, applyOuterProjection, maxTolerance, avoidBinarySearchHint, rnd);
             } catch (AssertionError e) {
                 throw new AssertionError("Failed with parameters: " +
                         "joinType=" + joinType +
@@ -95,7 +95,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                         ", projectionType=" + projectionType +
                         ", applyOuterProjection = " + applyOuterProjection +
                         ", maxTolerance=" + maxTolerance +
-                        ", useBinarySearchHint=" + useBinarySearchHint,
+                        ", avoidBinarySearchHint=" + avoidBinarySearchHint,
                         e);
             }
         }
@@ -109,7 +109,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             ProjectionType projectionType,
             boolean applyOuterProjection,
             long maxTolerance,
-            boolean useBinarySearchHint,
+            boolean avoidBinarySearchHint,
             Rnd rnd
     ) throws Exception {
         String join;
@@ -124,9 +124,6 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 break;
             case LT_NONKEYD:
                 join = " LT";
-//                if (maxTolerance != -1) {
-//                    return; // LT join does not support tolerance
-//                }
                 break;
             default:
                 throw new IllegalArgumentException("Unexpected join type: " + joinType);
@@ -203,7 +200,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         }
 
         // we can always hint to use BINARY_SEARCH, it's ignored in cases where it doesn't apply
-        String query = "select " + (useBinarySearchHint ? " /*+ USE_ASOF_BINARY_SEARCH(t1 t2) */ " : "") + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
+        String query = "select " + (avoidBinarySearchHint ? " /*+ AVOID_ASOF_BINARY_SEARCH(t1 t2) */ " : "") + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
         int limit;
         switch (limitType) {
             case POSITIVE_LIMIT:
@@ -223,12 +220,15 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         printSql(query, true);
         expectedSink.put(sink);
 
-        // sanity check: make sure non-keyd ASOF join use the Fast-path
-        if (joinType == JoinType.ASOF_NONKEYD && useBinarySearchHint) {
+
+        if (avoidBinarySearchHint) {
+            TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
+        } else if (joinType == JoinType.ASOF_NONKEYD || (joinType == JoinType.ASOF && projectionType == ProjectionType.NONE && !exerciseFilters && !exerciseIntervals)) {
             sink.clear();
             printSql("EXPLAIN " + query, false);
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
         }
+
 
         final StringSink actualSink = new StringSink();
         sink.clear();

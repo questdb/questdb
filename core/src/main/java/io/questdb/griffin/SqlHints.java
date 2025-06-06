@@ -30,12 +30,20 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import org.jetbrains.annotations.NotNull;
 
 public final class SqlHints {
-    public static final String ASOF_JOIN_BINARY_SEARCH_HINT = "use_asof_binary_search";
+    public static final String ASOF_JOIN_AVOID_BINARY_SEARCH_HINT = "avoid_asof_binary_search";
+    public static final String ASOF_JOIN_USE_BINARY_SEARCH_HINT = "use_asof_binary_search";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
 
-    public static boolean hasAsOfJoinBinarySearchHint(@NotNull QueryModel queryModel, CharSequence tableNameA, CharSequence tableNameB) {
+    public static boolean hasAvoidAsOfJoinBinarySearchHint(@NotNull QueryModel queryModel, CharSequence tableNameA, CharSequence tableNameB) {
         LowerCaseCharSequenceObjHashMap<CharSequence> hints = queryModel.getHints();
-        CharSequence params = hints.get(SqlHints.ASOF_JOIN_BINARY_SEARCH_HINT);
+        CharSequence params = hints.get(SqlHints.ASOF_JOIN_AVOID_BINARY_SEARCH_HINT);
+        return Chars.containsWordIgnoreCase(params, tableNameA, HINTS_PARAMS_DELIMITER) &&
+                Chars.containsWordIgnoreCase(params, tableNameB, HINTS_PARAMS_DELIMITER);
+    }
+
+    public static boolean hasUseAsOfJoinBinarySearchHint(@NotNull QueryModel queryModel, CharSequence tableNameA, CharSequence tableNameB) {
+        LowerCaseCharSequenceObjHashMap<CharSequence> hints = queryModel.getHints();
+        CharSequence params = hints.get(SqlHints.ASOF_JOIN_USE_BINARY_SEARCH_HINT);
         return Chars.containsWordIgnoreCase(params, tableNameA, HINTS_PARAMS_DELIMITER) &&
                 Chars.containsWordIgnoreCase(params, tableNameB, HINTS_PARAMS_DELIMITER);
     }
