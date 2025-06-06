@@ -123,12 +123,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
-        sink().putAscii(sequence, lo, hi);
-        return this;
-    }
-
-    @Override
     public LogRecord $(@Nullable File x) {
         sink().put(x == null ? "null" : x.getAbsolutePath());
         return this;
@@ -272,6 +266,12 @@ abstract class AbstractLogRecord implements LogRecord, Log {
             long hi = sequence.hi();
             Utf8s.putSafe(p, hi, sink);
         }
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(@NotNull CharSequence sequence, int lo, int hi) {
+        sink().put(sequence, lo, hi);
         return this;
     }
 

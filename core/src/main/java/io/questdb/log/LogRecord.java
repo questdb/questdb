@@ -43,8 +43,6 @@ public interface LogRecord extends Utf8Sink {
 
     LogRecord $(@Nullable DirectUtf8Sequence sequence);
 
-    LogRecord $(@NotNull CharSequence sequence, int lo, int hi);
-
     LogRecord $(int x);
 
     LogRecord $(double x);
@@ -71,6 +69,8 @@ public interface LogRecord extends Utf8Sink {
 
     LogRecord $ip(long ip);
 
+    LogRecord $safe(@NotNull CharSequence sequence, int lo, int hi);
+
     LogRecord $safe(@Nullable DirectUtf8Sequence sequence);
 
     LogRecord $size(long memoryBytes);
@@ -93,5 +93,7 @@ public interface LogRecord extends Utf8Sink {
 
     LogRecord ts();
 
+    // TODO: rename to $safe(). The name should start with $, and the argument is UTF8-encoded.
+    // It is a variant of $(CharSequence) which doesn't assume all chars are ASCII.
     LogRecord utf8(@Nullable CharSequence sequence);
 }

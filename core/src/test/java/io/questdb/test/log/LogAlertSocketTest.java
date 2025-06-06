@@ -42,7 +42,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -579,12 +578,6 @@ public class LogAlertSocketTest {
         @Override
         public LogRecord $(@Nullable DirectUtf8Sequence sequence) {
             throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
-            sink.put(sequence, lo, hi);
-            return this;
         }
 
         @Override
