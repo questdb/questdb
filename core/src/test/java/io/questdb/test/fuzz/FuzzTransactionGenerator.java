@@ -214,6 +214,12 @@ public class FuzzTransactionGenerator {
                 }
                 stopTs = Math.min(startTs + size, maxTimestamp);
 
+                // Replace commits with TTL may result in partition drop, if the data is deleted from WAL table at the end
+                // it be the reason to drop a partition because of a TTL before that.
+                // Non-wal don't have the replaced data inserted, and they will not drop the partition
+                // because of TTL, and it will generate expected vs actual difference.
+                // The workaround is to not generate replace inserts on the tables with TTL set.
+                boolean replaceInsert = rnd.nextDouble() < replaceInsertProb && i < setTtlIteration;
                 waitBarrierVersion = generateDataBlock(
                         transactionList,
                         rnd,
@@ -230,7 +236,7 @@ public class FuzzTransactionGenerator {
                         maxStrLenForStrColumns,
                         symbols,
                         probabilityOfSameTimestamp,
-                        rnd.nextDouble() < replaceInsertProb
+                        replaceInsert
                 );
                 rowCount -= blockRows;
                 lastTimestamp = stopTs;
