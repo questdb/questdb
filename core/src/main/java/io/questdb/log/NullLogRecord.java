@@ -50,11 +50,6 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public LogRecord $invalid(@Nullable DirectUtf8Sequence sequence) {
-        return this;
-    }
-
-    @Override
     public LogRecord $(@Nullable Utf8Sequence sequence) {
         return this;
     }
@@ -131,6 +126,11 @@ final class NullLogRecord implements LogRecord {
 
     @Override
     public LogRecord $ip(long ip) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(@Nullable DirectUtf8Sequence sequence) {
         return this;
     }
 

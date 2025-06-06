@@ -923,11 +923,6 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord $invalid(@Nullable DirectUtf8Sequence sequence) {
-            return this;
-        }
-
-        @Override
         public LogRecord $(@Nullable Utf8Sequence sequence) {
             return this;
         }
@@ -1004,6 +999,11 @@ public class LogFactory implements Closeable {
 
         @Override
         public LogRecord $ip(long ip) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $safe(@Nullable DirectUtf8Sequence sequence) {
             return this;
         }
 

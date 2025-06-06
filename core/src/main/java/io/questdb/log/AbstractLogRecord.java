@@ -123,20 +123,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $invalid(@Nullable DirectUtf8Sequence sequence) {
-        if (sequence == null) {
-            sink().putAscii("null");
-        } else {
-            var sink = sink();
-            long p = sequence.lo();
-            long hi = sequence.hi();
-            Utf8s.utf8EncodeInvalidMultiByte(p, hi, sink);
-        }
-        return this;
-    }
-
-
-    @Override
     public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
         sink().putAscii(sequence, lo, hi);
         return this;
@@ -273,6 +259,19 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     @Override
     public LogRecord $ip(long ip) {
         Net.appendIP4(sink(), ip);
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(@Nullable DirectUtf8Sequence sequence) {
+        if (sequence == null) {
+            sink().putAscii("null");
+        } else {
+            var sink = sink();
+            long p = sequence.lo();
+            long hi = sequence.hi();
+            Utf8s.putSafe(p, hi, sink);
+        }
         return this;
     }
 

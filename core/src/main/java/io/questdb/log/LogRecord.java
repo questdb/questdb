@@ -39,8 +39,6 @@ public interface LogRecord extends Utf8Sink {
 
     LogRecord $(@Nullable CharSequence sequence);
 
-    LogRecord $invalid(@Nullable DirectUtf8Sequence sequence);
-
     LogRecord $(@Nullable Utf8Sequence sequence);
 
     LogRecord $(@Nullable DirectUtf8Sequence sequence);
@@ -72,6 +70,8 @@ public interface LogRecord extends Utf8Sink {
     LogRecord $hexPadded(long value);
 
     LogRecord $ip(long ip);
+
+    LogRecord $safe(@Nullable DirectUtf8Sequence sequence);
 
     LogRecord $size(long memoryBytes);
 
