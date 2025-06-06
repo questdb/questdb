@@ -72,8 +72,8 @@ public class MetadataCache implements QuietCloseable {
 
     @Override
     public void close() {
-        this.metaMem = Misc.free(metaMem);
-        this.tableMap.clear();
+        metaMem = Misc.free(metaMem);
+        tableMap.clear();
     }
 
     /**
@@ -434,7 +434,8 @@ public class MetadataCache implements QuietCloseable {
                         (cachedTable == null
                                 || cachedTable.getMetadataVersion() < latestTable.getMetadataVersion()
                                 || cachedTable.getTableToken().getTableId() != latestTable.getTableToken().getTableId())
-                                && isVisibleTable(latestTable.getTableName())) {
+                                && isVisibleTable(latestTable.getTableName())
+                ) {
                     localCache.put(latestTable.getTableName(), latestTable);
                 }
             }

@@ -84,7 +84,7 @@ class OperationExecutor implements Closeable {
             int stallCount = 0;
             while (true) {
                 try {
-                    compiledQuery = compiler.compile(alterSql, executionContext, false);
+                    compiledQuery = compiler.compile(alterSql, executionContext);
                     break;
                 } catch (TableReferenceOutOfDateException ex) {
                     // The table is renamed in the table registry
@@ -121,7 +121,7 @@ class OperationExecutor implements Closeable {
         final TableToken tableToken = tableWriter.getTableToken();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             executionContext.remapTableNameResolutionTo(tableToken);
-            final CompiledQuery compiledQuery = compiler.compile(updateSql, executionContext, false);
+            final CompiledQuery compiledQuery = compiler.compile(updateSql, executionContext);
             try (UpdateOperation updateOperation = compiledQuery.getUpdateOperation()) {
                 updateOperation.withSqlStatement(updateSql);
                 updateOperation.withContext(executionContext);

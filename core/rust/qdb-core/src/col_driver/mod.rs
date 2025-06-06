@@ -21,6 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+mod array;
 mod binary;
 mod designated_timestamp;
 mod err;
@@ -32,6 +33,7 @@ mod varchar;
 use crate::col_type::{ColumnType, ColumnTypeTag};
 use crate::error::CoreResult;
 
+pub use array::*;
 pub use binary::*;
 pub use designated_timestamp::*;
 pub use mapped::*;
@@ -80,6 +82,7 @@ pub fn lookup_driver(col_type: ColumnType) -> &'static dyn ColumnDriver {
         (ColumnTypeTag::Long128, _) => &Long128Driver,
         (ColumnTypeTag::IPv4, _) => &IPv4Driver,
         (ColumnTypeTag::Varchar, _) => &VarcharDriver,
+        (ColumnTypeTag::Array, _) => &ArrayDriver,
     }
 }
 

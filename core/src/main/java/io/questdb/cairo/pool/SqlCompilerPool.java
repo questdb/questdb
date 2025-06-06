@@ -139,11 +139,6 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx, boolean generateProgressLogger) throws SqlException {
-            return delegate.compile(sqlText, ctx, generateProgressLogger);
-        }
-
-        @Override
         public void compileBatch(CharSequence batchText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception {
             delegate.compileBatch(batchText, sqlExecutionContext, batchCallback);
         }

@@ -112,4 +112,10 @@ class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
     public void remapTableNameResolutionTo(TableToken tableToken) {
         this.tableToken = tableToken;
     }
+
+    @Override
+    public boolean shouldLogSql() {
+        // avoid duplicate logging for ALTER and UPDATE
+        return false;
+    }
 }
