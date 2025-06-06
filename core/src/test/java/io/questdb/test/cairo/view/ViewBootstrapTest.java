@@ -289,7 +289,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                     "create view " + VIEW2 + " as (" + query2 + ")",
                     HTTP_BAD_REQUEST,
                     "{" +
-                            "\"query\":\"create view view2 as (select ts, k2, max(v) as v_max from table2 where v > 6)\"," +
+                            "\"query\":\"create view view2 as (select ts, k2, max(v) as v_max from table1 where v > 6)\"," +
                             "\"error\":\"views are disabled\"," +
                             "\"position\":0" +
                             "}"

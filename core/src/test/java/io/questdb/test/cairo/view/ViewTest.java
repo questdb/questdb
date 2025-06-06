@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.view.ViewDefinition;
@@ -32,6 +33,7 @@ import io.questdb.cairo.view.ViewStateReader;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Before;
 import org.junit.Test;
 
 import static org.junit.Assert.*;
@@ -41,6 +43,12 @@ public class ViewTest extends AbstractCairoTest {
     private static final String TABLE2 = "table2";
     private static final String VIEW1 = "view1";
     private static final String VIEW2 = "view2";
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
+    }
 
     @Test
     public void testCreateView() throws Exception {
