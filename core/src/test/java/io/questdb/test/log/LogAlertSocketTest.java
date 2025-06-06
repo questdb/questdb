@@ -24,13 +24,23 @@
 
 package io.questdb.test.log;
 
-import io.questdb.log.*;
+import io.questdb.log.HttpLogRecordUtf8Sink;
+import io.questdb.log.Log;
+import io.questdb.log.LogAlertSocket;
+import io.questdb.log.LogError;
+import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
+import io.questdb.log.LogRecordUtf8Sink;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
