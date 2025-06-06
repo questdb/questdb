@@ -2155,14 +2155,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } else if (isViewKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("[IF EXISTS] view-name");
+                    throw SqlException.$(lexer.getPosition(), "expected ").put("[IF EXISTS] view-name");
                 }
                 boolean hasIfExists = false;
                 int viewNamePosition = lexer.lastTokenPosition();
                 if (isIfKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || !isExistsKeyword(tok)) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS view-name");
+                        throw SqlException.$(lexer.getPosition(), "expected ").put("EXISTS view-name");
                     }
                     hasIfExists = true;
                     viewNamePosition = lexer.getPosition();
@@ -4140,11 +4140,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             @NotNull CharSequence tok,
             int position
     ) throws SqlException {
-        throw SqlException.position(position).put("'table' or 'materialized view' or 'all' expected");
+        throw SqlException.position(position).put("'table' or 'view' or 'materialized view' or 'all' expected");
     }
 
     protected void compileDropReportExpected(int position) throws SqlException {
-        throw SqlException.position(position).put("'table' or 'materialized view' or 'all' expected");
+        throw SqlException.position(position).put("'table' or 'view' or 'materialized view' or 'all' expected");
     }
 
     protected RecordCursorFactory generateSelectOneShot(

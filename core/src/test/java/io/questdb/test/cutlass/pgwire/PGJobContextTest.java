@@ -3385,15 +3385,15 @@ if __name__ == "__main__":
         String[][] sqlExpectedErrMsg = {
                 {"drop table doesnt", "ERROR: table does not exist [table=doesnt]"},
                 {"drop table", "ERROR: expected [IF EXISTS] table-name"},
-                {"drop doesnt", "ERROR: 'table' or 'materialized view' or 'all' expected"},
-                {"drop", "ERROR: 'table' or 'materialized view' or 'all' expected"},
+                {"drop doesnt", "ERROR: 'table' or 'view' or 'materialized view' or 'all' expected"},
+                {"drop", "ERROR: 'table' or 'view' or 'materialized view' or 'all' expected"},
                 {"drop table if doesnt", "ERROR: expected EXISTS"},
                 {"drop table exists doesnt", "ERROR: table and column names that are SQL keywords have to be enclosed in double quotes, such as \"exists\""},
                 {"drop table if exists", "ERROR: table name expected"},
                 {"drop table if exists;", "ERROR: table name expected"},
                 {"drop all table if exists;", "ERROR: ';' or 'tables' expected"},
                 {"drop all tables if exists;", "ERROR: ';' or 'tables' expected"},
-                {"drop database ;", "ERROR: 'table' or 'materialized view' or 'all' expected"}
+                {"drop database ;", "ERROR: 'table' or 'view' or 'materialized view' or 'all' expected"}
         };
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             for (int i = 0, n = sqlExpectedErrMsg.length; i < n; i++) {

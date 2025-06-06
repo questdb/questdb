@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -46,6 +47,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -57,6 +59,12 @@ import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
 public class SqlParserTest extends AbstractSqlParserTest {
     private static final List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
+    }
 
     @Test
     public void test2Between() throws Exception {
@@ -1767,7 +1775,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create",
                 6,
-                "'atomic' or 'table' or 'batch' or 'materialized' expected"
+                "'atomic' or 'table' or 'batch' or 'materialized' or 'view' expected"
         );
     }
 
@@ -3487,6 +3495,93 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateViewSyntax() throws Exception {
+        assertSyntaxError(
+                "create view",
+                11,
+                "view name or 'if' expected"
+        );
+
+        assertSyntaxError(
+                "create view if",
+                14,
+                "'not' expected"
+        );
+
+        assertSyntaxError(
+                "create view if abc",
+                15,
+                "'if not exists' expected"
+        );
+
+        assertSyntaxError(
+                "create view if not",
+                18,
+                "'exists' expected"
+        );
+
+        assertSyntaxError(
+                "create view if not abc",
+                19,
+                "'if not exists' expected"
+        );
+
+        assertSyntaxError(
+                "create view if not exists",
+                25,
+                "view name expected"
+        );
+
+        assertSyntaxError(
+                "create view if not exists v1",
+                28,
+                "'as' expected"
+        );
+
+        assertSyntaxError(
+                "create view v1",
+                14,
+                "'as' expected"
+        );
+
+        assertSyntaxError(
+                "create view v1 as",
+                17,
+                "'(' or 'with' or 'select' expected"
+        );
+
+        assertSyntaxError(
+                "create view v1 as (",
+                19,
+                "'with' or 'select' expected"
+        );
+
+        assertSyntaxError(
+                "create view v1 as select",
+                24,
+                "[distinct] column expected"
+        );
+
+        assertSyntaxError(
+                "create view v1 as (select",
+                25,
+                "[distinct] column expected"
+        );
+
+        assertSyntaxError(
+                "create view v1 as (select 42",
+                28,
+                "')' expected"
+        );
+
+        assertSyntaxError(
+                "create view v1 as (bla)",
+                19,
+                "table does not exist [table=bla]"
+        );
+    }
+
+    @Test
     public void testCrossJoin() throws Exception {
         assertSyntaxError("select x from a a cross join b on b.x = a.x", 31, "cannot");
     }
@@ -3853,7 +3948,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop foobar",
                 5,
-                "'table' or 'materialized view' or 'all' expected"
+                "'table' or 'view' or 'materialized view' or 'all' expected"
         );
     }
 
@@ -3907,7 +4002,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop tables tab1 tab2",
                 5,
-                "'table' or 'materialized view' or 'all' expected",
+                "'table' or 'view' or 'materialized view' or 'all' expected",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -3918,7 +4013,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop tables tab1, ",
                 5,
-                "'table' or 'materialized view' or 'all' expected",
+                "'table' or 'view' or 'materialized view' or 'all' expected",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -3932,6 +4027,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "unexpected token [,]",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testDropViewSyntax() throws Exception {
+        assertSyntaxError(
+                "drop view",
+                9,
+                "expected [IF EXISTS] view-name"
+        );
+
+        assertSyntaxError(
+                "drop view if",
+                12,
+                "expected EXISTS view-name"
+        );
+
+        assertSyntaxError(
+                "drop view if exists",
+                19,
+                "view name expected"
+        );
+
+        assertSyntaxError(
+                "drop view bla",
+                10,
+                "view does not exist [view=bla]"
         );
     }
 
@@ -11210,7 +11332,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 19,
                 "missing expression",
                 modelOf("tab").col("a", ColumnType.INT)
-
         );
     }
 
