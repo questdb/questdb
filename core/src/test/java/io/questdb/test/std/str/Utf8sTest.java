@@ -447,24 +447,44 @@ public class Utf8sTest {
                 {b(0b1111_0000), b(0b0101_1111), b(0b1001_0010), b(0b1010_1001)},
                 {b(0b1111_0000), b(0b1001_1111), b(0b0101_0010), b(0b1010_1001)},
                 {b(0b1111_0000), b(0b1001_1111), b(0b1001_0010), b(0b0110_1001)},
+
+                {b(0b1111_1000)},
+                {b(0b1111_1000), b(0b1000_0000)},
+                {b(0b1111_1000), b(0b1000_0000), b(0b1000_0001)},
+                {b(0b1111_1000), b(0b1000_0000), b(0b1000_0001), b(0b1000_0010)},
+                {b(0b1111_1000), b(0b1000_0000), b(0b1000_0001), b(0b1000_0010), b(0b1000_0011)},
+                {b(0b1111_1110), b(0b1100_0000)},
+                {b(0b1111_1000), b(0b1100_0000)},
+                {b(0b1111_1000), b(0b1111_0000)},
+                {b(0b1111_1000), b(0b1111_1111)},
         };
         final String[] expectedStrs = {
                 "\\xD5",
-                "\\xD5\\x3C",
+                "\\xD5<",
                 "\\xC4\\xCD",
 
                 "\\xE4\\xBD",
                 "\\xE4\\xBD\\xE0",
-                "\\xE4\\xBD\\x60",
-                "\\xE4\\x60\\xBD",
+                "\\xE4\\xBD`",
+                "\\xE4`\\xBD",
 
                 "\\xF0",
                 "\\xF0\\x9F",
                 "\\xF0\\x9F\\x92",
 
-                "\\xF0\\x5F\\x92\\xA9",
-                "\\xF0\\x9F\\x52\\xA9",
-                "\\xF0\\x9F\\x92\\x69",
+                "\\xF0_\\x92\\xA9",
+                "\\xF0\\x9FR\\xA9",
+                "\\xF0\\x9F\\x92i",
+
+                "\\xF8",
+                "\\xF8\\x80",
+                "\\xF8\\x80\\x81",
+                "\\xF8\\x80\\x81\\x82",
+                "\\xF8\\x80\\x81\\x82\\x83",
+                "\\xFE\\xC0",
+                "\\xF8\\xC0",
+                "\\xF8\\xF0",
+                "\\xF8\\xFF",
         };
         final long buf = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -473,7 +493,6 @@ public class Utf8sTest {
                 long hi = copyBytes(buf, bytes);
                 sink.clear();
                 Utf8s.putSafe(buf, hi, sink);
-                System.out.println(sink);
                 Assert.assertEquals(expectedStrs[i], sink.toString());
             }
         } finally {
