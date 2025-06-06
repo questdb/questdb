@@ -28,6 +28,26 @@ import org.junit.Test;
 
 public class PivotTest extends AbstractSqlParserTest {
 
+    public static String ddlSensors = "CREATE TABLE IF NOT EXISTS sensors (\n" +
+            "  timestamp TIMESTAMP,\n" +
+            "  vehicle_id SYMBOL,\n" +
+            "  sensor_name SYMBOL,\n" +
+            "  int_value LONG,\n" +
+            "  str_value STRING\n" +
+            ") timestamp(timestamp) PARTITION BY DAY;\n";
+
+    public static String dmlSensors = "INSERT INTO sensors\n" +
+            "SELECT\n" +
+            "    date_trunc('milliseconds', timestamp_sequence('2025-01-01', 1L) + (x / 2000)) AS timestamp,\n" +
+            "    'AAA' || lpad(((x / 20) % 100)::string, 3, '0') AS vehicle_id,\n" +
+            "    CASE\n" +
+            "        WHEN x % 20 < 10 THEN 'i' || lpad((x % 10)::string, 3, '0')\n" +
+            "        ELSE 's' || lpad(((x % 10))::string, 3, '0')\n" +
+            "    END AS sensor_name,\n" +
+            "    CASE WHEN x % 20 < 10 THEN rnd_long() % 1000 ELSE NULL END AS int_value,\n" +
+            "    CASE WHEN x % 20 >= 10 THEN 'val_' || rnd_int() % 1000 ELSE NULL END AS str_value\n" +
+            "FROM long_sequence(10000) x;";
+
     public static String ddlCities = "CREATE TABLE cities (\n" +
             "    country VARCHAR, name VARCHAR, year INT, population INT\n" +
             ");";
@@ -175,6 +195,226 @@ public class PivotTest extends AbstractSqlParserTest {
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: cities\n");
+    }
+
+    @Test
+    public void testPivotWithNonDistinctQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlTrades);
+            execute(dmlTrades);
+
+            String query = "SELECT *\n" +
+                    " FROM (\n" +
+                    "SELECT * FROM (\n" +
+                    "     SELECT timestamp, symbol, side, AVG(price) price, AVG(amount) amount FROM trades SAMPLE BY 100T\n" +
+                    ")\n" +
+                    "PIVOT (\n" +
+                    "    sum(price)\n" +
+                    "    FOR symbol IN (select symbol from trades)\n" +
+                    "        side IN ('buy', 'sell')\n" +
+                    "    GROUP BY  timestamp\n" +
+                    ")\n" +
+                    ")";
+
+            assertQueryNoLeakCheck("timestamp\tADA-USDT_buy\tADA-USDT_sell\tADA-USD_buy\tADA-USD_sell\tBTC-USDT_buy\tBTC-USDT_sell\tBTC-USD_buy\tBTC-USD_sell\tBTC-USDT_buy0\tBTC-USDT_sell0\tBTC-USD_buy0\tBTC-USD_sell0\tBTC-USDT_buy1\tBTC-USDT_sell1\tBTC-USD_buy1\tBTC-USD_sell1\tDOGE-USDT_buy\tDOGE-USDT_sell\tDOGE-USD_buy\tDOGE-USD_sell\tDOGE-USDT_buy0\tDOGE-USDT_sell0\tDOGE-USD_buy0\tDOGE-USD_sell0\tDOGE-USDT_buy1\tDOGE-USDT_sell1\tDOGE-USD_buy1\tDOGE-USD_sell1\tBTC-USDT_buy2\tBTC-USDT_sell2\tBTC-USD_buy2\tBTC-USD_sell2\tUSDT-USDC_buy\tUSDT-USDC_sell\tADA-USDT_buy0\tADA-USDT_sell0\tADA-USD_buy0\tADA-USD_sell0\tADA-USDT_buy1\tADA-USDT_sell1\tADA-USD_buy1\tADA-USD_sell1\tBTC-USDT_buy3\tBTC-USDT_sell3\tBTC-USD_buy3\tBTC-USD_sell3\tBTC-USDT_buy4\tBTC-USDT_sell4\tBTC-USD_buy4\tBTC-USD_sell4\tBTC-USDT_buy5\tBTC-USDT_sell5\tBTC-USD_buy5\tBTC-USD_sell5\tETH-USDT_buy\tETH-USDT_sell\tETH-USD_buy\tETH-USD_sell\tBTC-USDT_buy6\tBTC-USDT_sell6\tBTC-USD_buy6\tBTC-USD_sell6\tBTC-USDT_buy7\tBTC-USDT_sell7\tBTC-USD_buy7\tBTC-USD_sell7\tBTC-USDT_buy8\tBTC-USDT_sell8\tBTC-USD_buy8\tBTC-USD_sell8\tBTC-USDT_buy9\tBTC-USDT_sell9\tBTC-USD_buy9\tBTC-USD_sell9\tBTC-USDT_buy10\tBTC-USDT_sell10\tBTC-USD_buy10\tBTC-USD_sell10\tBTC-USDT_buy11\tBTC-USDT_sell11\tBTC-USD_buy11\tBTC-USD_sell11\tBTC-USDT_buy12\tBTC-USDT_sell12\tBTC-USD_buy12\tBTC-USD_sell12\tBTC-USDT_buy13\tBTC-USDT_sell13\tBTC-USD_buy13\tBTC-USD_sell13\tBTC-USDT_buy14\tBTC-USDT_sell14\tBTC-USD_buy14\tBTC-USD_sell14\tDOGE-USDT_buy2\tDOGE-USDT_sell2\tDOGE-USD_buy2\tDOGE-USD_sell2\tBTC-USDT_buy15\tBTC-USDT_sell15\tBTC-USD_buy15\tBTC-USD_sell15\tBTC-USDT_buy16\tBTC-USDT_sell16\tBTC-USD_buy16\tBTC-USD_sell16\tETH-USDT_buy0\tETH-USDT_sell0\tETH-USD_buy0\tETH-USD_sell0\tDOGE-USDT_buy3\tDOGE-USDT_sell3\tDOGE-USD_buy3\tDOGE-USD_sell3\tDOGE-USDT_buy4\tDOGE-USDT_sell4\tDOGE-USD_buy4\tDOGE-USD_sell4\tETH-USDC_buy\tETH-USDC_sell\tETH-USDC_buy0\tETH-USDC_sell0\tETH-USDC_buy1\tETH-USDC_sell1\tETH-USDC_buy2\tETH-USDC_sell2\tBTC-USDT_buy17\tBTC-USDT_sell17\tBTC-USD_buy17\tBTC-USD_sell17\tETH-USDC_buy3\tETH-USDC_sell3\tETH-USDC_buy4\tETH-USDC_sell4\tETH-USDT_buy1\tETH-USDT_sell1\tETH-USD_buy1\tETH-USD_sell1\tETH-USDT_buy2\tETH-USDT_sell2\tETH-USD_buy2\tETH-USD_sell2\tETH-USDT_buy3\tETH-USDT_sell3\tETH-USD_buy3\tETH-USD_sell3\tDOGE-USDT_buy5\tDOGE-USDT_sell5\tDOGE-USD_buy5\tDOGE-USD_sell5\tSOL-USDT_buy\tSOL-USDT_sell\tSOL-USD_buy\tSOL-USD_sell\tBTC-USDT_buy18\tBTC-USDT_sell18\tBTC-USD_buy18\tBTC-USD_sell18\tBTC-USDT_buy19\tBTC-USDT_sell19\tBTC-USD_buy19\tBTC-USD_sell19\tBTC-USDT_buy20\tBTC-USDT_sell20\tBTC-USD_buy20\tBTC-USD_sell20\tETH-USDC_buy5\tETH-USDC_sell5\tETH-USDC_buy6\tETH-USDC_sell6\tETH-USDC_buy7\tETH-USDC_sell7\tETH-USDC_buy8\tETH-USDC_sell8\tETH-USDC_buy9\tETH-USDC_sell9\tETH-USDC_buy10\tETH-USDC_sell10\tETH-USDC_buy11\tETH-USDC_sell11\tETH-USDC_buy12\tETH-USDC_sell12\tETH-USDT_buy4\tETH-USDT_sell4\tETH-USD_buy4\tETH-USD_sell4\n" +
+                    "2024-12-19T08:10:00.000000Z\tnull\t0.9716\tnull\t0.9716\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0.9716\tnull\t0.9716\tnull\t0.9716\tnull\t0.9716\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "2024-12-19T08:10:00.100000Z\tnull\tnull\tnull\tnull\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101502.2\t101502.1\t101502.2\t101502.1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\tnull\tnull\tnull\tnull\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\tnull\tnull\tnull\tnull\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101502.2\t101502.1\t101502.2\t101502.1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\t101502.2\t101502.1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "2024-12-19T08:10:00.200000Z\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "2024-12-19T08:10:00.300000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0.36047\t0.360485\t0.36047\t0.360485\t0.36047\t0.360485\t0.36047\t0.360485\t0.36047\t0.360485\t0.36047\t0.360485\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0.36047\t0.360485\t0.36047\t0.360485\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0.36047\t0.360485\t0.36047\t0.360485\t0.36047\t0.360485\t0.36047\t0.360485\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0.36047\t0.360485\t0.36047\t0.360485\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "2024-12-19T08:10:00.400000Z\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "2024-12-19T08:10:00.500000Z\tnull\t0.9716\tnull\t0.9716\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0.9994\tnull\tnull\t0.9716\tnull\t0.9716\tnull\t0.9716\tnull\t0.9716\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "2024-12-19T08:10:00.600000Z\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\t101502.2\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "2024-12-19T08:10:00.700000Z\tnull\tnull\tnull\tnull\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\tnull\t0.3604433333333333\tnull\t0.3604433333333333\tnull\t0.3604433333333333\tnull\t0.3604433333333333\tnull\t0.3604433333333333\tnull\t0.3604433333333333\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\tnull\t3678.125\tnull\t3678.125\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\tnull\t0.3604433333333333\tnull\t0.3604433333333333\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\tnull\t3678.125\tnull\t3678.125\tnull\t0.3604433333333333\tnull\t0.3604433333333333\tnull\t0.3604433333333333\tnull\t0.3604433333333333\tnull\t3675.971666666667\tnull\t3675.971666666667\tnull\t3675.971666666667\tnull\t3675.971666666667\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\tnull\t3675.971666666667\tnull\t3675.971666666667\tnull\t3678.125\tnull\t3678.125\tnull\t3678.125\tnull\t3678.125\tnull\t3678.125\tnull\t3678.125\tnull\t0.3604433333333333\tnull\t0.3604433333333333\tnull\tnull\tnull\tnull\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\t101500.66666666667\t101500.57777777778\tnull\t3675.971666666667\tnull\t3675.971666666667\tnull\t3675.971666666667\tnull\t3675.971666666667\tnull\t3675.971666666667\tnull\t3675.971666666667\tnull\t3675.971666666667\tnull\t3675.971666666667\tnull\t3678.125\tnull\t3678.125\n" +
+                    "2024-12-19T08:10:00.800000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0.36041\tnull\t0.36041\tnull\t0.36041\tnull\t0.36041\tnull\t0.36041\tnull\t0.36041\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3678.01\tnull\t3678.01\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0.36041\tnull\t0.36041\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3678.01\tnull\t3678.01\tnull\tnull\t0.36041\tnull\t0.36041\tnull\t0.36041\tnull\t0.36041\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3678.01\tnull\t3678.01\tnull\t3678.01\tnull\t3678.01\tnull\t3678.01\tnull\t3678.01\tnull\tnull\t0.36041\tnull\t0.36041\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3678.01\tnull\t3678.01\tnull\n" +
+                    "2024-12-19T08:10:00.900000Z\tnull\tnull\tnull\tnull\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101497.6\t101497.25\t101497.6\t101497.25\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\tnull\t3678.0\tnull\t3678.0\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\tnull\tnull\tnull\tnull\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\tnull\t3678.0\tnull\t3678.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3675.7887500000006\tnull\t3675.7887500000006\tnull\t3675.7887500000006\tnull\t3675.7887500000006\t101497.6\t101497.25\t101497.6\t101497.25\tnull\t3675.7887500000006\tnull\t3675.7887500000006\tnull\t3678.0\tnull\t3678.0\tnull\t3678.0\tnull\t3678.0\tnull\t3678.0\tnull\t3678.0\tnull\tnull\tnull\tnull\tnull\t210.41\tnull\t210.41\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\t101497.6\t101497.25\tnull\t3675.7887500000006\tnull\t3675.7887500000006\tnull\t3675.7887500000006\tnull\t3675.7887500000006\tnull\t3675.7887500000006\tnull\t3675.7887500000006\tnull\t3675.7887500000006\tnull\t3675.7887500000006\tnull\t3678.0\tnull\t3678.0\n",
+                    query,
+                    null,
+                    true,
+                    true,
+                    false);
+
+            assertPlanNoLeakCheck(query,
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp,ADA-USDT_buy,ADA-USDT_sell,ADA-USD_buy,ADA-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,DOGE-USDT_buy,DOGE-USDT_sell,DOGE-USD_buy,DOGE-USD_sell,DOGE-USDT_buy,DOGE-USDT_sell,DOGE-USD_buy,DOGE-USD_sell,DOGE-USDT_buy,DOGE-USDT_sell,DOGE-USD_buy,DOGE-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,USDT-USDC_buy,USDT-USDC_sell,ADA-USDT_buy,ADA-USDT_sell,ADA-USD_buy,ADA-USD_sell,ADA-USDT_buy,ADA-USDT_sell,ADA-USD_buy,ADA-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,ETH-USDT_buy,ETH-USDT_sell,ETH-USD_buy,ETH-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,DOGE-USDT_buy,DOGE-USDT_sell,DOGE-USD_buy,DOGE-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,ETH-USDT_buy,ETH-USDT_sell,ETH-USD_buy,ETH-USD_sell,DOGE-USDT_buy,DOGE-USDT_sell,DOGE-USD_buy,DOGE-USD_sell,DOGE-USDT_buy,DOGE-USDT_sell,DOGE-USD_buy,DOGE-USD_sell,ETH-USDC_buy,ETH-USDC_sell,ETH-USDC_buy,ETH-USDC_sell,ETH-USDC_buy,ETH-USDC_sell,ETH-USDC_buy,ETH-USDC_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,ETH-USDC_buy,ETH-USDC_sell,ETH-USDC_buy,ETH-USDC_sell,ETH-USDT_buy,ETH-USDT_sell,ETH-USD_buy,ETH-USD_sell,ETH-USDT_buy,ETH-USDT_sell,ETH-USD_buy,ETH-USD_sell,ETH-USDT_buy,ETH-USDT_sell,ETH-USD_buy,ETH-USD_sell,DOGE-USDT_buy,DOGE-USDT_sell,DOGE-USD_buy,DOGE-USD_sell,SOL-USDT_buy,SOL-USDT_sell,SOL-USD_buy,SOL-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,BTC-USDT_buy,BTC-USDT_sell,BTC-USD_buy,BTC-USD_sell,ETH-USDC_buy,ETH-USDC_sell,ETH-USDC_buy,ETH-USDC_sell,ETH-USDC_buy,ETH-USDC_sell,ETH-USDC_buy,ETH-USDC_sell,ETH-USDC_buy,ETH-USDC_sell,ETH-USDC_buy,ETH-USDC_sell,ETH-USDC_buy,ETH-USDC_sell,ETH-USDC_buy,ETH-USDC_sell,ETH-USDT_buy,ETH-USDT_sell,ETH-USD_buy,ETH-USD_sell]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [timestamp]\n" +
+                            "      values: [sum(case([(symbol='ADA-USDT' and side='buy'),sum,null])),sum(case([(symbol='ADA-USDT' and side='sell'),sum,null])),sum(case([(symbol='ADA-USD' and side='buy'),sum,null])),sum(case([(symbol='ADA-USD' and side='sell'),sum,null])),sum(case([(symbol='BTC-USDT' and side='buy'),sum,null])),sum(case([(symbol='BTC-USDT' and side='sell'),sum,null])),sum(case([(symbol='BTC-USD' and side='buy'),sum,null])),sum(case([(symbol='BTC-USD' and side='sell'),sum,null])),sum(case([(symbol='DOGE-USDT' and side='buy'),sum,null])),sum(case([(symbol='DOGE-USDT' and side='sell'),sum,null])),sum(case([(symbol='DOGE-USD' and side='buy'),sum,null])),sum(case([(symbol='DOGE-USD' and side='sell'),sum,null])),sum(case([(symbol='USDT-USDC' and side='buy'),sum,null])),sum(case([(symbol='USDT-USDC' and side='sell'),sum,null])),sum(case([(symbol='ETH-USDT' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDT' and side='sell'),sum,null])),sum(case([(symbol='ETH-USD' and side='buy'),sum,null])),sum(case([(symbol='ETH-USD' and side='sell'),sum,null])),sum(case([(symbol='ETH-USDC' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDC' and side='sell'),sum,null])),sum(case([(symbol='SOL-USDT' and side='buy'),sum,null])),sum(case([(symbol='SOL-USDT' and side='sell'),sum,null])),sum(case([(symbol='SOL-USD' and side='buy'),sum,null])),sum(case([(symbol='SOL-USD' and side='sell'),sum,null]))]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [timestamp,symbol,side]\n" +
+                            "          values: [sum(price)]\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [timestamp]\n" +
+                            "                Async Group By workers: 1\n" +
+                            "                  keys: [timestamp,symbol,side]\n" +
+                            "                  values: [avg(price)]\n" +
+                            "                  filter: (symbol in [ADA-USDT,ADA-USD,BTC-USDT,BTC-USD,DOGE-USDT,DOGE-USD,USDT-USDC,ETH-USDT,ETH-USD,ETH-USDC,SOL-USDT,SOL-USD] and side in [buy,sell])\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: trades\n");
+        });
+    }
+
+    @Test
+    public void testPivotWithCTEAndKeyedAsOfJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlSensors);
+            execute(dmlSensors);
+
+            String query = "\n" +
+                    "WITH A AS (\n" +
+                    "SELECT * FROM (    \n" +
+                    "select * FROM sensors \n" +
+                    "PIVOT (\n" +
+                    "    avg(int_value) \n" +
+                    "    FOR sensor_name IN (select distinct sensor_name FROM sensors where sensor_name like 'i%') ELSE 'Others'\n" +
+                    "    GROUP BY timestamp, vehicle_id\n" +
+                    ") order by timestamp\n" +
+                    ")\n" +
+                    "), B AS (\n" +
+                    "    select * FROM (\n" +
+                    "select * FROM sensors \n" +
+                    "PIVOT (\n" +
+                    "    last(str_value) \n" +
+                    "    FOR sensor_name IN (select distinct sensor_name FROM sensors where sensor_name like 's%') ELSE 'Others'\n" +
+                    "    GROUP BY timestamp, vehicle_id\n" +
+                    ")\n" +
+                    "order by timestamp\n" +
+                    ") \n" +
+                    ") select * from A asof join B ON (vehicle_id) LIMIT 10\n" +
+                    ";";
+
+            assertQueryNoLeakCheck("timestamp\tvehicle_id\ti009\ti000\ti002\ti004\ti008\ti003\ti007\ti005\ti006\ti001\tOthers\ttimestamp1\tvehicle_id1\ts001\ts005\ts006\ts009\ts003\ts008\ts002\ts004\ts007\ts000\tOthers1\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA003\t-364.0\t64.0\t-360.0\t694.0\t-476.0\t-248.0\t-602.0\t10.0\t778.0\t717.0\tnull\t2025-01-01T00:00:00.000000Z\tAAA003\tval_-835\tval_705\tval_-703\tval_841\tval_-54\tval_-933\tval_263\tval_-908\tval_-393\tval_394\t\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA014\t-745.0\t309.0\t-804.0\t-671.0\t-721.0\t226.0\t123.0\t-497.0\t-844.0\t296.0\tnull\t2025-01-01T00:00:00.000000Z\tAAA014\tval_-477\tval_903\tval_831\tval_-236\tval_-290\tval_-863\tval_-601\tval_76\tval_412\tval_887\t\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA044\t-222.0\t-218.0\t-779.0\t322.0\t-959.0\t486.0\t-80.0\t-889.0\t254.0\t-25.0\tnull\t2025-01-01T00:00:00.000000Z\tAAA044\tval_-234\tval_-337\tval_874\tval_725\tval_-661\tval_-950\tval_596\tval_-727\tval_574\tval_-194\t\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA031\t-39.0\t-813.0\t86.0\t965.0\t481.0\t-170.0\t516.0\t124.0\t-925.0\t412.0\tnull\t2025-01-01T00:00:00.000000Z\tAAA031\tval_-939\tval_590\tval_-719\tval_13\tval_697\tval_-99\tval_-587\tval_156\tval_-718\tval_-921\t\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA041\t-454.0\t408.0\t-164.0\t904.0\t-698.0\t-299.0\t-419.0\t941.0\t946.0\t-479.0\tnull\t2025-01-01T00:00:00.000000Z\tAAA041\tval_337\tval_468\tval_180\tval_-783\tval_165\tval_-758\tval_248\tval_-872\tval_987\tval_-744\t\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA039\t412.0\t896.0\t332.0\t-171.0\t327.0\t257.0\t225.0\t-431.0\t-203.0\t-347.0\tnull\t2025-01-01T00:00:00.000000Z\tAAA039\tval_123\tval_450\tval_199\tval_-935\tval_672\tval_616\tval_596\tval_275\tval_-320\tval_450\t\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA045\t850.0\t315.0\t-332.0\t948.0\t-444.0\t317.0\t-371.0\t-887.0\t-67.0\t428.0\tnull\t2025-01-01T00:00:00.000000Z\tAAA045\tval_-527\tval_212\tval_-916\tval_-836\tval_89\tval_792\tval_-132\tval_769\tval_-464\tval_-88\t\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA048\t164.0\t436.0\t468.0\t-37.0\t-362.0\t238.0\t224.0\t-686.0\t537.0\t790.0\tnull\t2025-01-01T00:00:00.000000Z\tAAA048\tval_15\tval_-839\tval_500\tval_-887\tval_-439\tval_85\tval_-592\tval_-849\tval_-431\tval_-842\t\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA022\t-98.0\t804.0\t370.0\t861.0\t-87.0\t90.0\t674.0\t47.0\t908.0\t88.0\tnull\t2025-01-01T00:00:00.000000Z\tAAA022\tval_-614\tval_-367\tval_-547\tval_623\tval_-341\tval_-806\tval_-289\tval_-405\tval_0\tval_-530\t\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA012\t-200.0\t285.0\t-357.0\t412.0\t588.0\t479.0\t-31.0\t807.0\t-726.0\t416.0\tnull\t2025-01-01T00:00:00.000000Z\tAAA012\tval_-31\tval_-86\tval_-648\tval_-36\tval_-113\tval_392\tval_0\tval_815\tval_-192\tval_848\t\n",
+                     query,
+                    "timestamp",
+                    false,
+                    true,
+                    false);
+
+            assertPlanNoLeakCheck(query,
+                    "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
+                            "    SelectedRecord\n" +
+                            "        AsOf Join Light\n" +
+                            "          condition: B.vehicle_id=A.vehicle_id\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [timestamp]\n" +
+                            "                GroupBy vectorized: false\n" +
+                            "                  keys: [timestamp,vehicle_id]\n" +
+                            "                  values: [avg(case([avg,NaN,sensor_name])),avg(case([avg,NaN,sensor_name])),avg(case([avg,NaN,sensor_name])),avg(case([avg,NaN,sensor_name])),avg(case([avg,NaN,sensor_name])),avg(case([avg,NaN,sensor_name])),avg(case([avg,NaN,sensor_name])),avg(case([avg,NaN,sensor_name])),avg(case([avg,NaN,sensor_name])),avg(case([avg,NaN,sensor_name])),avg(case([not (sensor_name in [i009,i000,i002,i004,i008,i003,i007,i005,i006,i001]),avg,null]))]\n" +
+                            "                    Async Group By workers: 1\n" +
+                            "                      keys: [timestamp,vehicle_id,sensor_name]\n" +
+                            "                      values: [avg(int_value)]\n" +
+                            "                      filter: null\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: sensors\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [timestamp]\n" +
+                            "                GroupBy vectorized: false\n" +
+                            "                  keys: [timestamp,vehicle_id]\n" +
+                            "                  values: [last_not_null(case([last,null,sensor_name])),last_not_null(case([last,null,sensor_name])),last_not_null(case([last,null,sensor_name])),last_not_null(case([last,null,sensor_name])),last_not_null(case([last,null,sensor_name])),last_not_null(case([last,null,sensor_name])),last_not_null(case([last,null,sensor_name])),last_not_null(case([last,null,sensor_name])),last_not_null(case([last,null,sensor_name])),last_not_null(case([last,null,sensor_name])),last_not_null(case([not (sensor_name in [s001,s005,s006,s009,s003,s008,s002,s004,s007,s000]),last,null]))]\n" +
+                            "                    Async Group By workers: 1\n" +
+                            "                      keys: [timestamp,vehicle_id,sensor_name]\n" +
+                            "                      values: [last(str_value)]\n" +
+                            "                      filter: null\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: sensors\n");
+        });
+    }
+
+    @Test
+    public void testPivotWithUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlSensors);
+            execute(dmlSensors);
+
+            String query = "\n" +
+                    "(\n" +
+                    "    sensors \n" +
+                    "    PIVOT (\n" +
+                    "        avg(int_value) \n" +
+                    "        FOR sensor_name IN (select distinct sensor_name FROM sensors where sensor_name like 'i%' LIMIT 1) ELSE 'Others'\n" +
+                    "        GROUP BY timestamp, vehicle_id\n" +
+                    "        ORDER BY timestamp\n" +
+                    "        LIMIT 10\n" +
+                    "    )\n" +
+                    ")\n" +
+                    "UNION\n" +
+                    "(\n" +
+                    "    sensors \n" +
+                    "    PIVOT (\n" +
+                    "        avg(int_value) \n" +
+                    "        FOR sensor_name IN (select distinct sensor_name FROM sensors where sensor_name like 'i%' LIMIT 1) ELSE 'Others'\n" +
+                    "        GROUP BY timestamp, vehicle_id\n" +
+                    "        ORDER BY timestamp\n" +
+                    "        LIMIT -10\n" +
+                    "    )\n" +
+                    ");";
+
+            assertQueryNoLeakCheck("timestamp\tvehicle_id\ti009\tOthers\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA012\t-200.0\t208.11111111111111\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA022\t-98.0\t417.22222222222223\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA048\t164.0\t178.66666666666666\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA045\t850.0\t-10.333333333333334\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA039\t412.0\t98.33333333333333\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA041\t-454.0\t126.66666666666667\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA031\t-39.0\t75.11111111111111\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA044\t-222.0\t-209.77777777777777\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA014\t-745.0\t-287.0\n" +
+                            "2025-01-01T00:00:00.000000Z\tAAA003\t-364.0\t64.11111111111111\n" +
+                            "2025-01-01T00:00:00.009000Z\tAAA082\t320.0\t-67.33333333333333\n" +
+                            "2025-01-01T00:00:00.009000Z\tAAA087\t-67.0\t309.6666666666667\n" +
+                            "2025-01-01T00:00:00.009000Z\tAAA079\t-24.0\t-294.1111111111111\n" +
+                            "2025-01-01T00:00:00.009000Z\tAAA053\t417.0\t-105.55555555555556\n" +
+                            "2025-01-01T00:00:00.009000Z\tAAA094\t158.0\t16.11111111111111\n" +
+                            "2025-01-01T00:00:00.009000Z\tAAA085\t-773.0\t-287.8888888888889\n" +
+                            "2025-01-01T00:00:00.009000Z\tAAA088\t619.0\t-392.6666666666667\n" +
+                            "2025-01-01T00:00:00.009000Z\tAAA074\t-946.0\t-34.333333333333336\n" +
+                            "2025-01-01T00:00:00.010000Z\tAAA099\tnull\tnull\n" +
+                            "2025-01-01T00:00:00.010000Z\tAAA000\tnull\t-636.0\n",
+                    query,
+                    null,
+                    false,
+                    false,
+                    false);
+
+            assertPlanNoLeakCheck(query,
+                    "Union\n" +
+                            "    Sort light lo: 10\n" +
+                            "      keys: [timestamp]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [timestamp,vehicle_id]\n" +
+                            "          values: [avg(case([avg,NaN,sensor_name])),avg(case([not (sensor_name in [i009]),avg,null]))]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [timestamp,vehicle_id,sensor_name]\n" +
+                            "              values: [avg(int_value)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: sensors\n" +
+                            "    Sort light lo: -10\n" +
+                            "      keys: [timestamp]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [timestamp,vehicle_id]\n" +
+                            "          values: [avg(case([avg,NaN,sensor_name])),avg(case([not (sensor_name in [i009]),avg,null]))]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [timestamp,vehicle_id,sensor_name]\n" +
+                            "              values: [avg(int_value)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: sensors\n");
+        });
     }
 
     @Test

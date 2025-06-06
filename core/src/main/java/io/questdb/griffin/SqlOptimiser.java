@@ -7385,7 +7385,6 @@ public class SqlOptimiser implements Mutable {
                                 final int startLen = nameSink.length();
                                 nameSink.put(_i);
                                 if (model.getColumnAliasIndex(nameSink.toImmutable()) < 0) {
-
                                     if (_i != aliasCounters.incrementAndReturnValue(nameDup)) {
                                         throw new UnsupportedOperationException();
                                     }
@@ -7525,6 +7524,7 @@ public class SqlOptimiser implements Mutable {
             model.setNestedModel(bonusModel);
 
             nested.setNestedModel(rewritePivot(nested.getNestedModel()));
+            model.setUnionModel(rewritePivot(model.getUnionModel()));
         } else {
             /*
                 We only allow wildcard selects of subqueries, so error out if we see a model with a projection.
@@ -7539,6 +7539,8 @@ public class SqlOptimiser implements Mutable {
             for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
                 model.getJoinModels().set(i, rewritePivot(model.getJoinModels().getQuick(i)));
             }
+
+            model.setUnionModel(rewritePivot(model.getUnionModel()));
 
 
         }
