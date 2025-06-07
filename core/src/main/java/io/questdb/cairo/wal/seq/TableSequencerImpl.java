@@ -111,7 +111,7 @@ public class TableSequencerImpl implements TableSequencer {
             }
         } catch (Throwable th) {
             LOG.critical().$("could not create sequencer [name=").utf8(tableToken.getDirName())
-                    .$(", error=").$(th.getMessage())
+                    .$(", error=").utf8(th.getMessage())
                     .I$();
             closeLocked();
             throw th;
@@ -128,20 +128,20 @@ public class TableSequencerImpl implements TableSequencer {
             if (ex.errnoFileCannotRead() && engine.isTableDropped(tableToken)) {
                 LOG.info().$("could not open sequencer, table is dropped [name=").utf8(tableToken.getDirName())
                         .$(", path=").$(path)
-                        .$(", error=").$(ex.getMessage())
+                        .$(", error=").utf8(ex.getMessage())
                         .I$();
                 throw CairoException.tableDropped(tableToken);
             }
             LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
                     .$(", path=").$(path)
                     .$(", errno=").$(ex.getErrno())
-                    .$(", error=").$(ex.getMessage())
+                    .$(", error=").utf8(ex.getMessage())
                     .I$();
             throw ex;
         } catch (Throwable th) {
             LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
                     .$(", path=").$(path)
-                    .$(", error=").$(th.getMessage())
+                    .$(", error=").utf8(th.getMessage())
                     .I$();
             closeLocked();
             throw th;
@@ -347,7 +347,7 @@ public class TableSequencerImpl implements TableSequencer {
         } catch (Throwable th) {
             distressed = true;
             LOG.critical().$("could not apply structure change to WAL table sequencer [table=").utf8(tableToken.getDirName())
-                    .$(", error=").$(th.getMessage())
+                    .$(", error=").utf8(th.getMessage())
                     .I$();
             throw th;
         }
@@ -380,7 +380,7 @@ public class TableSequencerImpl implements TableSequencer {
             distressed = true;
             LOG.critical().$("could not apply transaction to WAL table sequencer [table=")
                     .utf8(tableToken.getDirName())
-                    .$(", error=").$(th.getMessage())
+                    .$(", error=").utf8(th.getMessage())
                     .I$();
             throw th;
         }

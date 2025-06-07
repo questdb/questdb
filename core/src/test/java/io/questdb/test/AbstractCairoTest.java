@@ -137,8 +137,8 @@ import java.util.function.Supplier;
 @SuppressWarnings("ClassEscapesDefinedScope")
 public abstract class AbstractCairoTest extends AbstractTest {
 
-    public static final int DEFAULT_SPIN_LOCK_TIMEOUT = 5000;
     public static final Set<QuietCloseable> CLOSEABLES = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    public static final int DEFAULT_SPIN_LOCK_TIMEOUT = 5000;
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     protected static final PlanSink planSink = new TextPlanSink();
     protected static final StringSink sink = new StringSink();
@@ -559,7 +559,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     public void tearDown(boolean removeDir) {
-        LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
+        LOG.info().$("Tearing down test ").utf8(getClass().getSimpleName()).$('#').utf8(testName.getMethodName()).$();
         forEachNode(node -> node.tearDownCairo(removeDir));
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {

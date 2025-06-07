@@ -36,6 +36,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -118,12 +119,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         } else {
             sink().put(sequence);
         }
-        return this;
-    }
-
-    @Override
-    public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
-        sink().putAscii(sequence, lo, hi);
         return this;
     }
 
@@ -262,6 +257,31 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $safe(@Nullable DirectUtf8Sequence sequence) {
+        if (sequence == null) {
+            sink().putAscii("null");
+        } else {
+            var sink = sink();
+            long p = sequence.lo();
+            long hi = sequence.hi();
+            Utf8s.putSafe(p, hi, sink);
+        }
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(@NotNull CharSequence sequence, int lo, int hi) {
+        sink().put(sequence, lo, hi);
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(long lo, long hi) {
+        Utf8s.putSafe(lo, hi, sink());
+        return this;
+    }
+
+    @Override
     public LogRecord $size(long memoryBytes) {
         sink().putSize(memoryBytes);
         return this;
@@ -288,12 +308,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     @Override
     public LogRecord $ts(long x) {
         sink().putISODate(x);
-        return this;
-    }
-
-    @Override
-    public LogRecord $utf8(long lo, long hi) {
-        sink().putNonAscii(lo, hi);
         return this;
     }
 

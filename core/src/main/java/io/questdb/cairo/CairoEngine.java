@@ -416,10 +416,10 @@ public class CairoEngine implements Closeable, WriterSource {
                         final LogRecord rec = LOG.error().$("could not load materialized view [view=").utf8(tableToken.getTableName());
                         if (th instanceof CairoException) {
                             final CairoException ce = (CairoException) th;
-                            rec.$(", msg=").$(ce.getFlyweightMessage())
+                            rec.$(", msg=").utf8(ce.getFlyweightMessage())
                                     .$(", errno=").$(ce.getErrno());
                         } else {
-                            rec.$(", msg=").$(th.getMessage());
+                            rec.$(", msg=").utf8(th.getMessage());
                         }
                         rec.I$();
                     }
@@ -793,7 +793,7 @@ public class CairoEngine implements Closeable, WriterSource {
         } catch (CairoException e) {
             LOG.critical()
                     .$("could not open reader [table=").$(tableToken)
-                    .$(", msg=").$(e.getFlyweightMessage())
+                    .$(", msg=").utf8(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
             throw e;
@@ -1737,7 +1737,7 @@ public class CairoEngine implements Closeable, WriterSource {
         LOG.info()
                 .$("starting table repair [table=").$(tableToken)
                 .$(", dirName=").utf8(tableToken.getDirName())
-                .$(", cause=").$(rethrow.getFlyweightMessage())
+                .$(", cause=").utf8(rethrow.getFlyweightMessage())
                 .I$();
         try {
             writerPool.get(tableToken, "repair").close();
@@ -1749,7 +1749,7 @@ public class CairoEngine implements Closeable, WriterSource {
         } catch (Throwable th) {
             LOG.critical()
                     .$("table repair failed [dirName=").utf8(tableToken.getDirName())
-                    .$(", error=").$(th.getMessage())
+                    .$(", error=").utf8(th.getMessage())
                     .I$();
             throw rethrow;
         }

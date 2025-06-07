@@ -413,7 +413,7 @@ public class WalWriter implements TableWriterAPI {
             applyMetadataChangeLog(maxStructureVersion);
             return true;
         } catch (CairoException e) {
-            LOG.critical().$("could not apply structure changes, WAL will be closed [table=").$(tableToken.getTableName())
+            LOG.critical().$("could not apply structure changes, WAL will be closed [table=").utf8(tableToken.getTableName())
                     .$(", walId=").$(walId)
                     .$(", ex=").$((Throwable) e)
                     .$(", errno=").$(e.getErrno())
