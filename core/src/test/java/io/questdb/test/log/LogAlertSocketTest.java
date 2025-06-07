@@ -652,6 +652,7 @@ public class LogAlertSocketTest {
 
         @Override
         public LogRecord $safe(@NotNull CharSequence sequence, int lo, int hi) {
+            sink.put(sequence, lo, hi);
             return this;
         }
 
