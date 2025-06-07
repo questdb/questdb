@@ -662,6 +662,11 @@ public class LogAlertSocketTest {
         }
 
         @Override
+        public LogRecord $safe(long lo, long hi) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public LogRecord $size(long memoryBytes) {
             sink.putSize(memoryBytes);
             return this;
@@ -674,11 +679,6 @@ public class LogAlertSocketTest {
 
         @Override
         public LogRecord $ts(long x) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public LogRecord $utf8(long lo, long hi) {
             throw new UnsupportedOperationException();
         }
 

@@ -135,6 +135,11 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord $safe(long lo, long hi) {
+        return this;
+    }
+
+    @Override
     public LogRecord $size(long memoryBytes) {
         return this;
     }
@@ -146,11 +151,6 @@ final class NullLogRecord implements LogRecord {
 
     @Override
     public LogRecord $ts(long x) {
-        return this;
-    }
-
-    @Override
-    public LogRecord $utf8(long lo, long hi) {
         return this;
     }
 

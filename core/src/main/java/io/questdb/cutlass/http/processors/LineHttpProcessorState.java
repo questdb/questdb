@@ -349,7 +349,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
                 .$(", errno=").$(ex.getErrno());
         if (logMessageOnError) {
-            errorRec.$(", mangledLine=`").$utf8(recvBuffer.getBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');
+            errorRec.$(", mangledLine=`").$safe(recvBuffer.getBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');
         }
         errorRec.$(", ex=").$(ex.getFlyweightMessage()).I$();
 
@@ -366,7 +366,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 .$('[').$(fd).$("] could not process line data 3 [table=").$(parser.getMeasurementName())
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId);
         if (logMessageOnError) {
-            errorRec.$(", mangledLine=`").$utf8(recvBuffer.getBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');
+            errorRec.$(", mangledLine=`").$safe(recvBuffer.getBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');
         }
         errorRec.$(", ex=").utf8(ex.getMessage()).I$();
 
@@ -389,7 +389,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 .$(", error=").utf8(error.subSequence(errorPos, error.length()))
                 .$(", fd=").$(fd);
         if (logMessageOnError) {
-            errorRec.$(", mangledLine=`").$utf8(recvBuffer.getBufStartOfMeasurement(), parser.getBufferAddress()).$('`');
+            errorRec.$(", mangledLine=`").$safe(recvBuffer.getBufStartOfMeasurement(), parser.getBufferAddress()).$('`');
         }
         errorRec.I$();
     }
