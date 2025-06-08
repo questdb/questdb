@@ -261,10 +261,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         if (sequence == null) {
             sink().putAscii("null");
         } else {
-            var sink = sink();
-            long p = sequence.lo();
-            long hi = sequence.hi();
-            Utf8s.putSafe(p, hi, sink);
+            Utf8s.putSafe(sequence.lo(), sequence.hi(), sink());
         }
         return this;
     }
