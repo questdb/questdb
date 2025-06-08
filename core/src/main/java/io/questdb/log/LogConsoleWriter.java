@@ -36,12 +36,13 @@ import io.questdb.std.str.Utf8StringSink;
 import java.io.Closeable;
 
 public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogWriter {
-    private final Utf8StringSink debugSink = new Utf8StringSink(1024);
+    private final Utf8StringSink[] debugSinks = new Utf8StringSink[10];
     private final long fd = Files.getStdOutFdInternal();
     private final int level;
     private final RingQueue<LogRecordUtf8Sink> ring;
     private final SCSequence subSeq;
     private LogInterceptor interceptor;
+    private long sinkArrayPos = 0;
     private final QueueConsumer<LogRecordUtf8Sink> myConsumer = this::toStdOut;
 
     public LogConsoleWriter(RingQueue<LogRecordUtf8Sink> ring, SCSequence subSeq, int level) {
@@ -60,7 +61,6 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
 
     @Override
     public boolean runSerially() {
-        debugSink.clear();
         return subSeq.consumeAll(ring, myConsumer);
     }
 
@@ -68,16 +68,18 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
         this.interceptor = interceptor;
     }
 
-    private static void printAscii(Utf8StringSink sink) {
-        for (int n = sink.size(), i = 0; i < n; i++) {
-            byte b = sink.byteAt(i);
-            if (b < 127 && (b > 31 || b == 0x0d || b == 0x0a)) {
-                System.err.print((char) b);
-            } else {
-                System.err.format("\\x%02x", b & 0xFF);
+    private void safeDebugPrint() {
+        for (long l = sinkArrayPos; l < sinkArrayPos + debugSinks.length; l++) {
+            Utf8StringSink sink = debugSinks[(int) (l % debugSinks.length)];
+            for (int n = sink.size(), i = 0; i < n; i++) {
+                byte b = sink.byteAt(i);
+                if (b < 127 && (b > 31 || b == 0x0d || b == 0x0a)) {
+                    System.err.print((char) b);
+                } else {
+                    System.err.format("\\x%02x", b & 0xFF);
+                }
             }
         }
-        System.err.println();
     }
 
     private void toStdOut(LogRecordUtf8Sink sink) {
@@ -86,12 +88,14 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
                 if (interceptor != null) {
                     interceptor.onLog(sink);
                 }
+                Utf8StringSink debugSink = debugSinks[(int) (sinkArrayPos++ % debugSinks.length)];
+                debugSink.clear();
                 debugSink.put((DirectUtf8Sequence) sink);
                 long res = Files.append(fd, sink.ptr(), sink.size());
                 if (res != sink.size()) {
                     System.err.println("sink.size() " + sink.size() + ", res " + res + ", errno " +
                             Os.errno() + ", fd " + Files.toOsFd(fd) + ". Text being logged:");
-                    printAscii(debugSink);
+                    safeDebugPrint();
                     Os.sleep(1000);
                     System.exit(-1);
                 }
