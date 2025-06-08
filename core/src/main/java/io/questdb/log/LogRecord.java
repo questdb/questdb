@@ -37,6 +37,15 @@ public interface LogRecord extends Utf8Sink {
 
     void $();
 
+    /**
+     * Puts an ASCII char sequence to this record.
+     * <p>
+     * <strong>WARNING:</strong> sequence must be all ASCII chars, but this method doesn't
+     * validate it. It puts only the lower byte of each char to the record, so if this ends
+     * up being a non-ASCII byte, the record's UTF-8 output breaks.
+     * <p>
+     * If the sequence may contain non-ASCII chars, use {@link #utf8(CharSequence)} instead.
+     */
     LogRecord $(@Nullable CharSequence sequence);
 
     LogRecord $(@Nullable Utf8Sequence sequence);
