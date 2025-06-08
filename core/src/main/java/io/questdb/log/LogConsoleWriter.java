@@ -31,17 +31,19 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
 
 import java.io.Closeable;
 
 public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogWriter {
+    private final DirectUtf8Sink debugSink = new DirectUtf8Sink(1024);
     private final long fd = Files.getStdOutFdInternal();
     private final int level;
     private final RingQueue<LogRecordUtf8Sink> ring;
     private final SCSequence subSeq;
     private LogInterceptor interceptor;
     private final QueueConsumer<LogRecordUtf8Sink> myConsumer = this::toStdOut;
-
 
     public LogConsoleWriter(RingQueue<LogRecordUtf8Sink> ring, SCSequence subSeq, int level) {
         this.ring = ring;
@@ -59,6 +61,7 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
 
     @Override
     public boolean runSerially() {
+        debugSink.clear();
         return subSeq.consumeAll(ring, myConsumer);
     }
 
@@ -66,11 +69,11 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
         this.interceptor = interceptor;
     }
 
-    private static void printAscii(LogRecordUtf8Sink sink) {
+    private static void printAscii(DirectUtf8Sink sink) {
         long ptr = sink.ptr();
         for (int n = sink.size(), i = 0; i < n; i++) {
             byte b = Unsafe.getUnsafe().getByte(ptr + i);
-            if (b > 31 && b < 127) {
+            if (b < 127 && (b > 31 || b == 0x0d || b == 0x0a)) {
                 System.err.print((char) b);
             } else {
                 System.err.format("\\x%02x", b & 0xFF);
@@ -85,11 +88,12 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
                 if (interceptor != null) {
                     interceptor.onLog(sink);
                 }
+                debugSink.put((DirectUtf8Sequence) sink);
                 long res = Files.append(fd, sink.ptr(), sink.size());
                 if (res != sink.size()) {
                     System.err.println("sink.size() " + sink.size() + ", res " + res + ", errno " +
-                            Os.errno() + ", fd " + Files.toOsFd(fd) + ". Line that failed to log:");
-                    printAscii(sink);
+                            Os.errno() + ", fd " + Files.toOsFd(fd) + ". Text being logged:");
+                    printAscii(debugSink);
                     Os.sleep(1000);
                     System.exit(-1);
                 }
