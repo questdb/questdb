@@ -30,14 +30,13 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
 
 public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogWriter {
-    private final DirectUtf8Sink debugSink = new DirectUtf8Sink(1024);
+    private final Utf8StringSink debugSink = new Utf8StringSink(1024);
     private final long fd = Files.getStdOutFdInternal();
     private final int level;
     private final RingQueue<LogRecordUtf8Sink> ring;
@@ -69,10 +68,9 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
         this.interceptor = interceptor;
     }
 
-    private static void printAscii(DirectUtf8Sink sink) {
-        long ptr = sink.ptr();
+    private static void printAscii(Utf8StringSink sink) {
         for (int n = sink.size(), i = 0; i < n; i++) {
-            byte b = Unsafe.getUnsafe().getByte(ptr + i);
+            byte b = sink.byteAt(i);
             if (b < 127 && (b > 31 || b == 0x0d || b == 0x0a)) {
                 System.err.print((char) b);
             } else {
