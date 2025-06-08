@@ -75,7 +75,7 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
             Utf8StringSink sink = debugSinks[(int) (l % debugSinks.length)];
             for (int n = sink.size(), i = 0; i < n; i++) {
                 byte b = sink.byteAt(i);
-                if (b < 127 && (b > 31 || b == 0x0d || b == 0x0a)) {
+                if (b < 127 && (b > 31 || b == '\r' || b == '\n' || b == '\t')) {
                     System.err.print((char) b);
                 } else {
                     System.err.format("\\x%02x", b & 0xFF);
