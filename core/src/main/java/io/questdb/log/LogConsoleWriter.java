@@ -30,6 +30,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 
 import java.io.Closeable;
 
@@ -65,6 +66,19 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
         this.interceptor = interceptor;
     }
 
+    private static void printAscii(LogRecordUtf8Sink sink) {
+        long ptr = sink.ptr();
+        for (int n = sink.size(), i = 0; i < n; i++) {
+            byte b = Unsafe.getUnsafe().getByte(ptr + i);
+            if (b > 31 && b < 127) {
+                System.err.print((char) b);
+            } else {
+                System.err.format("\\x%02x", b & 0xFF);
+            }
+        }
+        System.err.println();
+    }
+
     private void toStdOut(LogRecordUtf8Sink sink) {
         try {
             if ((sink.getLevel() & this.level) != 0) {
@@ -73,7 +87,9 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
                 }
                 long res = Files.append(fd, sink.ptr(), sink.size());
                 if (res != sink.size()) {
-                    System.err.println("printed " + sink.size() + ", res " + res + ", errno " + Os.errno() + ", fd " + Files.toOsFd(fd));
+                    System.err.println("sink.size() " + sink.size() + ", res " + res + ", errno " +
+                            Os.errno() + ", fd " + Files.toOsFd(fd) + ". Line that failed to log:");
+                    printAscii(sink);
                     Os.sleep(1000);
                     System.exit(-1);
                 }
