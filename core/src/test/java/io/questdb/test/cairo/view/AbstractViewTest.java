@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
+import org.junit.BeforeClass;
 
 import static io.questdb.cairo.SqlJitMode.JIT_MODE_DISABLED;
 import static org.junit.Assert.*;
@@ -45,17 +46,18 @@ class AbstractViewTest extends AbstractCairoTest {
     static final String VIEW1 = "view1";
     static final String VIEW2 = "view2";
 
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        // JIT does not support ARM, and we want query plans to be the same
+        setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(JIT_MODE_DISABLED));
+        AbstractCairoTest.setUpStatic();
+    }
+
     @Before
     public void setUp() {
-        // JIT does not support ARM, and we want query plans to be the same
-        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(JIT_MODE_DISABLED));
-
-        super.setUp();
+        // enable views
         setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
-
-        // enable parallel GROUP BY and filter
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "true");
+        super.setUp();
     }
 
     static void assertViewDefinition(String name, String query) {
