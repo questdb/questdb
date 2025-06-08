@@ -30,7 +30,6 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <maven.javadoc.skip>false</maven.javadoc.skip>
         <outputPath>target</outputPath>
         <runtime.assembly>none</runtime.assembly>
@@ -100,7 +99,6 @@
                     <fork>true</fork>
                     <source>${javac.compile.source}</source>
                     <target>${javac.compile.target}</target>
-                    <encoding>${project.build.sourceEncoding}</encoding>
                     <testExcludes>
                         <exclude>${excludePattern1}</exclude>
                     </testExcludes>
