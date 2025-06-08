@@ -29,6 +29,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Files;
+import io.questdb.std.Os;
 
 import java.io.Closeable;
 
@@ -65,13 +66,33 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
     }
 
     private void toStdOut(LogRecordUtf8Sink sink) {
-        if ((sink.getLevel() & this.level) != 0) {
-            if (interceptor != null) {
-                interceptor.onLog(sink);
+        try {
+            if ((sink.getLevel() & this.level) != 0) {
+                if (interceptor != null) {
+                    interceptor.onLog(sink);
+                }
+                long res = Files.append(fd, sink.ptr(), sink.size());
+                if (res != sink.size()) {
+                    System.err.println("printed " + sink.size() + ", res " + res + ", errno " + Os.errno() + ", fd " + Files.toOsFd(fd));
+                    Os.sleep(1000);
+                    System.exit(-1);
+                }
             }
-            Files.append(fd, sink.ptr(), sink.size());
+        } catch (Throwable th) {
+            th.printStackTrace(System.err);
+            Os.sleep(1000);
+            System.exit(-2);
         }
     }
+
+//    private void toStdOut(LogRecordUtf8Sink sink) {
+//        if ((sink.getLevel() & this.level) != 0) {
+//            if (interceptor != null) {
+//                interceptor.onLog(sink);
+//            }
+//            Files.append(fd, sink.ptr(), sink.size());
+//        }
+//    }
 
     @FunctionalInterface
     public interface LogInterceptor {
