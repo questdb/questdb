@@ -34,6 +34,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
+import java.util.Arrays;
 
 public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogWriter {
     private final Utf8StringSink[] debugSinks = new Utf8StringSink[10];
@@ -49,6 +50,7 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
         this.ring = ring;
         this.subSeq = subSeq;
         this.level = level;
+        Arrays.setAll(debugSinks, i -> new Utf8StringSink(512));
     }
 
     @Override
