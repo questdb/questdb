@@ -215,7 +215,7 @@ public class ConvertOperatorImpl implements Closeable {
                                     dstFixFd = this.fixedFd;
                                     dstVarFd = this.varFd;
 
-                                    LOG.info().$("converting column [at=").$(path.trimTo(pathTrimToLen))
+                                    LOG.info().$("converting column [at=").$safe(path.trimTo(pathTrimToLen))
                                             .$(", column=").utf8(columnName)
                                             .$(", from=").$(ColumnType.nameOf(existingType))
                                             .$(", to=").$(ColumnType.nameOf(newType))
@@ -241,7 +241,7 @@ public class ConvertOperatorImpl implements Closeable {
                             columnVersionWriter.upsertColumnTop(partTs, columnIndex, columnTop > -1 ? columnTop : maxRow);
                         }
                     } catch (Throwable th) {
-                        LOG.error().$("error converting column [at=").$(tableWriter.getTableToken().getDirNameUtf8())
+                        LOG.error().$("error converting column [at=").$safe(tableWriter.getTableToken().getDirNameUtf8())
                                 .$(", column=").utf8(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                                 .$(", to=").$(ColumnType.nameOf(newType))
                                 .$(", error=").$(th).I$();
@@ -254,7 +254,7 @@ public class ConvertOperatorImpl implements Closeable {
             }
             consumeConversionTasks(messageBus.getColumnTaskQueue(), queueCount, true);
             long elapsed = timer.getTicks() - start;
-            LOG.info().$("completed column conversion [at=").$(tableWriter.getTableToken().getDirNameUtf8())
+            LOG.info().$("completed column conversion [at=").$safe(tableWriter.getTableToken().getDirNameUtf8())
                     .$(", column=").utf8(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType))
                     .$(", partitions=").$(partitionUpdated)
@@ -276,21 +276,21 @@ public class ConvertOperatorImpl implements Closeable {
                         ff, appendPageSize, noopConversionOffsetSink);
 
                 if (!ok) {
-                    LOG.critical().$("failed to convert column, column is corrupt [at=").$(tableWriter.getTableToken().getDirNameUtf8())
+                    LOG.critical().$("failed to convert column, column is corrupt [at=").$safe(tableWriter.getTableToken().getDirNameUtf8())
                             .$(", column=").utf8(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                             .$(", to=").$(ColumnType.nameOf(newType)).$(", srcFixFd=").$(srcFixFd)
-                            .$(", srcVarFd=").$(srcVarFd).$(", partition").$ts(partitionTimestamp)
+                            .$(", srcVarFd=").$(srcVarFd).$(", partition ").$ts(partitionTimestamp)
                             .I$();
                     asyncProcessingErrorCount.incrementAndGet();
                 }
             }
         } catch (Throwable th) {
             asyncProcessingErrorCount.incrementAndGet();
-            LogRecord log = LOG.critical().$("failed to convert column, column is corrupt [at=").$(tableWriter.getTableToken().getDirNameUtf8())
+            LogRecord log = LOG.critical().$("failed to convert column, column is corrupt [at=").$safe(tableWriter.getTableToken().getDirNameUtf8())
                     .$(", column=").utf8(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType))
                     .$(", srcFixFd=").$(srcFixFd).$(", srcVarFd=")
-                    .$(srcVarFd).$(", partition").$ts(partitionTimestamp);
+                    .$(srcVarFd).$(", partition ").$ts(partitionTimestamp);
             if (th instanceof CairoException) {
                 log.$(", errno=").$(((CairoException) th).getErrno());
             }
