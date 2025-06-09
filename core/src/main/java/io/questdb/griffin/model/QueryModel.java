@@ -2135,7 +2135,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     sink.putAscii(' ');
                 }
             }
-
         }
 
         if (unpivotColumns != null && unpivotColumns.size() > 0) {
