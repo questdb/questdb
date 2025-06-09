@@ -76,7 +76,7 @@ steps:
           eq(variables['System.PullRequest.IsFork'], 'false')
         )
 
-  - task: Maven@3
+  - task: Maven@4
     displayName: "Compile with Maven"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
@@ -91,7 +91,7 @@ steps:
         eq(variables['testset'], 'none'),
         eq(variables['SOURCE_CODE_CHANGED'], 'false')
       )
-  - task: Maven@3
+  - task: Maven@4
     displayName: "Run tests"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
@@ -115,7 +115,7 @@ steps:
         eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
-  - task: Maven@3
+  - task: Maven@4
     displayName: "Run tests with Coverage"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
