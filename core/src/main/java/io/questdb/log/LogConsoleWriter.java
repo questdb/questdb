@@ -98,13 +98,9 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
                 debugSink.put((DirectUtf8Sequence) sink);
                 long res = Files.append(fd, sink.ptr(), sink.size());
                 if (res != sink.size()) {
-                    System.err.println("sink.size() " + sink.size() + ", res " + res + ", errno " +
+                    System.out.println("sink.size() " + sink.size() + ", res " + res + ", errno " +
                             Os.errno() + ", fd " + Files.toOsFd(fd) + ". Text being logged:");
-                    System.out.println("System.out:");
                     safeDebugPrint(System.out);
-                    Os.sleep(1000);
-                    System.out.println("System.err:");
-                    safeDebugPrint(System.err);
                     Os.sleep(1000);
                     System.exit(-1);
                 }
