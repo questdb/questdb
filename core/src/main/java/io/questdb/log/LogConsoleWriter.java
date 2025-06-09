@@ -34,7 +34,6 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
-import java.io.PrintStream;
 import java.util.Arrays;
 
 public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogWriter {
@@ -71,14 +70,6 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
         this.interceptor = interceptor;
     }
 
-    private void safeDebugPrint(PrintStream out) {
-        for (long l = sinkArrayPos; l < sinkArrayPos + debugSinks.length; l++) {
-            Utf8StringSink sink = debugSinks[(int) (l % debugSinks.length)];
-            String content = sink.toString();
-            out.print(content);
-        }
-    }
-
     private void toStdOut(LogRecordUtf8Sink sink) {
         try {
             if ((sink.getLevel() & this.level) != 0) {
@@ -88,17 +79,23 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
                 Utf8StringSink debugSink = debugSinks[(int) (sinkArrayPos++ % debugSinks.length)];
                 debugSink.clear();
                 debugSink.put((DirectUtf8Sequence) sink);
-                long res = Files.append(fd, sink.ptr(), sink.size());
+
+                long res = Files.append(1L << 32, sink.ptr(), sink.size());
+
                 if (res != sink.size()) {
                     System.out.println("sink.size() " + sink.size() + ", res " + res + ", errno " +
                             Os.errno() + ", fd " + Files.toOsFd(fd) + ". Text being logged:");
-                    safeDebugPrint(System.out);
+                    for (long l = sinkArrayPos; l < sinkArrayPos + debugSinks.length; l++) {
+                        debugSink = debugSinks[(int) (l % debugSinks.length)];
+                        String content = debugSink.toString();
+                        System.out.print(content);
+                    }
                     Os.sleep(1000);
                     System.exit(-1);
                 }
             }
         } catch (Throwable th) {
-            th.printStackTrace(System.err);
+            th.printStackTrace(System.out);
             Os.sleep(1000);
             System.exit(-2);
         }
