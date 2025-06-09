@@ -458,7 +458,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 geoHashBitsSizeByColIdx.add(geoHashBits);
             } else {
                 LOG.error().$("mismatched column and value types [table=").utf8(writer.getTableToken().getTableName())
-                        .$(", column=").$(metadata.getColumnName(columnIndex))
+                        .$(", column=").utf8(metadata.getColumnName(columnIndex))
                         .$(", columnType=").$(ColumnType.nameOf(columnType))
                         .$(", valueType=").$(ColumnType.nameOf(valueType))
                         .$(']').$();

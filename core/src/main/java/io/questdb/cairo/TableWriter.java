@@ -2057,7 +2057,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (i > 0) {
                     logRec.$(',');
                 }
-                logRec.$(getColumnNameSafe(dedupColIndex)).$(':').$(ColumnType.nameOf(columnType));
+                logRec.utf8(getColumnNameSafe(dedupColIndex)).$(':').$(ColumnType.nameOf(columnType));
             }
         } finally {
             logRec.I$();
@@ -2757,7 +2757,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean isIndexed = metadata.isIndexed(index);
         String columnName = metadata.getColumnName(index);
 
-        LOG.info().$("renaming column '").utf8(columnName).$('[').$(ColumnType.nameOf(type)).$("]' to '").utf8(newName).$("' in ").$substr(pathRootSize, path).$();
+        LOG.info().$("renaming column '").utf8(columnName).$('[')
+                .$(ColumnType.nameOf(type)).$("]' to '").utf8(newName)
+                .$("' in ").$substr(pathRootSize, path).$();
 
         commit();
 
@@ -5357,7 +5359,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         o3ErrorCount.incrementAndGet();
         LogRecord logRecord = LOG.critical().$(message + " [table=").utf8(tableToken.getTableName())
-                .$(", column=").$(getColumnNameSafe(columnIndex))
+                .$(", column=").utf8(getColumnNameSafe(columnIndex))
                 .$(", type=").$(ColumnType.nameOf(columnType))
                 .$(", long0=").$(long0)
                 .$(", long1=").$(long1)
