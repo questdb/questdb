@@ -40,7 +40,6 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
     private final ListPool<ContiguousFileFixFrameColumn> fixColumnPool = new ListPool<>();
     private final ListPool<ContiguousFileFixFrameColumn> indexedColumnPool = new ListPool<>();
     private final ListPool<ContiguousFileVarFrameColumn> varColumnPool = new ListPool<>();
-    private boolean canWrite;
     private boolean isClosed;
 
     public ContiguousFileColumnPool(CairoConfiguration configuration) {
@@ -53,14 +52,7 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
     }
 
     @Override
-    public FrameColumnTypePool getPoolRO(int columnType) {
-        this.canWrite = false;
-        return columnTypePool;
-    }
-
-    @Override
-    public FrameColumnTypePool getPoolRW(int columnType) {
-        this.canWrite = true;
+    public FrameColumnTypePool getPool(int columnType) {
         return columnTypePool;
     }
 
@@ -75,7 +67,8 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
                 int indexBlockCapacity,
                 long columnTop,
                 int columnIndex,
-                boolean isEmpty
+                boolean isEmpty,
+                boolean canWrite
         ) {
             boolean isIndexed = indexBlockCapacity > 0;
 

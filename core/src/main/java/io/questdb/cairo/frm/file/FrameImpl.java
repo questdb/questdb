@@ -74,10 +74,20 @@ public class FrameImpl implements Frame {
         long columnTop = crv.getColumnTopByIndexOrDefault(crvRecIndex, partitionTimestamp, columnIndex, rowCount);
         long columnTxn = crv.getColumnNameTxn(partitionTimestamp, columnIndex);
 
-        FrameColumnTypePool columnTypePool = canWrite ? columnPool.getPoolRW(columnType) : columnPool.getPoolRO(columnType);
+        FrameColumnTypePool columnTypePool = columnPool.getPool(columnType);
         boolean createNew = columnTop >= rowCount || create;
         columnTop = Math.min(columnTop, rowCount);
-        return columnTypePool.create(partitionPath, metadata.getColumnName(columnIndex), columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex, createNew);
+        return columnTypePool.create(
+                partitionPath,
+                metadata.getColumnName(columnIndex),
+                columnTxn,
+                columnType,
+                indexBlockCapacity,
+                columnTop,
+                columnIndex,
+                createNew,
+                canWrite
+        );
     }
 
     @Override

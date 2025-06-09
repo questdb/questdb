@@ -28,4 +28,6 @@ import io.questdb.std.Mutable;
 
 public interface ValueHolder<T> extends Mutable {
     void copyTo(T dest);
+
+    void copyFrom(T src);
 }

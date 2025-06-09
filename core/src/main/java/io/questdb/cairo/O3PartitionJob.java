@@ -25,6 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.frm.Frame;
+import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -1087,40 +1089,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
     }
 
-    private static long calculateMinDataTimestampAfterReplacement(
-            long srcDataTimestampAddr,
-            long o3TimestampsAddr,
-            int prefixType,
-            int suffixType,
-            long prefixLo,
-            long suffixLo,
-            long srcOooLo,
-            long srcOooHi
-    ) {
-        if (prefixType == O3_BLOCK_DATA) {
-            return Unsafe.getUnsafe().getLong(srcDataTimestampAddr + prefixLo * Long.BYTES);
-        }
-        if (srcOooLo <= srcOooHi) {
-            // If there is O3 data, it will replace the partition data in merge section
-            return getTimestampIndexValue(o3TimestampsAddr, srcOooLo);
-        }
-        if (suffixType == O3_BLOCK_DATA) {
-            // No prefix, no merge, just suffix from the partition data
-            return Unsafe.getUnsafe().getLong(srcDataTimestampAddr + suffixLo * Long.BYTES);
-        }
-        return Long.MAX_VALUE;
-    }
-
-    private static void updatePartitionSink(long partitionUpdateSinkAddr, long partitionTimestamp, long o3TimestampMin, long newPartitionSize, long oldPartitionSize, long partitionMutates) {
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize); // new partition size
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates); // partitionMutates
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // update parquet partition file size
-    }
-
     public static void processPartition(
             O3PartitionTask task,
             long cursor,
@@ -1184,6 +1152,226 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 o3TimestampLo,
                 o3TimestampHi
         );
+    }
+
+    private static long calculateMinDataTimestampAfterReplacement(
+            long srcDataTimestampAddr,
+            long o3TimestampsAddr,
+            int prefixType,
+            int suffixType,
+            long prefixLo,
+            long suffixLo,
+            long srcOooLo,
+            long srcOooHi
+    ) {
+        if (prefixType == O3_BLOCK_DATA) {
+            return Unsafe.getUnsafe().getLong(srcDataTimestampAddr + prefixLo * Long.BYTES);
+        }
+        if (srcOooLo <= srcOooHi) {
+            // If there is O3 data, it will replace the partition data in merge section
+            return getTimestampIndexValue(o3TimestampsAddr, srcOooLo);
+        }
+        if (suffixType == O3_BLOCK_DATA) {
+            // No prefix, no merge, just suffix from the partition data
+            return Unsafe.getUnsafe().getLong(srcDataTimestampAddr + suffixLo * Long.BYTES);
+        }
+        return Long.MAX_VALUE;
+    }
+
+    private static boolean checkAllNonKeyColumnsIdentical(
+            long partitionTimestamp,
+            long partitionNameTxn,
+            TableWriter tableWriter,
+            long mergeIndexAddr,
+            long mergeIndexSize,
+            long mergeDataLo,
+            long mergeDataHi,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            long mergeOOOLo,
+            long mergeOOOHi,
+            Path tableRootPath
+    ) {
+        LOG.info().$("checking dedup insert results for noop [table=").$(tableWriter.getTableToken()).I$();
+        try (Frame partitionFrame = tableWriter.openPartitionFrameRO(partitionTimestamp)) {
+            try (Frame commitFrame = tableWriter.openCommitFrame()) {
+                TableRecordMetadata metadata = tableWriter.getMetadata();
+                for (int i = 0; i < metadata.getColumnCount(); i++) {
+                    int columnType = metadata.getColumnType(i);
+                    if (columnType > 0 && !metadata.isDedupKey(i) && i != metadata.getTimestampIndex()) {
+                        if (!FrameAlgebra.isNewDataIdential(
+                                partitionFrame,
+                                commitFrame,
+                                mergeIndexAddr,
+                                mergeIndexSize
+                        )) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+//        TableRecordMetadata metadata = tableWriter.getMetadata();
+//        int dedupColumnIndex = 0;
+//        int tableRootPathLen = tableRootPath.size();
+//        FilesFacade ff = tableWriter.getFilesFacade();
+//
+//        int mapMemTag = MemoryTag.MMAP_O3;
+//        try {
+//            for (int i = 0; i < metadata.getColumnCount(); i++) {
+//                int columnType = metadata.getColumnType(i);
+//                if (columnType > 0 && !metadata.isDedupKey(i) && i != metadata.getTimestampIndex()) {
+//                    final int columnSize = !ColumnType.isVarSize(columnType) ? ColumnType.sizeOf(columnType) : -1;
+//                    final long columnTop = tableWriter.getColumnTop(partitionTimestamp, i, mergeDataHi + 1);
+//                    CharSequence columnName = metadata.getColumnName(i);
+//                    long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, i);
+//
+//                    if (columnTop > mergeDataHi) {
+//                        // column is all nulls because of column top
+//                        if (columnSize > 0) {
+//                            final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
+//                            if (!checkAllNonKeyColumnsIdentical_checkFixedColAllNulls(oooColAddress, columnType, mergeOOOLo, mergeOOOHi)) {
+//                                return false;
+//                            }
+//                        } else {
+//                            // Var len columns
+//                            ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+//                            if (!driver.checkAllNulls(
+//                                    oooColumns.get(getPrimaryColumnIndex(i)),
+//                                    oooColumns.get(getSecondaryColumnIndex(i)),
+//                                    mergeOOOLo,
+//                                    mergeOOOHi
+//                            )) {
+//                                return false;
+//                            }
+//                        }
+//                    } else { // if (columnTop > mergeDataHi)
+//                        if (columnSize > 0) {
+//                            // Fixed length column
+//                            TableUtils.setSinkForNativePartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+//                            long fd = TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG);
+//
+//                            long fixMapSize = (mergeDataHi + 1 - columnTop) * columnSize;
+//                            long fixMappedAddress = TableUtils.mapAppendColumnBuffer(
+//                                    ff,
+//                                    fd,
+//                                    0,
+//                                    fixMapSize,
+//                                    false,
+//                                    mapMemTag
+//                            );
+//
+//                            try {
+//                                long dataAddress = Math.abs(fixMappedAddress);
+//                                if (!checkAllNonKeyColumnsIdentical_checkFixedColIdentical(
+//                                        mergeIndexAddr,
+//                                        mergeIndexSize,
+//                                        dataAddress,
+//                                        columnType,
+//                                        mergeDataLo,
+//                                        mergeDataHi,
+//                                        columnTop,
+//                                        mergeOOOLo,
+//                                        mergeOOOHi
+//                                )) {
+//                                    return false;
+//                                }
+//                            } finally {
+//                                TableUtils.mapAppendColumnBufferRelease(
+//                                        ff,
+//                                        fixMappedAddress,
+//                                        0,
+//                                        fixMapSize,
+//                                        mapMemTag
+//                                );
+//                            }
+//                        } else {
+//                            // Variable length column
+//                            long rows = mergeDataHi + 1 - columnTop;
+//                            ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+//                            long auxMapSize = driver.getAuxVectorSize(rows);
+//
+//                            TableUtils.setSinkForNativePartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+//                            long auxFd = TableUtils.openRO(ff, TableUtils.iFile(tableRootPath, columnName, columnNameTxn), LOG);
+//                            long auxMappedAddress = TableUtils.mapAppendColumnBuffer(
+//                                    ff,
+//                                    auxFd,
+//                                    0,
+//                                    auxMapSize,
+//                                    false,
+//                                    mapMemTag
+//                            );
+//
+//                            long varMapSize = driver.getDataVectorSizeAt(auxMappedAddress, rows - 1);
+//                            if (varMapSize > 0) {
+//                                TableUtils.setSinkForNativePartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+//                            }
+//                            long varFd = varMapSize > 0 ? TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG) : -1;
+//                            long varMappedAddress = varMapSize > 0 ? TableUtils.mapAppendColumnBuffer(
+//                                    ff,
+//                                    varFd,
+//                                    0,
+//                                    varMapSize,
+//                                    false,
+//                                    mapMemTag
+//                            ) : 0;
+//
+//                            long auxRecSize = driver.auxRowsToBytes(1);
+//                            DedupColumnCommitAddresses.setColAddressValues(addr, auxMappedAddress - columnTop * auxRecSize, varMappedAddress, varMapSize);
+//
+//                            MemoryCR oooVarCol = oooColumns.get(getPrimaryColumnIndex(i));
+//                            final long oooVarColAddress = oooVarCol.addressOf(0);
+//                            final long oooVarColSize = oooVarCol.addressHi() - oooVarColAddress;
+//                            final long oooAuxColAddress = oooColumns.get(getSecondaryColumnIndex(i)).addressOf(0);
+//
+//                            checkAllNonKeyColumnsIdentical_checkVarColIdentical(
+//                                    mergeIndexAddr,
+//                                    mergeIndexSize,
+//                                    auxMappedAddress,
+//                                    varMappedAddress,
+//                                    columnType,
+//                                    mergeDataLo,
+//                                    mergeDataHi,
+//                                    mergeOOOLo,
+//                                    mergeOOOHi
+//                            );
+//
+//                        }
+//                    }
+//                    dedupColumnIndex++;
+//                } // if (columnType > 0 && metadata.isDedupKey(i) && i != metadata.getTimestampIndex())
+//            }
+//
+//            return Vect.mergeDedupTimestampWithLongIndexIntKeys(
+//                    srcTimestampAddr,
+//                    mergeDataLo,
+//                    mergeDataHi,
+//                    sortedTimestampsAddr,
+//                    mergeOOOLo,
+//                    mergeOOOHi,
+//                    tempIndexAddr,
+//                    dedupCommitAddresses.getColumnCount(),
+//                    DedupColumnCommitAddresses.getAddress(dedupColSinkAddr)
+//            );
+//        } finally {
+//            for (int i = 0, n = dedupCommitAddresses.getColumnCount(); i < n; i++) {
+//                final long mappedAddress = DedupColumnCommitAddresses.getColReserved1(dedupColSinkAddr, i);
+//                final long mappedAddressSize = DedupColumnCommitAddresses.getColReserved2(dedupColSinkAddr, i);
+//                if (mappedAddressSize > 0) {
+//                    TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, 0, mappedAddressSize, mapMemTag);
+//                    final long fd = DedupColumnCommitAddresses.getColReserved3(dedupColSinkAddr, i);
+//                    ff.close(fd);
+//                }
+//
+//                final long varMappedAddress = DedupColumnCommitAddresses.getColReserved4(dedupColSinkAddr, i);
+//                if (varMappedAddress > 0) {
+//                    final long varMappedLength = DedupColumnCommitAddresses.getColVarDataLen(dedupColSinkAddr, i);
+//                    TableUtils.mapAppendColumnBufferRelease(ff, varMappedAddress, 0, varMappedLength, mapMemTag);
+//                    final long varFd = DedupColumnCommitAddresses.getColReserved5(dedupColSinkAddr, i);
+//                    ff.close(varFd);
+//                }
+//            }
+//        }
     }
 
     private static long createMergeIndex(
@@ -2067,6 +2255,38 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     timestampMergeIndexAddr = Unsafe.realloc(tempIndexAddr, tempIndexSize, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
                     final long duplicateCount = mergeRowCount - dedupRows;
                     if (duplicateCount > 0) {
+                        if (duplicateCount == mergeOOOHi - mergeOOOLo + 1) {
+                            // All the rows are duplicates
+                            // check if all non-key rows are dups
+                            if (checkAllNonKeyColumnsIdentical(
+                                    tableWriter,
+                                    srcTimestampAddr,
+                                    mergeDataLo,
+                                    mergeDataHi,
+                                    oooColumns,
+                                    mergeOOOLo,
+                                    mergeOOOHi,
+                                    tempTablePath)
+                            ) {
+                                LOG.info().$("deduplication resulted in noop [table=").$(tableWriter.getTableToken())
+                                        .$(", partition=").$ts(partitionTimestamp)
+                                        .I$();
+                                FilesFacade ff = tableWriter.getFilesFacade();
+
+                                // nothing to do, skip the partition
+                                updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, Long.MAX_VALUE, srcDataOldPartitionSize, srcDataOldPartitionSize, 0);
+
+                                O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
+                                O3Utils.close(ff, srcTimestampFd);
+
+                                tableWriter.o3ClockDownPartitionUpdateCount();
+                                tableWriter.o3CountDownDoneLatch();
+
+                                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+                                return;
+                            }
+                        }
+
                         // we could be de-duping a split partition
                         // in which case only its size will be affected
                         if (o3SplitPartitionSize > 0) {
@@ -2426,6 +2646,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         } finally {
             ff.munmap(parquetAddr, newParquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         }
+    }
+
+    private static void updatePartitionSink(long partitionUpdateSinkAddr, long partitionTimestamp, long o3TimestampMin, long newPartitionSize, long oldPartitionSize, long partitionMutates) {
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize); // new partition size
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates); // partitionMutates
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // update parquet partition file size
     }
 
     @Override

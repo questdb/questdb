@@ -27,5 +27,15 @@ package io.questdb.cairo.frm;
 import io.questdb.std.str.Path;
 
 public interface FrameColumnTypePool {
-    FrameColumn create(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, int indexBlockCapacity, long columnTop, int columnIndex, boolean init);
+    FrameColumn create(
+            Path partitionPath,
+            CharSequence columnName,
+            long columnTxn,
+            int columnType,
+            int indexBlockCapacity,
+            long columnTop,
+            int columnIndex,
+            boolean init,
+            boolean canWrite
+    );
 }

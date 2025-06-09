@@ -65,11 +65,11 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     }
 
     @Override
-    public boolean isClosed() {
+    public synchronized boolean isClosed() {
         return closed;
     }
 
-    public Frame open(boolean rw, Path path, long targetPartition, RecordMetadata metadata, ColumnVersionWriter cvr, long size) {
+    public synchronized Frame open(boolean rw, Path path, long targetPartition, RecordMetadata metadata, ColumnVersionWriter cvr, long size) {
         if (rw) {
             return openRW(path, targetPartition, metadata, cvr, size);
         } else {
@@ -77,7 +77,7 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
         }
     }
 
-    public Frame openRO(
+    public synchronized Frame openRO(
             Path partitionPath,
             long partitionTimestamp,
             RecordMetadata metadata,
@@ -89,7 +89,7 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
         return frame;
     }
 
-    public Frame openRW(
+    public synchronized Frame openRW(
             Path partitionPath,
             long partitionTimestamp,
             RecordMetadata metadata,
@@ -102,7 +102,7 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     }
 
     @Override
-    public void put(FrameImpl frame) {
+    public synchronized void put(FrameImpl frame) {
         assert !isClosed();
         framePool.add(frame);
     }

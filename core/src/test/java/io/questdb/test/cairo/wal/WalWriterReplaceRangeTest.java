@@ -26,19 +26,12 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -319,7 +312,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             "symbolColumnCount: 1, lagRowCount: 0, " +
                             "lagMinTimestamp: '294247-01-10T04:00:54.775Z', " +
                             "lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}",
-                    readTxnToSTring(tableToken, true, true)
+                    readTxnToString(tableToken, true, true)
             );
         });
     }
@@ -370,7 +363,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             "symbolColumnCount: 1, lagRowCount: 0, " +
                             "lagMinTimestamp: '294247-01-10T04:00:54.775Z', " +
                             "lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}",
-                    readTxnToSTring(tableToken, true, true)
+                    readTxnToString(tableToken, true, true)
             );
         });
     }
@@ -418,7 +411,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             "symbolColumnCount: 1, lagRowCount: 0, " +
                             "lagMinTimestamp: '294247-01-10T04:00:54.775Z', " +
                             "lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}",
-                    readTxnToSTring(tableToken, true, true)
+                    readTxnToString(tableToken, true, true)
             );
         });
     }
@@ -498,80 +491,6 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         }
     }
 
-    private static String readTxnToSTring(TableToken tt, boolean compareTxns, boolean compareTruncateVersion) {
-        try (TxReader rdr = new TxReader(engine.getConfiguration().getFilesFacade())) {
-            Path tempPath = Path.getThreadLocal(root);
-            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
-            rdr.unsafeLoadAll();
-
-            return txnToString(rdr, compareTxns, compareTruncateVersion);
-        }
-    }
-
-    private static String txnToString(TxReader txReader, boolean compareTxns, boolean compareTruncateVersion) {
-        // Used for debugging, don't use Misc.getThreadLocalSink() to not mess with other debugging values
-        StringSink sink = Misc.getThreadLocalSink();
-        sink.put("{");
-        if (compareTxns) {
-            sink.put("txn: ").put(txReader.getTxn());
-        }
-        sink.put(", attachedPartitions: [");
-        for (int i = 0; i < txReader.getPartitionCount(); i++) {
-            long timestamp = txReader.getPartitionTimestampByIndex(i);
-            long rowCount = txReader.getPartitionRowCountByTimestamp(timestamp);
-
-            if (i - 1 == txReader.getPartitionCount()) {
-                rowCount = txReader.getTransientRowCount();
-            }
-
-            long parquetSize = txReader.getPartitionParquetFileSize(i);
-
-            if (i > 0) {
-                sink.put(",");
-            }
-            sink.put("\n{ts: '");
-            TimestampFormatUtils.appendDateTime(sink, timestamp);
-            sink.put("', rowCount: ").put(rowCount);
-            // Do not print name txn, it can be different in expected and actual table
-
-            if (txReader.isPartitionParquet(i)) {
-                sink.put(", parquetSize: ").put(parquetSize);
-            }
-            if (txReader.isPartitionReadOnly(i)) {
-                sink.put(", readOnly=true");
-            }
-            sink.put("}");
-        }
-        sink.put("\n], transientRowCount: ").put(txReader.getTransientRowCount());
-        sink.put(", fixedRowCount: ").put(txReader.getFixedRowCount());
-        sink.put(", minTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getMinTimestamp());
-        sink.put("', maxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getMaxTimestamp());
-        if (compareTruncateVersion) {
-            sink.put("', dataVersion: ").put(txReader.getDataVersion());
-        }
-        sink.put(", structureVersion: ").put(txReader.getColumnStructureVersion());
-        sink.put(", columnVersion: ").put(txReader.getColumnVersion());
-        if (compareTruncateVersion) {
-            sink.put(", truncateVersion: ").put(txReader.getTruncateVersion());
-        }
-
-        if (compareTxns) {
-            sink.put(", seqTxn: ").put(txReader.getSeqTxn());
-        }
-        sink.put(", symbolColumnCount: ").put(txReader.getSymbolColumnCount());
-        sink.put(", lagRowCount: ").put(txReader.getLagRowCount());
-        sink.put(", lagMinTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMinTimestamp());
-        sink.put("', lagMaxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMaxTimestamp());
-        sink.put("', lagTxnCount: ").put(txReader.getLagRowCount());
-        sink.put(", lagOrdered: ").put(txReader.isLagOrdered());
-        sink.put("}");
-        return sink.toString();
-    }
-
     private void insertRowWithReplaceRange(String tsStr, String rangeStartStr, String rangeEndStr, TableToken tableToken, boolean compareTxns, boolean compareTruncateVersion, String tableName, String expectedTableName, boolean compareTxnDetails) throws SqlException, NumericException {
         execute("create table " + expectedTableName + " as (select * from " + tableName + " where ts not between '" + rangeStartStr + "' and '" + rangeEndStr + "') timestamp(ts) partition by DAY WAL");
 
@@ -588,8 +507,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
         if (compareTxnDetails) {
             Assert.assertEquals(
-                    readTxnToSTring(ttExpected, compareTxns, compareTruncateVersion),
-                    readTxnToSTring(tableToken, compareTxns, compareTruncateVersion)
+                    readTxnToString(ttExpected, compareTxns, compareTruncateVersion),
+                    readTxnToString(tableToken, compareTxns, compareTruncateVersion)
             );
         }
 

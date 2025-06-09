@@ -42,6 +42,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.Misc;
@@ -54,6 +55,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.fuzz.DuplicateFuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzDropPartitionOperation;
 import io.questdb.test.fuzz.FuzzInsertOperation;
@@ -475,6 +477,59 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         runFuzzWithRepeatDedup(rnd);
     }
 
+    private void addDuplicates(ObjList<FuzzTransaction> transactions, Rnd rnd, IntList upsertKeyIndexes) {
+        int duplicateCommits = rnd.nextInt(transactions.size() / 2);
+
+        IntHashSet upsertKeyIndexesMap = new IntHashSet();
+        upsertKeyIndexesMap.addAll(upsertKeyIndexes);
+
+        for (int i = 0; i < transactions.size(); i++) {
+            FuzzTransaction transaction = transactions.getQuick(i);
+            if (transaction.rollback
+                    || transaction.operationList.size() <= 1
+                    || transaction.hasReplaceRange()
+            ) {
+                continue;
+            }
+
+            if (duplicateCommits > 0 && rnd.nextInt(duplicateCommits) > (transactions.size() - i - duplicateCommits)) {
+                // Add a duplicate commit
+                FuzzTransaction duplicateTrans = new FuzzTransaction();
+                duplicateTrans.waitAllDone = transaction.waitAllDone;
+                duplicateTrans.reopenTable = transaction.reopenTable;
+                duplicateTrans.rollback = false;
+                duplicateTrans.structureVersion = transaction.structureVersion;
+                duplicateTrans.waitBarrierVersion = transaction.waitBarrierVersion;
+
+                ObjList<FuzzTransactionOperation> txnList = transaction.operationList;
+                int dupCount = rnd.nextInt(txnList.size()) + 1;
+
+                ObjList<FuzzTransactionOperation> newTxnList = duplicateTrans.operationList;
+                boolean identical = rnd.nextBoolean();
+
+                for (int t = 0, n = txnList.size(); t < n; t++) {
+                    if (dupCount > 0 && rnd.nextInt(dupCount) > (n - t - dupCount)) {
+                        // Add a duplicate operation
+                        FuzzInsertOperation operation = (FuzzInsertOperation) txnList.getQuick(t);
+                        if (identical) {
+                            FuzzInsertOperation dup = new FuzzInsertOperation(operation);
+                            newTxnList.add(dup);
+                        } else {
+                            FuzzInsertOperation dup = new DuplicateFuzzInsertOperation(operation, upsertKeyIndexesMap);
+                            newTxnList.add(dup);
+                        }
+                    }
+                }
+
+                if (newTxnList.size() > 0) {
+                    transactions.insert(i + 1, 1, duplicateTrans);
+                    i++;
+                }
+                duplicateCommits--;
+            }
+        }
+    }
+
     private void assertAllSymbolsSet(
             boolean[] foundSymbols,
             String[] symbols,
@@ -720,6 +775,36 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         throw new IllegalArgumentException();
     }
 
+    private void reinsertSameData(Rnd rnd, String tableNameDedup, String timestampColumnName) throws SqlException {
+        TableToken tt = engine.verifyTableName(tableNameDedup);
+        String partitions = readTxnToString(tt, false, true, true);
+        int inserts = 2 + rnd.nextInt(10);
+        long minTs, maxTs;
+        try (TableReader reader = getReader(tableNameDedup)) {
+            if (reader.size() == 0) {
+                return;
+            }
+            minTs = reader.getMinTimestamp();
+            maxTs = reader.getMaxTimestamp();
+        }
+
+        for (int i = 0; i < inserts; i++) {
+            long fromTs = minTs + rnd.nextLong(maxTs - minTs);
+            long toTs = (long) (fromTs + Timestamps.DAY_MICROS * Math.pow(1.2, rnd.nextDouble()));
+
+            String insertSql = "insert into " + tableNameDedup +
+                    " select * from " + tableNameDedup +
+                    " where " + timestampColumnName + " >= " + fromTs + " and ts < " + toTs
+                    + " LIMIT 100000";
+
+            execute(insertSql);
+        }
+        drainWalQueue();
+
+        String partitionsAfter = readTxnToString(tt, false, true, true);
+        Assert.assertEquals("partitions should be not rewritten", partitions, partitionsAfter);
+    }
+
     private void runDedupWithShiftAndStep(Rnd rnd, String tableName, int colType) {
         ObjList<FuzzTransaction> transactions = new ObjList<>();
         try {
@@ -828,6 +913,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 sharedWorkerPool.start(LOG);
 
                 try {
+                    addDuplicates(transactions, rnd, upsertKeyIndexes);
                     applyWal(transactions, tableNameWalNoDedup, 1, new Rnd());
                     applyWal(transactions, tableNameDedup, 1 + rnd.nextInt(4), rnd);
 
@@ -847,6 +933,19 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
                     fuzzer.assertCounts(tableNameDedup, timestampColumnName);
                     fuzzer.assertStringColDensity(tableNameDedup);
+
+//                    // Re-insert exactly same data, random intervals to the table with dedup enabled
+//                    reinsertSameData(
+//                            rnd,
+//                            tableNameDedup,
+//                            timestampColumnName
+//                    );
+//                    assertSqlCursorsNoDups(
+//                            tableNameWalNoDedup,
+//                            upsertKeyNames,
+//                            tableNameDedup
+//                    );
+
                 } finally {
                     sharedWorkerPool.halt();
                 }
