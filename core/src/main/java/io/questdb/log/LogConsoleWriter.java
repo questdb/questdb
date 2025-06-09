@@ -34,6 +34,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
+import java.io.PrintStream;
 import java.util.Arrays;
 
 public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogWriter {
@@ -70,20 +71,17 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
         this.interceptor = interceptor;
     }
 
-    private void safeDebugPrint() {
+    private void safeDebugPrint(PrintStream out) {
         for (long l = sinkArrayPos; l < sinkArrayPos + debugSinks.length; l++) {
             Utf8StringSink sink = debugSinks[(int) (l % debugSinks.length)];
-            System.err.println("System.err:");
             String content = sink.toString();
-            System.err.println(content);
-            System.err.println("System.out:");
-            System.out.println(content);
+            out.print(content);
 //            for (int n = sink.size(), i = 0; i < n; i++) {
 //                byte b = sink.byteAt(i);
 //                if (b < 127 && (b > 31 || b == '\r' || b == '\n' || b == '\t')) {
-//                    System.err.print((char) b);
+//                    out.print((char) b);
 //                } else {
-//                    System.err.format("\\x%02x", b & 0xFF);
+//                    out.format("\\x%02x", b & 0xFF);
 //                }
 //            }
         }
@@ -102,7 +100,11 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
                 if (res != sink.size()) {
                     System.err.println("sink.size() " + sink.size() + ", res " + res + ", errno " +
                             Os.errno() + ", fd " + Files.toOsFd(fd) + ". Text being logged:");
-                    safeDebugPrint();
+                    System.out.println("System.out:");
+                    safeDebugPrint(System.out);
+                    Os.sleep(1000);
+                    System.out.println("System.err:");
+                    safeDebugPrint(System.err);
                     Os.sleep(1000);
                     System.exit(-1);
                 }
