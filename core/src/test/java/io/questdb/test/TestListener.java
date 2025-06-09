@@ -65,7 +65,7 @@ public class TestListener extends RunListener {
     public void testAssumptionFailure(Failure failure) {
         Description description = failure.getDescription();
         LOG.error()
-                .$("***** Test Assumption Violated *****")
+                .$("***** Test Assumption Violated ***** ")
                 .utf8(description.getClassName()).$('.')
                 .utf8(description.getMethodName())
                 .$(" duration_ms=")
@@ -78,7 +78,7 @@ public class TestListener extends RunListener {
     public void testFailure(Failure failure) {
         Description description = failure.getDescription();
         LOG.error()
-                .$("***** Test Failed *****")
+                .$("***** Test Failed ***** ")
                 .utf8(description.getClassName()).$('.')
                 .utf8(description.getMethodName())
                 .$(" duration_ms=").$(getTestDuration())
