@@ -24,11 +24,87 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Os;
+import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 
 public class CreateDropViewTest extends AbstractViewTest {
+
+    @Test
+    public void testCreateDropConcurrent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table price (" +
+                            "  sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into price values('gbpusd', 1.320, now())");
+            drainWalQueue();
+
+            final int iterations = 50;
+            final CyclicBarrier barrier = new CyclicBarrier(2);
+            final AtomicInteger errorCounter = new AtomicInteger();
+            final AtomicInteger createCounter = new AtomicInteger();
+
+            final Thread creator = new Thread(() -> {
+                try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    barrier.await();
+                    for (int i = 0; i < iterations; i++) {
+                        // Use test alloc() function to make sure that we always free the factory.
+                        execute(
+                                "create view if not exists price_view as (" +
+                                        "select sym, alloc(42), last(price) as price, ts from price sample by 1h" +
+                                        ")",
+                                executionContext
+                        );
+                        drainWalQueue();
+                        createCounter.incrementAndGet();
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace(System.out);
+                    errorCounter.incrementAndGet();
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+            creator.start();
+
+            final Thread dropper = new Thread(() -> {
+                try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    barrier.await();
+                    int knownCount;
+                    int droppedAt = 0;
+                    while ((knownCount = createCounter.get()) < iterations && errorCounter.get() == 0) {
+                        if (knownCount > droppedAt) {
+                            execute("drop view if exists price_view", executionContext);
+                            droppedAt = createCounter.get();
+                        } else {
+                            Os.sleep(1);
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace(System.out);
+                    errorCounter.incrementAndGet();
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+            dropper.start();
+
+            creator.join();
+            dropper.join();
+
+            assertEquals(0, errorCounter.get());
+        });
+    }
 
     @Test
     public void testCreateViewBasedOnTable() throws Exception {
