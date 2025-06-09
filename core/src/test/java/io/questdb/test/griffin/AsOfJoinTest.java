@@ -113,8 +113,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "  and bid > price\n" +
                     ");";
 
-            // the same query with hint
-            String queryWithHint = "select /*+ use_asof_binary_search(orders md) */ * from (\n" +
+            // the same query with Use hint
+            String queryWithUseHint = "select /*+ use_asof_binary_search(orders md) */ * from (\n" +
                     "  select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from oRdERS\n" +
                     "  asof join (\n" +
                     "    select ts as md_ts, market_Data_symbol, bid from market_data\n" +
@@ -124,7 +124,18 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "  and bid > price\n" +
                     ");";
 
-            // plan without the hint should not use the FAST ASOF
+            // the same query with Avoid hint
+            String queryWithAvoidHint = "select /*+ avoid_asof_binary_search(orders md) */ * from (\n" +
+                    "  select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from oRdERS\n" +
+                    "  asof join (\n" +
+                    "    select ts as md_ts, market_Data_symbol, bid from market_data\n" +
+                    "    where market_data_symbol = 'sym_1' \n" +
+                    "  ) MD  \n" +
+                    "  where orders.ts > '2025-01-01T00:00:00.000000000Z' \n" +
+                    "  and bid > price\n" +
+                    ");";
+
+            // plan with the avoid hint should NOT use the FAST ASOF
             assertQuery("QUERY PLAN\n" +
                             "SelectedRecord\n" +
                             "    Filter filter: oRdERS.price<MD.bid\n" +
@@ -139,14 +150,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: market_data\n",
-                    "EXPLAIN " + queryWithoutHint, null, false, true);
+                    "EXPLAIN " + queryWithAvoidHint, null, false, true);
 
-            // with hint it generates a plan with the fast asof join
+            // with Use hint it generates a plan with the fast asof join
             assertQuery("QUERY PLAN\n" +
                             "SelectedRecord\n" +
                             "    Filter filter: oRdERS.price<MD.bid\n" +
                             "        Filtered AsOf Join Fast Scan\n" +
-                            "          filter: oRdERS.order_symbol='sym_1'\n" +
+                            "          filter: market_Data_symbol='sym_1'\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Interval forward scan on: orders\n" +
@@ -154,15 +165,31 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: market_data\n",
-                    "EXPLAIN " + queryWithHint, null, false, true);
+                    "EXPLAIN " + queryWithUseHint, null, false, true);
 
-            // both queries must return the same result
+            // and query without hint should also use the fast asof join
+            assertQuery("QUERY PLAN\n" +
+                            "SelectedRecord\n" +
+                            "    Filter filter: oRdERS.price<MD.bid\n" +
+                            "        Filtered AsOf Join Fast Scan\n" +
+                            "          filter: market_Data_symbol='sym_1'\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: orders\n" +
+                            "                  intervals: [(\"2025-01-01T00:00:00.000001Z\",\"MAX\")]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: market_data\n",
+                    "EXPLAIN " + queryWithoutHint, null, false, true);
+
+            // all three queries must return the same result
             String expectedResult = "ts\tbid\tmarket_data_symbol\torder_symbol\torder_ts\tprice\n" +
                     "2025-01-01T00:03:20.003570Z\t0.18646912884414946\tsym_1\tsym_4\t2025-01-01T00:03:19.407091Z\t0.08486964232560668\n" +
                     "2025-01-01T00:06:40.006304Z\t0.9130994629783138\tsym_1\tsym_2\t2025-01-01T00:06:37.303610Z\t0.8423410920883345\n" +
                     "2025-01-01T00:13:20.002056Z\t0.24872951622414008\tsym_1\tsym_4\t2025-01-01T00:13:19.909382Z\t0.0367581207471136\n" +
                     "2025-01-01T00:16:40.009947Z\t0.5071618579762882\tsym_1\tsym_6\t2025-01-01T00:16:39.800653Z\t0.3100545983862456\n";
-            assertQuery(expectedResult, queryWithHint, "ts", false, false);
+            assertQuery(expectedResult, queryWithUseHint, "ts", false, false);
+            assertQuery(expectedResult, queryWithAvoidHint, "ts", false, false);
             assertQuery(expectedResult, queryWithoutHint, "ts", false, false);
         });
     }
@@ -508,19 +535,24 @@ public class AsOfJoinTest extends AbstractCairoTest {
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
             assertQuery(expected, query, null, "ts", false, true);
 
-            // non-keyed join and slave has a filter + hint -> should use FilteredAsOfJoinNoKeyFastRecordCursorFactory
+            // non-keyed join and slave has a filter + use hint -> should use FilteredAsOfJoinNoKeyFastRecordCursorFactory
             query = "SELECT /*+ use_asof_binary_search(t1 t2) */ * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
             assertQuery(expected, query, null, "ts", false, true);
 
-            // non-keyed join, slave has a filter, no hint -> should use AsOfJoinNoKeyRecordCursorFactory
+            // non-keyed join, slave has a filter, no hint -> should also use FilteredAsOfJoinNoKeyFastRecordCursorFactory
             query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
+            assertQuery(expected, query, null, "ts", false, true);
+
+            // non-keyed join, slave has a filter, avoid hint -> should also use AsOfJoinNoKeyRecordCursorFactory
+            query = "SELECT /*+ avoid_asof_binary_search(t1 t2) */ * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "AsOf Join");
             TestUtils.assertNotContains(sink, "Filtered");
             TestUtils.assertNotContains(sink, "Fast");
-            assertQuery(expected, query, null, "ts", false, true);
         });
     }
 
