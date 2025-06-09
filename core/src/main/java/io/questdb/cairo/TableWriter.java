@@ -7710,7 +7710,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         o3ColumnOverrides.set(primaryColumnIndex, remappedColumn);
 
                         LOG.info().$("using remapped column buffer [table=").utf8(tableToken.getTableName())
-                                .$("name=").$(metadata.getColumnName(i)).$(", index=").$(i).I$();
+                                .$(", name=").$(metadata.getColumnName(i)).$(", index=").$(i).I$();
                     }
                 }
                 columnSegmentAddressesBase += Long.BYTES;
