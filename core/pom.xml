@@ -216,6 +216,7 @@
                             <value>io.questdb.test.TestListener</value>
                         </property>
                     </properties>
+                    <argLine>-Dfile.encoding=UTF-8</argLine>
                     <environmentVariables>
                         <!-- needed for testing Sender.fromEnv() -->
                         <QDB_CLIENT_CONF>
