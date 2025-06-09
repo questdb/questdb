@@ -33,7 +33,7 @@ steps:
       destinationFolder: '$(build.sourcesdirectory)/maven'
     condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'))
 
-  - task: Maven@4
+  - task: Maven@3
     displayName: "Compile with Maven"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
@@ -45,7 +45,7 @@ steps:
       jdkVersionOption: $(jdk)
     condition:
       eq(variables['SOURCE_CODE_CHANGED'], 'false')
-  - task: Maven@4
+  - task: Maven@3
     displayName: "Run tests"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
