@@ -8,6 +8,7 @@ import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -16,7 +17,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -26,16 +26,9 @@ import static org.junit.Assert.assertFalse;
 
 public class MatViewStateTest extends AbstractCairoTest {
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
-        AbstractCairoTest.setUpStatic();
-    }
-
     @Before
     public void setUp() {
         super.setUp();
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
     }
 
@@ -103,16 +96,16 @@ public class MatViewStateTest extends AbstractCairoTest {
                 for (int i = 0; i < iterations; i++) {
                     boolean invalidate = rnd.nextBoolean();
                     if (invalidate) {
-                        walWriter.resetMatViewState(i, i, true, "Invalidating " + i);
-                        assertState(tableToken, i, i, true, "Invalidating " + i);
+                        walWriter.resetMatViewState(i, i, true, "Invalidating " + i, Numbers.LONG_NULL);
+                        assertState(tableToken, i, i, true, "Invalidating " + i, Numbers.LONG_NULL);
                     }
                     TableWriter.Row row = walWriter.newRow(0);
                     row.putStr(0, "ABC");
                     row.putDouble(1, rnd.nextDouble());
                     row.append();
-                    walWriter.commitMatView(i, i, 0, 1);
+                    walWriter.commitMatView(i, i, i, 0, 1);
                 }
-                assertState(tableToken, iterations - 1, iterations - 1, false, null);
+                assertState(tableToken, iterations - 1, iterations - 1, false, null, iterations - 1);
 
                 fail.set(true);
                 // all subsequent state updates should fail
@@ -121,14 +114,14 @@ public class MatViewStateTest extends AbstractCairoTest {
                     row.putStr(0, "ABC");
                     row.putDouble(1, rnd.nextDouble());
                     row.append();
-                    walWriter.commitMatView(i, i, 0, 1);
+                    walWriter.commitMatView(i, i, i, 0, 1);
                     drainWalQueue();
-                    assertState(tableToken, iterations - 1, iterations - 1, false, null);
+                    assertState(tableToken, iterations - 1, iterations - 1, false, null, iterations - 1);
                 }
 
-                walWriter.resetMatViewState(42, 42, true, "missed invalidation");
+                walWriter.resetMatViewState(42, 42, true, "missed invalidation", Numbers.LONG_NULL);
                 drainWalQueue();
-                assertState(tableToken, iterations - 1, iterations - 1, false, null);
+                assertState(tableToken, iterations - 1, iterations - 1, false, null, iterations - 1);
             }
         });
     }
@@ -157,19 +150,27 @@ public class MatViewStateTest extends AbstractCairoTest {
                     row.putDouble(1, 0.0);
                     row.append();
                     if (i % 2 == 0) {
-                        walWriter.commitMatView(i, i, 0, 1);
+                        walWriter.commitMatView(i, i, i, 0, 1);
                     } else {
                         walWriter.commit();
                     }
                 }
                 // lastTxn = iterations - 1
                 long lastMatViewTxn = (iterations - 1) - 1;
-                assertState(tableToken, lastMatViewTxn, lastMatViewTxn, false, null);
+                long lastPeriodHi = (iterations - 1) - 1;
+                assertState(tableToken, lastMatViewTxn, lastMatViewTxn, false, null, lastPeriodHi);
             }
         });
     }
 
-    private static void assertState(TableToken viewToken, long lastRefreshBaseTxn, long lastRefreshTimestamp, boolean invalid, String invalidationReason) {
+    private static void assertState(
+            TableToken viewToken,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            boolean invalid,
+            String invalidationReason,
+            long lastPeriodHi
+    ) {
         drainWalQueue();
         try (Path path = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
             reader.of(path.of(configuration.getDbRoot()).concat(viewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
@@ -178,6 +179,7 @@ public class MatViewStateTest extends AbstractCairoTest {
             assertEquals(lastRefreshBaseTxn, viewState.getLastRefreshBaseTxn());
             assertEquals(lastRefreshTimestamp, viewState.getLastRefreshTimestamp());
             TestUtils.assertEquals(invalidationReason, viewState.getInvalidationReason());
+            assertEquals(lastPeriodHi, viewState.getLastPeriodHi());
         }
     }
 }

@@ -293,6 +293,7 @@ public class MatViewTimerJob extends SynchronizedJob {
             this.tzRules = tzRules;
             this.delay = delay;
             sampler.setStart(start);
+            // TODO(puzpuzpuz): trigger period mat views immediately after restart
             // It's fine if the timer triggers immediately.
             deadlineUtc = now > start + startEpsilon ? sampler.nextTimestamp(sampler.round(now - 1)) : start;
             deadlineLocal = tzRules != null ? deadlineUtc + tzRules.getOffset(deadlineUtc) : deadlineUtc;

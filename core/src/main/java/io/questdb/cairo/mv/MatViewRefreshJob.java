@@ -66,8 +66,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import static io.questdb.cairo.wal.WalUtils.WAL_DEFAULT_BASE_TABLE_TXN;
-import static io.questdb.cairo.wal.WalUtils.WAL_DEFAULT_LAST_REFRESH_TIMESTAMP;
+import static io.questdb.cairo.wal.WalUtils.*;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
@@ -544,7 +543,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             if (replacementTimestampHi > replacementTimestampLo) {
                                 // Gap in the refresh intervals, commit the previous batch
                                 // so that the replacement interval does not span across the gap.
-                                walWriter.commitMatView(WAL_DEFAULT_BASE_TABLE_TXN, WAL_DEFAULT_LAST_REFRESH_TIMESTAMP, replacementTimestampLo, replacementTimestampHi);
+                                walWriter.commitMatView(
+                                        WAL_DEFAULT_BASE_TABLE_TXN,
+                                        WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
+                                        WAL_DEFAULT_LAST_PERIOD_HI,
+                                        replacementTimestampLo,
+                                        replacementTimestampHi
+                                );
                                 commitTarget = rowCount + batchSize;
                             }
                             replacementTimestampLo = intervalIterator.getTimestampLo();
@@ -572,7 +577,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 final long commitBaseTableTxnLocal = isLastInterval ? commitBaseTableTxn : WAL_DEFAULT_BASE_TABLE_TXN;
                                 refreshFinishTimestamp = isLastInterval ? microsecondClock.getTicks() : WAL_DEFAULT_LAST_REFRESH_TIMESTAMP;
 
-                                walWriter.commitMatView(commitBaseTableTxnLocal, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
+                                // TODO(puzpuzpuz): use actual value instead of WAL_DEFAULT_LAST_PERIOD_HI
+                                walWriter.commitMatView(commitBaseTableTxnLocal, refreshFinishTimestamp, WAL_DEFAULT_LAST_PERIOD_HI, replacementTimestampLo, replacementTimestampHi);
                                 replacementTimestampLo = replacementTimestampHi;
                                 commitTarget = rowCount + batchSize;
                             }
@@ -581,7 +587,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                     if (replacementTimestampHi > replacementTimestampLo) {
                         refreshFinishTimestamp = microsecondClock.getTicks();
-                        walWriter.commitMatView(commitBaseTableTxn, refreshFinishTimestamp, replacementTimestampLo, replacementTimestampHi);
+                        // TODO(puzpuzpuz): use actual value instead of WAL_DEFAULT_LAST_PERIOD_HI
+                        walWriter.commitMatView(commitBaseTableTxn, refreshFinishTimestamp, WAL_DEFAULT_LAST_PERIOD_HI, replacementTimestampLo, replacementTimestampHi);
                     }
                     break;
                 } catch (TableReferenceOutOfDateException e) {
@@ -920,7 +927,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private void refreshFailState(MatViewState state, @Nullable WalWriter walWriter, CharSequence errorMessage) {
         state.refreshFail(microsecondClock.getTicks(), errorMessage);
         if (walWriter != null) {
-            walWriter.resetMatViewState(state.getLastRefreshBaseTxn(), state.getLastRefreshFinishTimestamp(), true, errorMessage);
+            walWriter.resetMatViewState(
+                    state.getLastRefreshBaseTxn(),
+                    state.getLastRefreshFinishTimestamp(),
+                    true,
+                    errorMessage,
+                    state.getLastPeriodHi()
+            );
         }
         // Invalidate dependent views recursively.
         enqueueInvalidateDependentViews(state.getViewDefinition().getMatViewToken(), "base materialized view refresh failed");
@@ -1048,13 +1061,25 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         state.markAsValid();
         state.setLastRefreshBaseTableTxn(-1);
         state.setLastRefreshTimestamp(Numbers.LONG_NULL);
-        walWriter.resetMatViewState(state.getLastRefreshBaseTxn(), state.getLastRefreshFinishTimestamp(), false, null);
+        walWriter.resetMatViewState(
+                state.getLastRefreshBaseTxn(),
+                state.getLastRefreshFinishTimestamp(),
+                false,
+                null,
+                state.getLastPeriodHi()
+        );
     }
 
     private void setInvalidState(MatViewState state, WalWriter walWriter, CharSequence invalidationReason, long invalidationTimestamp) {
         state.markAsInvalid(invalidationReason);
         state.setLastRefreshTimestamp(invalidationTimestamp);
         state.setLastRefreshStartTimestamp(invalidationTimestamp);
-        walWriter.resetMatViewState(state.getLastRefreshBaseTxn(), state.getLastRefreshFinishTimestamp(), true, invalidationReason);
+        walWriter.resetMatViewState(
+                state.getLastRefreshBaseTxn(),
+                state.getLastRefreshFinishTimestamp(),
+                true,
+                invalidationReason,
+                state.getLastPeriodHi()
+        );
     }
 }

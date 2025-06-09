@@ -68,7 +68,8 @@ public class WalTxnDetails implements QuietCloseable {
     private static final int WAL_TXN_MAT_VIEW_REFRESH_TS = WAL_TXN_MAT_VIEW_REFRESH_TXN + 1;
     private static final int WAL_TXN_REPLACE_RANGE_TS_LOW = WAL_TXN_MAT_VIEW_REFRESH_TS + 1;
     private static final int WAL_TXN_REPLACE_RANGE_TS_HI = WAL_TXN_REPLACE_RANGE_TS_LOW + 1;
-    public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_REPLACE_RANGE_TS_HI + 1;
+    private static final int WAL_TXN_MAT_VIEW_PERIOD_HI = WAL_TXN_REPLACE_RANGE_TS_HI + 1;
+    public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_MAT_VIEW_PERIOD_HI + 1;
     private static final int SYMBOL_MAP_COLUMN_RECORD_HEADER_INTS = 6;
     private static final int SYMBOL_MAP_RECORD_HEADER_INTS = 4;
     private final CairoConfiguration config;
@@ -94,7 +95,7 @@ public class WalTxnDetails implements QuietCloseable {
     // 4 bytes - low 32bits of offset into stored symbol strings in symbolStringsMem
     // 4 bytes - high 32bits of offset into stored symbol strings in symbolStringsMem
     private DirectIntList symbolIndexes = new DirectIntList(4, MemoryTag.NATIVE_TABLE_WRITER);
-    // Stores all symbol strings for the stored transactions. The format is usula STRING format 4 bytes length + string in chars
+    // Stores all symbol strings for the stored transactions. The format is STRING format (4 bytes length + string in chars)
     private MemoryCARW symbolStringsMem = null;
     private long totalRowsLoadedToApply = 0;
     private DirectLongList txnOrder = new DirectLongList(10 * 4L, MemoryTag.NATIVE_TABLE_WRITER);
@@ -320,6 +321,10 @@ public class WalTxnDetails implements QuietCloseable {
         return startSeqTxn + transactionMeta.size() / TXN_METADATA_LONGS_SIZE - 1;
     }
 
+    public long getMatViewPeriodHi(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MAT_VIEW_PERIOD_HI);
+    }
+
     public long getMatViewRefreshTimestamp(long seqTxn) {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MAT_VIEW_REFRESH_TS);
     }
@@ -466,7 +471,6 @@ public class WalTxnDetails implements QuietCloseable {
             assert newSymbolsOffset >= currentSymbolIndexesStartOffset;
 
             if (newSymbolsOffset > currentSymbolIndexesStartOffset) {
-
                 if (symbolStringsMem != null && symbolStringsMem.getAppendOffset() > 0) {
                     long newSymbolStringMemStartOffset = findFirstSymbolStringMemOffset(newSymbolsOffset);
                     shiftSymbolStringsDataLeft(newSymbolStringMemStartOffset - currentSymbolStringMemStartOffset);
@@ -700,9 +704,11 @@ public class WalTxnDetails implements QuietCloseable {
                                 WalEventCursor.MatViewDataInfo matViewDataInfo = walEventCursor.getMatViewDataInfo();
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, matViewDataInfo.getLastRefreshBaseTableTxn());
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, matViewDataInfo.getLastRefreshTimestamp());
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_PERIOD_HI, matViewDataInfo.getLastPeriodHi());
                             } else {
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, -1);
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, -1);
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_PERIOD_HI, -1);
                             }
                             transactionMeta.set(txnMetaOffset + WAL_TXN_REPLACE_RANGE_TS_LOW, commitInfo.getReplaceRangeTsLow());
                             transactionMeta.set(txnMetaOffset + WAL_TXN_REPLACE_RANGE_TS_HI, commitInfo.getReplaceRangeTsHi());
@@ -727,6 +733,9 @@ public class WalTxnDetails implements QuietCloseable {
                     transactionMeta.set(txnMetaOffset + WAL_TXN_SYMBOL_DIFF_OFFSET, -1); // symbols diff offset
                     transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, -1); // mat view refresh txn
                     transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, -1); // mat view refresh timestamp
+                    transactionMeta.set(txnMetaOffset + WAL_TXN_REPLACE_RANGE_TS_LOW, -1); // replace range low boundary
+                    transactionMeta.set(txnMetaOffset + WAL_TXN_REPLACE_RANGE_TS_HI, -1); // replace range high boundary
+                    transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_PERIOD_HI, -1); // mat view last period high boundary
                 }
             }
         } finally {

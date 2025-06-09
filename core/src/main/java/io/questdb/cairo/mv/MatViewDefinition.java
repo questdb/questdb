@@ -59,7 +59,7 @@ public class MatViewDefinition implements Mutable {
     private long fixedOffset;
     private String matViewSql;
     private volatile TableToken matViewToken;
-    // Not persisted, parsed from periodLength and periodLengthUnit (stored in table meta).
+    // Not persisted, parsed from periodLength and periodLengthUnit (external fields from table meta).
     // Access must be synchronized as this object is not thread-safe.
     private TimestampSampler periodSampler;
     private int refreshType = -1;
