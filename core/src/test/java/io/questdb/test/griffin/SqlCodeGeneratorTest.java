@@ -2614,6 +2614,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexed() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         final String expected = "a\tb\tk\n" +
                 "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                 "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
@@ -2693,6 +2695,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedExternalFilter() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         final String expected = "a\tk\tb\n" +
                 "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
@@ -2884,6 +2888,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHash1c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(1);
             assertQueryNoLeakCheck(
@@ -2902,6 +2908,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHash2c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             assertQueryNoLeakCheck(
@@ -2920,6 +2928,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHash2cFn() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             assertQueryNoLeakCheck(
@@ -2938,6 +2948,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHash4c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(4);
             assertQueryNoLeakCheck(
@@ -2956,6 +2968,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHash8c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(8);
             assertQueryNoLeakCheck(
@@ -2974,6 +2988,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashExcludeLongPrefix() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -2993,6 +3009,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashFnNonConst() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             execute(
                     "create table x as (" +
@@ -3022,6 +3040,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashLiteralExpected() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -3044,6 +3064,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashOutOfRangeFn() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -3066,6 +3088,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashRnd1c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createRndGeoHashTable();
             assertQueryNoLeakCheck(
@@ -3089,6 +3113,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashRnd2c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createRndGeoHashTable();
             assertQueryNoLeakCheck(
@@ -3115,6 +3141,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashRnd4c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createRndGeoHashTable();
             assertQueryNoLeakCheck(
@@ -3141,6 +3169,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashRnd6Bits() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createRndGeoHashBitsTable();
             assertQueryNoLeakCheck(
@@ -3163,6 +3193,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashRnd8c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createRndGeoHashTable();
             assertQueryNoLeakCheck(
@@ -3183,6 +3215,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashRndLongBitsMask() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createRndGeoHashBitsTable();
             assertQueryNoLeakCheck(
@@ -3200,6 +3234,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashRndLongBitsPrefix() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createRndGeoHashBitsTable();
             try {
@@ -3220,6 +3256,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashStrCast() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             assertQueryNoLeakCheck(
@@ -3238,6 +3276,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashTimeRange1c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(1);
             assertQueryNoLeakCheck(
@@ -3255,6 +3295,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashTimeRange2c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             assertQueryNoLeakCheck(
@@ -3272,6 +3314,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashTimeRange4c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(4);
             assertQueryNoLeakCheck(
@@ -3289,6 +3333,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashTimeRange8c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(8);
             assertQueryNoLeakCheck(
@@ -3305,6 +3351,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinColumnNotLiteral() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -3324,6 +3372,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinColumnWrongType() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -3343,6 +3393,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinEmpty() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -3362,6 +3414,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinNullArg() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -3381,6 +3435,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinOr() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -3400,6 +3456,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinWrongCast() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -3466,6 +3524,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedMixed() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         final String expected = "a\tk\tb\n" +
                 "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
                 "2.6836863013701473\t1970-01-13T17:33:20.000000Z\tHYRX\n" +
@@ -3514,6 +3574,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedMixedColumns() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         final String expected = "k\ta\n" +
                 "1970-01-03T07:33:20.000000Z\t23.90529010846525\n" +
                 "1970-01-11T10:00:00.000000Z\t12.026122412833129\n" +
@@ -3544,6 +3606,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedMultiplePartitions() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(
                 () -> {
                     execute("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
@@ -5246,6 +5310,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestBySupportedColumnTypes2() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         testLatestBySupportedColumnTypes(
                 "create table tab (" +
                         "    boolean boolean, " +
@@ -5263,6 +5329,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestBySupportedColumnTypes3() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         testLatestBySupportedColumnTypes(
                 "create table tab (" +
                         "    boolean boolean, " +
@@ -6521,7 +6589,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                13, "unsupported column type: BINARY"
+                13,
+                "BINARY is not a supported type in ORDER BY clause"
         );
     }
 
@@ -8031,6 +8100,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testUnionCastTypeSymmetry() {
         for (int typeA = 0; typeA <= ColumnType.INTERVAL; typeA++) {
             for (int typeB = 0; typeB <= typeA; typeB++) {
+                if (ColumnType.isGenericType(typeA) || ColumnType.isGenericType(typeB)) {
+                    continue;
+                }
                 Assert.assertEquals(
                         "typeA: " + typeA + ", typeB: " + typeB,
                         SqlCodeGenerator.getUnionCastType(typeA, typeB),
@@ -8283,23 +8355,33 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         );
     }
 
+    /**
+     * Should not fail any more.
+     */
     @Test
     public void testWithinClauseWithFilterFails() throws Exception {
-        assertException(
+        configOverrideUseWithinLatestByOptimisation();
+
+        assertQuery(
+                "x\tsym\tgeo\tts\n" +
+                        "19\tb\tz2\t1970-01-01T00:00:00.000019Z\n" +
+                        "20\ta\trk\t1970-01-01T00:00:00.000020Z\n",
                 "select * from tab where geo within(#zz) and x > 0 latest on ts partition by sym",
                 "create table tab as " +
                         "(" +
                         " select  x, rnd_symbol('a', 'b') sym, rnd_geohash(10) geo, x::timestamp ts " +
                         " from long_sequence(20) " +
                         "), index(sym) timestamp(ts)",
-                28,
-                "WITHIN clause doesn't work with filters"
+                "ts",
+                true,
+                true
         );
     }
 
     @Test
     public void testWithinClauseWithLatestByNonSymbolOrNonIndexedSymbolColumnFails() throws Exception {
-        assertException(
+        assertQuery(
+                "x\tsym_idx\tsym_noidx\tgeo\tts\n",
                 "select * from tab where geo within(#zz) latest on ts partition by x",
                 "create table tab as " +
                         "(" +
@@ -8310,26 +8392,36 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "         x::timestamp ts " +
                         " from long_sequence(20) " +
                         "), index(sym_idx) timestamp(ts)",
-                28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+                "ts",
+                true,
+                true
         );
 
-        assertException(
+        assertQuery(
+                "x\tsym_idx\tsym_noidx\tgeo\tts\n",
                 "select * from tab where geo within(#zz) latest on ts partition by sym_idx, x",
-                28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+                null,
+                "ts",
+                true,
+                true
         );
 
-        assertException(
+        assertQuery(
+                "x\tsym_idx\tsym_noidx\tgeo\tts\n",
                 "select * from tab where geo within(#zz) latest on ts partition by sym_noidx",
-                28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+                null,
+                "ts",
+                true,
+                true
         );
 
-        assertException(
+        assertQuery(
+                "x\tsym_idx\tsym_noidx\tgeo\tts\n",
                 "select * from tab where geo within(#zz) latest on ts partition by sym_idx, sym_noidx",
-                28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+                null,
+                "ts",
+                true,
+                true
         );
     }
 
@@ -8354,16 +8446,78 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testWithinClauseWithoutLatestByFails() throws Exception {
-        assertException(
+        assertQuery("x\tsym\tgeo\tts\n",
                 "select * from tab where geo within(#zz)",
                 "create table tab as " +
                         "(" +
                         " select  x, rnd_symbol('a', 'b') sym, rnd_geohash(10) geo, x::timestamp ts " +
                         " from long_sequence(20) " +
                         "), index(sym) timestamp(ts)",
-                28,
-                "WITHIN clause requires LATEST BY clause"
+                "ts",
+                true,
+                false
         );
+    }
+
+    @Test
+    public void testWithinDoesNotThrowSegfaultWithEmptySymbolColumn() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
+        String ddlTrips = "CREATE TABLE trips (\n" +
+                "pickup_datetime TIMESTAMP,\n" +
+                "pickup_geohash GEOHASH(12c)\n" +
+                ") timestamp(pickup_datetime)\n";
+
+        String dmlTrips = "INSERT INTO trips (pickup_datetime, pickup_geohash) VALUES \n" +
+                "    ('2009-01-01T00:00:00.000000Z', #dr5rsjutvshf),\n" +
+                "    ('2009-01-01T00:00:00.000000Z', #dr5ruy5ttnw1),\n" +
+                "    ('2009-01-01T00:00:02.000000Z', #dr5ruvkrr2fe),\n" +
+                "    ('2009-01-01T00:00:04.000000Z', #dr5reff6hu5e),\n" +
+                "    ('2009-01-01T00:00:07.000000Z', #dr5rshd6guzu),\n" +
+                "    ('2009-01-01T00:00:09.000000Z', #dr5rugk21jew),\n" +
+                "    ('2009-01-01T00:00:10.000000Z', #dr5ru7bhxxr7),\n" +
+                "    ('2009-01-01T00:00:13.000000Z', #dr5ruhv90nt3),\n" +
+                "    ('2009-01-01T00:00:15.000000Z', #dr5ru43qt65b),\n" +
+                "    ('2009-01-01T00:00:16.000000Z', #dr5rt6qwr9s8),\n" +
+                "    ('2009-01-01T00:00:17.000000Z', #dr5rvn6ccrhq),\n" +
+                "    ('2009-01-01T00:00:21.000000Z', #dr5rgcj30u1n),\n" +
+                "    ('2009-01-01T00:00:23.000000Z', #dr5rgbk02dxk),\n" +
+                "    ('2009-01-01T00:00:25.000000Z', #000000000000),\n" +
+                "    ('2009-01-01T00:00:25.000000Z', #s00000000000),\n" +
+                "    ('2009-01-01T00:00:27.000000Z', #dr5rutj2ty38),\n" +
+                "    ('2009-01-01T00:00:27.000000Z', #dr5rsncg1he5),\n" +
+                "    ('2009-01-01T00:00:27.000000Z', #dr5x1p1t86gx),\n" +
+                "    ('2009-01-01T00:00:28.000000Z', #dr5ruswebtne),\n" +
+                "    ('2009-01-01T00:00:29.000000Z', #dr5rsqhc82jq),\n" +
+                "    ('2009-01-01T00:00:29.000000Z', #dr5rzjybb9g4),\n" +
+                "    ('2009-01-01T00:00:29.000000Z', #dr7grdqzppp0),\n" +
+                "    ('2009-01-01T00:00:29.000000Z', #dr5rgbw8fxz6),\n" +
+                "    ('2009-01-01T00:00:30.000000Z', #dr5rsqqnccnz),\n" +
+                "    ('2009-01-01T00:00:30.000000Z', #dr5rtnj79c20),\n" +
+                "    ('2009-01-01T00:00:33.000000Z', #dr5rzjy9r094),\n" +
+                "    ('2009-01-01T00:00:36.000000Z', #dr5rvhfgw67v),\n" +
+                "    ('2009-01-01T00:00:37.000000Z', #dr5rsnpw997n),\n" +
+                "    ('2009-01-01T00:00:39.000000Z', #dr72h8hkt556),\n" +
+                "    ('2009-01-01T00:00:43.000000Z', #000000000000)\n";
+
+        assertMemoryLeak(() -> {
+            execute(ddlTrips);
+            execute(dmlTrips);
+            execute("ALTER TABLE trips ADD COLUMN sym SYMBOL;");
+            execute("ALTER TABLE trips ALTER COLUMN sym ADD INDEX;");
+            drainWalQueue();
+
+            String query = "trips WHERE pickup_geohash WITHIN (#dr5) LATEST ON pickup_datetime PARTITION BY sym;";
+
+            // below will segfault
+            assertQuery("pickup_datetime\tpickup_geohash\tsym\n",
+                    query,
+                    null,
+                    "pickup_datetime",
+                    true,
+                    true
+            );
+        });
     }
 
     private static void printExpectedUnionCastMatrix(int[][] expected) {

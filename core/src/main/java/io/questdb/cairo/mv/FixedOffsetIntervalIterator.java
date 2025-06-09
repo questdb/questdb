@@ -25,14 +25,14 @@
 package io.questdb.cairo.mv;
 
 import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-public class FixedOffsetIntervalIterator implements SampleByIntervalIterator {
+public class FixedOffsetIntervalIterator extends SampleByIntervalIterator {
     private long maxTimestamp;
     private long minTimestamp;
-    private TimestampSampler sampler;
-    private int step;
     private long timestampHi;
     private long timestampLo;
 
@@ -61,24 +61,15 @@ public class FixedOffsetIntervalIterator implements SampleByIntervalIterator {
         return timestampLo;
     }
 
-    @Override
-    public boolean next() {
-        if (timestampHi == maxTimestamp) {
-            return false;
-        }
-        timestampLo = timestampHi;
-        timestampHi = Math.min(sampler.nextTimestamp(timestampHi, step), maxTimestamp);
-        return true;
-    }
-
     public FixedOffsetIntervalIterator of(
             @NotNull TimestampSampler sampler,
             long offset,
+            @Nullable LongList txnIntervals,
             long minTs,
             long maxTs,
             int step
     ) {
-        this.sampler = sampler;
+        super.of(sampler, txnIntervals);
 
         sampler.setStart(offset);
         minTimestamp = sampler.round(minTs);
@@ -89,9 +80,18 @@ public class FixedOffsetIntervalIterator implements SampleByIntervalIterator {
     }
 
     @Override
-    public void toTop(int step) {
+    protected boolean next0() {
+        if (timestampHi == maxTimestamp) {
+            return false;
+        }
+        timestampLo = timestampHi;
+        timestampHi = Math.min(sampler.nextTimestamp(timestampHi, step), maxTimestamp);
+        return true;
+    }
+
+    @Override
+    protected void toTop0() {
         this.timestampLo = Numbers.LONG_NULL;
         this.timestampHi = minTimestamp;
-        this.step = step;
     }
 }

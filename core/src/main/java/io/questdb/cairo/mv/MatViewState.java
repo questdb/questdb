@@ -35,6 +35,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.TelemetrySystemEvent.*;
 
@@ -51,13 +52,17 @@ public class MatViewState implements QuietCloseable {
     public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
     // used to avoid concurrent refresh runs
     private final AtomicBoolean latch = new AtomicBoolean(false);
+    // Incremented each time an incremental/full refresh finishes.
+    // Used by MatViewTimerJob to avoid queueing redundant refresh tasks.
+    private final AtomicLong refreshSeq = new AtomicLong();
     private final MatViewTelemetryFacade telemetryFacade;
     private final MatViewDefinition viewDefinition;
     private RecordCursorFactory cursorFactory;
     private volatile boolean dropped;
     private volatile boolean invalid;
     private volatile long lastRefreshBaseTxn = -1;
-    private volatile long lastRefreshTimestamp = Numbers.LONG_NULL;
+    private volatile long lastRefreshFinishTimestamp = Numbers.LONG_NULL;
+    private volatile long lastRefreshStartTimestamp = Numbers.LONG_NULL;
     private volatile boolean pendingInvalidation;
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
@@ -140,8 +145,12 @@ public class MatViewState implements QuietCloseable {
         return lastRefreshBaseTxn;
     }
 
-    public long getLastRefreshTimestamp() {
-        return lastRefreshTimestamp;
+    public long getLastRefreshFinishTimestamp() {
+        return lastRefreshFinishTimestamp;
+    }
+
+    public long getLastRefreshStartTimestamp() {
+        return lastRefreshStartTimestamp;
     }
 
     public long getRecordRowCopierMetadataVersion() {
@@ -152,8 +161,16 @@ public class MatViewState implements QuietCloseable {
         return recordToRowCopier;
     }
 
+    public long getRefreshSeq() {
+        return refreshSeq.get();
+    }
+
     public @NotNull MatViewDefinition getViewDefinition() {
         return viewDefinition;
+    }
+
+    public void incrementRefreshSeq() {
+        refreshSeq.incrementAndGet();
     }
 
     public void init() {
@@ -163,7 +180,7 @@ public class MatViewState implements QuietCloseable {
     public void initFromReader(MatViewStateReader reader) {
         this.invalid = reader.isInvalid();
         this.lastRefreshBaseTxn = reader.getLastRefreshBaseTxn();
-        this.lastRefreshTimestamp = reader.getLastRefreshTimestamp();
+        this.lastRefreshFinishTimestamp = reader.getLastRefreshTimestamp();
     }
 
     public boolean isDropped() {
@@ -203,9 +220,30 @@ public class MatViewState implements QuietCloseable {
         this.pendingInvalidation = false;
     }
 
+    public void rangeRefreshSuccess(
+            RecordCursorFactory factory,
+            RecordToRowCopier copier,
+            long recordRowCopierMetadataVersion,
+            long refreshFinishedTimestamp,
+            long refreshTriggeredTimestamp
+    ) {
+        assert latch.get();
+        this.cursorFactory = factory;
+        this.recordToRowCopier = copier;
+        this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
+        this.lastRefreshFinishTimestamp = refreshFinishedTimestamp;
+        telemetryFacade.store(
+                MAT_VIEW_REFRESH_SUCCESS,
+                viewDefinition.getMatViewToken(),
+                -1,
+                null,
+                refreshFinishedTimestamp - refreshTriggeredTimestamp
+        );
+    }
+
     public void refreshFail(long refreshTimestamp, CharSequence errorMessage) {
         assert latch.get();
-        this.lastRefreshTimestamp = refreshTimestamp;
+        this.lastRefreshFinishTimestamp = refreshTimestamp;
         markAsInvalid(errorMessage);
         telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, errorMessage, 0);
     }
@@ -214,7 +252,7 @@ public class MatViewState implements QuietCloseable {
             RecordCursorFactory factory,
             RecordToRowCopier copier,
             long recordRowCopierMetadataVersion,
-            long refreshTimestamp,
+            long refreshFinishedTimestamp,
             long refreshTriggeredTimestamp,
             long baseTableTxn
     ) {
@@ -222,18 +260,27 @@ public class MatViewState implements QuietCloseable {
         this.cursorFactory = factory;
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
-        this.lastRefreshTimestamp = refreshTimestamp;
+        this.lastRefreshFinishTimestamp = refreshFinishedTimestamp;
+        this.lastRefreshBaseTxn = baseTableTxn;
         telemetryFacade.store(
                 MAT_VIEW_REFRESH_SUCCESS,
                 viewDefinition.getMatViewToken(),
                 baseTableTxn,
                 null,
-                refreshTimestamp - refreshTriggeredTimestamp
+                refreshFinishedTimestamp - refreshTriggeredTimestamp
         );
     }
 
     public void setLastRefreshBaseTableTxn(long txn) {
         lastRefreshBaseTxn = txn;
+    }
+
+    public void setLastRefreshStartTimestamp(long ts) {
+        lastRefreshStartTimestamp = ts;
+    }
+
+    public void setLastRefreshTimestamp(long ts) {
+        this.lastRefreshFinishTimestamp = ts;
     }
 
     public void tryCloseIfDropped() {

@@ -45,16 +45,39 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.atomic.AtomicReference;
 
+@RunWith(Parameterized.class)
 public class CheckpointFuzzTest extends AbstractFuzzTest {
+    static int SCOREBOARD_FORMAT = 1;
     private static Path triggerFilePath;
+
+    public CheckpointFuzzTest(int scoreboardFormat) throws Exception {
+        if (scoreboardFormat != SCOREBOARD_FORMAT) {
+            SCOREBOARD_FORMAT = scoreboardFormat;
+            tearDownStatic();
+            setUpStatic();
+        }
+    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
+        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, SCOREBOARD_FORMAT);
         AbstractFuzzTest.setUpStatic();
         triggerFilePath = new Path();
+    }
+
+    @Parameterized.Parameters(name = "V{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {1},
+                {2},
+        });
     }
 
     @AfterClass
@@ -86,7 +109,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0,
                 0,
-                0.5
+                0.5,
+                0.01
         );
 
         fuzzer.setFuzzCounts(
@@ -127,7 +151,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0,
                 1,
-                0.0
+                0.0,
+                0.01
         );
 
         fuzzer.setFuzzCounts(
@@ -265,7 +290,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.1 * rnd.nextDouble(),
                 rnd.nextDouble(),
-                0.0
+                0.0,
+                0.01
         );
 
         fuzzer.setFuzzCounts(
@@ -323,6 +349,10 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    private String getTestTableName() {
+        return testName.getMethodName().replace('[', '_').replace(']', '_');
+    }
+
     protected void runFuzzWithCheckpoint(Rnd rnd) throws Exception {
         // Snapshot is not supported on Windows.
         Assume.assumeFalse(Os.isWindows());
@@ -335,63 +365,68 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "100G");
             }
 
-            String tableNameNonWal = testName.getMethodName() + "_non_wal";
-            fuzzer.createInitialTable(tableNameNonWal, false, fuzzer.initialRowCount);
-            String tableNameWal = testName.getMethodName();
-            TableToken walTable = fuzzer.createInitialTable(tableNameWal, true, fuzzer.initialRowCount);
+            String tableNameNonWal = getTestTableName() + "_non_wal";
+            String tableNameWal = getTestTableName();
+            TableToken walTable = fuzzer.createInitialTableWal(tableNameWal, fuzzer.initialRowCount);
+            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameWal, rnd);
+
+            fuzzer.createInitialTableNonWal(tableNameNonWal, transactions);
             if (rnd.nextBoolean()) {
                 drainWalQueue();
             }
 
-            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameNonWal, rnd);
-            int snapshotIndex = 1 + rnd.nextInt(transactions.size() - 1);
+            try {
+                int snapshotIndex = 1 + rnd.nextInt(transactions.size() - 1);
 
-            ObjList<FuzzTransaction> beforeSnapshot = new ObjList<>();
-            beforeSnapshot.addAll(transactions, 0, snapshotIndex);
-            ObjList<FuzzTransaction> afterSnapshot = new ObjList<>();
-            afterSnapshot.addAll(transactions, snapshotIndex, transactions.size());
+                ObjList<FuzzTransaction> beforeSnapshot = new ObjList<>();
+                beforeSnapshot.addAll(transactions, 0, snapshotIndex);
+                ObjList<FuzzTransaction> afterSnapshot = new ObjList<>();
+                afterSnapshot.addAll(transactions, snapshotIndex, transactions.size());
 
-            fuzzer.applyToWal(beforeSnapshot, tableNameWal, rnd.nextInt(2) + 1, rnd);
+                fuzzer.applyToWal(beforeSnapshot, tableNameWal, rnd.nextInt(2) + 1, rnd);
 
-            AtomicReference<Throwable> ex = new AtomicReference<>();
-            Thread asyncWalApply = new Thread(() -> {
-                try {
-                    drainWalQueue();
-                } catch (Throwable th) {
-                    ex.set(th);
-                } finally {
-                    Path.clearThreadLocals();
+                AtomicReference<Throwable> ex = new AtomicReference<>();
+                Thread asyncWalApply = new Thread(() -> {
+                    try {
+                        drainWalQueue();
+                    } catch (Throwable th) {
+                        ex.set(th);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                });
+                asyncWalApply.start();
+
+                Os.sleep(rnd.nextLong(snapshotIndex * 50L));
+                // Make snapshot here
+                checkpointCreate((rnd.nextInt() >> 30) == 1, testHardLinkCheckpoint);
+
+                asyncWalApply.join();
+
+                if (ex.get() != null) {
+                    throw new RuntimeException(ex.get());
                 }
-            });
-            asyncWalApply.start();
 
-            Os.sleep(rnd.nextLong(snapshotIndex * 50L));
-            // Make snapshot here
-            checkpointCreate((rnd.nextInt() >> 30) == 1, testHardLinkCheckpoint);
+                // Restore snapshot here
+                checkpointRecover();
+                engine.notifyWalTxnRepublisher(engine.verifyTableName(tableNameWal));
+                if (afterSnapshot.size() > 0) {
+                    fuzzer.applyWal(afterSnapshot, tableNameWal, rnd.nextInt(2) + 1, rnd);
+                } else {
+                    drainWalQueue();
+                }
 
-            asyncWalApply.join();
+                Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(walTable));
 
-            if (ex.get() != null) {
-                throw new RuntimeException(ex.get());
+                // Write same data to non-wal table
+                fuzzer.applyNonWal(transactions, tableNameNonWal, rnd);
+
+                String limit = "";
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableNameNonWal + limit, tableNameWal + limit, LOG);
+                fuzzer.assertRandomIndexes(tableNameNonWal, tableNameWal, rnd);
+            } finally {
+                Misc.freeObjListAndClear(transactions);
             }
-
-            // Restore snapshot here
-            checkpointRecover();
-            engine.notifyWalTxnRepublisher(engine.verifyTableName(tableNameWal));
-            if (afterSnapshot.size() > 0) {
-                fuzzer.applyWal(afterSnapshot, tableNameWal, rnd.nextInt(2) + 1, rnd);
-            } else {
-                drainWalQueue();
-            }
-
-            Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(walTable));
-
-            // Write same data to non-wal table
-            fuzzer.applyNonWal(transactions, tableNameNonWal, rnd);
-
-            String limit = "";
-            TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableNameNonWal + limit, tableNameWal + limit, LOG);
-            fuzzer.assertRandomIndexes(tableNameNonWal, tableNameWal, rnd);
         });
     }
 }

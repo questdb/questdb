@@ -26,6 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
@@ -39,6 +40,7 @@ import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NanosecondClock;
+import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -52,7 +54,7 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     private final HttpContextConfiguration httpContextConfiguration;
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new DefaultJsonQueryProcessorConfiguration() {
     };
-    private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new DefaultLineHttpProcessorConfiguration();
+    private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration;
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
         @Override
         public FilesFacade getFilesFacade() {
@@ -80,16 +82,17 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
     };
 
-    public DefaultHttpServerConfiguration() {
-        this(new DefaultHttpContextConfiguration());
+    public DefaultHttpServerConfiguration(CairoConfiguration cairoConfiguration) {
+        this(cairoConfiguration, new DefaultHttpContextConfiguration());
     }
 
-    public DefaultHttpServerConfiguration(HttpContextConfiguration httpContextConfiguration) {
+    public DefaultHttpServerConfiguration(CairoConfiguration cairoConfiguration, HttpContextConfiguration httpContextConfiguration) {
         try (InputStream inputStream = DefaultHttpServerConfiguration.class.getResourceAsStream("/io/questdb/site/conf/mime.types")) {
             this.mimeTypesCache = new MimeTypesCache(inputStream);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+        this.lineHttpProcessorConfiguration = new DefaultLineHttpProcessorConfiguration(cairoConfiguration);
         this.httpContextConfiguration = httpContextConfiguration;
     }
 
@@ -189,8 +192,96 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     }
 
     @Override
+    public boolean isSettingsReadOnly() {
+        return false;
+    }
+
+    @Override
     public boolean preAllocateBuffers() {
         return false;
+    }
+
+    public static class DefaultLineHttpProcessorConfiguration implements LineHttpProcessorConfiguration {
+        private final CairoConfiguration cairoConfiguration;
+
+        public DefaultLineHttpProcessorConfiguration(CairoConfiguration cairoConfiguration) {
+            this.cairoConfiguration = cairoConfiguration;
+        }
+
+        @Override
+        public boolean autoCreateNewColumns() {
+            return true;
+        }
+
+        @Override
+        public boolean autoCreateNewTables() {
+            return true;
+        }
+
+        @Override
+        public CairoConfiguration getCairoConfiguration() {
+            return cairoConfiguration;
+        }
+
+        @Override
+        public short getDefaultColumnTypeForFloat() {
+            return ColumnType.DOUBLE;
+        }
+
+        @Override
+        public short getDefaultColumnTypeForInteger() {
+            return ColumnType.LONG;
+        }
+
+        @Override
+        public int getDefaultPartitionBy() {
+            return PartitionBy.DAY;
+        }
+
+        @Override
+        public CharSequence getInfluxPingVersion() {
+            return "v2.7.4";
+        }
+
+        @Override
+        public long getMaxRecvBufferSize() {
+            return Numbers.SIZE_1GB;
+        }
+
+        @Override
+        public MicrosecondClock getMicrosecondClock() {
+            return MicrosecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public long getSymbolCacheWaitUsBeforeReload() {
+            return 500_000;
+        }
+
+        @Override
+        public LineTcpTimestampAdapter getTimestampAdapter() {
+            return LineTcpTimestampAdapter.DEFAULT_TS_INSTANCE;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+
+        @Override
+        public boolean isStringToCharCastAllowed() {
+            return false;
+        }
+
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return true;
+        }
+
+        @Override
+        public boolean logMessageOnError() {
+            return true;
+        }
     }
 
     public class DefaultJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
@@ -228,74 +319,6 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         @Override
         public NanosecondClock getNanosecondClock() {
             return httpContextConfiguration.getNanosecondClock();
-        }
-    }
-
-    public static class DefaultLineHttpProcessorConfiguration implements LineHttpProcessorConfiguration {
-
-        @Override
-        public boolean autoCreateNewColumns() {
-            return true;
-        }
-
-        @Override
-        public boolean autoCreateNewTables() {
-            return true;
-        }
-
-        @Override
-        public short getDefaultColumnTypeForFloat() {
-            return ColumnType.DOUBLE;
-        }
-
-        @Override
-        public short getDefaultColumnTypeForInteger() {
-            return ColumnType.LONG;
-        }
-
-        @Override
-        public int getDefaultPartitionBy() {
-            return PartitionBy.DAY;
-        }
-
-        @Override
-        public CharSequence getInfluxPingVersion() {
-            return "v2.7.4";
-        }
-
-        @Override
-        public MicrosecondClock getMicrosecondClock() {
-            return MicrosecondClockImpl.INSTANCE;
-        }
-
-        @Override
-        public long getSymbolCacheWaitUsBeforeReload() {
-            return 500_000;
-        }
-
-        @Override
-        public LineTcpTimestampAdapter getTimestampAdapter() {
-            return LineTcpTimestampAdapter.DEFAULT_TS_INSTANCE;
-        }
-
-        @Override
-        public boolean isEnabled() {
-            return true;
-        }
-
-        @Override
-        public boolean isStringToCharCastAllowed() {
-            return false;
-        }
-
-        @Override
-        public boolean isUseLegacyStringDefault() {
-            return true;
-        }
-
-        @Override
-        public boolean logMessageOnError() {
-            return true;
         }
     }
 }

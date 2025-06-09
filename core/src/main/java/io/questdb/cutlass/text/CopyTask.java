@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultLifecycleManager;
+import io.questdb.cairo.EmptyTxnScoreboardPool;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.SymbolMapWriter;
@@ -37,6 +38,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxnScoreboardPool;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -90,6 +92,7 @@ public class CopyTask {
     public static final byte STATUS_FAILED = 2;
     public static final byte STATUS_FINISHED = 1;
     public static final byte STATUS_STARTED = 0;
+    private static final TxnScoreboardPool EMPTY_SCOREBOARD_POOL = new EmptyTxnScoreboardPool();
     private static final Log LOG = LogFactory.getLog(CopyTask.class);
     private static final long MASK_NEW_LINE = SwarUtils.broadcast((byte) '\n');
     private static final long MASK_QUOTE = SwarUtils.broadcast((byte) '"');
@@ -535,7 +538,8 @@ public class CopyTask {
                             root,
                             cairoEngine.getDdlListener(tableToken),
                             cairoEngine.getCheckpointStatus(),
-                            cairoEngine
+                            cairoEngine,
+                            EMPTY_SCOREBOARD_POOL
                     )
             ) {
                 for (int i = 0; i < columnCount; i++) {
@@ -920,7 +924,8 @@ public class CopyTask {
                             importRoot,
                             engine.getDdlListener(tableToken),
                             engine.getCheckpointStatus(),
-                            engine
+                            engine,
+                            EMPTY_SCOREBOARD_POOL
                     )
             ) {
                 tableWriterRef = writer;
@@ -1202,8 +1207,8 @@ public class CopyTask {
 
                 final long len = ff.length(fd);
                 if (len == -1) {
-                    throw CairoException.critical(ff.errno()).put(
-                                    "could not get length of file [path=").put(tmpPath)
+                    throw CairoException.critical(ff.errno())
+                            .put("could not get length of file [path=").put(tmpPath)
                             .put(']');
                 }
 
@@ -1380,7 +1385,9 @@ public class CopyTask {
                 if (i == timestampIndex || dus.size() == 0) {
                     continue;
                 }
-                if (onField(offset, dus, w, i)) return;
+                if (onField(offset, dus, w, i)) {
+                    return;
+                }
             }
             w.append();
         }

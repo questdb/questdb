@@ -139,9 +139,54 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
             );
 
             assertPlanNoLeakCheck(
+                    "select timestamp_floor('3d', ts, '1980-01-01T16:00:00.000000Z', null, 'UTC+12:00') from x",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp_floor('3d',ts,'1980-01-01T16:00:00.000Z','00:00','UTC+12:00')]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select timestamp_floor('3d', ts, '1980-01-01T16:00:00.000000Z', '00:15', null) from x",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp_floor('3d',ts,'1980-01-01T16:15:00.000Z')]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
                     "select timestamp_floor('3d', ts, null, '00:00', 'Europe/Berlin') from x",
                     "VirtualRecord\n" +
-                            "  functions: [timestamp_floor('3d',ts,null,'00:00',Europe/Berlin')]\n" +
+                            "  functions: [timestamp_floor('3d',ts,null,'00:00','Europe/Berlin')]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select timestamp_floor('3d', ts, '1980-01-01T00:00:00.000000Z', null, 'Europe/Berlin') from x",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp_floor('3d',ts,'1980-01-01T00:00:00.000Z','00:00','Europe/Berlin')]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select timestamp_floor('33m', ts, '1980-01-01T16:00:00.000000Z', null, 'Europe/Berlin') from x",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp_floor('33m',ts,'1980-01-01T16:00:00.000Z','00:00','Europe/Berlin')]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select timestamp_floor('33m', ts, null, '00:00', 'Europe/Berlin') from x",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp_floor('33m',ts,null,'00:00','Europe/Berlin')]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"
@@ -150,7 +195,7 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
             assertPlanNoLeakCheck(
                     "select timestamp_floor('3d', ts, null, '12:00', 'Europe/Berlin') from x",
                     "VirtualRecord\n" +
-                            "  functions: [timestamp_floor('3d',ts,null,'12:00',Europe/Berlin')]\n" +
+                            "  functions: [timestamp_floor('3d',ts,null,'12:00','Europe/Berlin')]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"
@@ -179,9 +224,31 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
             assertPlanNoLeakCheck(
+                    "select timestamp_floor('d', ts, '2016-02-10T16:00:00.000Z', :offset, 'UTC+00:00') from x",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp_floor('1d',ts,'2016-02-10T16:00:00.000Z',:offset::string,'UTC+00:00')]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("offset", "00:00");
+            assertPlanNoLeakCheck(
                     "select timestamp_floor('d', ts, null, :offset, 'Europe/London') from x",
                     "VirtualRecord\n" +
                             "  functions: [timestamp_floor('1d',ts,null,:offset::string,'Europe/London')]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("offset", "00:00");
+            assertPlanNoLeakCheck(
+                    "select timestamp_floor('d', ts, '2022-02-02T01:00:00.000Z', :offset, 'Europe/London') from x",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp_floor('1d',ts,'2022-02-02T01:00:00.000Z',:offset::string,'Europe/London')]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"
@@ -193,6 +260,17 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
                     "select timestamp_floor('d', ts, null, '00:00', :tz) from x",
                     "VirtualRecord\n" +
                             "  functions: [timestamp_floor('1d',ts,null,'00:00',:tz::string)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "UTC");
+            assertPlanNoLeakCheck(
+                    "select timestamp_floor('d', ts, '1980-01-01T00:00:00.000000Z', null, :tz) from x",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp_floor('1d',ts,'1980-01-01T00:00:00.000Z','00:00',:tz::string)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"
@@ -220,6 +298,18 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"
             );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("offset", "00:00");
+            bindVariableService.setStr("tz", "UTC");
+            assertPlanNoLeakCheck(
+                    "select timestamp_floor('1d', ts, '2016-02-10T16:18:22.862Z', :offset, :tz) from x",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp_floor('1d',ts,'2016-02-10T16:18:22.862Z',:offset::string,:tz::string)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
         });
     }
 
@@ -227,6 +317,12 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
     public void testFloorDstGap() throws Exception {
         assertMemoryLeak(() -> {
             // verify that timestamp_floor() never returns timestamps from gaps
+
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "\n",
+                    "1h", null, null, "00:10", "Europe/Berlin"
+            );
 
             // 2021-03-28T02:00 - 2021-03-28T03:00 is a gap hour in local time
             assertTimestampFloor(
@@ -443,11 +539,28 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
             );
 
             bindVariableService.clear();
+            bindVariableService.setStr("tz", "foobar");
+            assertExceptionNoLeakCheck(
+                    "select timestamp_floor('41m', '2016-02-10T16:18:22.862145Z', '2016-02-10T00:00:00Z', '00:00', :tz)",
+                    94,
+                    "invalid timezone: foobar"
+            );
+
+            bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
             bindVariableService.setStr("tz", "foobar");
             assertExceptionNoLeakCheck(
                     "select timestamp_floor('1h', '2018-02-10T21:00:00.000000Z', null, :offset, :tz)",
                     75,
+                    "invalid timezone: foobar"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("offset", "00:01");
+            bindVariableService.setStr("tz", "foobar");
+            assertExceptionNoLeakCheck(
+                    "select timestamp_floor('2d', '2016-02-10T16:18:22.862145Z', '2016-02-10T00:00:00Z', :offset, :tz)",
+                    93,
                     "invalid timezone: foobar"
             );
 
@@ -464,7 +577,7 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
         assertMemoryLeak(() -> {
             assertExceptionNoLeakCheck(
                     "select timestamp_floor('z', '2018-02-10T21:00:00.000000Z', null, '00:00', null)",
-                    -1,
+                    23,
                     "Invalid unit: z"
             );
         });
@@ -832,6 +945,11 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
                     "timestamp_floor\n" +
                             "\n",
                     "3w", null, null, "00:00", "Europe/London"
+            );
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "\n",
+                    "3w", null, null, null, "Europe/London"
             );
 
             assertTimestampFloor(

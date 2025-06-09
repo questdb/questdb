@@ -27,7 +27,9 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.model.ExpressionNode;
@@ -56,6 +58,7 @@ import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
@@ -203,6 +206,20 @@ public class SqlUtil {
      * @return with next valid token or null if end of input is reached .
      */
     public static CharSequence fetchNext(GenericLexer lexer) throws SqlException {
+        return fetchNext(lexer, false);
+    }
+
+    /**
+     * Fetches next non-whitespace token that's not part of single or multiline comment.
+     *
+     * @param lexer        The input lexer containing the token stream to process
+     * @param includeHints If true, hint block markers (/*+) are treated as valid tokens and returned;
+     *                     if false, hint blocks are treated as comments and skipped
+     * @return The next meaningful token as a CharSequence, or null if the end of input is reached
+     * @throws SqlException If a parsing error occurs while processing the token stream
+     * @see #fetchNextHintToken(GenericLexer) For handling tokens within hint blocks
+     */
+    public static CharSequence fetchNext(GenericLexer lexer, boolean includeHints) throws SqlException {
         int blockCount = 0;
         boolean lineComment = false;
         while (lexer.hasNext()) {
@@ -225,6 +242,11 @@ public class SqlUtil {
                 continue;
             }
 
+            if (Chars.equals("/*+", cs) && (!includeHints || blockCount > 0)) {
+                blockCount++;
+                continue;
+            }
+
             if (Chars.equals("*/", cs) && blockCount > 0) {
                 blockCount--;
                 continue;
@@ -236,6 +258,79 @@ public class SqlUtil {
                     throw SqlException.$(lexer.lastTokenPosition(), "unclosed quotation mark");
                 }
                 return cs;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Fetches the next non-whitespace, non-comment hint token from the lexer.
+     * <p>
+     * This method should only be called after entering a hint block. Specifically,
+     * a previous call to {@link #fetchNext(GenericLexer, boolean)} must have returned
+     * a hint start token (<code>/*+</code>) before this method can be used.
+     * <p>
+     * The method processes the input stream, skipping over any nested comments and whitespace,
+     * and returns the next meaningful hint token. This allows for clean parsing of hint
+     * content without manual handling of comments and formatting characters.
+     * <p>
+     * When the end of the hint block is reached, the method returns null, indicating
+     * no more hint tokens are available for processing.
+     * <p>
+     * If a hint contains unbalanced quotes, the method will NOT throw an exception, instead
+     * it will consume all tokens until the end of the hint block is reached and then return null indicating
+     * the end of the hint block.
+     *
+     * @param lexer The input lexer containing the token stream to process
+     * @return The next meaningful hint token, or null if the end of the hint block is reached
+     * @see #fetchNext(GenericLexer, boolean) For entering the hint block initially
+     */
+    public static CharSequence fetchNextHintToken(GenericLexer lexer) {
+        int blockCount = 0;
+        boolean lineComment = false;
+        boolean inError = false;
+        while (lexer.hasNext()) {
+            CharSequence cs = lexer.next();
+
+            if (lineComment) {
+                if (Chars.equals(cs, '\n') || Chars.equals(cs, '\r')) {
+                    lineComment = false;
+                }
+                continue;
+            }
+
+            if (Chars.equals("--", cs)) {
+                lineComment = true;
+                continue;
+            }
+
+            if (Chars.equals("/*", cs)) {
+                blockCount++;
+                continue;
+            }
+
+            if (Chars.equals("/*+", cs)) {
+                // nested hints are treated as regular comments
+                blockCount++;
+                continue;
+            }
+
+            // end of hints or a nested comment
+            if (Chars.equals("*/", cs)) {
+                if (blockCount > 0) {
+                    blockCount--;
+                    continue;
+                }
+                return null;
+            }
+
+            if (!inError && blockCount == 0 && GenericLexer.WHITESPACE.excludes(cs)) {
+                // unclosed quote check
+                if (cs.length() == 1 && cs.charAt(0) == '"') {
+                    inError = true;
+                } else {
+                    return cs;
+                }
             }
         }
         return null;
@@ -648,6 +743,18 @@ public class SqlUtil {
         }
     }
 
+    public static ArrayView implicitCastStringAsDoubleArray(CharSequence value, DoubleArrayParser parser, int expectedType) {
+        try {
+            parser.of(value, ColumnType.decodeArrayDimensionality(expectedType));
+        } catch (IllegalArgumentException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
+        }
+        if (expectedType != ColumnType.UNDEFINED && parser.getType() != expectedType) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
+        }
+        return parser;
+    }
+
     public static long implicitCastSymbolAsTimestamp(CharSequence value) {
         return implicitCastStrVarcharAsTimestamp0(value, ColumnType.SYMBOL);
     }
@@ -787,6 +894,29 @@ public class SqlUtil {
         return pool.next().of(exprNodeType, token, 0, position);
     }
 
+    public static int parseArrayDimensionality(GenericLexer lexer) throws SqlException {
+        int dim = 0;
+        do {
+            CharSequence tok = fetchNext(lexer);
+            if (Chars.equalsNc(tok, '[')) {
+                // could be a start of array type
+                tok = fetchNext(lexer);
+
+                if (Chars.equalsNc(tok, ']')) {
+                    dim++;
+                } else {
+                    // we do not expect anything between [], but lets try to be helpful to user and ask them
+                    // to remove things between brackets
+                    throw SqlException.$(lexer.lastTokenPosition(), "']' expected");
+                }
+            } else {
+                lexer.unparseLast();
+                break;
+            }
+        } while (true);
+        return dim;
+    }
+
     /**
      * Parses partial representation of timestamp with time zone.
      *
@@ -804,7 +934,7 @@ public class SqlUtil {
         }
     }
 
-    public static short toPersistedTypeTag(CharSequence tok, int tokPosition) throws SqlException {
+    public static short toPersistedTypeTag(@NotNull CharSequence tok, int tokPosition) throws SqlException {
         final short typeTag = ColumnType.tagOf(tok);
         if (typeTag == -1) {
             throw SqlException.$(tokPosition, "unsupported column type: ").put(tok);
@@ -813,7 +943,6 @@ public class SqlUtil {
             return typeTag;
         }
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
-
     }
 
     private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {

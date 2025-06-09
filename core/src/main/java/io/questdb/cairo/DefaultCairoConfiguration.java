@@ -103,9 +103,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean freeLeakedReaders() {
-        // to override use overrides() system, the idea for the "false" here
+        // To override use overrides() system, the idea for the "false" here
         // is not to hide reader leaks and continue to get errors in tests if
-        // reader is left behind by the cursor. The need to override should be rare,
+        // the cursor leaves behind the reader. The need to override should be rare,
         // and only for testing the "supervisor" system itself.
         return false;
     }
@@ -489,6 +489,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewTimerStartEpsilon() {
+        return Timestamps.MINUTE_MICROS;
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return 1;
     }
@@ -655,6 +660,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPreferencesStringPoolCapacity() {
+        return 64;
+    }
+
+    @Override
     public int getQueryCacheEventQueueCapacity() {
         return 4;
     }
@@ -697,6 +707,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return 0;
+    }
+
+    @Override
+    public int getScoreboardFormat() {
+        return 2;
     }
 
     @Override
@@ -1188,9 +1203,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getWriterFileOpenOpts() {
-        // In some places we rely on the fact that data written via conventional IO
-        // is immediately visible to mapped memory for the same area of file. While this is the
-        // case on Linux it is absolutely not the case on Windows. We must not enable anything other
+        // In some places, we rely on the fact that data written via conventional IO
+        // is immediately visible to mapped memory for the same area of a file. While this is the
+        // case on Linux, it is absolutely not the case on Windows. We must not enable anything other
         // than MMAP on Windows.
         return Os.type != Os.WINDOWS ? O_ASYNC : O_NONE;
     }
@@ -1326,7 +1341,17 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int maxArrayElementCount() {
+        return 1_000_000;
+    }
+
+    @Override
     public boolean useFastAsOfJoin() {
         return true;
+    }
+
+    @Override
+    public boolean useWithinLatestByOptimisation() {
+        return false;
     }
 }

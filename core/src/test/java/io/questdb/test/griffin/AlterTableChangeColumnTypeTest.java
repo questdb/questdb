@@ -310,7 +310,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 execute("alter table x alter column ik symbol capacity 512 index", sqlExecutionContext);
                 Assert.fail("index syntax not supported when changing SYMBOL capacity");
             } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "INDEX is not supported when changing SYMBOL capacity");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token [index] while trying to change symbol capacity");
             }
             drainWalQueue();
         });
@@ -509,13 +509,91 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testColumnDoesNotExist() throws Exception {
         Assume.assumeTrue(!walEnabled && partitioned);
-        assertFailure("alter table x alter column non_existing", 27, "column 'non_existing' does not exists in table 'x'");
+        assertFailure("alter table x alter column non_existing", 27, "column 'non_existing' does not exist in table 'x'");
     }
 
     @Test
     public void testConversionInvalidToken() throws Exception {
         Assume.assumeTrue(!walEnabled && partitioned);
         assertFailure("alter table x alter column i type long abc", 39, "unexpected token [abc] while trying to change column type");
+    }
+
+    @Test
+    public void testConversionsFromArray() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("create table x (arr double[]);");
+                assertException("alter table x alter column arr type uuid", 36, "incompatible column type change [existing=DOUBLE[], new=UUID]", sqlExecutionContext);
+                assertException("alter table x alter column arr type int", 36, "incompatible column type change [existing=DOUBLE[], new=INT]", sqlExecutionContext);
+                assertException("alter table x alter column arr type ipv4", 36, "incompatible column type change [existing=DOUBLE[], new=IPv4]", sqlExecutionContext);
+                assertException("alter table x alter column arr type long", 36, "incompatible column type change [existing=DOUBLE[], new=LONG]", sqlExecutionContext);
+                assertException("alter table x alter column arr type short", 36, "incompatible column type change [existing=DOUBLE[], new=SHORT]", sqlExecutionContext);
+                assertException("alter table x alter column arr type byte", 36, "incompatible column type change [existing=DOUBLE[], new=BYTE]", sqlExecutionContext);
+                assertException("alter table x alter column arr type double", 36, "incompatible column type change [existing=DOUBLE[], new=DOUBLE]", sqlExecutionContext);
+                assertException("alter table x alter column arr type float", 36, "incompatible column type change [existing=DOUBLE[], new=FLOAT]", sqlExecutionContext);
+                assertException("alter table x alter column arr type char", 36, "incompatible column type change [existing=DOUBLE[], new=CHAR]", sqlExecutionContext);
+                assertException("alter table x alter column arr type boolean", 36, "incompatible column type change [existing=DOUBLE[], new=BOOLEAN]", sqlExecutionContext);
+                assertException("alter table x alter column arr type timestamp", 36, "incompatible column type change [existing=DOUBLE[], new=TIMESTAMP]", sqlExecutionContext);
+                assertException("alter table x alter column arr type date", 36, "incompatible column type change [existing=DOUBLE[], new=DATE]", sqlExecutionContext);
+                assertException("alter table x alter column arr type symbol", 36, "incompatible column type change [existing=DOUBLE[], new=SYMBOL]", sqlExecutionContext);
+                assertException("alter table x alter column arr type string", 36, "incompatible column type change [existing=DOUBLE[], new=STRING]", sqlExecutionContext);
+                assertException("alter table x alter column arr type varchar", 36, "incompatible column type change [existing=DOUBLE[], new=VARCHAR]", sqlExecutionContext);
+                assertException("alter table x alter column arr type binary", 36, "incompatible column type change [existing=DOUBLE[], new=BINARY]", sqlExecutionContext);
+            } finally {
+                execute("drop table if exists x;");
+            }
+        });
+    }
+
+    @Test
+    public void testConversionsToArray() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute(
+                        "create table x as (" +
+                                "select" +
+                                " rnd_uuid4() guid," +
+                                " rnd_int() rint," +
+                                " rnd_ipv4() ip," +
+                                " rnd_long() i64," +
+                                " rnd_short() i16," +
+                                " rnd_byte() i8," +
+                                " rnd_double() f64," +
+                                " rnd_float() f32," +
+                                " rnd_char() ch," +
+                                " rnd_boolean() b," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 ts," +
+                                " cast(to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 as date) dt," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp," +
+                                " rnd_symbol('A', 'B', 'C') sym," +
+                                " rnd_str('abc', 'def', 'ghi') str," +
+                                " rnd_varchar('abc', 'def', 'ghi') var," +
+                                " rnd_bin() bin" +
+                                " from long_sequence(1000)" +
+                                ")"
+                );
+
+                assertException("alter table x alter column guid type DOUBLE[]", 44, "incompatible column type change [existing=UUID, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column rint type DOUBLE[]", 44, "incompatible column type change [existing=INT, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column ip type DOUBLE[]", 42, "incompatible column type change [existing=IPv4, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column i64 type DOUBLE[]", 43, "incompatible column type change [existing=LONG, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column i16 type DOUBLE[]", 43, "incompatible column type change [existing=SHORT, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column i8 type DOUBLE[]", 42, "incompatible column type change [existing=BYTE, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column f64 type DOUBLE[]", 43, "incompatible column type change [existing=DOUBLE, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column f32 type DOUBLE[]", 43, "incompatible column type change [existing=FLOAT, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column ch type DOUBLE[]", 42, "incompatible column type change [existing=CHAR, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column b type DOUBLE[]", 41, "incompatible column type change [existing=BOOLEAN, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column ts type DOUBLE[]", 42, "incompatible column type change [existing=TIMESTAMP, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column dt type DOUBLE[]", 42, "incompatible column type change [existing=DATE, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column sym type DOUBLE[]", 43, "incompatible column type change [existing=SYMBOL, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column str type DOUBLE[]", 43, "incompatible column type change [existing=STRING, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column var type DOUBLE[]", 43, "incompatible column type change [existing=VARCHAR, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column bin type DOUBLE[]", 43, "incompatible column type change [existing=BINARY, new=DOUBLE[]]", sqlExecutionContext);
+
+            } finally {
+                execute("drop table if exists x;");
+            }
+        });
     }
 
     @Test
@@ -971,61 +1049,66 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     private static void testConvertFixedToVar(String varTypeName) throws SqlException {
-        execute(
-                "create table x as (" +
-                        "select" +
-                        " rnd_uuid4() guid," +
-                        " rnd_int() rint," +
-                        " rnd_ipv4() ip," +
-                        " rnd_long() i64," +
-                        " rnd_short() i16," +
-                        " rnd_byte() i8," +
-                        " rnd_double() f64," +
-                        " rnd_float() f32," +
-                        " rnd_char() ch," +
-                        " rnd_boolean() b," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 ts," +
-                        " cast(to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 as date) dt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp" +
-                        " from long_sequence(1000)" +
-                        ")"
-        );
-        // add nulls last line
-        execute("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
+        try {
+            execute(
+                    "create table if not exists x as (" +
+                            "select" +
+                            " rnd_uuid4() guid," +
+                            " rnd_int() rint," +
+                            " rnd_ipv4() ip," +
+                            " rnd_long() i64," +
+                            " rnd_short() i16," +
+                            " rnd_byte() i8," +
+                            " rnd_double() f64," +
+                            " rnd_float() f32," +
+                            " rnd_char() ch," +
+                            " rnd_boolean() b," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 ts," +
+                            " cast(to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 as date) dt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp" +
+                            " from long_sequence(1000)" +
+                            ")"
+            );
+            // add nulls last line
+            execute("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
 
-        execute("create table y as (" +
-                "select cast(cast(guid as string) as " + varTypeName + ") as guid," +
-                " cast(cast(rint as string) as " + varTypeName + ") as rint," +
-                " cast(cast(ip as string) as " + varTypeName + ") as ip," +
-                " cast(cast(i64 as string) as " + varTypeName + ") as i64," +
-                " cast(cast(i16 as string) as " + varTypeName + ") as i16," +
-                " cast(cast(i8 as string) as " + varTypeName + ") as i8," +
-                " cast(cast(f64 as string) as " + varTypeName + ") as f64," +
-                " cast(cast(f32 as string) as " + varTypeName + ") as f32," +
-                " cast(cast(ch as string) as " + varTypeName + ") as ch," +
-                " cast(cast(b as string) as " + varTypeName + ") as b," +
-                " cast(cast(ts as string) as " + varTypeName + ") as ts," +
-                " cast(cast(dt as string) as " + varTypeName + ") as dt," +
-                " timestamp from x) " +
-                "timestamp (timestamp) partition by DAY;", sqlExecutionContext);
+            execute("create table y as (" +
+                    "select cast(cast(guid as string) as " + varTypeName + ") as guid," +
+                    " cast(cast(rint as string) as " + varTypeName + ") as rint," +
+                    " cast(cast(ip as string) as " + varTypeName + ") as ip," +
+                    " cast(cast(i64 as string) as " + varTypeName + ") as i64," +
+                    " cast(cast(i16 as string) as " + varTypeName + ") as i16," +
+                    " cast(cast(i8 as string) as " + varTypeName + ") as i8," +
+                    " cast(cast(f64 as string) as " + varTypeName + ") as f64," +
+                    " cast(cast(f32 as string) as " + varTypeName + ") as f32," +
+                    " cast(cast(ch as string) as " + varTypeName + ") as ch," +
+                    " cast(cast(b as string) as " + varTypeName + ") as b," +
+                    " cast(cast(ts as string) as " + varTypeName + ") as ts," +
+                    " cast(cast(dt as string) as " + varTypeName + ") as dt," +
+                    " timestamp from x) " +
+                    "timestamp (timestamp) partition by DAY;", sqlExecutionContext);
 
-        execute("alter table x alter column guid type " + varTypeName, sqlExecutionContext);
-        execute("alter table x alter column rint type " + varTypeName, sqlExecutionContext);
-        execute("alter table x alter column ip type " + varTypeName, sqlExecutionContext);
-        execute("alter table x alter column i64 type " + varTypeName, sqlExecutionContext);
-        execute("alter table x alter column i16 type " + varTypeName, sqlExecutionContext);
-        execute("alter table x alter column i8 type " + varTypeName, sqlExecutionContext);
-        execute("alter table x alter column f64 type " + varTypeName, sqlExecutionContext);
-        execute("alter table x alter column f32 type " + varTypeName, sqlExecutionContext);
-        execute("alter table x alter column ch type " + varTypeName, sqlExecutionContext);
-        execute("alter table x alter column b type " + varTypeName, sqlExecutionContext);
-        execute("alter table x alter column ts type " + varTypeName, sqlExecutionContext);
-        execute("alter table x alter column dt type " + varTypeName, sqlExecutionContext);
+            execute("alter table x alter column guid type " + varTypeName, sqlExecutionContext);
+            execute("alter table x alter column rint type " + varTypeName, sqlExecutionContext);
+            execute("alter table x alter column ip type " + varTypeName, sqlExecutionContext);
+            execute("alter table x alter column i64 type " + varTypeName, sqlExecutionContext);
+            execute("alter table x alter column i16 type " + varTypeName, sqlExecutionContext);
+            execute("alter table x alter column i8 type " + varTypeName, sqlExecutionContext);
+            execute("alter table x alter column f64 type " + varTypeName, sqlExecutionContext);
+            execute("alter table x alter column f32 type " + varTypeName, sqlExecutionContext);
+            execute("alter table x alter column ch type " + varTypeName, sqlExecutionContext);
+            execute("alter table x alter column b type " + varTypeName, sqlExecutionContext);
+            execute("alter table x alter column ts type " + varTypeName, sqlExecutionContext);
+            execute("alter table x alter column dt type " + varTypeName, sqlExecutionContext);
 
-        assertSqlCursorsConvertedStrings(
-                "select * from y",
-                "select * from x"
-        );
+            assertSqlCursorsConvertedStrings(
+                    "select * from x",
+                    "select * from y"
+            );
+        } finally {
+            execute("drop table if exists x;");
+            execute("drop table if exists y;");
+        }
     }
 
     private static void testConvertVarToFixed(String varType) throws SqlException {

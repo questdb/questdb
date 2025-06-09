@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.security;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
@@ -32,9 +33,17 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class AllowAllSecurityContext implements SecurityContext {
-    public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext();
+    public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext(false);
+    public static final AllowAllSecurityContext SETTINGS_READ_ONLY = new AllowAllSecurityContext(true);
+
+    private final boolean settingsReadOnly;
 
     protected AllowAllSecurityContext() {
+        this(false);
+    }
+
+    private AllowAllSecurityContext(boolean settingsReadOnly) {
+        this.settingsReadOnly = settingsReadOnly;
     }
 
     @Override
@@ -135,6 +144,13 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeSelectOnAnyColumn(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeSettings() {
+        if (settingsReadOnly) {
+            throw CairoException.authorization().put("The /settings endpoint is read-only").setCacheable(true);
+        }
     }
 
     @Override

@@ -33,18 +33,14 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Misc;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
 import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.Timeout;
-
-import java.util.concurrent.TimeUnit;
 
 public class HttpSecurityTest extends AbstractTest {
 
@@ -84,6 +80,7 @@ public class HttpSecurityTest extends AbstractTest {
         }
     };
     private static final String VALID_BASIC_AUTH_CREDENTIALS_HEADER = "Authorization: " + VALID_BASIC_AUTH_CREDENTIALS;
+    private static final String VALID_BASIC_AUTH_CREDENTIALS_HEADER_RANDOM_CASE = "aUThOriZATiOn: " + VALID_BASIC_AUTH_CREDENTIALS;
     private static final String VALID_REST_TOKEN_AUTH_CREDENTIALS = "Bearer validToken-XubtaE";
     private static final HttpAuthenticatorFactory SINGLE_USER_REST_TOKEN_AUTH_FACTORY = () -> new HttpAuthenticator() {
         @Override
@@ -96,25 +93,13 @@ public class HttpSecurityTest extends AbstractTest {
             return "foo";
         }
     };
-    private static TestHttpClient testHttpClient;
-
-    @Rule
-    public Timeout timeout = Timeout.builder()
-            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
-            .withLookingForStuckThread(true)
-            .build();
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractTest.setUpStatic();
-        testHttpClient = Misc.free(testHttpClient);
-        testHttpClient = new TestHttpClient();
-    }
+    private static final TestHttpClient testHttpClient = new TestHttpClient();
 
     @AfterClass
     public static void tearDownStatic() {
-        testHttpClient = Misc.free(testHttpClient);
+        testHttpClient.close();
         AbstractTest.tearDownStatic();
+        assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
     }
 
     @Test
@@ -378,6 +363,50 @@ public class HttpSecurityTest extends AbstractTest {
                         "\r\n" +
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
                 UNAUTHORIZED_RESPONSE
+        ));
+    }
+
+    @Test
+    public void testImplCheckAuthorizationHeaderIsCaseInsensitive() throws Exception {
+        testHttpEndpoint(SINGLE_USER_BASIC_AUTH_FACTORY, (engine, sqlExecutionContext) -> sendAndReceive(
+                "POST /upload?name=test HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "User-Agent: curl/7.71.1\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Length: 243\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        VALID_BASIC_AUTH_CREDENTIALS_HEADER_RANDOM_CASE + "\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "col_a,ts\r\n" +
+                        "1000,1000\r\n" +
+                        "2000,2000\r\n" +
+                        "3000,3000\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "0507\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                        "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                        "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|   Rows handled  |                                                 3  |                 |         |              |\r\n" +
+                        "|  Rows imported  |                                                 3  |                 |         |              |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|              0  |                                             col_a  |                      INT  |           0  |\r\n" +
+                        "|              1  |                                                ts  |                      INT  |           0  |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
         ));
     }
 

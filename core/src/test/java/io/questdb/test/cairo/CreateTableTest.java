@@ -50,11 +50,37 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.*;
 
-/**
- * Test interactions between cast and index clauses in CREATE TABLE and CREATE TABLE AS SELECT statements .
- */
 @SuppressWarnings("SameParameterValue")
 public class CreateTableTest extends AbstractCairoTest {
+
+    @Test
+    public void testCreateTableWithInvalidArrayType() throws Exception {
+        assertMemoryLeak(() -> assertException("create table x (ts timestamp, arr varchar[]);", 34, "unsupported array element type [type=VARCHAR]"));
+    }
+
+    @Test
+    public void testCreateTableArrayWithMismatchedBrackets() throws Exception {
+        assertMemoryLeak(() -> {
+            assertException("create table x (arr double[);", 27, "']' expected");
+            assertException("create table x (arr double[][);", 29, "']' expected");
+            assertException("create table x (arr double]);", 16, "arr has an unmatched `]` - were you trying to define an array?");
+            assertException("create table x (arr double[]]);", 16, "arr has an unmatched `]` - were you trying to define an array?");
+        });
+    }
+
+    @Test
+    public void testCreateTableWithArrayColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (arr double[]);");
+            assertSql("ddl\n" +
+                            "CREATE TABLE 'x' ( \n" +
+                            "\tarr DOUBLE[]\n" +
+                            ")\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table x;");
+        });
+    }
+
 
     @Test
     public void testCreateNaNColumn() throws Exception {

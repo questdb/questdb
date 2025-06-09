@@ -26,7 +26,10 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long128;
 import io.questdb.std.Long256;
@@ -40,8 +43,19 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.wal.WalReader.getPrimaryColumnIndex;
 
 public class WalDataRecord implements Record, Sinkable {
+    private final BorrowedArray array = new BorrowedArray();
     private WalReader reader;
     private long recordIndex = 0;
+
+    @Override
+    public ArrayView getArray(int col, int columnType) {
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        MemoryCR auxMem = reader.getColumn(absoluteColumnIndex + 1);
+        MemoryCR dataMem = reader.getColumn(absoluteColumnIndex);
+
+        array.of(columnType, auxMem.addressOf(0), auxMem.addressHi(), dataMem.addressOf(0), dataMem.addressHi(), recordIndex);
+        return array;
+    }
 
     @Override
     public BinarySequence getBin(int col) {

@@ -24,11 +24,23 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpChunkedResponse;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpKeywords;
+import io.questdb.cutlass.http.HttpMultipartContentProcessor;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.http.ex.RetryOperationException;
-import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoadWarning;
 import io.questdb.cutlass.text.TextLoader;
@@ -38,15 +50,17 @@ import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
-
-import java.io.Closeable;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.cutlass.text.TextLoadWarning.*;
 
-public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartContentListener, Closeable {
+public class TextImportProcessor implements HttpMultipartContentProcessor, HttpRequestHandler {
     static final int MESSAGE_UNKNOWN = 3;
     static final int RESPONSE_PREFIX = 1;
     private static final Log LOG = LogFactory.getLog(TextImportProcessor.class);
@@ -57,7 +71,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final int MESSAGE_DATA = 2;
     private static final int MESSAGE_SCHEMA = 1;
     private static final String OVERRIDDEN_FROM_TABLE = "From Table";
-    private static final Utf8String PARTITION_BY_NONE = new Utf8String("NONE");
     private static final int RESPONSE_COLUMN = 2;
     private static final int RESPONSE_COMPLETE = 6;
     private static final int RESPONSE_DONE = 5;
@@ -68,24 +81,26 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final int TO_STRING_COL3_PAD = 15;
     private static final int TO_STRING_COL4_PAD = 7;
     private static final int TO_STRING_COL5_PAD = 12;
-    private static final Utf8SequenceIntHashMap atomicityParamMap = new Utf8SequenceIntHashMap();
     private final CairoEngine engine;
+    private final TextImportRequestHeaderProcessor requestHeaderProcessor;
     private final byte requiredAuthType;
     private HttpConnectionContext transientContext;
     private TextImportProcessorState transientState;
 
     public TextImportProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
-        this.engine = cairoEngine;
+        engine = cairoEngine;
         requiredAuthType = configuration.getRequiredAuthType();
-    }
-
-    @Override
-    public void close() {
+        requestHeaderProcessor = configuration.getFactoryProvider().getTextImportRequestHeaderProcessor();
     }
 
     @Override
     public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         sendErrorAndThrowDisconnect(e.getFlyweightMessage());
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
     }
 
     @Override
@@ -118,77 +133,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         final DirectUtf8Sequence contentDisposition = partHeader.getContentDispositionName();
         LOG.debug().$("part begin [name=").$(contentDisposition).$(']').$();
         if (Utf8s.equalsNcAscii("data", contentDisposition)) {
-            final HttpRequestHeader rh = transientContext.getRequestHeader();
-            DirectUtf8Sequence name = rh.getUrlParam(URL_PARAM_NAME);
-            if (name == null) {
-                name = partHeader.getContentDispositionFilename();
-            }
-
-            if (name == null) {
-                sendErrorAndThrowDisconnect("no file name given");
-            }
-
-            Utf8Sequence partitionedBy = rh.getUrlParam(URL_PARAM_PARTITION_BY);
-            if (partitionedBy == null) {
-                partitionedBy = PARTITION_BY_NONE;
-            }
-            int partitionBy = PartitionBy.fromUtf8String(partitionedBy);
-            if (partitionBy == -1) {
-                sendErrorAndThrowDisconnect("invalid partitionBy");
-            }
-
-            DirectUtf8Sequence timestampColumn = rh.getUrlParam(URL_PARAM_TIMESTAMP);
-            if (PartitionBy.isPartitioned(partitionBy) && timestampColumn == null) {
-                sendErrorAndThrowDisconnect("when specifying partitionBy you must also specify timestamp");
-            }
-
-            transientState.analysed = false;
-            transientState.textLoader.configureDestination(
-                    name,
-                    Utf8s.equalsNcAscii("true", rh.getUrlParam(URL_PARAM_OVERWRITE)),
-                    getAtomicity(rh.getUrlParam(URL_PARAM_ATOMICITY)),
-                    partitionBy,
-                    timestampColumn,
-                    null
-            );
-
-            DirectUtf8Sequence o3MaxLagChars = rh.getUrlParam(URL_PARAM_O3_MAX_LAG);
-            if (o3MaxLagChars != null) {
-                try {
-                    long o3MaxLag = Numbers.parseLong(o3MaxLagChars);
-                    if (o3MaxLag >= 0) {
-                        transientState.textLoader.setO3MaxLag(o3MaxLag);
-                    }
-                } catch (NumericException e) {
-                    sendErrorAndThrowDisconnect("invalid o3MaxLag value, must be a long");
-                }
-            }
-
-            DirectUtf8Sequence maxUncommittedRowsChars = rh.getUrlParam(URL_PARAM_MAX_UNCOMMITTED_ROWS);
-            if (maxUncommittedRowsChars != null) {
-                try {
-                    int maxUncommittedRows = Numbers.parseInt(maxUncommittedRowsChars);
-                    if (maxUncommittedRows >= 0) {
-                        transientState.textLoader.setMaxUncommittedRows(maxUncommittedRows);
-                    }
-                } catch (NumericException e) {
-                    sendErrorAndThrowDisconnect("invalid maxUncommittedRows, must be an int");
-                }
-            }
-
-            boolean create = !Utf8s.equalsNcAscii("false", rh.getUrlParam(URL_PARAM_CREATE));
-            transientState.textLoader.setCreate(create);
-
-            boolean forceHeader = Utf8s.equalsNcAscii("true", rh.getUrlParam(URL_PARAM_FORCE_HEADER));
-            transientState.textLoader.setForceHeaders(forceHeader);
-            transientState.textLoader.setSkipLinesWithExtraValues(Utf8s.equalsNcAscii("true", rh.getUrlParam(URL_PARAM_SKIP_LEV)));
-            DirectUtf8Sequence delimiter = rh.getUrlParam(URL_PARAM_DELIMITER);
-            if (delimiter != null && delimiter.size() == 1) {
-                transientState.textLoader.configureColumnDelimiter(delimiter.byteAt(0));
-            }
-            transientState.textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-
-            transientState.forceHeader = forceHeader;
+            requestHeaderProcessor.processRequestHeader(partHeader, transientContext, transientState);
             transientState.messagePart = MESSAGE_DATA;
         } else if (Utf8s.equalsNcAscii("schema", contentDisposition)) {
             transientState.textLoader.setState(TextLoader.LOAD_JSON_METADATA);
@@ -256,15 +201,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         doResumeSend(LV.get(context), context.getChunkedResponse());
     }
 
-    private static int getAtomicity(Utf8Sequence name) {
-        if (name == null) {
-            return Atomicity.SKIP_COL;
-        }
-
-        int atomicity = atomicityParamMap.get(name);
-        return atomicity == -1 ? Atomicity.SKIP_COL : atomicity;
-    }
-
     private static void pad(Utf8Sink b, int w, long value) {
         int len = (int) Math.log10(value);
         if (len < 0) {
@@ -293,6 +229,21 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         for (int i = 0; i < times; i++) {
             b.put(c);
         }
+    }
+
+    private static void resumeError(TextImportProcessorState state, HttpChunkedResponse socket) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        if (state.responseState == RESPONSE_ERROR) {
+            socket.bookmark();
+            if (state.json) {
+                socket.putAscii('{').putAsciiQuoted("status").putAscii(':').putQuoted(state.errorMessage).putAscii('}');
+            } else {
+                socket.put(state.errorMessage);
+            }
+            state.responseState = RESPONSE_DONE;
+            socket.sendChunk(true);
+        }
+        socket.shutdownWrite();
+        throw ServerDisconnectException.INSTANCE;
     }
 
     private static void resumeJson(TextImportProcessorState state, HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -462,6 +413,18 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         }
     }
 
+    private static void sendErr(HttpConnectionContext context, CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        final TextImportProcessorState state = LV.get(context);
+        state.responseState = RESPONSE_ERROR;
+        state.errorMessage = message;
+
+        final HttpChunkedResponse response = context.getChunkedResponse();
+        response.status(200, state.json ? CONTENT_TYPE_JSON : CONTENT_TYPE_TEXT);
+        response.sendHeader();
+        response.sendChunk(false);
+        resumeError(state, response);
+    }
+
     private static void sep(Utf8Sink b) {
         b.putAscii('+');
         replicate(b, '-', TO_STRING_COL1_PAD + TO_STRING_COL2_PAD + TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + TO_STRING_COL5_PAD + 14);
@@ -497,39 +460,12 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     private boolean isJson(HttpConnectionContext transientContext) {
-        return Utf8s.equalsNcAscii("json", transientContext.getRequestHeader().getUrlParam(URL_PARAM_FMT));
-    }
-
-    private void resumeError(TextImportProcessorState state, HttpChunkedResponse socket) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        if (state.responseState == RESPONSE_ERROR) {
-            socket.bookmark();
-            if (state.json) {
-                socket.putAscii('{').putAsciiQuoted("status").putAscii(':').putQuoted(state.errorMessage).putAscii('}');
-            } else {
-                socket.put(state.errorMessage);
-            }
-            state.responseState = RESPONSE_DONE;
-            socket.sendChunk(true);
-        }
-        socket.shutdownWrite();
-        throw ServerDisconnectException.INSTANCE;
-    }
-
-    private void sendErr(HttpConnectionContext context, CharSequence message, HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        final TextImportProcessorState state = LV.get(context);
-        state.responseState = RESPONSE_ERROR;
-        state.errorMessage = message;
-        response.status(200, state.json ? CONTENT_TYPE_JSON : CONTENT_TYPE_TEXT);
-        response.sendHeader();
-        response.sendChunk(false);
-        resumeError(state, response);
+        return HttpKeywords.isJson(transientContext.getRequestHeader().getUrlParam(URL_PARAM_FMT));
     }
 
     private void sendErrorAndThrowDisconnect(CharSequence message)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        transientState.snapshotStateAndCloseWriter();
-        final HttpChunkedResponse response = transientContext.getChunkedResponse();
-        sendErr(transientContext, message, response);
+        sendErrorAndThrowDisconnect(message, transientContext, transientState);
     }
 
     private void sendResponse(HttpConnectionContext context)
@@ -544,12 +480,13 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             response.sendHeader();
             doResumeSend(state, response);
         } else {
-            sendErr(context, state.stateMessage, context.getChunkedResponse());
+            sendErr(context, state.stateMessage);
         }
     }
 
-    static {
-        atomicityParamMap.put(new Utf8String("skipRow"), Atomicity.SKIP_ROW);
-        atomicityParamMap.put(new Utf8String("abort"), Atomicity.SKIP_ALL);
+    static void sendErrorAndThrowDisconnect(CharSequence message, HttpConnectionContext transientContext, TextImportProcessorState transientState)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        transientState.snapshotStateAndCloseWriter();
+        sendErr(transientContext, message);
     }
 }

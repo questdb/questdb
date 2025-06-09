@@ -25,12 +25,16 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.http.LineHttpSender;
+import io.questdb.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -254,6 +258,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
         });
     }
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -546,7 +551,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                             .httpTimeoutMillis(60000)
                             .build()
             ) {
-                LineHttpSender httpSender = (LineHttpSender) sender;
+                AbstractLineHttpSender httpSender = (AbstractLineHttpSender) sender;
                 List<String> points = new ArrayList<>();
                 for (int n = 0; n < numOfIterations; n++) {
                     for (int j = 0; j < numOfLines; j++) {

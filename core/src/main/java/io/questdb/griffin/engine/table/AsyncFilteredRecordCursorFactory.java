@@ -54,9 +54,7 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 
 public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
-
     private static final PageFrameReducer REDUCER = AsyncFilteredRecordCursorFactory::filter;
-
     private final RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncFilteredRecordCursor cursor;

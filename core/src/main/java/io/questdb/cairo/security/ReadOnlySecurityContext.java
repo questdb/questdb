@@ -33,9 +33,17 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class ReadOnlySecurityContext implements SecurityContext {
-    public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext();
+    public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext(false);
+    public static final ReadOnlySecurityContext SETTINGS_READ_ONLY = new ReadOnlySecurityContext(true);
+
+    private final boolean settingsReadOnly;
 
     protected ReadOnlySecurityContext() {
+        this(false);
+    }
+
+    private ReadOnlySecurityContext(boolean settingsReadOnly) {
+        this.settingsReadOnly = settingsReadOnly;
     }
 
     @Override
@@ -156,6 +164,13 @@ public class ReadOnlySecurityContext implements SecurityContext {
 
     @Override
     public void authorizeSelectOnAnyColumn(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeSettings() {
+        if (settingsReadOnly) {
+            throw CairoException.authorization().put("The /settings endpoint is read-only").setCacheable(true);
+        }
     }
 
     @Override

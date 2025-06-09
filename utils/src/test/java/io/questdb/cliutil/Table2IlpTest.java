@@ -164,7 +164,7 @@ public class Table2IlpTest {
                 () -> new SqlExecutionContextImpl(engine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
         );
 
-        receiver = new LineTcpReceiver(new DefaultLineTcpReceiverConfiguration() {
+        receiver = new LineTcpReceiver(new DefaultLineTcpReceiverConfiguration(configuration) {
             @Override
             public int getBindPort() {
                 return ILP_PORT;
@@ -186,7 +186,7 @@ public class Table2IlpTest {
                 new DefaultServerConfiguration(root) {
                     @Override
                     public HttpFullFatServerConfiguration getHttpServerConfiguration() {
-                        return new DefaultHttpServerConfiguration() {
+                        return new DefaultHttpServerConfiguration(configuration) {
                             @Override
                             public int getBindPort() {
                                 return HTTP_PORT;
@@ -504,14 +504,14 @@ public class Table2IlpTest {
                 cookieHandler,
                 headerParserFactory
         );
-        HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
+        HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
                 workerPool.getWorkerCount(),
                 sharedWorkerCount
         );
 
-        HttpServer.HttpRequestProcessorBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
+        HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
                 cairoEngine,
                 httpServerConfiguration.getRecvBufferSize(),
                 httpServerConfiguration.getSendBufferSize(),

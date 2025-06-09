@@ -43,11 +43,32 @@ import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+/**
+ * Specialized ASOF join cursor factory usable when the slave table supports TimeFrameRecordCursor.
+ * <p>
+ * It conceptually extends {@link AsOfJoinNoKeyFastRecordCursorFactory} by adding a filter function to the slave records
+ * to be applied before the join. It also optionally supports crossindex projection of the slave records.
+ * <p>
+ * <strong>Important</strong>: the filter is tested <strong>before</strong> applying the crossindex projection!
+ */
 public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final FilteredAsOfJoinKeyedFastRecordCursor cursor;
     private final SelectedRecordCursorFactory.SelectedTimeFrameCursor selectedTimeFrameCursor;
     private final Function slaveRecordFilter;
 
+    /**
+     * Creates a new instance with filtered slave record support and optional crossindex projection.
+     *
+     * @param configuration         configuration
+     * @param metadata              metadata of the resulting record factory
+     * @param masterFactory         master record factory
+     * @param slaveFactory          slave record factory
+     * @param slaveRecordFilter     filter function for slave records (applied before projection)
+     * @param columnSplit           number of columns to be split between master and slave
+     * @param slaveNullRecord       null record to be used when the slave record is not found, projection is NOT applied on this record
+     * @param slaveColumnCrossIndex optional crossindex for projecting the slave records, can be null
+     * @param slaveTimestampIndex   timestamp column index in slave table after projection
+     */
     public FilteredAsOfJoinNoKeyFastRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
@@ -56,7 +77,8 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             @NotNull Function slaveRecordFilter,
             int columnSplit,
             @NotNull Record slaveNullRecord,
-            @Nullable IntList slaveColumnCrossIndex) {
+            @Nullable IntList slaveColumnCrossIndex,
+            int slaveTimestampIndex) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.slaveRecordFilter = slaveRecordFilter;
@@ -64,7 +86,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 columnSplit,
                 slaveNullRecord,
                 masterFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampIndex(),
+                slaveTimestampIndex,
                 configuration.getSqlAsOfJoinLookAhead()
         );
         if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {

@@ -40,12 +40,21 @@ public class AlterOperationBuilder implements Mutable {
     private int tableNamePosition = -1;
     private TableToken tableToken;
 
-    // builder and the operation it is building share two lists.
+    // the builder and the operation it builds share the extraInfo list
     public AlterOperationBuilder() {
         this.op = new AlterOperation(extraInfo, extraStrInfo);
     }
 
-    public void addColumnToList(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity, boolean dedupKey) {
+    public void addColumnToList(
+            CharSequence columnName,
+            int columnNamePosition,
+            int type,
+            int symbolCapacity,
+            boolean cache,
+            boolean indexed,
+            int indexValueBlockCapacity,
+            boolean dedupKey
+    ) {
         assert columnName != null && columnName.length() > 0;
         extraStrInfo.add(columnName);
         extraInfo.add(type);
@@ -128,14 +137,6 @@ public class AlterOperationBuilder implements Mutable {
 
     public AlterOperationBuilder ofColumnChangeType(int tableNamePosition, TableToken tableToken, int tableId) {
         this.command = CHANGE_COLUMN_TYPE;
-        this.tableNamePosition = tableNamePosition;
-        this.tableToken = tableToken;
-        this.tableId = tableId;
-        return this;
-    }
-
-    public AlterOperationBuilder ofSymbolCapacityChange(int tableNamePosition, TableToken tableToken, int tableId) {
-        this.command = CHANGE_SYMBOL_CAPACITY;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;
@@ -235,6 +236,26 @@ public class AlterOperationBuilder implements Mutable {
         extraStrInfo.add(newName);
     }
 
+    public AlterOperationBuilder ofSetMatViewRefreshLimit(int matViewNamePosition, TableToken matViewToken, int tableId, int limitHoursOrMonths) {
+        this.command = SET_MAT_VIEW_REFRESH_LIMIT;
+        this.tableNamePosition = matViewNamePosition;
+        this.tableToken = matViewToken;
+        this.extraInfo.add(limitHoursOrMonths);
+        this.tableId = tableId;
+        return this;
+    }
+
+    public AlterOperationBuilder ofSetMatViewRefreshTimer(int matViewNamePosition, TableToken matViewToken, int tableId, long start, int interval, char unit) {
+        this.command = SET_MAT_VIEW_REFRESH_TIMER;
+        this.tableNamePosition = matViewNamePosition;
+        this.tableToken = matViewToken;
+        this.extraInfo.add(start);
+        this.extraInfo.add(interval);
+        this.extraInfo.add(unit);
+        this.tableId = tableId;
+        return this;
+    }
+
     public AlterOperationBuilder ofSetO3MaxLag(int tableNamePosition, TableToken tableToken, int tableId, long o3MaxLag) {
         this.command = SET_PARAM_COMMIT_LAG;
         this.tableNamePosition = tableNamePosition;
@@ -253,8 +274,8 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
-    public AlterOperationBuilder ofSetTtlHoursOrMonths(int tableNamePosition, TableToken tableToken, int tableId, int ttlHoursOrMonths) {
-        this.command = SET_TTL_HOURS_OR_MONTHS;
+    public AlterOperationBuilder ofSetTtl(int tableNamePosition, TableToken tableToken, int tableId, int ttlHoursOrMonths) {
+        this.command = SET_TTL;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.extraInfo.add(ttlHoursOrMonths);
@@ -267,6 +288,14 @@ public class AlterOperationBuilder implements Mutable {
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableToken.getTableId();
+        return this;
+    }
+
+    public AlterOperationBuilder ofSymbolCapacityChange(int tableNamePosition, TableToken tableToken, int tableId) {
+        this.command = CHANGE_SYMBOL_CAPACITY;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
         return this;
     }
 

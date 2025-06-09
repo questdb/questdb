@@ -28,13 +28,21 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Rnd;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.cairo.TestRecord;
+import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 
-public class FuzzInsertOperation implements FuzzTransactionOperation {
+public class FuzzInsertOperation implements FuzzTransactionOperation, QuietCloseable {
     public final static int[] SUPPORTED_COLUMN_TYPES = new int[]{
             ColumnType.INT,
             ColumnType.LONG,
@@ -56,11 +64,18 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             ColumnType.GEOLONG,
             ColumnType.BOOLEAN,
             ColumnType.UUID,
-            ColumnType.IPv4
+            ColumnType.IPv4,
+            ColumnType.ARRAY
     };
+
     private static final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
     private static final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
     private static final ThreadLocal<Utf8StringSink> tlUtf8 = new ThreadLocal<>(Utf8StringSink::new);
+    private static final ThreadLocal<DirectArray> tlArray = new ThreadLocal<>(() -> {
+        DirectArray array = new DirectArray();
+        AbstractFuzzTest.CLOSEABLES.add(array);
+        return array;
+    });
     private final double cancelRows;
     private final double notSet;
     private final double nullSet;
@@ -91,7 +106,11 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex) {
+    public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex, LongList excludedTsIntervals) {
+        if (excludedTsIntervals != null && IntervalUtils.isInIntervals(excludedTsIntervals, timestamp)) {
+            return false;
+        }
+
         rnd.reset(this.s1, this.s0);
         rnd.nextLong();
         rnd.nextLong();
@@ -224,6 +243,16 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                             case ColumnType.UUID:
                                 row.putLong128(index, rnd.nextLong(), rnd.nextLong());
                                 break;
+                            case ColumnType.ARRAY:
+                                DirectArray array = tlArray.get();
+                                if (rnd.nextPositiveInt() % 4 == 0) {
+                                    array.ofNull();
+                                    row.putArray(index, array);
+                                } else {
+                                    rnd.nextDoubleArray(ColumnType.decodeArrayDimensionality(type), array, 1, 8, 0);
+                                    row.putArray(index, array);
+                                }
+                                break;
                             default:
                                 throw new UnsupportedOperationException();
                         }
@@ -238,6 +267,10 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             row.append();
         }
         return false;
+    }
+
+    @Override
+    public void close() {
     }
 
     public int getStrLen() {

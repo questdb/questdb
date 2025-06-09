@@ -108,7 +108,7 @@ public class DropIndexTest extends AbstractCairoTest {
         execute("alter table " + tableName + " add column sym symbol index");
         execute("insert into " + tableName +
                 " select x, timestamp_sequence('2022-02-24T01:30', 1000000000), rnd_symbol('A', 'B', 'C') from long_sequence(5)");
-        assertIndexFileExist(tableName, "sym", ".1", true);
+        assertIndexFileExist(true);
 
         assertSql("a\tts\tsym\n" +
                 "1\t2022-02-24T00:23:59.800000Z\t\n" +
@@ -159,7 +159,7 @@ public class DropIndexTest extends AbstractCairoTest {
                 "1\t2022-02-24T01:30:00.000000Z\tA\n" +
                 "2\t2022-02-24T01:46:40.000000Z\tA\n", "select * from " + tableName + " where sym = 'A'");
 
-        assertIndexFileExist(tableName, "sym", ".1", false);
+        assertIndexFileExist(false);
     }
 
     @Test
@@ -322,7 +322,7 @@ public class DropIndexTest extends AbstractCairoTest {
                 for (int i = 0; i < 5; i++) {
                     try (RecordCursorFactory factory = select(select)) {
                         try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                            // 1st reader sees the index as DROP INDEX has not happened yet
+                            // the 1st reader sees the index as DROP INDEX has not happened yet
                             // the readers that follow do not see the index, because it has been dropped
                             boolean isIndexed = i == 0;
                             path2.trimTo(tablePathLen);
@@ -626,17 +626,18 @@ public class DropIndexTest extends AbstractCairoTest {
         return fn.endsWith(K) || fn.endsWith(V);
     }
 
-    private void assertIndexFileExist(String tableName, String index, String version, boolean exists) {
-        Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
-        TableToken token = engine.verifyTableName(tableName);
-        path.concat(token);
+    private void assertIndexFileExist(boolean exists) {
+        TableToken token = engine.verifyTableName(DropIndexTest.tableName);
+        Path path;
         try (TableReader rdr = engine.getReader(token)) {
+            path = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
+            path.concat(token);
             long lastPartition = rdr.getTxFile().getLastPartitionTimestamp();
             long lastPartitionNameTxn = rdr.getTxFile().getPartitionNameTxnByPartitionTimestamp(lastPartition);
             int partitionBy = rdr.getPartitionedBy();
             TableUtils.setPathForNativePartition(path, partitionBy, lastPartition, lastPartitionNameTxn);
         }
-        path.concat(index).put(".k").put(version);
+        path.concat("sym").put(".k").put(".1");
         Assert.assertEquals(exists, engine.getConfiguration().getFilesFacade().exists(path.$()));
     }
 
@@ -705,7 +706,7 @@ public class DropIndexTest extends AbstractCairoTest {
                     true,
                     4
             );
-            // other indexed column remains intact
+            // another indexed column remains intact
             Assert.assertEquals(
                     expectedDFiles,
                     countFiles("temperature", 0L, DropIndexTest::isDataFile)

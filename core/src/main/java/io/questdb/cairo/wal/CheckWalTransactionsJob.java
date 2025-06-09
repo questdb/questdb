@@ -56,6 +56,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private boolean notificationQueueIsFull = false;
     private Path threadLocalPath;
 
+
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;
         this.ff = engine.getConfiguration().getFilesFacade();
@@ -63,7 +64,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         dbRoot = engine.getConfiguration().getDbRoot();
         millisecondClock = engine.getConfiguration().getMillisecondClock();
         spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
-        checkNotifyOutstandingTxnInWalRef = (tableToken, txn, txn2) -> checkNotifyOutstandingTxnInWal(txn, txn2);
+        checkNotifyOutstandingTxnInWalRef = (tableId, token, txn) -> checkNotifyOutstandingTxnInWal(token, txn);
         checkInterval = engine.getConfiguration().getSequencerCheckInterval();
         lastRunMs = millisecondClock.getTicks();
     }
@@ -115,7 +116,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     public boolean runSerially() {
         long unpublishedWalTxnCount = engine.getUnpublishedWalTxnCount();
         if (unpublishedWalTxnCount == lastProcessedCount || notificationQueueIsFull) {
-            // when notification queue was full last run, re-evalute tables after a timeout
+            // when notification queue was full last run, re-evaluate tables after a timeout
             final long t = millisecondClock.getTicks();
             if (lastRunMs + checkInterval < t) {
                 lastRunMs = t;

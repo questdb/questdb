@@ -51,7 +51,7 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.std.DirectLongLongHeap;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -140,9 +140,9 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void longTopK(DirectLongLongHeap heap, int columnIndex) {
+    public void longTopK(DirectLongLongSortedList list, int columnIndex) {
         buildMapConditionally();
-        mapCursor.longTopK(heap, recordFunctions.getQuick(columnIndex));
+        mapCursor.longTopK(list, recordFunctions.getQuick(columnIndex));
     }
 
     @Override
@@ -197,7 +197,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     if (task.hasError()) {
                         throw CairoException.nonCritical()
                                 .position(task.getErrorMessagePosition())
-                                .put(task.getErrorMsg());
+                                .put(task.getErrorMsg())
+                                .setCancellation(task.isCancelled())
+                                .setInterruption(task.isCancelled())
+                                .setOutOfMemory(task.isOutOfMemory());
                     }
 
                     allFramesActive &= frameSequence.isActive();

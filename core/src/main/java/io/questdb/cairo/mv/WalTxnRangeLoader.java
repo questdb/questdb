@@ -25,27 +25,39 @@
 package io.questdb.cairo.mv;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
+import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
-import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
+import static io.questdb.cairo.wal.WalUtils.*;
 
-public class WalTxnRangeLoader {
-    private final IntList txnDetails = new IntList();
+public class WalTxnRangeLoader implements QuietCloseable {
     private final WalEventReader walEventReader;
     private long maxTimestamp;
     private long minTimestamp;
+    private DirectLongList txnDetails = new DirectLongList(10 * 4L, MemoryTag.NATIVE_TABLE_READER);
 
     public WalTxnRangeLoader(FilesFacade ff) {
         walEventReader = new WalEventReader(ff);
+    }
+
+    @Override
+    public void close() {
+        txnDetails = Misc.free(txnDetails);
     }
 
     public long getMaxTimestamp() {
@@ -56,94 +68,114 @@ public class WalTxnRangeLoader {
         return minTimestamp;
     }
 
-    public void load(CairoEngine engine, Path tempPath, TableToken tableToken, long txnLo, long txnHi) {
+    public void load(
+            @NotNull CairoEngine engine,
+            @NotNull Path tempPath,
+            @NotNull TableToken tableToken,
+            @NotNull LongList intervals,
+            long txnLo,
+            long txnHi
+    ) {
         try (TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, txnLo)) {
-            if (transactionLogCursor.getVersion() == WAL_SEQUENCER_FORMAT_VERSION_V1) {
-                tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken);
-                int rootLen = tempPath.size();
-                loadTransactionDetailsV1(tempPath, transactionLogCursor, rootLen, txnLo, txnHi);
-            } else {
-                loadTransactionDetailsV2(transactionLogCursor, txnLo, txnHi);
-            }
+            // We need to load replace range timestamps from WAL-E files, even when we can read min/max timestamps
+            // from the transaction log when it's in V2 format.
+            tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken);
+            int rootLen = tempPath.size();
+            loadTransactionDetailsFromWalE(tempPath, rootLen, transactionLogCursor, intervals, txnLo, txnHi);
         }
     }
 
-    private static WalEventCursor openWalEFile(Path tempPath, WalEventReader eventReader, int segmentTxn) {
-        WalEventCursor walEventCursor;
-        try {
-            walEventCursor = eventReader.of(tempPath, segmentTxn);
-        } catch (CairoException ex) {
-            throw CairoException.critical(ex.getErrno()).put("cannot read WAL even file:").put(tempPath)
-                    .put(", ").put(ex.getFlyweightMessage());
-        }
-        return walEventCursor;
-    }
-
-    private void loadTransactionDetailsV1(Path tempPath, TransactionLogCursor transactionLogCursor, int rootLen, long txnLo, long txnHi) {
+    private void loadTransactionDetailsFromWalE(Path tempPath, int rootLen, TransactionLogCursor transactionLogCursor, LongList intervals, long txnLo, long txnHi) {
         txnDetails.clear();
-        txnDetails.allocate((int) ((txnHi - txnLo) * 3));
 
-        while (txnLo++ < txnHi && transactionLogCursor.hasNext()) {
-            final int walId = transactionLogCursor.getWalId();
-            if (walId > 0) {
-                txnDetails.add(transactionLogCursor.getWalId());
-                txnDetails.add(transactionLogCursor.getSegmentId());
-                txnDetails.add(transactionLogCursor.getSegmentTxn());
-            }
-        }
-
-        int lastWalId = -1;
-        int lastSegmentId = -1;
-        int lastSegmentTxn = -2;
-        WalEventCursor walEventCursor = null;
-        minTimestamp = Long.MAX_VALUE;
-        maxTimestamp = Long.MIN_VALUE;
-
-        txnDetails.sortGroups(3);
         try (WalEventReader eventReader = walEventReader) {
-            for (int i = 0, size = txnDetails.size() / 3; i < size; i++) {
-                int walId = txnDetails.get(3 * i);
-                int segmentId = txnDetails.get(3 * i + 1);
-                int segmentTxn = txnDetails.get(3 * i + 2);
+            final int maxLoadTxnCount = (int) (txnHi - txnLo);
+            int txnsToLoad = (int) Math.min(maxLoadTxnCount, transactionLogCursor.getMaxTxn() - txnLo + 1);
+            if (txnsToLoad > 0) {
+                txnDetails.setCapacity(txnsToLoad * 4L);
 
-                if (lastWalId == walId && segmentId == lastSegmentId) {
-                    assert segmentTxn > lastSegmentTxn;
-                    while (lastSegmentTxn++ < segmentTxn && walEventCursor.hasNext()) {
-                        // Skip uncommitted yet transactions
+                // Load the map of outstanding WAL transactions to load necessary details from WAL-E files efficiently.
+                long max = Long.MIN_VALUE, min = Long.MAX_VALUE;
+                int txn;
+                for (txn = 0; txn < txnsToLoad && transactionLogCursor.hasNext(); txn++) {
+                    long long1 = Numbers.encodeLowHighInts(transactionLogCursor.getSegmentId(), transactionLogCursor.getWalId() - MIN_WAL_ID);
+                    max = Math.max(max, long1);
+                    min = Math.min(min, long1);
+                    txnDetails.add(long1);
+                    txnDetails.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), txn));
+                }
+                txnsToLoad = txn;
+
+                // We specify min as 0, so we expect the highest bit to be 0
+                Vect.radixSortLongIndexAscChecked(
+                        txnDetails.getAddress(),
+                        txnsToLoad,
+                        txnDetails.getAddress() + txnsToLoad * 2L * Long.BYTES,
+                        min,
+                        max
+                );
+
+                int lastWalId = -1;
+                int lastSegmentId = -1;
+                int lastSegmentTxn = -2;
+
+                WalEventCursor walEventCursor = null;
+                minTimestamp = Long.MAX_VALUE;
+                maxTimestamp = Long.MIN_VALUE;
+
+                for (int i = 0; i < txnsToLoad; i++) {
+                    long long1 = txnDetails.get(2L * i);
+                    long long2 = txnDetails.get(2L * i + 1);
+
+                    long seqTxn = Numbers.decodeHighInt(long2) + txnLo;
+                    int walId = Numbers.decodeHighInt(long1) + MIN_WAL_ID;
+                    int segmentId = Numbers.decodeLowInt(long1);
+                    int segmentTxn = Numbers.decodeLowInt(long2);
+
+                    if (walId > 0) {
+                        if (lastWalId == walId && segmentId == lastSegmentId) {
+                            assert segmentTxn > lastSegmentTxn;
+                            while (lastSegmentTxn < segmentTxn && walEventCursor.hasNext()) {
+                                // Skip uncommitted transactions
+                                lastSegmentTxn++;
+                            }
+                            if (lastSegmentTxn != segmentTxn) {
+                                walEventCursor = WalTxnDetails.openWalEFile(tempPath, eventReader, segmentTxn, seqTxn);
+                                lastSegmentTxn = segmentTxn;
+                            }
+                        } else {
+                            tempPath.trimTo(rootLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                            walEventCursor = WalTxnDetails.openWalEFile(tempPath, eventReader, segmentTxn, seqTxn);
+                            lastWalId = walId;
+                            lastSegmentId = segmentId;
+                            lastSegmentTxn = segmentTxn;
+                        }
+
+                        if (!WalTxnType.isDataType(walEventCursor.getType())) {
+                            // Skip non-inserts
+                            continue;
+                        }
+
+                        final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
+                        long minTimestamp1 = dataInfo.getMinTimestamp();
+                        long maxTimestamp1 = dataInfo.getMaxTimestamp();
+                        if (dataInfo.getDedupMode() == WAL_DEDUP_MODE_REPLACE_RANGE) {
+                            minTimestamp1 = dataInfo.getReplaceRangeTsLow();
+                            // Replace range high is exclusive, so we subtract 1 to make it maximum inclusive.
+                            maxTimestamp1 = dataInfo.getReplaceRangeTsHi() - 1;
+                        }
+                        intervals.add(minTimestamp1, maxTimestamp1);
+                        IntervalUtils.unionInPlace(intervals, intervals.size() - 2);
                     }
-                    if (lastSegmentTxn != segmentTxn) {
-                        walEventCursor = openWalEFile(tempPath, eventReader, segmentTxn);
-                        lastSegmentTxn = segmentTxn;
-                    }
-                } else {
-                    tempPath.trimTo(rootLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                    walEventCursor = openWalEFile(tempPath, eventReader, segmentTxn);
-                    lastWalId = walId;
-                    lastSegmentId = segmentId;
-                    lastSegmentTxn = segmentTxn;
                 }
 
-                if (!WalTxnType.isDataType(walEventCursor.getType())) {
-                    // Skip non-inserts
-                    continue;
+                if (intervals.size() > 0) {
+                    minTimestamp = intervals.getQuick(0);
+                    maxTimestamp = intervals.getQuick(intervals.size() - 1);
                 }
-
-                minTimestamp = Math.min(minTimestamp, walEventCursor.getDataInfo().getMinTimestamp());
-                maxTimestamp = Math.max(maxTimestamp, walEventCursor.getDataInfo().getMaxTimestamp());
             }
-        }
-        txnDetails.clear();
-    }
-
-    private void loadTransactionDetailsV2(TransactionLogCursor transactionLogCursor, long txnLo, long txnHi) {
-        minTimestamp = Long.MAX_VALUE;
-        maxTimestamp = Long.MIN_VALUE;
-
-        while (txnLo++ < txnHi && transactionLogCursor.hasNext()) {
-            if (transactionLogCursor.getTxnRowCount() > 0) {
-                minTimestamp = Math.min(minTimestamp, transactionLogCursor.getTxnMinTimestamp());
-                maxTimestamp = Math.max(maxTimestamp, transactionLogCursor.getTxnMaxTimestamp());
-            }
+        } finally {
+            txnDetails.resetCapacity();
         }
     }
 }

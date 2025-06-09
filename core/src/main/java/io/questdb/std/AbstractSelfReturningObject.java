@@ -24,9 +24,7 @@
 
 package io.questdb.std;
 
-import java.io.Closeable;
-
-public abstract class AbstractSelfReturningObject<T extends AbstractSelfReturningObject<?>> implements Closeable {
+public abstract class AbstractSelfReturningObject<T extends AbstractSelfReturningObject<?>> implements QuietCloseable {
     private final WeakSelfReturningObjectPool<T> parentPool;
 
     public AbstractSelfReturningObject(WeakSelfReturningObjectPool<T> parentPool) {

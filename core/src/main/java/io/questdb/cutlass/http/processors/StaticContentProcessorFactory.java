@@ -25,11 +25,11 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
-import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.http.HttpRequestProcessorFactory;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.std.ObjList;
 
-public class StaticContentProcessorFactory implements HttpRequestProcessorFactory {
+public class StaticContentProcessorFactory implements HttpRequestHandlerFactory {
     private final HttpFullFatServerConfiguration httpConfiguration;
 
     public StaticContentProcessorFactory(HttpFullFatServerConfiguration httpConfiguration) {
@@ -42,8 +42,7 @@ public class StaticContentProcessorFactory implements HttpRequestProcessorFactor
     }
 
     @Override
-    public HttpRequestProcessor newInstance() {
+    public HttpRequestHandler newInstance() {
         return new StaticContentProcessor(httpConfiguration);
     }
-
 }

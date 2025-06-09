@@ -82,7 +82,7 @@ jobs:
         run: |
           ldd --version
           yum update -y
-          yum install perl-Font-TTF perl-Sort-Versions wget perf asciidoc xmlto ghostscript adobe-source-sans-pro-fonts adobe-source-code-pro-fonts rpm-build zstd curl -y
+          yum install 'perl(Env)' perl-Font-TTF perl-Sort-Versions gcc wget perf asciidoc xmlto ghostscript adobe-source-sans-pro-fonts adobe-source-code-pro-fonts rpm-build zstd curl -y
       - name: Build nasm
         # we need nasm 2.14+ due to this bug https://bugzilla.nasm.us/show_bug.cgi?id=3392205
         # manylinux2014 distribution includes nasm 2.10

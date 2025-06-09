@@ -25,6 +25,7 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
@@ -64,8 +65,8 @@ public class HttpServerConfigurationBuilder {
     private int tcpSndBufSize;
     private int workerCount;
 
-    public DefaultHttpServerConfiguration build() {
-        return new DefaultHttpServerConfiguration() {
+    public DefaultHttpServerConfiguration build(CairoConfiguration cairoConfiguration) {
+        return new DefaultHttpServerConfiguration(cairoConfiguration) {
             private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
                 @Override
                 public int getConnectionCheckFrequency() {

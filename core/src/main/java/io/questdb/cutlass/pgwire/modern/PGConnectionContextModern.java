@@ -591,8 +591,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         for (int i = 0, n = names.size(); i < n; i++) {
             PGPipelineEntry pe = cache.get(names.getQuick(i));
             pe.setStateClosed(true, isStatementClose);
-            // return the factory back to global cache in case of a select
-            pe.cacheIfPossible(tasCache, null);
+            pe.cacheIfPossible(tasCache, taiCache);
             releaseToPool(pe);
         }
         cache.clear();
@@ -707,7 +706,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         responseUtf8Sink.sendBufferAndReset();
     }
 
-    private boolean lookupPipelineEntryForNamedPortal(@Nullable Utf8Sequence namedPortal) throws BadProtocolException {
+    private void lookupPipelineEntryForNamedPortal(@Nullable Utf8Sequence namedPortal) throws BadProtocolException {
         if (namedPortal != null) {
             PGPipelineEntry pe = namedPortals.get(namedPortal);
             if (pe == null) {
@@ -716,12 +715,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             }
 
             replaceCurrentPipelineEntry(pe);
-            return false;
         }
-        return true;
     }
 
-    private boolean lookupPipelineEntryForNamedStatement(long lo, long hi) throws BadProtocolException {
+    private void lookupPipelineEntryForNamedStatement(long lo, long hi) throws BadProtocolException {
         @Nullable Utf8Sequence namedStatement = getUtf8NamedStatement(lo, hi);
         if (namedStatement != null) {
             PGPipelineEntry pe = namedStatements.get(namedStatement);
@@ -731,9 +728,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             }
 
             replaceCurrentPipelineEntry(pe);
-            return false;
         }
-        return true;
     }
 
     private void msgBind(long lo, long msgLimit) throws BadProtocolException {
@@ -924,11 +919,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // followed by the name, which can be NULL, typically with 'P'
         boolean isPortal = Unsafe.getUnsafe().getByte(lo) == 'P';
         final long hi = getUtf8StrSize(lo + 1, msgLimit, "bad prepared statement name length (describe)", pipelineCurrentEntry);
-        final boolean nullTargetName;
         if (isPortal) {
-            nullTargetName = lookupPipelineEntryForNamedPortal(getUtf8NamedPortal(lo + 1, hi));
+            lookupPipelineEntryForNamedPortal(getUtf8NamedPortal(lo + 1, hi));
         } else {
-            nullTargetName = lookupPipelineEntryForNamedStatement(lo + 1, hi);
+            lookupPipelineEntryForNamedStatement(lo + 1, hi);
         }
 
         // some defensive code to have predictable behaviour
@@ -939,7 +933,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             throw msgKaput().put("spurious describe message received");
         }
 
-        pipelineCurrentEntry.setStateDesc(nullTargetName || isPortal ? PGPipelineEntry.SYNC_DESC_ROW_DESCRIPTION : PGPipelineEntry.SYNC_DESC_PARAMETER_DESCRIPTION);
+        pipelineCurrentEntry.setStateDesc(isPortal ? PGPipelineEntry.SYNC_DESC_ROW_DESCRIPTION : PGPipelineEntry.SYNC_DESC_PARAMETER_DESCRIPTION);
     }
 
     private void msgExecute(long lo, long msgLimit) throws BadProtocolException {
@@ -961,7 +955,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         transactionState = pipelineCurrentEntry.msgExecute(
                 sqlExecutionContext,
                 transactionState,
-                taiCache,
                 taiPool,
                 pendingWriters,
                 this,
@@ -1075,15 +1068,13 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // will have the supplied parameter types.
 
         int cachedStatus = CACHE_MISS;
-        int taiKeyIndex = taiCache.keyIndex(utf16SqlText);
-        final TypesAndInsertModern tai = taiCache.peek(taiKeyIndex);
+        final TypesAndInsertModern tai = taiCache.poll(utf16SqlText);
         if (tai != null) {
             if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
                 pipelineCurrentEntry.ofCachedInsert(utf16SqlText, tai);
                 cachedStatus = CACHE_HIT_INSERT_VALID;
             } else {
-                TypesAndInsertModern tai2 = taiCache.poll(taiKeyIndex);
-                assert tai2 == tai;
+                // Cache miss, get rid of this entry.
                 tai.close();
                 cachedStatus = CACHE_HIT_INSERT_INVALID;
             }
@@ -1268,6 +1259,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // Message types in the order they usually come over the wire. All "msg" methods
         // are called only from here and are responsible for handling individual messages.
         // Please do not create other methods that start with "msg".
+
         switch (type) {
             case 'P': // parse
                 msgParse(address, msgLo, msgLimit);
@@ -1420,7 +1412,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             boolean isError = pipelineCurrentEntry.isError();
             boolean isClosed = pipelineCurrentEntry.isStateClosed();
             // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
-            do {
+            while (true) {
                 try {
                     pipelineCurrentEntry.msgSync(
                             sqlExecutionContext,
@@ -1445,7 +1437,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                         break;
                     }
                 }
-            } while (true);
+            }
 
             // we want the pipelineCurrentEntry to retain the last entry of the pipeline
             // unless this entry was already executed, closed and is an error
@@ -1563,7 +1555,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             transactionState = pipelineCurrentEntry.msgExecute(
                     sqlExecutionContext,
                     transactionState,
-                    taiCache,
                     taiPool,
                     pendingWriters,
                     PGConnectionContextModern.this,

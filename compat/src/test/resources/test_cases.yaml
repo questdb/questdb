@@ -2,9 +2,123 @@ variables:
   table_name: "sensor_data"
 
 tests:
+  - name: Test Empty Array
+    description: Test inserting and selecting empty array.
+    prepare:
+      - action: execute
+        query: "CREATE TABLE ${table_name} (id INT, arr double[]);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 10
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO ${table_name} (id, arr) VALUES ($[1], $[2]);"
+              parameters:
+                - value: "${id}"
+                  type: "INT4"
+                - value: "{}"
+                  type: "ARRAY_FLOAT8"
+              expect:
+                result:
+                  - [ 1 ]
+      - action: query
+        query: "SELECT * FROM ${table_name}"
+        expect:
+          result_contains:
+            - [ 1, "{}" ]
+            - [ 2, "{}" ]
+            - [ 10, "{}" ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"
+
+  - name: Test Array
+    description: Test inserting and selecting data with an array.
+    prepare:
+      - action: execute
+        query: "CREATE TABLE array_table (id INT, arr double[], arr2 double[]);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 10
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO array_table (id, arr, arr2) VALUES ($[1], $[2], $[3]);"
+              parameters:
+                - value: "${id}"
+                  type: "INT4"
+                - value: "{-1, 2, 3, 4, 5.42}"
+                  type: "ARRAY_FLOAT8"
+                - value: "{0, 1, 2, 3, 4, 5}"
+                  type: "ARRAY_FLOAT8"
+              expect:
+                result:
+                  - [ 1 ]
+      - action: query
+        query: "SELECT * FROM array_table"
+        expect:
+          result_contains:
+            - [ 1, "{-1.0,2.0,3.0,4.0,5.42}",  "{0.0,1.0,2.0,3.0,4.0,5.0}" ]
+            - [ 2, "{-1.0,2.0,3.0,4.0,5.42}",  "{0.0,1.0,2.0,3.0,4.0,5.0}" ]
+            - [ 10, "{-1.0,2.0,3.0,4.0,5.42}", "{0.0,1.0,2.0,3.0,4.0,5.0}" ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS array_table;"
+
+  - name: Test non Vanilla Arrays
+    description: Selecting sliced arrays
+    exclude: [ 'golang' ]
+    prepare:
+      - action: execute
+        query: "CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]] arr FROM long_sequence(1))"
+    steps:
+      - action: query
+        query: "SELECT arr[1:2] slice FROM tango"
+        expect:
+          result:
+            - [ "{{1.0,2.0}}" ]
+      - action: query
+        query: "SELECT arr[2:] slice FROM tango"
+        expect:
+          result:
+            - [ "{{3.0,4.0},{5.0,6.0}}" ]
+      - action: query
+        query: "SELECT arr[3:, 1:2] slice FROM tango"
+        expect:
+          result:
+            - [ "{{5.0}}" ]
+      - action: query
+        query: "SELECT arr[3:, 2] slice FROM tango"
+        expect:
+          result:
+            - [ "{6.0}" ]
+      - action: query
+        query: "SELECT arr[1:3] slice FROM tango"
+        expect:
+          result:
+            - [ "{{1.0,2.0},{3.0,4.0}}" ]
+      - action: query
+        query: "SELECT arr[1:3, 1:2] slice FROM tango"
+        expect:
+          result:
+            - [ "{{1.0},{3.0}}" ]
+      - action: query
+        query: "SELECT arr[2, 2] element FROM tango"
+        expect:
+          result:
+            - [ 4.0 ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS tango;"
+
   - name: Bindvar gaps with subqueries
     description: https://github.com/questdb/questdb/issues/5512
-    exclude: [ 'psycopg2', 'psycopg3', 'asyncpg', 'rust', 'php' ]
+    exclude: [ 'psycopg2', 'psycopg3', 'asyncpg', 'rust', 'php', 'nodejs-postgres' ]
     prepare:
       - action: execute
         query: "CREATE TABLE test_table (value double, state symbol, opened_at timestamp) timestamp(opened_at) PARTITION BY YEAR BYPASS WAL;"

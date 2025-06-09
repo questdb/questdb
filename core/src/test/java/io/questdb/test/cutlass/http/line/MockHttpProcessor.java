@@ -24,7 +24,13 @@
 
 package io.questdb.test.cutlass.http.line;
 
-import io.questdb.cutlass.http.*;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cutlass.http.HttpChunkedResponse;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpPostPutProcessor;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Chars;
@@ -34,6 +40,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.tools.TestUtils;
 
+import java.net.HttpURLConnection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Queue;
@@ -41,7 +48,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartContentListener {
+final class MockHttpProcessor implements HttpPostPutProcessor, HttpRequestHandler {
     private static final long MAX_DELIVERY_DELAY_NANOS = TimeUnit.SECONDS.toNanos(10);
     private final Queue<ExpectedRequest> expectedRequests = new ConcurrentLinkedQueue<>();
     private final Queue<ActualRequest> recordedRequests = new ConcurrentLinkedQueue<>();
@@ -62,7 +69,6 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
         return this;
     }
 
-
     public MockHttpProcessor delayedReplyWithStatus(int statusCode, CountDownLatch delayLatch) {
         Response response = new Response();
         response.responseStatusCode = statusCode;
@@ -72,6 +78,11 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
         expectedRequests.add(expectedRequest);
         expectedRequest = new ExpectedRequest();
 
+        return this;
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
         return this;
     }
 
@@ -113,16 +124,6 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
             String headerValue = context.getRequestHeader().getHeader(headerNameUtf8).toString();
             actualRequest.headers.put(headerName, headerValue);
         }
-    }
-
-    @Override
-    public void onPartBegin(HttpRequestHeader partHeader) {
-
-    }
-
-    @Override
-    public void onPartEnd() {
-
     }
 
     @Override
@@ -209,17 +210,20 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
 
     private void verifyInteraction(ExpectedRequest expectedRequest, ActualRequest actualRequest, int interactionIndex) {
         if (actualRequest == null) {
-            throw new AssertionError("Expected request: " + expectedRequest + ", actual: null. Interaction index: " + interactionIndex);
+            throw new AssertionError("Expected request: " + expectedRequest +
+                    ", actual: null. Interaction index: " + interactionIndex);
         }
         if (expectedRequest.content != null) {
             if (!Chars.equals(expectedRequest.content, actualRequest.bodyContent.toString())) {
-                throw new AssertionError("Expected content: " + expectedRequest.content + ", actual: " + actualRequest.bodyContent + ". Interaction index: " + interactionIndex);
+                throw new AssertionError("Expected content: " + expectedRequest.content +
+                        ", actual: " + actualRequest.bodyContent + ". Interaction index: " + interactionIndex);
             }
         }
         for (Map.Entry<String, String> header : expectedRequest.headers.entrySet()) {
             String actualHeaderValue = actualRequest.headers.get(header.getKey());
             if (actualHeaderValue == null || !Chars.equals(header.getValue(), actualHeaderValue)) {
-                throw new AssertionError("Expected header: " + header.getKey() + "=" + header.getValue() + ", actual: " + actualHeaderValue + ". Interaction index: " + interactionIndex);
+                throw new AssertionError("Expected header: " + header.getKey() + "=" + header.getValue() +
+                        ", actual: " + actualHeaderValue + ". Interaction index: " + interactionIndex);
             }
         }
     }
@@ -249,5 +253,49 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
         private String responseContent;
         private int responseStatusCode;
     }
+}
 
+class MockSettingsProcessor implements HttpRequestHandler, HttpRequestProcessor {
+    @Override
+    public HttpRequestProcessor getDefaultProcessor() {
+        return this;
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
+    }
+
+    @Override
+    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpChunkedResponse r = context.getChunkedResponse();
+        r.status(HttpURLConnection.HTTP_OK, "application/json");
+        r.sendHeader();
+        r.put("{\"release.type\":\"OSS\",\"release.version\":\"[DEVELOPMENT]\",\"acl.enabled\":false," +
+                "\"line.proto.support.versions\":[1,2]," +
+                "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
+                "\"posthog.enabled\":false,\"posthog.api.key\":null}");
+        r.sendChunk(true);
+    }
+}
+
+class MockSettingsProcessorOldServer implements HttpRequestProcessor, HttpRequestHandler {
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
+        return SecurityContext.AUTH_TYPE_NONE;
+    }
+
+    @Override
+    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpChunkedResponse r = context.getChunkedResponse();
+        r.status(HttpURLConnection.HTTP_OK, "application/json");
+        r.sendHeader();
+        r.put("{ \"release.type\": \"OSS\", \"release.version\": \"[DEVELOPMENT]\", \"acl.enabled\": false, \"posthog.enabled\": false, \"posthog.api.key\": null }");
+        r.sendChunk(true);
+    }
 }
