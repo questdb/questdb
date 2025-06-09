@@ -201,6 +201,11 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         }
 
         @Override
+        public long preComputedStateSize() {
+            return baseCursor == null ? 1 : 0;
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             delegate.recordAt(record, atRowId);
         }

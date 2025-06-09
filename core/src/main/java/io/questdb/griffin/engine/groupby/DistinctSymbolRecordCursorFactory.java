@@ -107,6 +107,13 @@ public class DistinctSymbolRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long preComputedStateSize() {
+            // todo: this algo is pretty naive and does not allow easy re-runs
+            //     we need to build key set and use it for hasNext()
+            return 0;
+        }
+
+        @Override
         public boolean hasNext() {
             if (count == knownSymbolCount) {
                 return false;

@@ -159,6 +159,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() throws DataUnavailableException {
+                // todo: great allocation in a loop
                 final CairoConfiguration configuration = engine.getConfiguration();
                 try (
                         final Path path = new Path();

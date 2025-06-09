@@ -50,6 +50,10 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
         }
     }
 
+    static long fromBool(boolean b) {
+        return b ? 1L : 0L;
+    }
+
     static void skipRows(RecordCursor cursor, Counter rowCount) throws DataUnavailableException {
         while (rowCount.get() > 0 && cursor.hasNext()) {
             rowCount.dec();
@@ -144,6 +148,8 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
         throw new UnsupportedOperationException();
     }
 
+    long preComputedStateSize();
+
     /**
      * Positions record at given row id. The row id must have been previously obtained from Record instance.
      *
@@ -177,8 +183,10 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     }
 
     /**
-     * Return the cursor to the beginning of the page frame.
-     * Sets location to first column.
+     * Returns the cursor to its top position without re-running the
+     * query or triggering heavy computations. This method is not meant to
+     * reload data from the tables, but rather for performing multiple
+     * passes over the same result set.
      */
     void toTop();
 

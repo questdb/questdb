@@ -145,6 +145,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             @Override
             public void close() {
+                tableBucket.clear();
                 tableIndex = -1;
                 txReader.close();
             }
@@ -156,9 +157,8 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                if (tableIndex < 0) {
+                if (tableBucket.isEmpty()) {
                     engine.getTableTokens(tableBucket, false);
-                    tableIndex = -1;
                 }
 
                 tableIndex++;
@@ -170,6 +170,11 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     }
                 }
                 return tableIndex < n;
+            }
+
+            @Override
+            public long preComputedStateSize() {
+                return tableBucket.size();
             }
 
             @Override
