@@ -66,8 +66,8 @@ public class TestListener extends RunListener {
         Description description = failure.getDescription();
         LOG.error()
                 .$("***** Test Assumption Violated *****")
-                .$(description.getClassName()).$('.')
-                .$(description.getMethodName())
+                .utf8(description.getClassName()).$('.')
+                .utf8(description.getMethodName())
                 .$(" duration_ms=")
                 .$(getTestDuration())
                 .$(" : ")
@@ -79,17 +79,17 @@ public class TestListener extends RunListener {
         Description description = failure.getDescription();
         LOG.error()
                 .$("***** Test Failed *****")
-                .$(description.getClassName()).$('.')
-                .$(description.getMethodName())
-                .$(" duration_ms=")
-                .$(getTestDuration())
+                .utf8(description.getClassName()).$('.')
+                .utf8(description.getMethodName())
+                .$(" duration_ms=").$(getTestDuration())
                 .$(" : ")
                 .$(failure.getException()).$();
     }
 
     @Override
     public void testFinished(Description description) {
-        LOG.infoW().$("<<<< ").$(description.getClassName()).$('.')
+        LOG.infoW().$("<<<< ")
+                .utf8(description.getClassName()).$('.')
                 .utf8(description.getMethodName())
                 .$(" duration_ms=").$(getTestDuration()).$();
         System.out.println("<<<<= " + description.getClassName() + '.' + description.getMethodName() + " duration_ms=" + getTestDuration());
@@ -98,7 +98,8 @@ public class TestListener extends RunListener {
     @Override
     public void testStarted(Description description) {
         testStartMs = System.currentTimeMillis();
-        LOG.infoW().$(">>>> ").$(description.getClassName()).$('.')
+        LOG.infoW().$(">>>> ")
+                .utf8(description.getClassName()).$('.')
                 .utf8(description.getMethodName())
                 .$();
         System.out.println(">>>>= " + description.getClassName() + '.' + description.getMethodName());
