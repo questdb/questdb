@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.Record;
@@ -79,8 +80,6 @@ public class SqlParser {
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
     public static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
     private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
-    public static final int PIVOT_MAX_FOR_IN_LISTS = 500;
-    public static final int PIVOT_MAX_FOR_IN_LIST_LENGTH = 10000;
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
@@ -1638,6 +1637,18 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
+        return parseDml(lexer, withClauses, modelPosition, useTopLevelWithClauses, sqlParserCallback, decls, null);
+    }
+
+    private QueryModel parseDml(
+            GenericLexer lexer,
+            @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
+            int modelPosition,
+            boolean useTopLevelWithClauses,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            @Nullable SqlExecutionContext executionContext
+    ) throws SqlException {
         QueryModel model = null;
         QueryModel prevModel = null;
 
@@ -1645,7 +1656,7 @@ public class SqlParser {
             LowerCaseCharSequenceObjHashMap<WithClauseModel> parentWithClauses = prevModel != null ? prevModel.getWithClauses() : withClauses;
             LowerCaseCharSequenceObjHashMap<WithClauseModel> topWithClauses = useTopLevelWithClauses && model == null ? topLevelWithModel : null;
 
-            QueryModel unionModel = parseDml0(lexer, parentWithClauses, topWithClauses, modelPosition, sqlParserCallback, decls);
+            QueryModel unionModel = parseDml0(lexer, parentWithClauses, topWithClauses, modelPosition, sqlParserCallback, decls, executionContext);
             if (prevModel == null) {
                 model = unionModel;
                 prevModel = model;
@@ -1724,7 +1735,8 @@ public class SqlParser {
             @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> topWithClauses,
             int modelPosition,
             SqlParserCallback sqlParserCallback,
-            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            @Nullable SqlExecutionContext executionContext
     ) throws SqlException {
         CharSequence tok;
         QueryModel model = queryModelPool.next();
@@ -1864,7 +1876,7 @@ public class SqlParser {
             QueryModel nestedModel = queryModelPool.next();
             nestedModel.setModelPosition(modelPosition);
 
-            parseFromClause(lexer, nestedModel, model, sqlParserCallback);
+            parseFromClause(lexer, nestedModel, model, sqlParserCallback, executionContext);
             if (nestedModel.getLimitHi() != null || nestedModel.getLimitLo() != null) {
                 model.setLimit(nestedModel.getLimitLo(), nestedModel.getLimitHi());
                 nestedModel.setLimit(null, null);
@@ -2016,7 +2028,7 @@ public class SqlParser {
         }
     }
 
-    private void parseFromClause(GenericLexer lexer, QueryModel model, QueryModel masterModel, SqlParserCallback sqlParserCallback) throws SqlException {
+    private void parseFromClause(GenericLexer lexer, QueryModel model, QueryModel masterModel, SqlParserCallback sqlParserCallback, @Nullable SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = expectTableNameOrSubQuery(lexer);
 
         // copy decls down
@@ -2097,7 +2109,7 @@ public class SqlParser {
             }
             try {
                 pivotMode = true;
-                tok = parsePivot(lexer, model, sqlParserCallback);
+                tok = parsePivot(lexer, model, sqlParserCallback, executionContext);
             } finally {
                 pivotMode = false;
             }
@@ -2638,16 +2650,11 @@ public class SqlParser {
      * <p>
      * `tableName` PIVOT (sum(value) FOR name IN ('a', 'b', 'c') GROUP BY something);
      *
-     * @param lexer
-     * @param model
-     * @param sqlParserCallback
-     * @return
-     * @throws SqlException
      */
-    private CharSequence parsePivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+    private CharSequence parsePivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback, @Nullable SqlExecutionContext executionContext) throws SqlException {
         /*
             On entry, we expect that the `PIVOT` keyword has just been parsed.
-         */
+        */
 
         CharSequence tok;
         expectTok(lexer, '(');
@@ -2695,7 +2702,6 @@ public class SqlParser {
                 tok = tok(lexer, "')' or 'LHS of IN expr'");
             }
 
-
             if (isForKeyword(tok) || isRightParen(tok)) {
                 throw SqlException.$(lexer.lastTokenPosition(), "expected column name for IN expression");
             }
@@ -2737,11 +2743,17 @@ public class SqlParser {
                     Now eagerly compile and execute the query so we can get our IN keys-list.
                  */
                 final SqlCompilerImpl compiler = (SqlCompilerImpl) sqlParserCallback;
-                final SqlExecutionContext executionContext = new SqlExecutionContextImpl(compiler.getEngine(), 1);
+                final SqlExecutionContext innerExecutionContext =
+                        new SqlExecutionContextImpl(compiler.getEngine(), executionContext != null ? executionContext.getWorkerCount() : 1);
+
+                /*
+                    This query must be re-run, so the final execution plan cannot be cached.
+                 */
+                model.setCacheable(false);
 
                 try (RecordCursorFactory inListFactory = compiler
                         .getEngine()
-                        .select(lexer.getContent().subSequence(start, lexer.lastTokenPosition()), executionContext)) {
+                        .select(lexer.getContent().subSequence(start, lexer.lastTokenPosition()), innerExecutionContext)) {
 
                     final RecordMetadata inListMetadata = inListFactory.getMetadata();
 
@@ -2755,18 +2767,30 @@ public class SqlParser {
                                 .put(']');
                     }
 
+                    final TableColumnMetadata columnMetadata = inListMetadata.getColumnMetadata(0);
+
+                    boolean quote = ColumnType.isSymbolOrString(columnMetadata.getColumnType());
+
+                    // todo(nwoolmer): support geohash
+                    // todo(nwoolmer) support binary (when literal is added)
+
                     boolean hadEntries = false;
-                    try (RecordCursor cursor = inListFactory.getCursor(executionContext)) {
+                    try (RecordCursor cursor = inListFactory.getCursor(innerExecutionContext)) {
                         /*
                             Print each output key and add it to our `FOR` list.
                          */
                         while (cursor.hasNext()) {
                             hadEntries = true;
                             CharacterStoreEntry cse = characterStore.newEntry();
-                            cse.put('\'');
+                            if (quote) {
+                                cse.put('\'');
+                            }
+
                             final Record record = cursor.getRecord();
                             CursorPrinter.printColumn(record, inListMetadata, 0, cse);
-                            cse.put('\'');
+                            if (quote) {
+                                cse.put('\'');
+                            }
                             final QueryColumn qc = nextColumn(null, cse.toImmutable(), lexer.lastTokenPosition());
                             qc.getAst().type = ExpressionNode.CONSTANT;
                             model.addPivotFor(qc);
@@ -2781,6 +2805,15 @@ public class SqlParser {
                                 .put(lexer.getContent().subSequence(start, lexer.lastTokenPosition()))
                                 .put(']');
                     }
+                } catch (SqlException e) {
+                    /*
+                     If the subquery contains bind variables, it will fail to bind them, because we gave it
+                     an execution context that lacks them. That is intentional.
+                    */
+                    if (Chars.contains(e.getFlyweightMessage(), "bind variable service is not provided")) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "cannot use bind variables in a PIVOT query");
+                    }
+                    throw e;
                 }
 
                 tok = optTok(lexer);
@@ -2800,9 +2833,27 @@ public class SqlParser {
 
                 do {
                     final QueryColumn nextFor = parsePivotParseColumn(lexer, model, sqlParserCallback, "',' or ')'", "missing constant");
+                    ExpressionNode ast = nextFor.getAst();
+                    if (ast.type != ExpressionNode.CONSTANT) {
+                        if (ast.type == ExpressionNode.FUNCTION && isCastKeyword(nextFor.getAst().token)) {
 
-                    if (nextFor.getAst().type != ExpressionNode.CONSTANT) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "expected constant, did you provide an empty IN list?");
+                            if (ast.lhs.type != ExpressionNode.CONSTANT) {
+                                // cast should mainly be used by PG Wire drivers
+                                throw SqlException.$(lexer.lastTokenPosition(), "only single level of CAST is supported by PIVOT");
+                            }
+
+                            // unwrap
+                            int type = ColumnType.tagOf(ast.rhs.token);
+
+                            if (!ColumnType.isSymbolOrString(type)) {
+                                nextFor.setAst(nextConstant(unquote(ast.lhs.token), ast.position));
+                            } else {
+                                nextFor.setAst(ast.lhs);
+                            }
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "literal IN list must must only contain constants");
+                        }
+
                     }
 
                     tok = tok(lexer, "constant list");
@@ -2849,7 +2900,7 @@ public class SqlParser {
 
             In the rewrite, the columns are cleared and replaced with newly generated ones.
          */
-        if (tok != null && isGroupKeyword(tok)) {
+        if (isGroupKeyword(tok)) {
             expectBy(lexer);
 
             do {
@@ -3092,8 +3143,17 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
+        return parseSelect(lexer, sqlParserCallback, decls, null);
+    }
+
+    private ExecutionModel parseSelect(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            @Nullable SqlExecutionContext executionContext
+    ) throws SqlException {
         lexer.unparseLast();
-        final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls);
+        final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, executionContext);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
@@ -4397,7 +4457,7 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "Did you mean 'select * from'?");
         }
 
-        return parseSelect(lexer, sqlParserCallback, null);
+        return parseSelect(lexer, sqlParserCallback, null, executionContext);
     }
 
     QueryModel parseAsSubQuery(

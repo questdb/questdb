@@ -2623,7 +2623,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
             executionContext.setAllowNonDeterministicFunction(false);
             try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, executionContext, false));
+                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, executionContext, false), true);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
@@ -2913,7 +2913,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     (QueryModel) executionModel,
                                     executionContext,
                                     generateProgressLogger
-                            )
+                            ),
+                            ((QueryModel) executionModel).isCacheable()
                     );
                     break;
                 case ExecutionModel.CREATE_TABLE:

@@ -198,6 +198,56 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWithCast() throws Exception {
+        assertQueryAndPlan(
+                "country\t2000\t2010\t2020\n",
+                "SELECT *\n" +
+                        "FROM cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population)\n" +
+                        "    FOR\n" +
+                        "        year IN (2000, '2010'::int, '2020'::long)\n" +
+                        "    GROUP BY country\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "country\t2000\t2010\t2020\n" +
+                        "NL\t1005\t1065\t1158\n" +
+                        "US\t8579\t8783\t9510\n",
+                true,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  keys: [country]\n" +
+                        "  values: [sum(case([SUM,nullL,year])),sum(case([SUM,nullL,year])),sum(case([SUM,nullL,year]))]\n" +
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [country,year]\n" +
+                        "      values: [sum(population)]\n" +
+                        "      filter: year in [2000,2010,2020]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: cities\n");
+    }
+
+    @Test
+    public void testPivotWithNestedCast() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+            assertException( "cities\n" +
+                    "PIVOT (\n" +
+                    "    SUM(population)\n" +
+                    "    FOR\n" +
+                    "        year IN (2000, ('2010'::int)::long, '2020'::long)\n" +
+                    "    GROUP BY country\n" +
+                    ");\n",
+                    85,
+                    "only single level of CAST is supported by PIVOT");
+        });
+    }
+
+    @Test
     public void testPivotWithNonDistinctQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlTrades);

@@ -197,6 +197,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode outerJoinExpressionClause;
     private @Nullable ObjList<QueryColumn> pivotColumns = null;
     private @Nullable ObjList<QueryColumn> pivotFor = null;
+    private boolean cacheable = true;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
     private ExpressionNode sampleByFrom;
@@ -373,6 +374,17 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         pivotFor.add(_for);
     }
 
+    public void setCacheable(boolean b) {
+        cacheable = b;
+    }
+
+    public boolean isCacheable() {
+        if (nestedModel != null) {
+            return cacheable && nestedModel.isCacheable();
+        }
+        return cacheable;
+    }
+
     public void addSampleByFill(ExpressionNode sampleByFill) {
         this.sampleByFill.add(sampleByFill);
     }
@@ -511,6 +523,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         skipped = false;
         Misc.clear(pivotColumns);
         Misc.clear(pivotFor);
+        cacheable = true;
         Misc.clear(unpivotColumns);
         Misc.clear(unpivotFor);
         unpivotIncludeNulls = false;
@@ -536,8 +549,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void clearPivot() {
-        Misc.clear(pivotFor);
         Misc.clear(pivotColumns);
+        Misc.clear(pivotFor);
     }
 
     public void clearSampleBy() {
@@ -1138,7 +1151,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 isUpdateModel, modelType, updateTableModel,
                 updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls,
                 allowPropagationOfOrderByAdvice,
-                pivotColumns, pivotFor, unpivotColumns, unpivotFor, unpivotIncludeNulls
+                pivotColumns, pivotFor, cacheable, unpivotColumns, unpivotFor, unpivotIncludeNulls
         );
     }
 
@@ -2101,7 +2114,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             pivotColumns.toSink(sink);
             sink.putAscii(" for ");
 
-            ExpressionNode _else;
             assert pivotFor != null;
             for (int i = 0, n = pivotFor.size(); i < n; i++) {
                 QueryColumn pivotForName = pivotFor.getQuick(i);
@@ -2115,7 +2127,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             sink.put(',');
                         }
                     }
-
                 }
 
                 sink.put(')');
