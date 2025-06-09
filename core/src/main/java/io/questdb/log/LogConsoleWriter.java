@@ -80,7 +80,7 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
                 debugSink.clear();
                 debugSink.put((DirectUtf8Sequence) sink);
 
-                long res = Files.append(1L << 32, sink.ptr(), sink.size());
+                long res = Files.append(fd, sink.ptr(), sink.size());
 
                 if (res != sink.size()) {
                     System.out.println("sink.size() " + sink.size() + ", res " + res + ", errno " +
