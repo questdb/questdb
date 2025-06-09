@@ -32,7 +32,7 @@ public class FixedTimeZoneRule implements TimeZoneRules {
     }
 
     @Override
-    public long getGapDuration(long localEpoch) {
+    public long getDstGapOffset(long localEpoch) {
         return 0;
     }
 

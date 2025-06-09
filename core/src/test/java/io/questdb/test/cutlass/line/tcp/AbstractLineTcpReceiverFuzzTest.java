@@ -233,8 +233,13 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 final String sql = tableName + " where timestamp > " + timestampMark;
                 try (RecordCursorFactory factory = select(sql)) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
-                                .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
+                        // Extract for safe logging
+                        CharSequence name = table.getName();
+                        int size = table.size();
+                        long cursorSize = cursor.size();
+
+                        getLog().info().$("table.getName(): ").$(name).$(", tableName: ").$(tableName)
+                                .$(", table.size(): ").$(size).$(", cursor.size(): ").$(cursorSize).$();
                         assertCursorTwoPass(expected, cursor, metadata);
                     }
                 }
@@ -368,16 +373,33 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         final String sql = tableName + " where timestamp > " + timestampMark;
         try (RecordCursorFactory factory = select(sql)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
-                        .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
-                return table.size() <= cursor.size();
+
+                // Extract vars for safe logging
+                long size = cursor.size();
+                int tableSize = table.size();
+                CharSequence name = table.getName();
+
+                getLog().info().$("table.getName(): ")
+                        .$(name).$(", tableName: ").$(tableName)
+                        .$(", table.size(): ").$(tableSize)
+                        .$(", cursor.size(): ").$(size).$();
+                return tableSize <= size;
             }
         } catch (SqlException ex) {
             if (ex.getFlyweightMessage().toString().contains("table does not exist")
                     || ex.getFlyweightMessage().toString().contains("table directory is of unknown format")) {
-                getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
-                        .$(", table.size(): ").$(table.size()).$(", cursor.size(): table does not exist").$();
-                return table.size() <= 0;
+
+                // Extract vars for safe logging
+                int size = table.size();
+                CharSequence name = table.getName();
+
+                getLog().info().$("table.getName(): ")
+                        .$(name).$(", tableName: ").$(tableName)
+                        .$(", table.size(): ").$(size)
+                        .$(", cursor.size(): table does not exist")
+                        .$();
+
+                return size <= 0;
             } else {
                 throw ex;
             }

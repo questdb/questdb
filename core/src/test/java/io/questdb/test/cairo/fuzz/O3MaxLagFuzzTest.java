@@ -74,7 +74,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
             FuzzTransaction tx = transactions.getQuick(i);
             ObjList<FuzzTransactionOperation> ops = tx.operationList;
             for (int j = 0, k = ops.size(); j < k; j++) {
-                ops.getQuick(j).apply(rnd, engine, w, virtualTimestampIndex);
+                ops.getQuick(j).apply(rnd, engine, w, virtualTimestampIndex, null);
             }
             w.ic();
         }
@@ -153,6 +153,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                     0.0,
                     Os.type == Os.WINDOWS ? 0 : 0.2, // insert only
                     0,
+                    0.0,
                     0.0,
                     5,
                     new String[]{"ABC", "CDE", "XYZ"},
