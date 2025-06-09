@@ -7698,7 +7698,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         o3ColumnOverrides.set(primaryColumnIndex, remappedColumn);
 
                         LOG.info().$("using remapped column buffer [table=").$(tableToken)
-                                .$(", name=").$(metadata.getColumnName(i)).$(", index=").$(i).I$();
+                                .$(", name=").utf8(metadata.getColumnName(i)).$(", index=").$(i).I$();
                     }
                 }
                 columnSegmentAddressesBase += Long.BYTES;
@@ -8073,7 +8073,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Save the hint that symbol column is not re-mapped
                 Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary, 0);
                 LOG.debug().$("no new symbols, no remapping needed [table=").utf8(tableToken.getTableName())
-                        .$(", column=").$(metadata.getColumnName(columnIndex))
+                        .$(", column=").utf8(metadata.getColumnName(columnIndex))
                         .$(", rows=").$(totalRows)
                         .I$();
             }
@@ -9757,7 +9757,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void throwApplyBlockColumnShuffleFailed(int columnIndex, int columnType, long totalRows, long rowCount) {
         LOG.error().$("wal block apply failed [table=").$(tableToken)
-                .$(", column=").$(metadata.getColumnName(columnIndex))
+                .$(", column=").utf8(metadata.getColumnName(columnIndex))
                 .$(", columnType=").$(ColumnType.nameOf(columnType))
                 .$(", expectedResult=").$(totalRows)
                 .$(", actualResult=").$(rowCount)
