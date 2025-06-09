@@ -102,6 +102,7 @@ steps:
       options:
         "--batch-mode --quiet -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
+        -Dfile.encoding=UTF-8
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
