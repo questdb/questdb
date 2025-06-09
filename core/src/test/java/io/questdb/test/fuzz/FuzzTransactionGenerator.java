@@ -216,7 +216,7 @@ public class FuzzTransactionGenerator {
 
                 // Replace commits with TTL may result in partition drop, if the data is deleted from WAL table at the end
                 // it'll be the reason to drop prior partitions because of the TTL.
-                // Non-wal don't have the replaced data inserted, and they will not drop the partition
+                // Non-wal tables don't have the replaced data inserted, and they will not drop partitions
                 // because of TTL, and it will generate expected vs actual difference.
                 // The workaround is to not generate replace inserts on the tables with TTL set.
                 boolean replaceInsert = rnd.nextDouble() < replaceInsertProb && (setTtlIteration < 0 || i < setTtlIteration);
