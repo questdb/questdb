@@ -58,8 +58,7 @@ public class TablesBootstrapTest extends AbstractBootstrapTest {
             // restart
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
-
-                assertTables(serverMain);
+                TestUtils.assertEventually(() -> assertTables(serverMain));
 
                 serverMain.ddl("ALTER TABLE tab DROP COLUMN sym");
                 assertTables(serverMain);

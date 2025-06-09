@@ -107,6 +107,13 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         AbstractTest.tearDownStatic();
     }
 
+    protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            code.run();
+            CLOSEABLES.forEach(Misc::free);
+        });
+    }
+
     protected static void assertQueryFails(
             String username,
             String password,
