@@ -38,7 +38,7 @@ import java.io.PrintStream;
 import java.util.Arrays;
 
 public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogWriter {
-    private final Utf8StringSink[] debugSinks = new Utf8StringSink[100];
+    private final Utf8StringSink[] debugSinks = new Utf8StringSink[50];
     private final long fd = Files.getStdOutFdInternal();
     private final int level;
     private final RingQueue<LogRecordUtf8Sink> ring;
@@ -76,14 +76,6 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
             Utf8StringSink sink = debugSinks[(int) (l % debugSinks.length)];
             String content = sink.toString();
             out.print(content);
-//            for (int n = sink.size(), i = 0; i < n; i++) {
-//                byte b = sink.byteAt(i);
-//                if (b < 127 && (b > 31 || b == '\r' || b == '\n' || b == '\t')) {
-//                    out.print((char) b);
-//                } else {
-//                    out.format("\\x%02x", b & 0xFF);
-//                }
-//            }
         }
     }
 
