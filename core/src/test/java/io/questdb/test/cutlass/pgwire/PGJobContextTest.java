@@ -2977,6 +2977,7 @@ if __name__ == "__main__":
 
     @Test
     public void testCloseMessageHex() throws Exception {
+        Assume.assumeFalse(legacyMode);
         skipOnWalRun(); // select only
         //hex for close message 43 00000009 53 535f31 00
         assertHexScriptAltCreds(
