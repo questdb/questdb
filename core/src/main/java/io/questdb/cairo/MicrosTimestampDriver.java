@@ -34,7 +34,6 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -716,7 +715,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 try {
                     // trim to the lowest precision needed and get the timestamp
                     // convert timestamp to first day of the week
-                    return Nanos.floorDOW(DAY_FORMAT.parse(partitionName, 0, localLimit, EN_LOCALE));
+                    return Timestamps.floorDOW(DAY_FORMAT.parse(partitionName, 0, localLimit, EN_LOCALE));
                 } catch (NumericException ignore) {
                     throw expectedPartitionDirNameFormatCairoException(partitionName, 0, Math.min(partitionName.length(), localLimit), partitionBy);
                 }
