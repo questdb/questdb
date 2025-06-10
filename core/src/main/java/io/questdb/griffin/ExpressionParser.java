@@ -1407,6 +1407,11 @@ public class ExpressionParser {
                                     throw SqlException.$(lastPos, "Huh? What would you like to extract?");
                                 }
                                 throw SqlException.$(lastPos, "Unnecessary `from`. Typo?");
+                            } else if (SqlKeywords.isOverKeyword(tok)) {
+                                if (Chars.equals(SqlUtil.fetchNext(lexer), '(')) {
+                                    throw SqlException.$(lastPos, "Nested window functions are not currently supported.");
+                                }
+                                lexer.unparseLast();
                             }
 
                             // this is a function or array name, push it onto the stack
@@ -1503,6 +1508,11 @@ public class ExpressionParser {
                             } else if (SqlKeywords.isDoubleKeyword(last.token) && SqlKeywords.isPrecisionKeyword(tok)) {
                                 // ignore 'precision' keyword after 'double'
                                 continue;
+                            } else if (SqlKeywords.isOverKeyword(tok)) {
+                                if (Chars.equals(SqlUtil.fetchNext(lexer), '(')) {
+                                    throw SqlException.$(lastPos, "Nested window functions' context are not currently supported.");
+                                }
+                                lexer.unparseLast();
                             }
                         }
                         // literal can be at start of input, after a bracket or part of an operator
