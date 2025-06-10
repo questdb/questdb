@@ -58,7 +58,7 @@ public class CreateDropViewTest extends AbstractViewTest {
                 try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                     barrier.await();
                     for (int i = 0; i < iterations; i++) {
-                        // Use test alloc() function to make sure that we always free the factory.
+                        // use test alloc() function to make sure that we always free the factory
                         execute(
                                 "create view if not exists price_view as (" +
                                         "select sym, alloc(42), last(price) as price, ts from price sample by 1h" +
