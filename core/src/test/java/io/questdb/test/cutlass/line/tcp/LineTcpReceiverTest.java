@@ -1828,7 +1828,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     private void dropWeatherTable() {
-        engine.dropTableOrMatView(path, engine.verifyTableName("weather"));
+        engine.dropTableOrViewOrMatView(path, engine.verifyTableName("weather"));
     }
 
     private void mayDrainWalQueue() {

@@ -569,7 +569,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 matViewStateStore.createViewState(matViewDefinition);
             }
         } catch (CairoException e) {
-            dropTableOrMatView(path, matViewToken);
+            dropTableOrViewOrMatView(path, matViewToken);
             throw e;
         }
         return matViewDefinition;
@@ -621,7 +621,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 walWriter.resetViewState(false, null);
             }
         } catch (CairoException e) {
-            dropTableOrMatView(path, viewToken);
+            dropTableOrViewOrMatView(path, viewToken);
             throw e;
         }
         return viewDefinition;
@@ -632,7 +632,7 @@ public class CairoEngine implements Closeable, WriterSource {
         readerPool.detach(reader);
     }
 
-    public void dropTableOrMatView(@Transient Path path, TableToken tableToken) {
+    public void dropTableOrViewOrMatView(@Transient Path path, TableToken tableToken) {
         verifyTableToken(tableToken);
         if (tableToken.isWal() || tableToken.isView()) {
             if (notifyDropped(tableToken)) {
