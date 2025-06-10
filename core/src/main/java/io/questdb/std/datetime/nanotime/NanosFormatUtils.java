@@ -40,8 +40,9 @@ import static io.questdb.std.datetime.CommonFormatUtils.*;
 
 public class NanosFormatUtils {
     public static final DateFormat NSEC_UTC_FORMAT;
-    public static final DateFormat UTC_FORMAT;
+    public static final DateFormat PG_TIMESTAMP_FORMAT;
     public static final DateFormat USEC_UTC_FORMAT;
+    public static final DateFormat UTC_FORMAT;
     private static final DateFormat[] FORMATS;
     private static final DateFormat[] HTTP_FORMATS;
     static int prevCenturyLow;
@@ -101,18 +102,18 @@ public class NanosFormatUtils {
         UTC_FORMAT.format(nanos, EN_LOCALE, "Z", sink);
     }
 
-    public static void appendDateTimeUSec(@NotNull CharSink<?> sink, long nanos) {
-        if (nanos == Long.MIN_VALUE) {
-            return;
-        }
-        USEC_UTC_FORMAT.format(nanos, EN_LOCALE, "Z", sink);
-    }
-
     public static void appendDateTimeNSec(@NotNull CharSink<?> sink, long nanos) {
         if (nanos == Long.MIN_VALUE) {
             return;
         }
         NSEC_UTC_FORMAT.format(nanos, EN_LOCALE, "Z", sink);
+    }
+
+    public static void appendDateTimeUSec(@NotNull CharSink<?> sink, long nanos) {
+        if (nanos == Long.MIN_VALUE) {
+            return;
+        }
+        USEC_UTC_FORMAT.format(nanos, EN_LOCALE, "Z", sink);
     }
 
     public static void appendEra(@NotNull CharSink<?> sink, int year, @NotNull DateLocale locale) {
@@ -341,8 +342,8 @@ public class NanosFormatUtils {
 
     static {
         updateReferenceYear(Os.currentTimeMicros());
-
         final NanosFormatCompiler compiler = new NanosFormatCompiler();
+        PG_TIMESTAMP_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.SSSUUUNNN");
         final String[] httpPatterns = new String[]{ // priority sorted
                 "E, d MMM yyyy HH:mm:ss Z",     // HTTP standard
                 "E, d-MMM-yyyy HH:mm:ss Z"      // Microsoft EntraID

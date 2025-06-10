@@ -24,6 +24,7 @@
 
 package io.questdb.std.datetime.microtime;
 
+import io.questdb.cairo.TimestampUtils;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -86,6 +87,28 @@ public class TimestampFormatUtils {
         } else if (v < 10000) {
             sink.putAscii('0').putAscii('0');
         } else if (v < 100000) {
+            sink.putAscii('0');
+        }
+        sink.put(val);
+    }
+
+    public static void append00000000(@NotNull CharSink<?> sink, int val) {
+        int v = Math.abs(val);
+        if (v < 10) {
+            sink.putAscii("00000000");
+        } else if (v < 100) {
+            sink.putAscii("0000000");
+        } else if (v < 1000) {
+            sink.putAscii("000000");
+        } else if (v < 10000) {
+            sink.putAscii("00000");
+        } else if (v < 100000) {
+            sink.putAscii("0000");
+        } else if (v < 1000000) {
+            sink.putAscii("000");
+        } else if (v < 10000000) {
+            sink.putAscii("00");
+        } else if (v < 100000000) {
             sink.putAscii('0');
         }
         sink.put(val);
@@ -223,7 +246,7 @@ public class TimestampFormatUtils {
             year = -(year - 1);
         }
 
-        boolean leap = Timestamps.isLeapYear(year);
+        boolean leap = TimestampUtils.isLeapYear(year);
 
         // wrong month
         if (month < 1 || month > 12) {
@@ -248,7 +271,7 @@ public class TimestampFormatUtils {
         }
 
         // wrong day of month
-        if (day < 1 || day > Timestamps.getDaysPerMonth(month, leap)) {
+        if (day < 1 || day > TimestampUtils.getDaysPerMonth(month, leap)) {
             throw NumericException.INSTANCE;
         }
 
@@ -266,12 +289,12 @@ public class TimestampFormatUtils {
 
         // calculate year, month, and day of ISO week
         if (week != -1) {
-            long firstDayOfIsoWeekMicros = Timestamps.yearMicros(year, Timestamps.isLeapYear(year)) +
+            long firstDayOfIsoWeekMicros = Timestamps.yearMicros(year, TimestampUtils.isLeapYear(year)) +
                     (week - 1) * Timestamps.WEEK_MICROS +
                     Timestamps.getIsoYearDayOffset(year) * Timestamps.DAY_MICROS;
             month = Timestamps.getMonthOfYear(firstDayOfIsoWeekMicros);
             year += (week == 1 && Timestamps.getIsoYearDayOffset(year) < 0) ? -1 : 0;
-            day = Timestamps.getDayOfMonth(firstDayOfIsoWeekMicros, year, month, Timestamps.isLeapYear(year));
+            day = Timestamps.getDayOfMonth(firstDayOfIsoWeekMicros, year, month, TimestampUtils.isLeapYear(year));
         }
 
         long outMicros = Timestamps.yearMicros(year, leap)
@@ -295,7 +318,7 @@ public class TimestampFormatUtils {
     // YYYY-MM-DD
     public static void formatDashYYYYMMDD(@NotNull CharSink<?> sink, long micros) {
         int y = Timestamps.getYear(micros);
-        boolean l = Timestamps.isLeapYear(y);
+        boolean l = TimestampUtils.isLeapYear(y);
         int m = Timestamps.getMonthOfYear(micros, y, l);
         Numbers.append(sink, y);
         append0(sink.putAscii('-'), m);
@@ -305,7 +328,7 @@ public class TimestampFormatUtils {
     // YYYY-MM
     public static void formatYYYYMM(@NotNull CharSink<?> sink, long micros) {
         int y = Timestamps.getYear(micros);
-        int m = Timestamps.getMonthOfYear(micros, y, Timestamps.isLeapYear(y));
+        int m = Timestamps.getMonthOfYear(micros, y, TimestampUtils.isLeapYear(y));
         Numbers.append(sink, y);
         append0(sink.putAscii('-'), m);
     }
@@ -313,7 +336,7 @@ public class TimestampFormatUtils {
     // YYYYMMDD
     public static void formatYYYYMMDD(@NotNull CharSink<?> sink, long micros) {
         int y = Timestamps.getYear(micros);
-        boolean l = Timestamps.isLeapYear(y);
+        boolean l = TimestampUtils.isLeapYear(y);
         int m = Timestamps.getMonthOfYear(micros, y, l);
         Numbers.append(sink, y);
         append0(sink, m);

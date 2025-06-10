@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.TimestampUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -67,7 +68,7 @@ public class YearTimestampSampler implements TimestampSampler {
         final int y = Timestamps.getYear(value);
         return Timestamps.toMicros(
                 y - y % stepYears,
-                Timestamps.isLeapYear(y),
+                TimestampUtils.isLeapYear(y),
                 startDay,
                 startMonth,
                 startHour,
@@ -81,7 +82,7 @@ public class YearTimestampSampler implements TimestampSampler {
     @Override
     public void setStart(long timestamp) {
         final int y = Timestamps.getYear(timestamp);
-        final boolean leap = Timestamps.isLeapYear(y);
+        final boolean leap = TimestampUtils.isLeapYear(y);
         this.startMonth = Timestamps.getMonthOfYear(timestamp, y, leap);
         this.startDay = Timestamps.getDayOfMonth(timestamp, y, startMonth, leap);
         this.startHour = Timestamps.getHourOfDay(timestamp);
@@ -101,8 +102,8 @@ public class YearTimestampSampler implements TimestampSampler {
             return timestamp;
         }
         final int y = Timestamps.getYear(timestamp);
-        final boolean leap = Timestamps.isLeapYear(y + numYears);
-        final int maxDay = Math.min(startDay, Timestamps.getDaysPerMonth(startMonth, leap)) - 1;
+        final boolean leap = TimestampUtils.isLeapYear(y + numYears);
+        final int maxDay = Math.min(startDay, TimestampUtils.getDaysPerMonth(startMonth, leap)) - 1;
         return Timestamps.yearMicros(y + numYears, leap)
                 + Timestamps.monthOfYearMicros(startMonth, leap)
                 + maxDay * Timestamps.DAY_MICROS

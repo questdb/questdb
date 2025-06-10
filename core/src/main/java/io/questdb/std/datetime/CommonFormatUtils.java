@@ -31,6 +31,8 @@ public class CommonFormatUtils {
     public static final int DAY_HOURS = 24;
     public static final String DAY_PATTERN = "yyyy-MM-dd";
     public static final DateLocale EN_LOCALE = DateLocaleFactory.INSTANCE.getLocale("en");
+    public static final String GREEDY_MILLIS1_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.Sz";
+    public static final String GREEDY_MILLIS2_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSz";
     public static final int HOUR_24 = 2;
     public static final int HOUR_AM = 0;
     public static final int HOUR_MINUTES = 60;
@@ -38,16 +40,14 @@ public class CommonFormatUtils {
     public static final int HOUR_PM = 1;
     public static final long MINUTE_SECONDS = 60;
     public static final String MONTH_PATTERN = "yyyy-MM";
-    public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
-    public static final String WEEK_PATTERN = "YYYY-Www";
-    public static final String YEAR_PATTERN = "yyyy";
-    public static final String GREEDY_MILLIS1_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.Sz";
-    public static final String GREEDY_MILLIS2_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSz";
+    public static final String NSEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz";
     public static final String PG_TIMESTAMP_MILLI_TIME_Z_PATTERN = "y-MM-dd HH:mm:ss.SSSz";
     public static final String SEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ssz";
     public static final String USEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUz";
-    public static final String NSEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz";
+    public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
+    public static final String WEEK_PATTERN = "YYYY-Www";
     public static final int YEAR_MONTHS = 12;
+    public static final String YEAR_PATTERN = "yyyy";
 
     public static int getStrideMultiple(CharSequence str) {
         if (str != null && str.length() > 1) {

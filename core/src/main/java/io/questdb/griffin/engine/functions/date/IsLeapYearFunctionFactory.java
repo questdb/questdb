@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TimestampUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -69,7 +70,7 @@ public class IsLeapYearFunctionFactory implements FunctionFactory {
                 return Boolean.FALSE;
             }
             final int year = Timestamps.getYear(value);
-            return Timestamps.isLeapYear(year);
+            return TimestampUtils.isLeapYear(year);
         }
 
         @Override

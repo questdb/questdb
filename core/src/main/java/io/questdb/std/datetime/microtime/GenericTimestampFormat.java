@@ -24,6 +24,7 @@
 
 package io.questdb.std.datetime.microtime;
 
+import io.questdb.cairo.TimestampUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -222,7 +223,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     if (day == -1) {
                         if (year == Integer.MIN_VALUE) {
                             year = Timestamps.getYear(micros);
-                            leap = Timestamps.isLeapYear(year);
+                            leap = TimestampUtils.isLeapYear(year);
                         }
 
                         if (month == -1) {
@@ -237,7 +238,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     if (day == -1) {
                         if (year == Integer.MIN_VALUE) {
                             year = Timestamps.getYear(micros);
-                            leap = Timestamps.isLeapYear(year);
+                            leap = TimestampUtils.isLeapYear(year);
                         }
 
                         if (month == -1) {
@@ -285,7 +286,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     if (month == -1) {
                         if (year == Integer.MIN_VALUE) {
                             year = Timestamps.getYear(micros);
-                            leap = Timestamps.isLeapYear(year);
+                            leap = TimestampUtils.isLeapYear(year);
                         }
 
                         month = Timestamps.getMonthOfYear(micros, year, leap);
@@ -296,7 +297,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     if (month == -1) {
                         if (year == Integer.MIN_VALUE) {
                             year = Timestamps.getYear(micros);
-                            leap = Timestamps.isLeapYear(year);
+                            leap = TimestampUtils.isLeapYear(year);
                         }
 
                         month = Timestamps.getMonthOfYear(micros, year, leap);
@@ -308,7 +309,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     if (month == -1) {
                         if (year == Integer.MIN_VALUE) {
                             year = Timestamps.getYear(micros);
-                            leap = Timestamps.isLeapYear(year);
+                            leap = TimestampUtils.isLeapYear(year);
                         }
 
                         month = Timestamps.getMonthOfYear(micros, year, leap);
@@ -319,7 +320,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     if (month == -1) {
                         if (year == Integer.MIN_VALUE) {
                             year = Timestamps.getYear(micros);
-                            leap = Timestamps.isLeapYear(year);
+                            leap = TimestampUtils.isLeapYear(year);
                         }
 
                         month = Timestamps.getMonthOfYear(micros, year, leap);
@@ -332,28 +333,28 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                 case TimestampFormatCompiler.OP_YEAR_GREEDY:
                     if (year == Integer.MIN_VALUE) {
                         year = Timestamps.getYear(micros);
-                        leap = Timestamps.isLeapYear(year);
+                        leap = TimestampUtils.isLeapYear(year);
                     }
                     TimestampFormatUtils.appendYear(sink, year);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Timestamps.getYear(micros);
-                        leap = Timestamps.isLeapYear(year);
+                        leap = TimestampUtils.isLeapYear(year);
                     }
                     TimestampFormatUtils.appendYear0(sink, year % 100);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Timestamps.getYear(micros);
-                        leap = Timestamps.isLeapYear(year);
+                        leap = TimestampUtils.isLeapYear(year);
                     }
                     TimestampFormatUtils.appendYear00(sink, year % 1000);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Timestamps.getYear(micros);
-                        leap = Timestamps.isLeapYear(year);
+                        leap = TimestampUtils.isLeapYear(year);
                     }
                     TimestampFormatUtils.appendYear000(sink, year);
                     break;
@@ -368,7 +369,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                 case TimestampFormatCompiler.OP_ERA:
                     if (year == Integer.MIN_VALUE) {
                         year = Timestamps.getYear(micros);
-                        leap = Timestamps.isLeapYear(year);
+                        leap = TimestampUtils.isLeapYear(year);
                     }
                     TimestampFormatUtils.appendEra(sink, year, locale);
                     break;

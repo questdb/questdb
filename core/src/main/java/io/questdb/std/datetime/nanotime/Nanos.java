@@ -24,6 +24,7 @@
 
 package io.questdb.std.datetime.nanotime;
 
+import io.questdb.cairo.TimestampUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -102,7 +103,7 @@ public final class Nanos {
             }
         }
         int _d = getDayOfMonth(nanos, y, m, l);
-        int maxDay = getDaysPerMonth(_m, isLeapYear(_y));
+        int maxDay = TimestampUtils.getDaysPerMonth(_m, isLeapYear(_y));
         if (_d > maxDay) {
             _d = maxDay;
         }
@@ -183,7 +184,7 @@ public final class Nanos {
         int m = getMonthOfYear(nanos, y, l);
         return yearNanos(y, l)
                 + monthOfYearNanos(m, l)
-                + (getDaysPerMonth(m, l)) * DAY_NANOS;
+                + (TimestampUtils.getDaysPerMonth(m, l)) * DAY_NANOS;
     }
 
     public static long ceilMS(long nanos) {
@@ -203,7 +204,7 @@ public final class Nanos {
         boolean l = isLeapYear(y);
         return yearNanos(y, l)
                 + monthOfYearNanos(12, l)
-                + (getDaysPerMonth(11, false) + 1) * DAY_NANOS;
+                + (TimestampUtils.getDaysPerMonth(11, false) + 1) * DAY_NANOS;
 
     }
 
@@ -967,7 +968,7 @@ public final class Nanos {
             int micros,
             int nanos
     ) {
-        int maxDay = Math.min(day, getDaysPerMonth(month, leap)) - 1;
+        int maxDay = Math.min(day, TimestampUtils.getDaysPerMonth(month, leap)) - 1;
         return yearNanos(y, leap)
                 + monthOfYearNanos(month, leap)
                 + (long) maxDay * DAY_NANOS

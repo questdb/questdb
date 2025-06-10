@@ -129,12 +129,18 @@ public final class ColumnType {
     private static final int ARRAY_NDIMS_FIELD_POS = 14;
     private static final int BYTE_BITS = 8;
     private static final short[][] OVERLOAD_PRIORITY;
+    private static final int TIMESTAMP_MICRO_PRECISION_FLAG = 0;
+    public static final int TIMESTAMP_MICRO = TIMESTAMP_MICRO_PRECISION_FLAG | TIMESTAMP;
+    private static final int TIMESTAMP_NANO_PRECISION_FLAG = 1 << 16;
+    public static final int TIMESTAMP_NANO = TIMESTAMP_NANO_PRECISION_FLAG | TIMESTAMP;
+    private static final int TIMESTAMP_PRECISION_MASK = 0xFFFF0000;
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
     private static final IntHashSet arrayTypeSet = new IntHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final IntHashSet nonPersistedTypes = new IntHashSet();
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
+
 
     private ColumnType() {
     }
@@ -241,7 +247,16 @@ public final class ColumnType {
     }
 
     public static TimestampDriver getTimestampDriver(int timestampType) {
-        return MicrosTimestampDriver.INSTANCE;
+        assert tagOf(timestampType) == TIMESTAMP;
+        final int precisionFlag = timestampType & TIMESTAMP_PRECISION_MASK;
+        switch (precisionFlag) {
+            case TIMESTAMP_MICRO_PRECISION_FLAG:
+                return MicrosTimestampDriver.INSTANCE;
+            case TIMESTAMP_NANO_PRECISION_FLAG:
+                return NanoTimestampDriver.INSTANCE;
+            default:
+                throw new UnsupportedOperationException();
+        }
     }
 
     public static int getWalDataColumnShl(int columnType, boolean designatedTimestamp) {

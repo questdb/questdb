@@ -34,8 +34,9 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public interface TimestampDriver {
+import static io.questdb.griffin.SqlUtil.castPGDates;
 
+public interface TimestampDriver {
     long addMonths(long timestamp, int months);
 
     long addPeriod(long lo, char type, int period);
@@ -44,11 +45,23 @@ public interface TimestampDriver {
 
     void append(CharSink<?> sink, long timestamp);
 
-    void appendMem(CharSequence value, MemoryA mem);
+    default void appendMem(CharSequence value, MemoryA mem) {
+        try {
+            mem.putLong(parseFloorLiteral(value));
+        } catch (NumericException e) {
+            mem.putLong(Numbers.LONG_NULL);
+        }
+    }
 
     void appendPGWireText(CharSink<?> sink, long timestamp);
 
-    long castStr(CharSequence value, int tupleIndex, short fromType, short toType);
+    default long castStr(CharSequence value, int tupleIndex, short fromType, short toType) {
+        try {
+            return parseFloorLiteral(value);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, fromType, toType);
+        }
+    }
 
     // todo: explore static ref
     boolean convertToVar(long fixedAddr, CharSink<?> stringSink);
@@ -69,13 +82,50 @@ public interface TimestampDriver {
 
     PartitionFloorMethod getPartitionFloorMethod(int partitionBy);
 
-    long implicitCast(CharSequence value, int typeFrom);
+    default long implicitCast(CharSequence value, int typeFrom) {
+        assert typeFrom == ColumnType.STRING || typeFrom == ColumnType.SYMBOL;
+        if (value != null) {
+            try {
+                return Numbers.parseLong(value);
+            } catch (NumericException ignore) {
+            }
+
+            // Parse as ISO with variable length.
+            try {
+                return parseFloorLiteral(value);
+            } catch (NumericException ignore) {
+            }
+
+            return castPGDates(value, typeFrom);
+        }
+        return Numbers.LONG_NULL;
+    }
 
     default long implicitCast(CharSequence value) {
         return implicitCast(value, ColumnType.STRING);
     }
 
-    long implicitCastVarchar(Utf8Sequence value);
+    default long implicitCastVarchar(Utf8Sequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseLong(value);
+            } catch (NumericException ignore) {
+            }
+
+            // Parse as ISO with variable length.
+            try {
+                return parseFloorLiteral(value);
+            } catch (NumericException ignore) {
+            }
+
+            // all formats are ascii
+            if (value.isAscii()) {
+                return castPGDates(value.asAsciiCharSequence(), ColumnType.VARCHAR);
+            }
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.TIMESTAMP);
+        }
+        return Numbers.LONG_NULL;
+    }
 
     long monthsBetween(long hi, long lo);
 

@@ -32,9 +32,8 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.CommonFormatUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.nanotime.Nanos;
+import io.questdb.std.datetime.nanotime.NanosFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -45,19 +44,19 @@ import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
 import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
 import static io.questdb.std.datetime.microtime.TimestampFormatUtils.*;
 
-public class MicrosTimestampDriver implements TimestampDriver {
-    public static final TimestampDriver INSTANCE = new MicrosTimestampDriver();
+public class NanoTimestampDriver implements TimestampDriver {
+    public static final TimestampDriver INSTANCE = new NanoTimestampDriver();
 
-    private static final PartitionAddMethod ADD_DD = Timestamps::addDays;
-    private static final PartitionAddMethod ADD_HH = Timestamps::addHours;
-    private static final PartitionAddMethod ADD_MM = Timestamps::addMonths;
-    private static final PartitionAddMethod ADD_WW = Timestamps::addWeeks;
-    private static final PartitionAddMethod ADD_YYYY = Timestamps::addYears;
-    private static final PartitionCeilMethod CEIL_DD = Timestamps::ceilDD;
-    private static final PartitionCeilMethod CEIL_HH = Timestamps::ceilHH;
-    private static final PartitionCeilMethod CEIL_MM = Timestamps::ceilMM;
-    private static final PartitionCeilMethod CEIL_WW = Timestamps::ceilWW;
-    private static final PartitionCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;
+    private static final PartitionAddMethod ADD_DD = Nanos::addDays;
+    private static final PartitionAddMethod ADD_HH = Nanos::addHours;
+    private static final PartitionAddMethod ADD_MM = Nanos::addMonths;
+    private static final PartitionAddMethod ADD_WW = Nanos::addWeeks;
+    private static final PartitionAddMethod ADD_YYYY = Nanos::addYears;
+    private static final PartitionCeilMethod CEIL_DD = Nanos::ceilDD;
+    private static final PartitionCeilMethod CEIL_HH = Nanos::ceilHH;
+    private static final PartitionCeilMethod CEIL_MM = Nanos::ceilMM;
+    private static final PartitionCeilMethod CEIL_WW = Nanos::ceilWW;
+    private static final PartitionCeilMethod CEIL_YYYY = Nanos::ceilYYYY;
     private static final DateFormat DEFAULT_FORMAT = new DateFormat() {
         @Override
         public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
@@ -74,11 +73,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             return 0;
         }
     };
-    private static final PartitionFloorMethod FLOOR_DD = Timestamps::floorDD;
-    private static final PartitionFloorMethod FLOOR_HH = Timestamps::floorHH;
-    private static final PartitionFloorMethod FLOOR_MM = Timestamps::floorMM;
-    private static final PartitionFloorMethod FLOOR_WW = Timestamps::floorWW;
-    private static final PartitionFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
+    private static final PartitionFloorMethod FLOOR_DD = Nanos::floorDD;
+    private static final PartitionFloorMethod FLOOR_HH = Nanos::floorHH;
+    private static final PartitionFloorMethod FLOOR_MM = Nanos::floorMM;
+    private static final PartitionFloorMethod FLOOR_WW = Nanos::floorWW;
+    private static final PartitionFloorMethod FLOOR_YYYY = Nanos::floorYYYY;
     private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(FLOOR_DD, DAY_FORMAT);
     private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(FLOOR_HH, HOUR_FORMAT);
     private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(FLOOR_MM, MONTH_FORMAT);
@@ -128,86 +127,85 @@ public class MicrosTimestampDriver implements TimestampDriver {
                     TimestampUtils.checkRange(sec, 0, 59);
                     if (pos < lim && seq.charAt(pos) == '-') {
                         pos++;
-                        // varlen milli and micros
-                        int micrLim = pos + 6;
-                        int mlim = Math.min(lim, micrLim);
-                        int micr = 0;
-                        for (; pos < mlim; pos++) {
+                        // var len milli, micros and nanos
+                        int nanoLim = pos + 9;
+                        int nlim = Math.min(lim, nanoLim);
+                        int nanos = 0;
+                        for (; pos < nlim; pos++) {
                             char c = seq.charAt(pos);
                             if (c < '0' || c > '9') {
                                 throw NumericException.INSTANCE;
                             }
-                            micr *= 10;
-                            micr += c - '0';
+                            nanos *= 10;
+                            nanos += c - '0';
                         }
-                        micr *= TimestampUtils.tenPow(micrLim - pos);
+                        nanos *= TimestampUtils.tenPow(nanoLim - pos);
 
-                        // micros
-                        ts += (day - 1) * Timestamps.DAY_MICROS
-                                + hour * Timestamps.HOUR_MICROS
-                                + min * Timestamps.MINUTE_MICROS
-                                + sec * Timestamps.SECOND_MICROS
-                                + micr;
+                        ts += (day - 1) * Nanos.DAY_NANOS
+                                + hour * Nanos.HOUR_NANOS
+                                + min * Nanos.MINUTE_NANOS
+                                + sec * Nanos.SECOND_NANOS
+                                + nanos;
                     } else {
                         if (pos == lim) {
                             // seconds
-                            ts += (day - 1) * Timestamps.DAY_MICROS
-                                    + hour * Timestamps.HOUR_MICROS
-                                    + min * Timestamps.MINUTE_MICROS
-                                    + sec * Timestamps.SECOND_MICROS;
+                            ts += (day - 1) * Nanos.DAY_NANOS
+                                    + hour * Nanos.HOUR_NANOS
+                                    + min * Nanos.MINUTE_NANOS
+                                    + sec * Nanos.SECOND_NANOS;
                         } else {
                             throw NumericException.INSTANCE;
                         }
                     }
                 } else {
                     // minute
-                    ts += (day - 1) * Timestamps.DAY_MICROS
-                            + hour * Timestamps.HOUR_MICROS
-                            + min * Timestamps.MINUTE_MICROS;
+                    ts += (day - 1) * Nanos.DAY_NANOS
+                            + hour * Nanos.HOUR_NANOS
+                            + min * Nanos.MINUTE_NANOS;
 
                 }
             } else {
                 // year + month + day + hour
-                ts += (day - 1) * Timestamps.DAY_MICROS
-                        + hour * Timestamps.HOUR_MICROS;
+                ts += (day - 1) * Nanos.DAY_NANOS
+                        + hour * Nanos.HOUR_NANOS;
             }
         } else {
             // year + month + day
-            ts += (day - 1) * Timestamps.DAY_MICROS;
+            ts += (day - 1) * Nanos.DAY_NANOS;
         }
         return ts;
     }
 
     @Override
     public long addMonths(long timestamp, int months) {
-        return Timestamps.addMonths(timestamp, months);
+        return Nanos.addMonths(timestamp, months);
     }
 
     @Override
     public long addPeriod(long lo, char type, int period) {
-        return Timestamps.addPeriod(lo, type, period);
+        return Nanos.addPeriod(lo, type, period);
     }
 
     @Override
     public long addYears(long timestamp, int years) {
-        return Timestamps.addYears(timestamp, years);
+        return Nanos.addYears(timestamp, years);
     }
 
     @Override
     public void append(CharSink<?> sink, long timestamp) {
-        TimestampFormatUtils.appendDateTimeUSec(sink, timestamp);
+        NanosFormatUtils.appendDateTimeNSec(sink, timestamp);
     }
 
     @Override
     public void appendPGWireText(CharSink<?> sink, long timestamp) {
-        TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(timestamp, EN_LOCALE, null, sink);
+        NanosFormatUtils.PG_TIMESTAMP_FORMAT.format(timestamp, EN_LOCALE, null, sink);
     }
 
     @Override
     public boolean convertToVar(long fixedAddr, CharSink<?> sink) {
         long value = Unsafe.getUnsafe().getLong(fixedAddr);
         if (value != Numbers.LONG_NULL) {
-            TimestampFormatUtils.appendDateTimeUSec(sink, value);
+            NanosFormatUtils.appendDateTimeNSec(sink, value);
             return true;
         }
         return false;
@@ -215,22 +213,22 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long fromDays(int days) {
-        return days * Timestamps.DAY_MICROS;
+        return days * Nanos.DAY_NANOS;
     }
 
     @Override
     public long fromHours(int hours) {
-        return hours * Timestamps.HOUR_MICROS;
+        return hours * Nanos.HOUR_NANOS;
     }
 
     @Override
     public long fromMinutes(int minutes) {
-        return minutes * Timestamps.MINUTE_MICROS;
+        return minutes * Nanos.MINUTE_NANOS;
     }
 
     @Override
     public long fromSeconds(int seconds) {
-        return seconds * Timestamps.SECOND_MICROS;
+        return seconds * Nanos.SECOND_NANOS;
     }
 
     @Override
@@ -309,12 +307,12 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long monthsBetween(long hi, long lo) {
-        return Timestamps.getMonthsBetween(hi, lo);
+        return Nanos.getMonthsBetween(hi, lo);
     }
 
     @Override
     public long parseAnyFormat(CharSequence token, int start, int len) throws NumericException {
-        return TimestampFormatUtils.tryParse(token, start, len);
+        return NanosFormatUtils.tryParse(token, start, len);
     }
 
     @Override
@@ -349,79 +347,69 @@ public class MicrosTimestampDriver implements TimestampDriver {
                             if (p < hi && str.byteAt(p) == '.') {
 
                                 p++;
-                                // varlen milli and micros
-                                int micrLim = p + 6;
-                                int mlim = Math.min(hi, micrLim);
-                                int micr = 0;
-                                for (; p < mlim; p++) {
+                                // var len milli, micros and seconds
+                                int nanoLim = p + 9;
+                                int nlim = Math.min(hi, nanoLim);
+                                int nano = 0;
+                                for (; p < nlim; p++) {
                                     char c = (char) str.byteAt(p);
                                     if (Numbers.notDigit(c)) {
                                         // Timezone
                                         break;
                                     }
-                                    micr *= 10;
-                                    micr += c - '0';
+                                    nano *= 10;
+                                    nano += c - '0';
                                 }
-                                micr *= TimestampUtils.tenPow(micrLim - p);
-
-                                // truncate remaining nanos if any
-                                for (int nlim = Math.min(hi, p + 3); p < nlim; p++) {
-                                    char c = (char) str.byteAt(p);
-                                    if (Numbers.notDigit(c)) {
-                                        // Timezone
-                                        break;
-                                    }
-                                }
-
+                                nano *= TimestampUtils.tenPow(nlim - p);
                                 // micros
-                                ts = Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + min * Timestamps.MINUTE_MICROS
-                                        + sec * Timestamps.SECOND_MICROS
-                                        + micr
+                                ts = Nanos.yearNanos(year, l)
+                                        + Nanos.monthOfYearNanos(month, l)
+                                        + (day - 1) * Nanos.DAY_NANOS
+                                        + hour * Nanos.HOUR_NANOS
+                                        + min * Nanos.MINUTE_NANOS
+                                        + sec * Nanos.SECOND_NANOS
+                                        + nano
                                         + checkTimezoneTail(str, p, hi);
                             } else {
                                 // seconds
-                                ts = Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + min * Timestamps.MINUTE_MICROS
-                                        + sec * Timestamps.SECOND_MICROS
+                                ts = Nanos.yearNanos(year, l)
+                                        + Nanos.monthOfYearNanos(month, l)
+                                        + (day - 1) * Nanos.DAY_NANOS
+                                        + hour * Nanos.HOUR_NANOS
+                                        + min * Nanos.MINUTE_NANOS
+                                        + sec * Nanos.SECOND_NANOS
                                         + checkTimezoneTail(str, p, hi);
                             }
                         } else {
                             // minute
-                            ts = Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS
-                                    + hour * Timestamps.HOUR_MICROS
-                                    + min * Timestamps.MINUTE_MICROS;
+                            ts = Nanos.yearNanos(year, l)
+                                    + Nanos.monthOfYearNanos(month, l)
+                                    + (day - 1) * Nanos.DAY_NANOS
+                                    + hour * Nanos.HOUR_NANOS
+                                    + min * Nanos.MINUTE_NANOS;
 
                         }
                     } else {
                         // year + month + day + hour
-                        ts = Timestamps.yearMicros(year, l)
-                                + Timestamps.monthOfYearMicros(month, l)
-                                + (day - 1) * Timestamps.DAY_MICROS
-                                + hour * Timestamps.HOUR_MICROS;
+                        ts = Nanos.yearNanos(year, l)
+                                + Nanos.monthOfYearNanos(month, l)
+                                + (day - 1) * Nanos.DAY_NANOS
+                                + hour * Nanos.HOUR_NANOS;
 
                     }
                 } else {
                     // year + month + day
-                    ts = Timestamps.yearMicros(year, l)
-                            + Timestamps.monthOfYearMicros(month, l)
-                            + (day - 1) * Timestamps.DAY_MICROS;
+                    ts = Nanos.yearNanos(year, l)
+                            + Nanos.monthOfYearNanos(month, l)
+                            + (day - 1) * Nanos.DAY_NANOS;
                 }
             } else {
                 // year + month
-                ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));
+                ts = (Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(month, l));
             }
         } else {
             // year
-            ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));
+            ts = (Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(1, l));
         }
         return ts;
     }
@@ -457,79 +445,70 @@ public class MicrosTimestampDriver implements TimestampDriver {
                             TimestampUtils.checkRange(sec, 0, 59);
                             if (p < hi && str.charAt(p) == '.') {
                                 p++;
-                                // varlen milli and micros
-                                int micrLim = p + 6;
-                                int mlim = Math.min(hi, micrLim);
-                                int micr = 0;
-                                for (; p < mlim; p++) {
+                                // varlen milli, micros and nanos
+                                int nanoLim = p + 9;
+                                int nlim = Math.min(hi, nanoLim);
+                                int nano = 0;
+                                for (; p < nlim; p++) {
                                     char c = str.charAt(p);
                                     if (Numbers.notDigit(c)) {
                                         // Timezone
                                         break;
                                     }
-                                    micr *= 10;
-                                    micr += c - '0';
+                                    nano *= 10;
+                                    nano += c - '0';
                                 }
-                                micr *= TimestampUtils.tenPow(micrLim - p);
+                                nano *= TimestampUtils.tenPow(nanoLim - p);
 
-                                // truncate remaining nanos if any
-                                for (int nlim = Math.min(hi, p + 3); p < nlim; p++) {
-                                    char c = str.charAt(p);
-                                    if (Numbers.notDigit(c)) {
-                                        // Timezone
-                                        break;
-                                    }
-                                }
-
-                                // micros
-                                ts = Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + min * Timestamps.MINUTE_MICROS
-                                        + sec * Timestamps.SECOND_MICROS
-                                        + micr
+                                // nanos
+                                ts = Nanos.yearNanos(year, l)
+                                        + Nanos.monthOfYearNanos(month, l)
+                                        + (day - 1) * Nanos.DAY_NANOS
+                                        + hour * Nanos.HOUR_NANOS
+                                        + min * Nanos.MINUTE_NANOS
+                                        + sec * Nanos.SECOND_NANOS
+                                        + nano
                                         + checkTimezoneTail(str, p, hi);
                             } else {
                                 // seconds
-                                ts = Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + min * Timestamps.MINUTE_MICROS
-                                        + sec * Timestamps.SECOND_MICROS
+                                ts = Nanos.yearNanos(year, l)
+                                        + Nanos.monthOfYearNanos(month, l)
+                                        + (day - 1) * Nanos.DAY_NANOS
+                                        + hour * Nanos.HOUR_NANOS
+                                        + min * Nanos.MINUTE_NANOS
+                                        + sec * Nanos.SECOND_NANOS
                                         + checkTimezoneTail(str, p, hi);
                             }
                         } else {
                             // minute
-                            ts = Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS
-                                    + hour * Timestamps.HOUR_MICROS
-                                    + min * Timestamps.MINUTE_MICROS;
+                            ts = Nanos.yearNanos(year, l)
+                                    + Nanos.monthOfYearNanos(month, l)
+                                    + (day - 1) * Nanos.DAY_NANOS
+                                    + hour * Nanos.HOUR_NANOS
+                                    + min * Nanos.MINUTE_NANOS;
 
                         }
                     } else {
                         // year + month + day + hour
-                        ts = Timestamps.yearMicros(year, l)
-                                + Timestamps.monthOfYearMicros(month, l)
-                                + (day - 1) * Timestamps.DAY_MICROS
-                                + hour * Timestamps.HOUR_MICROS;
+                        ts = Nanos.yearNanos(year, l)
+                                + Nanos.monthOfYearNanos(month, l)
+                                + (day - 1) * Nanos.DAY_NANOS
+                                + hour * Nanos.HOUR_NANOS;
 
                     }
                 } else {
                     // year + month + day
-                    ts = Timestamps.yearMicros(year, l)
-                            + Timestamps.monthOfYearMicros(month, l)
-                            + (day - 1) * Timestamps.DAY_MICROS;
+                    ts = Nanos.yearNanos(year, l)
+                            + Nanos.monthOfYearNanos(month, l)
+                            + (day - 1) * Nanos.DAY_NANOS;
                 }
             } else {
                 // year + month
-                ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));
+                ts = (Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(month, l));
             }
         } else {
             // year
-            ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));
+            ts = (Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(1, l));
         }
         return ts;
     }
@@ -565,18 +544,18 @@ public class MicrosTimestampDriver implements TimestampDriver {
                                 throw NumericException.INSTANCE;
                             } else {
                                 // seconds
-                                IntervalUtils.encodeInterval(Timestamps.yearMicros(year, l)
-                                                + Timestamps.monthOfYearMicros(month, l)
-                                                + (day - 1) * Timestamps.DAY_MICROS
-                                                + hour * Timestamps.HOUR_MICROS
-                                                + min * Timestamps.MINUTE_MICROS
-                                                + sec * Timestamps.SECOND_MICROS,
-                                        Timestamps.yearMicros(year, l)
-                                                + Timestamps.monthOfYearMicros(month, l)
-                                                + (day - 1) * Timestamps.DAY_MICROS
-                                                + hour * Timestamps.HOUR_MICROS
-                                                + min * Timestamps.MINUTE_MICROS
-                                                + sec * Timestamps.SECOND_MICROS
+                                IntervalUtils.encodeInterval(Nanos.yearNanos(year, l)
+                                                + Nanos.monthOfYearNanos(month, l)
+                                                + (day - 1) * Nanos.DAY_NANOS
+                                                + hour * Nanos.HOUR_NANOS
+                                                + min * Nanos.MINUTE_NANOS
+                                                + sec * Nanos.SECOND_NANOS,
+                                        Nanos.yearNanos(year, l)
+                                                + Nanos.monthOfYearNanos(month, l)
+                                                + (day - 1) * Nanos.DAY_NANOS
+                                                + hour * Nanos.HOUR_NANOS
+                                                + min * Nanos.MINUTE_NANOS
+                                                + sec * Nanos.SECOND_NANOS
                                                 + 999999,
                                         operation,
                                         out);
@@ -584,17 +563,17 @@ public class MicrosTimestampDriver implements TimestampDriver {
                         } else {
                             // minute
                             IntervalUtils.encodeInterval(
-                                    Timestamps.yearMicros(year, l)
-                                            + Timestamps.monthOfYearMicros(month, l)
-                                            + (day - 1) * Timestamps.DAY_MICROS
-                                            + hour * Timestamps.HOUR_MICROS
-                                            + min * Timestamps.MINUTE_MICROS,
-                                    Timestamps.yearMicros(year, l)
-                                            + Timestamps.monthOfYearMicros(month, l)
-                                            + (day - 1) * Timestamps.DAY_MICROS
-                                            + hour * Timestamps.HOUR_MICROS
-                                            + min * Timestamps.MINUTE_MICROS
-                                            + 59 * Timestamps.SECOND_MICROS
+                                    Nanos.yearNanos(year, l)
+                                            + Nanos.monthOfYearNanos(month, l)
+                                            + (day - 1) * Nanos.DAY_NANOS
+                                            + hour * Nanos.HOUR_NANOS
+                                            + min * Nanos.MINUTE_NANOS,
+                                    Nanos.yearNanos(year, l)
+                                            + Nanos.monthOfYearNanos(month, l)
+                                            + (day - 1) * Nanos.DAY_NANOS
+                                            + hour * Nanos.HOUR_NANOS
+                                            + min * Nanos.MINUTE_NANOS
+                                            + 59 * Nanos.SECOND_NANOS
                                             + 999999,
                                     operation,
                                     out
@@ -603,16 +582,16 @@ public class MicrosTimestampDriver implements TimestampDriver {
                     } else {
                         // year + month + day + hour
                         IntervalUtils.encodeInterval(
-                                Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS,
-                                Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + 59 * Timestamps.MINUTE_MICROS
-                                        + 59 * Timestamps.SECOND_MICROS
+                                Nanos.yearNanos(year, l)
+                                        + Nanos.monthOfYearNanos(month, l)
+                                        + (day - 1) * Nanos.DAY_NANOS
+                                        + hour * Nanos.HOUR_NANOS,
+                                Nanos.yearNanos(year, l)
+                                        + Nanos.monthOfYearNanos(month, l)
+                                        + (day - 1) * Nanos.DAY_NANOS
+                                        + hour * Nanos.HOUR_NANOS
+                                        + 59 * Nanos.MINUTE_NANOS
+                                        + 59 * Nanos.SECOND_NANOS
                                         + 999999,
                                 operation,
                                 out
@@ -621,15 +600,15 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 } else {
                     // year + month + day
                     IntervalUtils.encodeInterval(
-                            Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS,
-                            Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS
-                                    + 23 * Timestamps.HOUR_MICROS
-                                    + 59 * Timestamps.MINUTE_MICROS
-                                    + 59 * Timestamps.SECOND_MICROS
+                            Nanos.yearNanos(year, l)
+                                    + Nanos.monthOfYearNanos(month, l)
+                                    + (day - 1) * Nanos.DAY_NANOS,
+                            Nanos.yearNanos(year, l)
+                                    + Nanos.monthOfYearNanos(month, l)
+                                    + (day - 1) * Nanos.DAY_NANOS
+                                    + 23 * Nanos.HOUR_NANOS
+                                    + 59 * Nanos.MINUTE_NANOS
+                                    + 59 * Nanos.SECOND_NANOS
                                     + 999999,
                             operation,
                             out
@@ -638,13 +617,13 @@ public class MicrosTimestampDriver implements TimestampDriver {
             } else {
                 // year + month
                 IntervalUtils.encodeInterval(
-                        Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l),
-                        Timestamps.yearMicros(year, l)
-                                + Timestamps.monthOfYearMicros(month, l)
-                                + (TimestampUtils.getDaysPerMonth(month, l) - 1) * Timestamps.DAY_MICROS
-                                + 23 * Timestamps.HOUR_MICROS
-                                + 59 * Timestamps.MINUTE_MICROS
-                                + 59 * Timestamps.SECOND_MICROS
+                        Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(month, l),
+                        Nanos.yearNanos(year, l)
+                                + Nanos.monthOfYearNanos(month, l)
+                                + (TimestampUtils.getDaysPerMonth(month, l) - 1) * Nanos.DAY_NANOS
+                                + 23 * Nanos.HOUR_NANOS
+                                + 59 * Nanos.MINUTE_NANOS
+                                + 59 * Nanos.SECOND_NANOS
                                 + 999999,
                         operation,
                         out
@@ -653,13 +632,13 @@ public class MicrosTimestampDriver implements TimestampDriver {
         } else {
             // year
             IntervalUtils.encodeInterval(
-                    Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l),
-                    Timestamps.yearMicros(year, l)
-                            + Timestamps.monthOfYearMicros(12, l)
-                            + (TimestampUtils.getDaysPerMonth(12, l) - 1) * Timestamps.DAY_MICROS
-                            + 23 * Timestamps.HOUR_MICROS
-                            + 59 * Timestamps.MINUTE_MICROS
-                            + 59 * Timestamps.SECOND_MICROS
+                    Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(1, l),
+                    Nanos.yearNanos(year, l)
+                            + Nanos.monthOfYearNanos(12, l)
+                            + (TimestampUtils.getDaysPerMonth(12, l) - 1) * Nanos.DAY_NANOS
+                            + 23 * Nanos.HOUR_NANOS
+                            + 59 * Nanos.MINUTE_NANOS
+                            + 59 * Nanos.SECOND_NANOS
                             + 999999,
                     operation,
                     out
@@ -727,15 +706,16 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long toNanosScale() {
-        return Timestamps.MICRO_NANOS;
+        return 1;
     }
 
     @Override
     public void validateBounds(long timestamp) {
-        if (Long.compareUnsigned(timestamp, Timestamps.YEAR_10000) >= 0) {
+        if (timestamp < 0) {
             validateBounds0(timestamp);
         }
     }
+
 
     private static long checkTimezoneTail(CharSequence seq, int p, int lim) throws NumericException {
         if (lim == p) {
@@ -760,9 +740,9 @@ public class MicrosTimestampDriver implements TimestampDriver {
             if (TimestampUtils.checkLenStrict(p, lim)) {
                 int min = Numbers.parseInt(seq, p, p + 2);
                 TimestampUtils.checkRange(min, 0, 59);
-                return tzSign * (hour * Timestamps.HOUR_MICROS + min * Timestamps.MINUTE_MICROS);
+                return tzSign * (hour * Nanos.HOUR_NANOS + min * Nanos.MINUTE_NANOS);
             } else {
-                return tzSign * (hour * Timestamps.HOUR_MICROS);
+                return tzSign * (hour * Nanos.HOUR_NANOS);
             }
         }
         throw NumericException.INSTANCE;
@@ -791,9 +771,9 @@ public class MicrosTimestampDriver implements TimestampDriver {
             if (TimestampUtils.checkLenStrict(p, lim)) {
                 int min = Numbers.parseInt(seq, p, p + 2);
                 TimestampUtils.checkRange(min, 0, 59);
-                return tzSign * (hour * Timestamps.HOUR_MICROS + min * Timestamps.MINUTE_MICROS);
+                return tzSign * (hour * Nanos.HOUR_NANOS + min * Nanos.MINUTE_NANOS);
             } else {
-                return tzSign * (hour * Timestamps.HOUR_MICROS);
+                return tzSign * (hour * Nanos.HOUR_NANOS);
             }
         }
         throw NumericException.INSTANCE;
@@ -801,13 +781,10 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     private static void validateBounds0(long timestamp) {
         if (timestamp == Long.MIN_VALUE) {
-            throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+            throw CairoException.nonCritical().put("designated nano timestamp column cannot be NULL");
         }
         if (timestamp < TableWriter.TIMESTAMP_EPOCH) {
-            throw CairoException.nonCritical().put("designated timestamp before 1970-01-01 is not allowed");
-        }
-        if (timestamp >= Timestamps.YEAR_10000) {
-            throw CairoException.nonCritical().put("designated timestamp beyond 9999-12-31 is not allowed");
+            throw CairoException.nonCritical().put("designated nano timestamp before 1970-01-01 and beyond 2262-04-12 is not allowed");
         }
     }
 
@@ -826,24 +803,24 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
             if (overspill > 0) {
                 DAY_FORMAT.format(timestamp, locale, timeZoneName, sink);
-                long time = timestamp - (timestamp / Timestamps.DAY_MICROS) * Timestamps.DAY_MICROS;
+                long time = timestamp - (timestamp / Nanos.DAY_NANOS) * Nanos.DAY_NANOS;
 
                 if (time > 0) {
-                    int hour = (int) (time / Timestamps.HOUR_MICROS);
-                    int minute = (int) ((time % Timestamps.HOUR_MICROS) / Timestamps.MINUTE_MICROS);
-                    int second = (int) ((time % Timestamps.MINUTE_MICROS) / Timestamps.SECOND_MICROS);
-                    int milliMicros = (int) (time % Timestamps.SECOND_MICROS);
+                    int hour = (int) (time / Nanos.HOUR_NANOS);
+                    int minute = (int) ((time % Nanos.HOUR_NANOS) / Nanos.MINUTE_NANOS);
+                    int second = (int) ((time % Nanos.MINUTE_NANOS) / Nanos.SECOND_NANOS);
+                    int milliNanos = (int) (time % Nanos.SECOND_NANOS);
 
                     sink.putAscii('T');
                     append0(sink, hour);
 
-                    if (minute > 0 || second > 0 || milliMicros > 0) {
+                    if (minute > 0 || second > 0 || milliNanos > 0) {
                         append0(sink, minute);
                         append0(sink, second);
 
-                        if (milliMicros > 0) {
+                        if (milliNanos > 0) {
                             sink.putAscii('-');
-                            append00000(sink, milliMicros);
+                            append00000000(sink, milliNanos);
                         }
                     }
                 }
@@ -872,15 +849,15 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 TimestampUtils.checkRange(month, 1, 12);
                 if (TimestampUtils.checkLen2(p, hi)) {
                     int dayRange = TimestampUtils.getDaysPerMonth(month, l);
-                    ts = Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l);
+                    ts = Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(month, l);
                     ts = parseDayTime(in, hi, p, ts, dayRange, 2);
                 } else {
                     // year + month
-                    ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));
+                    ts = (Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(month, l));
                 }
             } else {
                 // year
-                ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));
+                ts = (Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(1, l));
             }
             return ts;
         }
@@ -890,30 +867,30 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
         @Override
         public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
-            long weekTime = timestamp - Timestamps.floorWW(timestamp);
+            long weekTime = timestamp - Nanos.floorWW(timestamp);
             WEEK_FORMAT.format(timestamp, locale, timeZoneName, sink);
 
             if (weekTime > 0) {
-                int dayOfWeek = (int) (weekTime / Timestamps.DAY_MICROS) + 1;
-                int hour = (int) ((weekTime % Timestamps.DAY_MICROS) / Timestamps.HOUR_MICROS);
-                int minute = (int) ((weekTime % Timestamps.HOUR_MICROS) / Timestamps.MINUTE_MICROS);
-                int second = (int) ((weekTime % Timestamps.MINUTE_MICROS) / Timestamps.SECOND_MICROS);
-                int milliMicros = (int) (weekTime % Timestamps.SECOND_MICROS);
+                int dayOfWeek = (int) (weekTime / Nanos.DAY_NANOS) + 1;
+                int hour = (int) ((weekTime % Nanos.DAY_NANOS) / Nanos.HOUR_NANOS);
+                int minute = (int) ((weekTime % Nanos.HOUR_NANOS) / Nanos.MINUTE_NANOS);
+                int second = (int) ((weekTime % Nanos.MINUTE_NANOS) / Nanos.SECOND_NANOS);
+                int milliNanos = (int) (weekTime % Nanos.SECOND_NANOS);
 
                 sink.putAscii('-');
                 sink.put(dayOfWeek);
 
-                if (hour > 0 || minute > 0 || second > 0 || milliMicros > 0) {
+                if (hour > 0 || minute > 0 || second > 0 || milliNanos > 0) {
                     sink.putAscii('T');
                     append0(sink, hour);
 
-                    if (minute > 0 || second > 0 || milliMicros > 0) {
+                    if (minute > 0 || second > 0 || milliNanos > 0) {
                         append0(sink, minute);
                         append0(sink, second);
 
-                        if (milliMicros > 0) {
+                        if (milliNanos > 0) {
                             sink.putAscii('-');
-                            append00000(sink, milliMicros);
+                            append00000000(sink, milliNanos);
                         }
                     }
                 }

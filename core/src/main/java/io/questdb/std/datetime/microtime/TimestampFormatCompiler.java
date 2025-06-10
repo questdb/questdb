@@ -25,8 +25,15 @@
 package io.questdb.std.datetime.microtime;
 
 
+import io.questdb.cairo.TimestampUtils;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
 import io.questdb.std.datetime.AbstractDateFormat;
 import io.questdb.std.datetime.CommonFormatUtils;
 import io.questdb.std.datetime.DateFormat;
@@ -1400,7 +1407,7 @@ public class TimestampFormatCompiler {
         int parseOffsetIndex = asm.poolMethod(Dates.class, "parseOffset", "(Ljava/lang/CharSequence;II)J");
         int getYearIndex = asm.poolMethod(Timestamps.class, "getYear", "(J)I");
         int getIsoYearIndex = asm.poolMethod(Timestamps.class, "getIsoYear", "(J)I");
-        int isLeapYearIndex = asm.poolMethod(Timestamps.class, "isLeapYear", "(I)Z");
+        int isLeapYearIndex = asm.poolMethod(TimestampUtils.class, "isLeapYear", "(I)Z");
         int getMonthOfYearIndex = asm.poolMethod(Timestamps.class, "getMonthOfYear", "(JIZ)I");
         int getDayOfMonthIndex = asm.poolMethod(Timestamps.class, "getDayOfMonth", "(JIIZ)I");
         int getHourOfDayIndex = asm.poolMethod(Timestamps.class, "getHourOfDay", "(J)I");

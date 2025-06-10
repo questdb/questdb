@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TimestampUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -67,7 +68,7 @@ public class MonthOfYearFunctionFactory implements FunctionFactory {
             final long value = arg.getTimestamp(rec);
             if (value != Numbers.LONG_NULL) {
                 final int year = Timestamps.getYear(value);
-                final boolean isLeap = Timestamps.isLeapYear(year);
+                final boolean isLeap = TimestampUtils.isLeapYear(year);
                 return Timestamps.getMonthOfYear(value, year, isLeap);
             }
             return Numbers.INT_NULL;
