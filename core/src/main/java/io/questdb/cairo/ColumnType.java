@@ -247,6 +247,11 @@ public final class ColumnType {
     }
 
     public static TimestampDriver getTimestampDriver(int timestampType) {
+        final short type = tagOf(timestampType);
+        if (type == ColumnType.NULL) {
+            return MicrosTimestampDriver.INSTANCE;
+        }
+
         assert tagOf(timestampType) == TIMESTAMP;
         final int precisionFlag = timestampType & TIMESTAMP_PRECISION_MASK;
         switch (precisionFlag) {
