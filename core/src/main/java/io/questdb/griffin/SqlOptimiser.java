@@ -5396,7 +5396,7 @@ public class SqlOptimiser implements Mutable {
                 }
             }
             if (timestamp == null) {
-                throw SqlException.$(fromToModel.getSampleBy().position, "Sample by over a query requires designated TIMESTAMP");
+                throw SqlException.$(fromToModel.getSampleBy().position, "Sample by requires a designated TIMESTAMP");
             }
 
             if (Chars.indexOf(timestamp.token, '.') < 0) {
