@@ -78,7 +78,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
 
-            final int iterations = 25;
+            final int iterations = 50;
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final AtomicInteger errorCounter = new AtomicInteger();
             final AtomicInteger createCounter = new AtomicInteger();
@@ -120,6 +120,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         if (knownCount > droppedAt) {
                             execute("drop materialized view if exists price_1h", executionContext);
                             droppedAt = createCounter.get();
+                            drainWalQueue();
                         } else {
                             Os.sleep(1);
                         }

@@ -75,16 +75,6 @@ public class ViewState implements QuietCloseable {
         }
     }
 
-    // kept public for tests
-    public static void appendState(
-            boolean invalid,
-            @Nullable CharSequence invalidationReason,
-            @NotNull AppendableBlock block
-    ) {
-        block.putBool(invalid);
-        block.putStr(invalidationReason);
-    }
-
     @Override
     public void close() {
     }
@@ -142,5 +132,14 @@ public class ViewState implements QuietCloseable {
         if (!latch.compareAndSet(true, false)) {
             throw new IllegalStateException("cannot unlock, not locked");
         }
+    }
+
+    private static void appendState(
+            boolean invalid,
+            @Nullable CharSequence invalidationReason,
+            @NotNull AppendableBlock block
+    ) {
+        block.putBool(invalid);
+        block.putStr(invalidationReason);
     }
 }

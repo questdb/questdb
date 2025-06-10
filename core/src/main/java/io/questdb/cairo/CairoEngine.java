@@ -617,9 +617,6 @@ public class CairoEngine implements Closeable, WriterSource {
             if (viewGraph.addView(viewDefinition)) {
                 viewStateStore.createViewState(viewDefinition);
             }
-            try (WalWriter walWriter = getWalWriter(viewToken)) {
-                walWriter.resetViewState(false, null);
-            }
         } catch (CairoException e) {
             dropTableOrViewOrMatView(path, viewToken);
             throw e;
@@ -634,7 +631,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void dropTableOrViewOrMatView(@Transient Path path, TableToken tableToken) {
         verifyTableToken(tableToken);
-        if (tableToken.isWal() || tableToken.isView()) {
+        if (tableToken.isWal()) {
             if (notifyDropped(tableToken)) {
                 tableSequencerAPI.dropTable(tableToken, false);
                 viewStateStore.removeViewState(tableToken);
@@ -1744,6 +1741,13 @@ public class CairoEngine implements Closeable, WriterSource {
                         if (struct.isWalEnabled()) {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
                         }
+
+                        if (tableToken.isView()) {
+                            try (WalWriter walWriter = walWriterPool.get(tableToken)) {
+                                walWriter.resetViewState(false, null);
+                            }
+                        }
+
                         if (!keepLock) {
                             // Unlock pools before registering the name
                             // to avoid `table busy` errors when trying to use the table immediately after registration

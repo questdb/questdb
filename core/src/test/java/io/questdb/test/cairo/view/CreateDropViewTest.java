@@ -49,7 +49,7 @@ public class CreateDropViewTest extends AbstractViewTest {
             execute("insert into price values('gbpusd', 1.320, now())");
             drainWalQueue();
 
-            final int iterations = 50;
+            final int iterations = 100;
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final AtomicInteger errorCounter = new AtomicInteger();
             final AtomicInteger createCounter = new AtomicInteger();
@@ -74,7 +74,7 @@ public class CreateDropViewTest extends AbstractViewTest {
                 } finally {
                     Path.clearThreadLocals();
                 }
-            });
+            }, "create-view-thread");
             creator.start();
 
             final Thread dropper = new Thread(() -> {
@@ -86,6 +86,7 @@ public class CreateDropViewTest extends AbstractViewTest {
                         if (knownCount > droppedAt) {
                             execute("drop view if exists price_view", executionContext);
                             droppedAt = createCounter.get();
+                            drainWalQueue();
                         } else {
                             Os.sleep(1);
                         }
@@ -96,7 +97,7 @@ public class CreateDropViewTest extends AbstractViewTest {
                 } finally {
                     Path.clearThreadLocals();
                 }
-            });
+            }, "drop-view-thread");
             dropper.start();
 
             creator.join();
