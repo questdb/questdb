@@ -45,7 +45,7 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             int columnSplit,
-            long toleranceIntervalMicros
+            long toleranceInterval
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
@@ -55,7 +55,7 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
                 masterFactory.getMetadata().getTimestampIndex(),
                 slaveFactory.getMetadata().getTimestampIndex(),
                 configuration.getSqlAsOfJoinLookAhead(),
-                toleranceIntervalMicros
+                toleranceInterval
         );
     }
 
@@ -105,7 +105,7 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
 
     private static class AsOfJoinFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
 
-        private final long toleranceIntervalMicros;
+        private final long toleranceInterval;
         private long slaveTimestamp = Numbers.LONG_NULL;
 
         public AsOfJoinFastRecordCursor(
@@ -114,10 +114,10 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
                 int lookahead,
-                long toleranceIntervalMicros
+                long toleranceInterval
         ) {
             super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, lookahead);
-            this.toleranceIntervalMicros = toleranceIntervalMicros;
+            this.toleranceInterval = toleranceInterval;
         }
 
         @Override
@@ -129,16 +129,16 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
             if (masterHasNext) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
                 if (masterTimestamp < lookaheadTimestamp) {
-                    if (toleranceIntervalMicros != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceIntervalMicros) {
+                    if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
                         record.hasSlave(false);
                     }
                     isMasterHasNextPending = true;
                     return true;
                 }
                 nextSlave(masterTimestamp);
-                if (toleranceIntervalMicros != Numbers.LONG_NULL && record.hasSlave()) {
+                if (toleranceInterval != Numbers.LONG_NULL && record.hasSlave()) {
                     slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                    if (slaveTimestamp < masterTimestamp - toleranceIntervalMicros) {
+                    if (slaveTimestamp < masterTimestamp - toleranceInterval) {
                         record.hasSlave(false);
                     }
                 }

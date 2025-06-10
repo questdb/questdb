@@ -54,7 +54,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final IntList slaveColumnIndex; // maps columns after the split to columns in the slave cursor
     private final RecordSink slaveKeySink;
     private final int slaveValueTimestampIndex;
-    private final long toleranceIntervalMicros;
+    private final long toleranceInterval;
 
     public LtJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -71,7 +71,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             IntList columnIndex, // this column index will be used to retrieve symbol tables from underlying slave
             JoinContext joinContext,
             ColumnFilter masterTableKeyColumns,
-            long toleranceIntervalMicros,
+            long toleranceInterval,
             int slaveValueTimestampIndex
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
@@ -92,7 +92,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                     columnIndex
             );
             this.slaveColumnIndex = columnIndex;
-            this.toleranceIntervalMicros = toleranceIntervalMicros;
+            this.toleranceInterval = toleranceInterval;
             this.slaveValueTimestampIndex = slaveValueTimestampIndex;
         } catch (Throwable th) {
             close();
@@ -241,11 +241,11 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                 value = key.findValue();
                 if (value != null) {
                     value.setMapRecordHere();
-                    if (toleranceIntervalMicros == Numbers.LONG_NULL) {
+                    if (toleranceInterval == Numbers.LONG_NULL) {
                         record.hasSlave(true);
                     } else {
                         long slaveRecordTimestamp = value.getTimestamp(slaveValueTimestampIndex);
-                        long minTimestamp = masterTimestamp - toleranceIntervalMicros;
+                        long minTimestamp = masterTimestamp - toleranceInterval;
                         record.hasSlave(slaveRecordTimestamp >= minTimestamp);
                     }
                 } else {

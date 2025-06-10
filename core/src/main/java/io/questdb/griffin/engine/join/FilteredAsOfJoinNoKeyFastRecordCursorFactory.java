@@ -56,7 +56,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
     private final FilteredAsOfJoinKeyedFastRecordCursor cursor;
     private final SelectedRecordCursorFactory.SelectedTimeFrameCursor selectedTimeFrameCursor;
     private final Function slaveRecordFilter;
-    private final long toleranceIntervalMicros;
+    private final long toleranceInterval;
 
     /**
      * Creates a new instance with filtered slave record support and optional crossindex projection.
@@ -81,7 +81,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             @NotNull Record slaveNullRecord,
             @Nullable IntList slaveColumnCrossIndex,
             int slaveTimestampIndex,
-            long toleranceIntervalMicros
+            long toleranceInterval
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
@@ -98,7 +98,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         } else {
             this.selectedTimeFrameCursor = null;
         }
-        this.toleranceIntervalMicros = toleranceIntervalMicros;
+        this.toleranceInterval = toleranceInterval;
     }
 
     @Override
@@ -206,7 +206,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             }
 
             long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-            if (toleranceIntervalMicros != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceIntervalMicros) {
+            if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
                 // we are past the tolerance interval, no need to traverse the slave cursor any further
                 record.hasSlave(false);
                 return true;
@@ -277,7 +277,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
 
                 slaveCursor.recordAtRowIndex(slaveRecB, filteredRowId);
                 slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                if (toleranceIntervalMicros != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceIntervalMicros) {
+                if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
                     // we are past the tolerance interval, no need to traverse the slave cursor any further
                     record.hasSlave(false);
                     highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);

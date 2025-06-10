@@ -43,7 +43,7 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             int columnSplit,
-            long toleranceIntervalMicros
+            long toleranceInterval
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         this.cursor = new AsOfLightJoinRecordCursor(
@@ -51,7 +51,7 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
                 slaveFactory.getMetadata().getTimestampIndex(),
-                toleranceIntervalMicros
+                toleranceInterval
         );
     }
 
@@ -105,7 +105,7 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
         private final int masterTimestampIndex;
         private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
-        private final long toleranceIntervalMicros;
+        private final long toleranceInterval;
         private boolean isMasterHasNextPending;
         private long latestSlaveRowID = Long.MIN_VALUE;
         private boolean masterHasNext;
@@ -120,13 +120,13 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
                 Record nullRecord,
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
-                long toleranceIntervalMicros
+                long toleranceInterval
         ) {
             super(columnSplit);
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
-            this.toleranceIntervalMicros = toleranceIntervalMicros;
+            this.toleranceInterval = toleranceInterval;
         }
 
         @Override
@@ -177,10 +177,10 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
         }
 
         private void adjustForTolerance(long masterTimestamp) {
-            if (toleranceIntervalMicros == Numbers.LONG_NULL || !record.hasSlave()) {
+            if (toleranceInterval == Numbers.LONG_NULL || !record.hasSlave()) {
                 return;
             }
-            record.hasSlave(slaveBTimestamp >= masterTimestamp - toleranceIntervalMicros);
+            record.hasSlave(slaveBTimestamp >= masterTimestamp - toleranceInterval);
         }
 
         private void nextSlave(long masterTimestamp) {
@@ -203,8 +203,8 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
             if (record.hasSlave()) {
                 slaveBTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                if (toleranceIntervalMicros != Numbers.LONG_NULL) {
-                    record.hasSlave(slaveBTimestamp >= masterTimestamp - toleranceIntervalMicros);
+                if (toleranceInterval != Numbers.LONG_NULL) {
+                    record.hasSlave(slaveBTimestamp >= masterTimestamp - toleranceInterval);
                 }
             }
             assert !record.hasSlave() || slaveBTimestamp <= masterTimestamp;

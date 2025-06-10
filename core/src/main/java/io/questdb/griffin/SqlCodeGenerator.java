@@ -721,7 +721,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IntList columnIndex,
             JoinContext joinContext,
             ColumnFilter masterTableKeyColumns,
-            long toleranceIntervalMicros,
+            long toleranceInterval,
             int slaveValueTimestampIndex
     ) {
         return new LtJoinRecordCursorFactory(
@@ -739,7 +739,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 columnIndex,
                 joinContext,
                 masterTableKeyColumns,
-                toleranceIntervalMicros,
+                toleranceInterval,
                 slaveValueTimestampIndex
         );
     }
@@ -1073,7 +1073,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int joinPosition,
             FullFatJoinGenerator generator,
             JoinContext joinContext,
-            long toleranceIntervalMicros
+            long toleranceInterval
     ) throws SqlException {
         // create hash set of key columns to easily find them
         intHashSet.clear();
@@ -1189,7 +1189,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnIndex,
                     joinContext,
                     masterTableKeyColumns,
-                    toleranceIntervalMicros,
+                    toleranceInterval,
                     slaveValueTimestampIndex
             );
 
@@ -6572,7 +6572,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 IntList columnIndex,
                 JoinContext joinContext,
                 ColumnFilter masterTableKeyColumns,
-                long toleranceIntervalMicros,
+                long toleranceInterval,
                 int slaveValueTimestampIndex
         );
     }

@@ -49,7 +49,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
     private final LtJoinLightRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
-    private final long toleranceIntervalMicros;
+    private final long toleranceInterval;
 
     public LtJoinLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -68,7 +68,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
         try {
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
-            this.toleranceIntervalMicros = toleranceInterval;
+            this.toleranceInterval = toleranceInterval;
 
             Map joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
             this.cursor = new LtJoinLightRecordCursor(
@@ -225,7 +225,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
                 if (value != null) {
                     slaveCursor.recordAt(slaveRecord, value.getLong(0));
                     slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
-                    record.hasSlave(toleranceIntervalMicros == Numbers.LONG_NULL || slaveTimestamp >= masterTimestamp - toleranceIntervalMicros);
+                    record.hasSlave(toleranceInterval == Numbers.LONG_NULL || slaveTimestamp >= masterTimestamp - toleranceInterval);
                 } else {
                     record.hasSlave(false);
                 }

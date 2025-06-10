@@ -48,7 +48,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
     private final SymbolShortCircuit symbolShortCircuit;
-    private final long toleranceIntervalMicros;
+    private final long toleranceInterval;
 
     public AsOfJoinFastRecordCursorFactory(
             CairoConfiguration configuration,
@@ -60,7 +60,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             int columnSplit,
             SymbolShortCircuit symbolShortCircuit,
             JoinContext joinContext,
-            long toleranceIntervalMicros
+            long toleranceInterval
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
@@ -77,7 +77,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 configuration.getSqlAsOfJoinLookAhead()
         );
         this.symbolShortCircuit = symbolShortCircuit;
-        this.toleranceIntervalMicros = toleranceIntervalMicros;
+        this.toleranceInterval = toleranceInterval;
     }
 
     @Override
@@ -218,7 +218,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             int keyedFrameIndex = timeFrame.getFrameIndex();
             for (; ; ) {
                 long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                if (toleranceIntervalMicros != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceIntervalMicros) {
+                if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
                     // we are past the tolerance interval, no need to traverse the slave cursor any further
                     record.hasSlave(false);
                     break;

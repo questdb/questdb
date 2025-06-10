@@ -105,7 +105,7 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
 
     private static class LtJoinFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
 
-        private final long toleranceIntervalMicros;
+        private final long toleranceInterval;
         private long slaveTimestamp = Numbers.LONG_NULL;
 
         public LtJoinFastRecordCursor(
@@ -116,7 +116,7 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
                 int lookahead,
                 long toleranceInterval) {
             super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, lookahead);
-            this.toleranceIntervalMicros = toleranceInterval;
+            this.toleranceInterval = toleranceInterval;
         }
 
         @Override
@@ -128,16 +128,16 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
             if (masterHasNext) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
                 if (masterTimestamp <= lookaheadTimestamp) {
-                    if (toleranceIntervalMicros != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceIntervalMicros) {
+                    if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
                         record.hasSlave(false);
                     }
                     isMasterHasNextPending = true;
                     return true;
                 }
                 nextSlave(masterTimestamp - 1);
-                if (toleranceIntervalMicros != Numbers.LONG_NULL && record.hasSlave()) {
+                if (toleranceInterval != Numbers.LONG_NULL && record.hasSlave()) {
                     slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                    if (slaveTimestamp < masterTimestamp - toleranceIntervalMicros) {
+                    if (slaveTimestamp < masterTimestamp - toleranceInterval) {
                         record.hasSlave(false);
                     }
                 }
