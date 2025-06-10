@@ -210,7 +210,7 @@ public final class ColumnType {
      * @param elemType one of the supported array element type tags.
      * @param nDims    dimensionality, from 1 to {@value ARRAY_NDIMS_LIMIT}.
      */
-    public static int encodeArrayType(short elemType, int nDims) {
+    public static int encodeArrayType(int elemType, int nDims) {
         assert nDims >= 1 && nDims <= ARRAY_NDIMS_LIMIT : "nDims out of range: " + nDims;
         assert isSupportedArrayElementType(elemType) || elemType == UNDEFINED
                 : "not supported as array element type: " + nameOf(elemType);
@@ -248,7 +248,8 @@ public final class ColumnType {
 
     public static TimestampDriver getTimestampDriver(int timestampType) {
         final short type = tagOf(timestampType);
-        if (type == ColumnType.NULL) {
+        // todo null and UNDEFINED use MicrosTimestamp
+        if (type == ColumnType.NULL || type == UNDEFINED) {
             return MicrosTimestampDriver.INSTANCE;
         }
 
@@ -400,7 +401,7 @@ public final class ColumnType {
         return colType == VARCHAR || colType == STRING;
     }
 
-    public static boolean isSupportedArrayElementType(short typeTag) {
+    public static boolean isSupportedArrayElementType(int typeTag) {
         return arrayTypeSet.contains(typeTag);
     }
 
@@ -713,7 +714,8 @@ public final class ColumnType {
         typeNameMap.put(BINARY, "BINARY");
         typeNameMap.put(DATE, "DATE");
         typeNameMap.put(PARAMETER, "PARAMETER");
-        typeNameMap.put(TIMESTAMP, "TIMESTAMP");
+        typeNameMap.put(TIMESTAMP_MICRO, "TIMESTAMP");
+        typeNameMap.put(TIMESTAMP_NANO, "TIMESTAMP_NS");
         typeNameMap.put(LONG256, "LONG256");
         typeNameMap.put(UUID, "UUID");
         typeNameMap.put(LONG128, "LONG128");
@@ -757,7 +759,7 @@ public final class ColumnType {
         nameTypeMap.put("binary", BINARY);
         nameTypeMap.put("date", DATE);
         nameTypeMap.put("parameter", PARAMETER);
-        nameTypeMap.put("timestamp", TIMESTAMP);
+        nameTypeMap.put("timestamp", TIMESTAMP_MICRO);
         nameTypeMap.put("cursor", CURSOR);
         nameTypeMap.put("long256", LONG256);
         nameTypeMap.put("uuid", UUID);
@@ -773,6 +775,7 @@ public final class ColumnType {
         nameTypeMap.put("text[]", ARRAY_STRING);
         nameTypeMap.put("IPv4", IPv4);
         nameTypeMap.put("interval", INTERVAL);
+        nameTypeMap.put("timestamp_ns", TIMESTAMP_NANO);
 
         StringSink sink = new StringSink();
         for (int b = 1; b <= GEOLONG_MAX_BITS; b++) {

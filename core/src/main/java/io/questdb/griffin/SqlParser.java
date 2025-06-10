@@ -1165,7 +1165,7 @@ public class SqlParser {
                     throw SqlException.position(timestamp.position)
                             .put("invalid designated timestamp column [name=").put(timestamp.token).put(']');
                 }
-                if (model.getColumnType() != ColumnType.TIMESTAMP) {
+                if (ColumnType.tagOf(model.getColumnType()) != ColumnType.TIMESTAMP) {
                     throw SqlException
                             .position(timestamp.position)
                             .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(model.getColumnType()))
@@ -3750,7 +3750,7 @@ public class SqlParser {
 
     private int toColumnType(GenericLexer lexer, @NotNull CharSequence tok) throws SqlException {
         int typePosition = lexer.lastTokenPosition();
-        final short typeTag = SqlUtil.toPersistedTypeTag(tok, typePosition);
+        int typeTag = SqlUtil.toPersistedTypeTag(tok, typePosition);
 
         // ignore precision keyword for DOUBLE column: 'double precision' is the same type as 'double'
         if (typeTag == ColumnType.DOUBLE) {
@@ -3758,6 +3758,8 @@ public class SqlParser {
             if (next != null && !isPrecisionKeyword(next)) {
                 lexer.unparseLast();
             }
+        } else if (typeTag == ColumnType.TIMESTAMP) {
+            typeTag = ColumnType.typeOf(tok);
         }
 
         int nDims = SqlUtil.parseArrayDimensionality(lexer);
