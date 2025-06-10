@@ -136,7 +136,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ");";
 
             // plan with the avoid hint should NOT use the FAST ASOF
-            assertQuery("QUERY PLAN\n" +
+            assertQueryNoLeakCheck("QUERY PLAN\n" +
                             "SelectedRecord\n" +
                             "    Filter filter: oRdERS.price<MD.bid\n" +
                             "        AsOf Join\n" +
@@ -153,7 +153,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "EXPLAIN " + queryWithAvoidHint, null, false, true);
 
             // with Use hint it generates a plan with the fast asof join
-            assertQuery("QUERY PLAN\n" +
+            assertQueryNoLeakCheck("QUERY PLAN\n" +
                             "SelectedRecord\n" +
                             "    Filter filter: oRdERS.price<MD.bid\n" +
                             "        Filtered AsOf Join Fast Scan\n" +
@@ -168,7 +168,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "EXPLAIN " + queryWithUseHint, null, false, true);
 
             // and query without hint should also use the fast asof join
-            assertQuery("QUERY PLAN\n" +
+            assertQueryNoLeakCheck("QUERY PLAN\n" +
                             "SelectedRecord\n" +
                             "    Filter filter: oRdERS.price<MD.bid\n" +
                             "        Filtered AsOf Join Fast Scan\n" +
@@ -188,9 +188,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "2025-01-01T00:06:40.006304Z\t0.9130994629783138\tsym_1\tsym_2\t2025-01-01T00:06:37.303610Z\t0.8423410920883345\n" +
                     "2025-01-01T00:13:20.002056Z\t0.24872951622414008\tsym_1\tsym_4\t2025-01-01T00:13:19.909382Z\t0.0367581207471136\n" +
                     "2025-01-01T00:16:40.009947Z\t0.5071618579762882\tsym_1\tsym_6\t2025-01-01T00:16:39.800653Z\t0.3100545983862456\n";
-            assertQuery(expectedResult, queryWithUseHint, "ts", false, false);
-            assertQuery(expectedResult, queryWithAvoidHint, "ts", false, false);
-            assertQuery(expectedResult, queryWithoutHint, "ts", false, false);
+            assertQueryNoLeakCheck(expectedResult, queryWithUseHint, "ts", false, false);
+            assertQueryNoLeakCheck(expectedResult, queryWithAvoidHint, "ts", false, false);
+            assertQueryNoLeakCheck(expectedResult, queryWithoutHint, "ts", false, false);
         });
     }
 
@@ -435,50 +435,52 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinOnNullSymbolKeys() throws Exception {
-        final String expected = "tag\thi\tlo\n" +
-                "AA\t315515118\t315515118\n" +
-                "BB\t-727724771\t-727724771\n" +
-                "\t-948263339\t-948263339\n" +
-                "\t592859671\t592859671\n" +
-                "AA\t-847531048\t-847531048\n" +
-                "BB\t-2041844972\t-2041844972\n" +
-                "BB\t-1575378703\t-1575378703\n" +
-                "BB\t1545253512\t1545253512\n" +
-                "AA\t1573662097\t1573662097\n" +
-                "AA\t339631474\t339631474\n";
+        assertMemoryLeak(() -> {
+            final String expected = "tag\thi\tlo\n" +
+                    "AA\t315515118\t315515118\n" +
+                    "BB\t-727724771\t-727724771\n" +
+                    "\t-948263339\t-948263339\n" +
+                    "\t592859671\t592859671\n" +
+                    "AA\t-847531048\t-847531048\n" +
+                    "BB\t-2041844972\t-2041844972\n" +
+                    "BB\t-1575378703\t-1575378703\n" +
+                    "BB\t1545253512\t1545253512\n" +
+                    "AA\t1573662097\t1573662097\n" +
+                    "AA\t339631474\t339631474\n";
 
-        assertQuery(
-                "tag\thi\tlo\n",
-                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)",
-                "create table tab (\n" +
-                        "    tag symbol index,\n" +
-                        "    seq int,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into tab select * from (select rnd_symbol('AA', 'BB', null) tag, \n" +
-                        "        rnd_int() seq, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                false,
-                true,
-                false
-        );
+            assertQueryNoLeakCheck(
+                    "tag\thi\tlo\n",
+                    "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)",
+                    "create table tab (\n" +
+                            "    tag symbol index,\n" +
+                            "    seq int,\n" +
+                            "    ts timestamp\n" +
+                            ") timestamp(ts) partition by DAY",
+                    null,
+                    "insert into tab select * from (select rnd_symbol('AA', 'BB', null) tag, \n" +
+                            "        rnd_int() seq, \n" +
+                            "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                            "    from long_sequence(10)) timestamp (ts)",
+                    expected,
+                    false,
+                    true,
+                    false
+            );
 
-        execute("create table tab2 as (select * from tab where tag is not null)");
-        assertQuery("tag\thi\tlo\n" +
-                        "AA\t315515118\t315515118\n" +
-                        "BB\t-727724771\t-727724771\n" +
-                        "\t-948263339\tnull\n" +
-                        "\t592859671\tnull\n" +
-                        "AA\t-847531048\t-847531048\n" +
-                        "BB\t-2041844972\t-2041844972\n" +
-                        "BB\t-1575378703\t-1575378703\n" +
-                        "BB\t1545253512\t1545253512\n" +
-                        "AA\t1573662097\t1573662097\n" +
-                        "AA\t339631474\t339631474\n",
-                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab2 b on (tag)", null, null, false, true);
+            execute("create table tab2 as (select * from tab where tag is not null)");
+            assertQueryNoLeakCheck("tag\thi\tlo\n" +
+                            "AA\t315515118\t315515118\n" +
+                            "BB\t-727724771\t-727724771\n" +
+                            "\t-948263339\tnull\n" +
+                            "\t592859671\tnull\n" +
+                            "AA\t-847531048\t-847531048\n" +
+                            "BB\t-2041844972\t-2041844972\n" +
+                            "BB\t-1575378703\t-1575378703\n" +
+                            "BB\t1545253512\t1545253512\n" +
+                            "AA\t1573662097\t1573662097\n" +
+                            "AA\t339631474\t339631474\n",
+                    "select a.tag, a.seq hi, b.seq lo from tab a asof join tab2 b on (tag)", null, null, false, true);
+        });
     }
 
     @Test
@@ -506,14 +508,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "8\t1970-01-01T00:00:08.000008Z\tnull\t\n" +
                     "9\t1970-01-01T00:00:09.000009Z\tnull\t\n" +
                     "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
-            assertQuery(expected, query, null, "ts", false, true);
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             // keyed join and slave has no timeframe support -> should use AsOfJoinLightRecordCursorFactory
             query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) ON id TOLERANCE 2s;";
             // sanity check: uses AsOfJoinLightRecordCursorFactory
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "AsOf Join Light");
-            assertQuery(expected, query, null, "ts", false, true);
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             assertQueryFullFatNoLeakCheck(expected, query, "ts", false, true, true);
 
@@ -533,19 +535,19 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
-            assertQuery(expected, query, null, "ts", false, true);
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             // non-keyed join and slave has a filter + use hint -> should use FilteredAsOfJoinNoKeyFastRecordCursorFactory
             query = "SELECT /*+ use_asof_binary_search(t1 t2) */ * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
-            assertQuery(expected, query, null, "ts", false, true);
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             // non-keyed join, slave has a filter, no hint -> should also use FilteredAsOfJoinNoKeyFastRecordCursorFactory
             query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
-            assertQuery(expected, query, null, "ts", false, true);
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             // non-keyed join, slave has a filter, avoid hint -> should also use AsOfJoinNoKeyRecordCursorFactory
             query = "SELECT /*+ avoid_asof_binary_search(t1 t2) */ * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
@@ -564,10 +566,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
 
             String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE -2s;";
-            assertException(query, 49, "ASOF JOIN tolerance must not be negative");
+            assertExceptionNoLeakCheck(query, 49, "ASOF JOIN tolerance must not be negative");
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 0s;";
-            assertException(query, 46, "zero is not a valid tolerance value");
+            assertExceptionNoLeakCheck(query, 46, "zero is not a valid tolerance value");
         });
     }
 
