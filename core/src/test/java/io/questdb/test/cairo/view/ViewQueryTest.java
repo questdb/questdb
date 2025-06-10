@@ -311,7 +311,7 @@ public class ViewQueryTest extends AbstractViewTest {
 //                            "1970-01-01T00:00:50.000000Z\t5\n" +
 //                            "1970-01-01T00:01:20.000000Z\t8\n",
 //                    VIEW2 + " where v_max > 7 union " + VIEW1 + " where k = 'k5'",
-//                    "ts",
+//                    null,
 //                    false,
 //                    true,
 //                    "expected plan"
@@ -347,12 +347,12 @@ public class ViewQueryTest extends AbstractViewTest {
                             "            Union\n" +
                             "                Filter filter: 7<v_max\n" +
                             "                    Async Group By workers: 1\n" +
-                            "                      keys: [ts,k]\n" +
+                            "                      keys: [ts,k2]\n" +
                             "                      values: [max(v)]\n" +
-                            "                      filter: 4<v\n" +
+                            "                      filter: 6<v\n" +
                             "                        PageFrame\n" +
                             "                            Row forward scan\n" +
-                            "                            Frame forward scan on: table1\n" +
+                            "                            Frame forward scan on: table2\n" +
                             "                Async Group By workers: 1\n" +
                             "                  keys: [ts,k]\n" +
                             "                  values: [max(v)]\n" +

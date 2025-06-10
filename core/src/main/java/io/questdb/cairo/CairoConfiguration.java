@@ -587,6 +587,8 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
+    int getViewLexerPoolCapacity();
+
     @NotNull
     VolumeDefinitions getVolumeDefinitions();
 

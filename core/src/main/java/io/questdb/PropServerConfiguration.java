@@ -446,6 +446,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlStrFunctionBufferMaxSize;
     private final int sqlTxnScoreboardEntryCount;
     private final int sqlUnorderedMapMaxEntrySize;
+    private final int sqlViewLexerPoolCapacity;
     private final int sqlWindowColumnPoolCapacity;
     private final int sqlWindowInitialRangeBufferSize;
     private final int sqlWindowMaxRecursion;
@@ -1327,6 +1328,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlUnorderedMapMaxEntrySize = getInt(properties, env, PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 32);
             this.sqlMapMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlMapMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, Integer.MAX_VALUE);
+            this.sqlViewLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_VIEW_LEXER_POOL_CAPACITY, 8);
             this.sqlExplainModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY, 32);
             this.sqlModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_MODEL_POOL_CAPACITY, 1024);
             this.sqlMaxNegativeLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 10_000);
@@ -3599,6 +3601,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getVectorAggregateQueueCapacity() {
             return vectorAggregateQueueCapacity;
+        }
+
+        @Override
+        public int getViewLexerPoolCapacity() {
+            return sqlViewLexerPoolCapacity;
         }
 
         @Override

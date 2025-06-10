@@ -33,7 +33,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayDeque;
 import java.util.Comparator;
 
-public class GenericLexer implements ImmutableIterator<CharSequence> {
+public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
     public static final LenComparator COMPARATOR = new LenComparator();
     public static final CharSequenceHashSet WHITESPACE = new CharSequenceHashSet();
     public static final IntHashSet WHITESPACE_CH = new IntHashSet();
@@ -125,6 +125,14 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         _pos = position;
         last = lastSeen;
         next = null;
+    }
+
+    @Override
+    public void clear() {
+        of(null, 0, 0);
+
+        parkedPosition.clear();
+        parkedUnparsed.clear();
     }
 
     public final void defineSymbol(String token) {

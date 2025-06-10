@@ -1057,6 +1057,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getViewLexerPoolCapacity() {
+        return getDelegate().getViewLexerPoolCapacity();
+    }
+
+    @Override
     public @NotNull VolumeDefinitions getVolumeDefinitions() {
         return getDelegate().getVolumeDefinitions();
     }
