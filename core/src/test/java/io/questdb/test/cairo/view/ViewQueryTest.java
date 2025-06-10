@@ -305,28 +305,62 @@ public class ViewQueryTest extends AbstractViewTest {
             assertViewDefinitionFile(VIEW2, query2);
             assertViewStateFile(VIEW2);
 
-            // TODO: fix this
-//            assertQueryAndPlan(
-//                    "ts\tv_max\n" +
-//                            "1970-01-01T00:00:50.000000Z\t5\n" +
-//                            "1970-01-01T00:01:20.000000Z\t8\n",
-//                    VIEW2 + " where v_max > 7 union " + VIEW1 + " where k = 'k5'",
-//                    null,
-//                    false,
-//                    true,
-//                    "expected plan"
-//            );
-//
-//            assertQueryAndPlan(
-//                    "ts\tv_max\n" +
-//                            "1970-01-01T00:00:50.000000Z\t5\n" +
-//                            "1970-01-01T00:01:20.000000Z\t8\n",
-//                    "(select ts, v_max from " + VIEW2 + " where v_max > 6) union (select ts, v_max from " + VIEW1 + " where k = 'k5')",
-//                    "ts",
-//                    false,
-//                    true,
-//                    "expected plan"
-//            );
+            assertQueryAndPlan(
+                    "ts\tk2\tv_max\n" +
+                            "1970-01-01T00:01:20.000000Z\tk2_8\t8\n" +
+                            "1970-01-01T00:00:50.000000Z\tk5\t5\n",
+                    VIEW2 + " where v_max > 7 union " + VIEW1 + " where k = 'k5'",
+                    null,
+                    false,
+                    false,
+                    "QUERY PLAN\n" +
+                            "Union\n" +
+                            "    Filter filter: 7<v_max\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [ts,k2]\n" +
+                            "          values: [max(v)]\n" +
+                            "          filter: 6<v\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: table2\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts,k]\n" +
+                            "      values: [max(v)]\n" +
+                            "      filter: (4<v and k='k5')\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: table1\n"
+            );
+
+            assertQueryAndPlan(
+                    "ts\tv_max\n" +
+                            "1970-01-01T00:01:10.000000Z\t7\n" +
+                            "1970-01-01T00:01:20.000000Z\t8\n" +
+                            "1970-01-01T00:00:50.000000Z\t5\n",
+                    "(select ts, v_max from " + VIEW2 + " where v_max > 6) union (select ts, v_max from " + VIEW1 + " where k = 'k5')",
+                    null,
+                    false,
+                    false,
+                    "QUERY PLAN\n" +
+                            "Union\n" +
+                            "    SelectedRecord\n" +
+                            "        Filter filter: 6<v_max\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts,k2]\n" +
+                            "              values: [max(v)]\n" +
+                            "              filter: 6<v\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: table2\n" +
+                            "    SelectedRecord\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [ts,k]\n" +
+                            "          values: [max(v)]\n" +
+                            "          filter: (4<v and k='k5')\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: table1\n"
+            );
 
             assertQueryAndPlan(
                     "ts\tv_max\n" +

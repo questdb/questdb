@@ -257,7 +257,7 @@ public class CreateDropViewTest extends AbstractViewTest {
                     null,
                     true,
                     false,
-                    // TODO: can optimizer remove the redundant 6<v_max filter?
+                    // can optimizer remove the redundant 6<v_max filter?
                     "QUERY PLAN\n" +
                             "Filter filter: (6<v_max and 7<v_max)\n" +
                             "    Async Group By workers: 1\n" +
