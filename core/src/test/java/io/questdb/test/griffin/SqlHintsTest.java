@@ -54,26 +54,4 @@ public class SqlHintsTest extends AbstractTest {
             Assert.assertFalse(SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, "tableA", "tableB"));
         });
     }
-
-    @Test
-    public void testAsOfJoinUseBinarySearchHint() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            QueryModel model = new QueryModel.QueryModelFactory().newInstance();
-            Assert.assertFalse(SqlHints.hasUseAsOfJoinBinarySearchHint(model, "tableA", "tableB"));
-
-            model.addHint(SqlHints.ASOF_JOIN_USE_BINARY_SEARCH_HINT, "tableA tableB");
-            Assert.assertTrue(SqlHints.hasUseAsOfJoinBinarySearchHint(model, "tableA", "tableB"));
-
-            // case insensitive
-            Assert.assertTrue(SqlHints.hasUseAsOfJoinBinarySearchHint(model, "tablea", "tableb"));
-            Assert.assertTrue(SqlHints.hasUseAsOfJoinBinarySearchHint(model, "TABLEA", "TABLEB"));
-
-            // different order
-            Assert.assertTrue(SqlHints.hasUseAsOfJoinBinarySearchHint(model, "tableB", "tableA"));
-            Assert.assertTrue(SqlHints.hasUseAsOfJoinBinarySearchHint(model, "TABLEB", "TABLEA"));
-
-            model.clear();
-            Assert.assertFalse(SqlHints.hasUseAsOfJoinBinarySearchHint(model, "tableA", "tableB"));
-        });
-    }
 }
