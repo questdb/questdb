@@ -51,6 +51,7 @@ pub enum ColumnTypeTag {
     Long128 = 24,
     IPv4 = 25,
     Varchar = 26,
+    Array = 27,
 }
 
 impl ColumnTypeTag {
@@ -84,7 +85,10 @@ impl ColumnTypeTag {
 
             ColumnTypeTag::Long256 => Some(32),
 
-            ColumnTypeTag::Binary | ColumnTypeTag::String | ColumnTypeTag::Varchar => None,
+            ColumnTypeTag::Binary
+            | ColumnTypeTag::String
+            | ColumnTypeTag::Varchar
+            | ColumnTypeTag::Array => None,
         }
     }
 
@@ -112,6 +116,7 @@ impl ColumnTypeTag {
             ColumnTypeTag::Long128 => "long128",
             ColumnTypeTag::IPv4 => "ipv4",
             ColumnTypeTag::Varchar => "varchar",
+            ColumnTypeTag::Array => "array",
         }
     }
 
@@ -152,6 +157,7 @@ impl TryFrom<u8> for ColumnTypeTag {
             24 => Ok(ColumnTypeTag::Long128),
             25 => Ok(ColumnTypeTag::IPv4),
             26 => Ok(ColumnTypeTag::Varchar),
+            27 => Ok(ColumnTypeTag::Array),
             _ => Err(fmt_err!(
                 InvalidType,
                 "unknown QuestDB column tag code: {}",
