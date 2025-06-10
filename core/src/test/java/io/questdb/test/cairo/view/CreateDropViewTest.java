@@ -193,19 +193,26 @@ public class CreateDropViewTest extends AbstractViewTest {
             assertViewDefinitionFile(VIEW1, query1);
             assertViewStateFile(VIEW1);
 
-            // TODO: the below queries make the test to fail with NPE, fix it
-            //final String query2 = "select ts, v_max from " + VIEW1;
-            //final String query2 = "select date_trunc('hour', ts), avg(v_max) as v_avg from " + VIEW1;
-
-            // TODO: the below query fails, v_max > 7 filter is ignored, fix it
-            //final String query2 = "select * from " + VIEW1 + " where v_max > 7";
-
-            final String query2 = "select * from " + VIEW1;
+            final String query2 = VIEW1 + " where v_max > 6";
             execute("CREATE VIEW " + VIEW2 + " AS (" + query2 + ");");
             drainWalQueue();
             assertViewDefinition(VIEW2, query2);
             assertViewDefinitionFile(VIEW2, query2);
             assertViewStateFile(VIEW2);
+
+            final String query3 = VIEW2 + " where v_max > 7";
+            execute("CREATE VIEW " + VIEW3 + " AS (" + query3 + ");");
+            drainWalQueue();
+            assertViewDefinition(VIEW3, query3);
+            assertViewDefinitionFile(VIEW3, query3);
+            assertViewStateFile(VIEW3);
+
+            final String query4 = "select date_trunc('hour', ts), avg(v_max) as v_avg from " + VIEW1;
+            execute("CREATE VIEW " + VIEW4 + " AS (" + query4 + ");");
+            drainWalQueue();
+            assertViewDefinition(VIEW4, query4);
+            assertViewDefinitionFile(VIEW4, query4);
+            assertViewStateFile(VIEW4);
 
             assertQueryAndPlan(
                     "ts\tk\tv_max\n" +
@@ -226,19 +233,57 @@ public class CreateDropViewTest extends AbstractViewTest {
 
             assertQueryAndPlan(
                     "ts\tk\tv_max\n" +
-                            "1970-01-01T00:00:50.000000Z\tk5\t5\n" +
-                            "1970-01-01T00:01:00.000000Z\tk6\t6\n" +
                             "1970-01-01T00:01:10.000000Z\tk7\t7\n" +
                             "1970-01-01T00:01:20.000000Z\tk8\t8\n",
                     VIEW2,
+                    null,
+                    true,
+                    false,
                     "QUERY PLAN\n" +
-                            "Async Group By workers: 1\n" +
-                            "  keys: [ts,k]\n" +
-                            "  values: [max(v)]\n" +
-                            "  filter: 4<v\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: table1\n"
+                            "Filter filter: 6<v_max\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts,k]\n" +
+                            "      values: [max(v)]\n" +
+                            "      filter: 4<v\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: table1\n"
+            );
+
+            assertQueryAndPlan(
+                    "ts\tk\tv_max\n" +
+                            "1970-01-01T00:01:20.000000Z\tk8\t8\n",
+                    VIEW3,
+                    null,
+                    true,
+                    false,
+                    // TODO: can optimizer remove the redundant 6<v_max filter?
+                    "QUERY PLAN\n" +
+                            "Filter filter: (6<v_max and 7<v_max)\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts,k]\n" +
+                            "      values: [max(v)]\n" +
+                            "      filter: 4<v\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: table1\n"
+            );
+
+            assertQueryAndPlan(
+                    "date_trunc\tv_avg\n" +
+                            "1970-01-01T00:00:00.000000Z\t6.5\n",
+                    VIEW4,
+                    "QUERY PLAN\n" +
+                            "GroupBy vectorized: false\n" +
+                            "  keys: [date_trunc]\n" +
+                            "  values: [avg(v_max)]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts,k]\n" +
+                            "      values: [max(v)]\n" +
+                            "      filter: 4<v\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: table1\n"
             );
         });
     }

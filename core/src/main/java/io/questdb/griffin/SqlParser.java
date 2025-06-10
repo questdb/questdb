@@ -117,7 +117,6 @@ public class SqlParser {
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> viewDecl = new LowerCaseCharSequenceObjHashMap<>();
-    private final GenericLexer viewLexer;
     private final SqlParserCallback viewSqlParserCallback = new SqlParserCallback() {
     };
     private final ObjectPool<WindowColumn> windowColumnPool;
@@ -149,7 +148,6 @@ public class SqlParser {
         this.explainModelPool = new ObjectPool<>(ExplainModel.FACTORY, configuration.getExplainPoolCapacity());
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
-        this.viewLexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         boolean tempCairoSqlLegacyOperatorPrecedence = configuration.getCairoSqlLegacyOperatorPrecedence();
         if (tempCairoSqlLegacyOperatorPrecedence) {
             this.expressionParser = new ExpressionParser(
@@ -490,6 +488,9 @@ public class SqlParser {
     }
 
     private QueryModel compileViewQuery(ViewDefinition viewDefinition) throws SqlException {
+        // TODO: create a view lexer pool?
+        //  cannot use a single instance because of views based on other views
+        final GenericLexer viewLexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         SqlCompilerImpl.configureLexer(viewLexer);
         viewLexer.of(viewDefinition.getViewSql());
         return parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, viewDecl);
