@@ -38,6 +38,7 @@ import java.io.Closeable;
 import java.util.Arrays;
 
 public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogWriter {
+    private static final boolean DEBUG_CLOSED_STDOUT = false;
     private static final int DEBUG_LOG_HISTORY_LENGTH = 50;
     private final boolean debugBrokenLogging;
     private final Utf8StringSink[] debugSinks;
@@ -55,9 +56,14 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
         this.level = level;
         debugBrokenLogging = LogFactory.isInsideJUnitTest();
         if (debugBrokenLogging) {
-            System.out.println("#$#$ LOGGING WITH ERROR DETECTION ENABLED");
-            debugSinks = new Utf8StringSink[DEBUG_LOG_HISTORY_LENGTH];
-            Arrays.setAll(debugSinks, i -> new Utf8StringSink(512));
+            if (DEBUG_CLOSED_STDOUT) {
+                System.out.println("#$#$ LOGGING WITH UTF-8 VALIDATION AND CLOSED-STDOUT DIAGNOSTICS");
+                debugSinks = new Utf8StringSink[DEBUG_LOG_HISTORY_LENGTH];
+                Arrays.setAll(debugSinks, i -> new Utf8StringSink(512));
+            } else {
+                System.out.println("#$#$ LOGGING WITH UTF-8 VALIDATION");
+                debugSinks = null;
+            }
         } else {
             debugSinks = null;
         }
@@ -110,9 +116,11 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
             return;
         }
 
-        Utf8StringSink debugSink = debugSinks[(int) (debugSinkArrayPos++ % debugSinks.length)];
-        debugSink.clear();
-        debugSink.put((DirectUtf8Sequence) sink); // disambiguation cast, guaranteed to succeed
+        if (DEBUG_CLOSED_STDOUT) {
+            Utf8StringSink debugSink = debugSinks[(int) (debugSinkArrayPos++ % debugSinks.length)];
+            debugSink.clear();
+            debugSink.put((DirectUtf8Sequence) sink); // disambiguation cast, guaranteed to succeed
+        }
 
         int sinkSize = sink.size();
         long res = Files.append(fd, sink.ptr(), sinkSize);
@@ -120,17 +128,23 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
             return;
         }
 
-        System.out.println(
-                "#$#$ LOGGING ERROR: Files.append() returned " + res + ", expected result was " + sinkSize +
-                        ". Os.errno() " + Os.errno() + ", fd " + Files.toOsFd(fd) +
-                        ". Recent lines logged (up to " + DEBUG_LOG_HISTORY_LENGTH + "):");
-        for (int i = 0; i < DEBUG_LOG_HISTORY_LENGTH; i++) {
-            debugSink = debugSinks[(int) ((debugSinkArrayPos + i) % debugSinks.length)];
-            if (debugSink.size() == 0) {
-                continue;
+        // The most common reason to reach this point is that the stdout file descriptor is closed.
+        // When running through Maven Surefire in a forked process, System.out still works because
+        // it uses a different write path, so this will still appear in the output.
+        String errMsg = "#$#$ LOGGING ERROR: Files.append() returned " + res + ", expected result was " + sinkSize +
+                ". Os.errno() " + Os.errno() + ", fd " + Files.toOsFd(fd) + '.';
+        if (DEBUG_CLOSED_STDOUT) {
+            System.out.println(errMsg + " Recent lines logged (up to " + DEBUG_LOG_HISTORY_LENGTH + "):");
+            for (int i = 0; i < DEBUG_LOG_HISTORY_LENGTH; i++) {
+                Utf8StringSink debugSink = debugSinks[(int) ((debugSinkArrayPos + i) % debugSinks.length)];
+                if (debugSink.size() == 0) {
+                    continue;
+                }
+                System.out.print(debugSink);
+                debugSink.clear();
             }
-            System.out.print(debugSink);
-            debugSink.clear();
+        } else {
+            System.out.println(errMsg + " To debug this issue, set LogConsoleWriter.DEBUG_CLOSED_STDOUT to true.");
         }
         System.out.println("#$#$ END OF LOGGING ERROR REPORT");
         terminateJvm();
