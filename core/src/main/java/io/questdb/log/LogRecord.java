@@ -48,8 +48,21 @@ public interface LogRecord extends Utf8Sink {
      */
     LogRecord $(@Nullable CharSequence sequence);
 
+    /**
+     * Copies the UTF-8 sequence to the log record.
+     * <p>
+     * <strong>NOTE:</strong> This method doesn't perform any validation of UTF-8. If the byte
+     * sequence is invalid UTF-8, it may break logging.
+     */
     LogRecord $(@Nullable Utf8Sequence sequence);
 
+    /**
+     * Copies the UTF-8 sequence to the log record. Performs no validation of UTF-8.
+     * <p>
+     * <strong>NOTE:</strong> This method doesn't perform any validation of UTF-8. If
+     * you're logging a byte sequence whose contents you don't control, use
+     * {@link #$safe(DirectUtf8Sequence)} instead.
+     */
     LogRecord $(@Nullable DirectUtf8Sequence sequence);
 
     LogRecord $(int x);
