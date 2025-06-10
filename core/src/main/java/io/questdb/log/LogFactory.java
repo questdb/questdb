@@ -205,6 +205,17 @@ public class LogFactory implements Closeable {
     public static void init() {
     }
 
+    public static boolean isInsideJUnitTest() {
+        StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
+        for (StackTraceElement element : stackTrace) {
+            String className = element.getClassName();
+            if (className.startsWith("org.apache.maven.surefire") || className.startsWith("org.junit.")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public synchronized void add(final LogWriterConfig config) {
         assert !configured;
         final int index = scopeConfigMap.keyIndex(config.getScope());
