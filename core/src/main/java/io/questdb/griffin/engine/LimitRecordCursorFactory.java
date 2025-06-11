@@ -216,6 +216,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return RecordCursor.fromBool(areRowsCounted) + RecordCursor.fromBool(isLimitCounted);
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             base.recordAt(record, atRowId);
         }

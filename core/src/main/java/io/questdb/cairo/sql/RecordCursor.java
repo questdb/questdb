@@ -148,6 +148,13 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Quantifies internal cursor state. This method is used to assert that toTop() does not suffer major
+     * and avoidable overhead when returning to the beginning of the cursor. The assertion entails that
+     * pre-computed state size, computed after fetching the cursor remains the same before and after calling toTop().
+     *
+     * @return quantifies not-null pointers, booleans and other types as long. We are only tracking state change here.
+     */
     long preComputedStateSize();
 
     /**
