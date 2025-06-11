@@ -469,19 +469,9 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         case ColumnType.DATE:
-                            asm.iconst(1000);
-                            asm.idiv();
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            if (fromColumnType != toColumnType) {
-                                asm.iconst(1000);
-                                if (fromColumnType == ColumnType.TIMESTAMP_MICRO) {
-                                    asm.imul();
-                                } else {
-                                    asm.idiv();
-                                }
-                            }
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         default:
