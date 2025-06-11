@@ -1139,6 +1139,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         viewState.markAsValid();
         viewState.setLastRefreshBaseTableTxn(-1);
         viewState.setLastRefreshTimestamp(Numbers.LONG_NULL);
+        viewState.setLastPeriodHi(Numbers.LONG_NULL);
         walWriter.resetMatViewState(
                 viewState.getLastRefreshBaseTxn(),
                 viewState.getLastRefreshFinishTimestamp(),
