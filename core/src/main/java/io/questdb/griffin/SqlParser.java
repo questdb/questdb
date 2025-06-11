@@ -252,15 +252,15 @@ public class SqlParser {
     }
 
     private static void collectAllTableNames(
-            QueryModel model,
-            LowerCaseCharSequenceHashSet outTableNames,
-            IntList outTableNamePositions
+            @NotNull QueryModel model,
+            @NotNull LowerCaseCharSequenceHashSet outTableNames,
+            @Nullable IntList outTableNamePositions
     ) {
         QueryModel m = model;
         do {
             final ExpressionNode tableNameExpr = m.getTableNameExpr();
             if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
-                if (outTableNames.add(unquote(tableNameExpr.token))) {
+                if (outTableNames.add(unquote(tableNameExpr.token)) && outTableNamePositions != null) {
                     outTableNamePositions.add(tableNameExpr.position);
                 }
             }
@@ -345,7 +345,7 @@ public class SqlParser {
         for (QueryModel m = model; m != null; m = m.getNestedModel()) {
             tableNames.clear();
             tableNamePositions.clear();
-            collectAllTableNames(m, tableNames, tableNamePositions);
+            collectAllTableNames(m, tableNames, null);
             final boolean baseTableQueried = tableNames.contains(baseTableName);
             final int queriedTableCount = tableNames.size();
             if (baseTableQueried) {
