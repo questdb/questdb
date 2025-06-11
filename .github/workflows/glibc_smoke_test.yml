@@ -43,7 +43,7 @@ jobs:
       - name: Install Apache Maven
         # Amazon Linux 2 has too old version of Maven, so we need to install a newer one
         run: |
-          wget https://dlcdn.apache.org/maven/maven-3/3.9.6/binaries/apache-maven-3.9.6-bin.tar.gz
+          wget https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.6/apache-maven-3.9.6-bin.tar.gz
           tar xf apache-maven-3.9.6-bin.tar.gz -C /opt
           ln -sf /opt/apache-maven-3.9.6 /opt/maven
           echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV

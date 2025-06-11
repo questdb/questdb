@@ -177,9 +177,9 @@ public class TablesFunctionFactory implements FunctionFactory {
             public boolean hasNext() {
                 if (iteratorIdx < tableCache.size() - 1) {
                     record.of(tableCache.getAt(++iteratorIdx));
-                } else return false;
-
-                return true;
+                    return true;
+                }
+                return false;
             }
 
             @Override
