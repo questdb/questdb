@@ -98,6 +98,12 @@ public class SqlUtil {
         return millis != Numbers.LONG_NULL ? millis * 1000L : millis;
     }
 
+    // used by Copier assembler
+    @SuppressWarnings("unused")
+    public static long dateToTimestampNs(long millis) {
+        return millis != Numbers.LONG_NULL ? millis * 1000_000L : millis;
+    }
+
     public static long expectMicros(CharSequence tok, int position) throws SqlException {
         int k = -1;
 

@@ -135,6 +135,7 @@ public class RecordToRowCopierUtils {
         int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
         int transferStrToTimestampCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferStrToTimestampCol", "(Lio/questdb/cairo/TableWriter$Row;ILjava/lang/CharSequence;Lio/questdb/cairo/TimestampDriver;)V");
         int implicitCastDateAsTimestamp = asm.poolMethod(SqlUtil.class, "dateToTimestamp", "(J)J");
+        int implicitCastDateAsTimestampNs = asm.poolMethod(SqlUtil.class, "dateToTimestampNs", "(J)J");
         int implicitCastShortAsByte = asm.poolMethod(SqlUtil.class, "implicitCastShortAsByte", "(S)B");
         int implicitCastIntAsByte = asm.poolMethod(SqlUtil.class, "implicitCastIntAsByte", "(I)B");
         int implicitCastLongAsByte = asm.poolMethod(SqlUtil.class, "implicitCastLongAsByte", "(J)B");
@@ -421,7 +422,11 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            asm.invokeStatic(implicitCastDateAsTimestamp);
+                            if (toColumnType == ColumnType.TIMESTAMP_MICRO) {
+                                asm.invokeStatic(implicitCastDateAsTimestamp);
+                            } else {
+                                asm.invokeStatic(implicitCastDateAsTimestampNs);
+                            }
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.FLOAT:
