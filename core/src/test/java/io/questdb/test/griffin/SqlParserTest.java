@@ -6876,17 +6876,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testNestedWindowFunctionNotSupported() throws Exception {
-        assertSyntaxError(
-                "select a,b, 1 + f(c) over (partition by b order by a groups between unbounded preceding and 10 day following) from xyz",
-                21,
-                "Nested window functions' context are not currently supported."
-        );
+        assertMemoryLeak(() -> {
+            assertSyntaxError(
+                    "select a,b, 1 + f(c) over (partition by b order by a groups between unbounded preceding and 10 day following) from xyz",
+                    21,
+                    "Nested window functions' context are not currently supported."
+            );
 
-        assertSyntaxError(
-                "select a,b,cast(f(c) over (order by a) as int) from xyz",
-                21,
-                "Nested window functions' context are not currently supported."
-        );
+            assertSyntaxError(
+                    "select a,b,cast(f(c) over (order by a) as int) from xyz",
+                    21,
+                    "Nested window functions' context are not currently supported."
+            );
+        });
     }
 
     @Test
