@@ -35,6 +35,16 @@ public class ViewsTest extends AbstractViewTest {
             createTable(TABLE2);
             drainWalQueue();
 
+            assertQueryAndPlan(
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\n",
+                    "views()",
+                    null,
+                    false,
+                    false,
+                    "QUERY PLAN\n" +
+                            "views()\n"
+            );
+
             final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4";
             execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ");");
             drainWalQueue();
@@ -69,6 +79,34 @@ public class ViewsTest extends AbstractViewTest {
                             "view1\tselect ts, k, max(v) as v_max from table1 where v > 4\tview1~3\t\tvalid\n" +
                             "view4\tselect date_trunc('hour', ts), avg(v) as v_avg from table2\tview4~6\t\tvalid\n" +
                             "view3\tview2 where v_max > 7\tview3~5\t\tvalid\n",
+                    "views()",
+                    null,
+                    false,
+                    false,
+                    "QUERY PLAN\n" +
+                            "views()\n"
+            );
+
+            execute("DROP VIEW " + VIEW2);
+            execute("DROP VIEW " + VIEW4);
+
+            assertQueryAndPlan(
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\n" +
+                            "view1\tselect ts, k, max(v) as v_max from table1 where v > 4\tview1~3\t\tvalid\n" +
+                            "view3\tview2 where v_max > 7\tview3~5\t\tvalid\n",
+                    "views()",
+                    null,
+                    false,
+                    false,
+                    "QUERY PLAN\n" +
+                            "views()\n"
+            );
+
+            execute("DROP VIEW " + VIEW1);
+            execute("DROP VIEW " + VIEW3);
+
+            assertQueryAndPlan(
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\n",
                     "views()",
                     null,
                     false,
