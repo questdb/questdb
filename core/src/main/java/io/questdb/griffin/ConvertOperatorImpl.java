@@ -286,7 +286,7 @@ public class ConvertOperatorImpl implements Closeable {
             }
         } catch (Throwable th) {
             asyncProcessingErrorCount.incrementAndGet();
-            LogRecord log = LOG.critical().$("failed to convert column, column is corrupt [at=").$safe(tableWriter.getTableToken().getDirNameUtf8())
+            LogRecord log = LOG.critical().$("failed to convert column, column is corrupt [at=").$(tableWriter.getTableToken())
                     .$(", column=").utf8(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType))
                     .$(", srcFixFd=").$(srcFixFd).$(", srcVarFd=")
