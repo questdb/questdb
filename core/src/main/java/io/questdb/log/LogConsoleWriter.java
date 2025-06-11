@@ -32,21 +32,19 @@ import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 import java.util.Arrays;
 
+import static io.questdb.ParanoiaState.*;
+
 public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogWriter {
-    private static final boolean DEBUG_CLOSED_STDOUT = false;
-    private static final int DEBUG_LOG_HISTORY_LENGTH = 50;
-    private final boolean debugBrokenLogging;
-    private final Utf8StringSink[] debugSinks;
+    private static final int DEBUG_LOG_HISTORY_LENGTH = 25;
     private final long fd = Files.getStdOutFdInternal();
     private final int level;
+    private final LogHistory logHistory;
     private final RingQueue<LogRecordUtf8Sink> ring;
     private final SCSequence subSeq;
-    private long debugSinkArrayPos = 0;
     private LogInterceptor interceptor;
     private final QueueConsumer<LogRecordUtf8Sink> myConsumer = this::toStdOut;
 
@@ -54,18 +52,14 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
         this.ring = ring;
         this.subSeq = subSeq;
         this.level = level;
-        debugBrokenLogging = LogFactory.isInsideJUnitTest();
-        if (debugBrokenLogging) {
-            if (DEBUG_CLOSED_STDOUT) {
-                System.out.println("#$#$ LOGGING WITH UTF-8 VALIDATION AND CLOSED-STDOUT DIAGNOSTICS");
-                debugSinks = new Utf8StringSink[DEBUG_LOG_HISTORY_LENGTH];
-                Arrays.setAll(debugSinks, i -> new Utf8StringSink(512));
-            } else {
-                System.out.println("#$#$ LOGGING WITH UTF-8 VALIDATION");
-                debugSinks = null;
-            }
+        if (LOG_PARANOIA_MODE == LOG_PARANOIA_MODE_BASIC) {
+            System.out.println("#$#$ BASIC LOG PARANOIA MODE ACTIVE");
+            logHistory = null;
+        } else if (LOG_PARANOIA_MODE == LOG_PARANOIA_MODE_AGGRESSIVE) {
+            System.out.println("#$#$ AGGRESSIVE LOG PARANOIA MODE ACTIVE");
+            logHistory = new LogHistory();
         } else {
-            debugSinks = null;
+            logHistory = null;
         }
     }
 
@@ -86,21 +80,16 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
         this.interceptor = interceptor;
     }
 
-    private static void terminateJvm() {
-        System.out.println("The JVM will now exit with status -1");
-        System.exit(-1);
-    }
-
     private void toStdOut(LogRecordUtf8Sink sink) {
         try {
             if ((sink.getLevel() & this.level) != 0) {
                 if (interceptor != null) {
                     interceptor.onLog(sink);
                 }
-                if (!debugBrokenLogging) {
-                    Files.append(fd, sink.ptr(), sink.size());
-                } else {
+                if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
                     toStdOutWithErrorDetection(sink);
+                } else {
+                    Files.append(fd, sink.ptr(), sink.size());
                 }
             }
         } catch (Throwable th) {
@@ -110,16 +99,8 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
     }
 
     private void toStdOutWithErrorDetection(LogRecordUtf8Sink sink) {
-        if (Utf8s.validateUtf8(sink) < 0) {
-            System.out.println("#$#$ LOGGING ERROR: " + sink + "#$#$ END OF LOGGING ERROR REPORT");
-            terminateJvm();
-            return;
-        }
-
-        if (DEBUG_CLOSED_STDOUT) {
-            Utf8StringSink debugSink = debugSinks[(int) (debugSinkArrayPos++ % debugSinks.length)];
-            debugSink.clear();
-            debugSink.put((DirectUtf8Sequence) sink); // disambiguation cast, guaranteed to succeed
+        if (logHistory != null) {
+            logHistory.addLine(sink);
         }
 
         int sinkSize = sink.size();
@@ -133,25 +114,44 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
         // it uses a different write path, so this will still appear in the output.
         String errMsg = "#$#$ LOGGING ERROR: Files.append() returned " + res + ", expected result was " + sinkSize +
                 ". Os.errno() " + Os.errno() + ", fd " + Files.toOsFd(fd) + '.';
-        if (DEBUG_CLOSED_STDOUT) {
+        if (logHistory != null) {
             System.out.println(errMsg + " Recent lines logged (up to " + DEBUG_LOG_HISTORY_LENGTH + "):");
-            for (int i = 0; i < DEBUG_LOG_HISTORY_LENGTH; i++) {
-                Utf8StringSink debugSink = debugSinks[(int) ((debugSinkArrayPos + i) % debugSinks.length)];
-                if (debugSink.size() == 0) {
-                    continue;
-                }
-                System.out.print(debugSink);
-                debugSink.clear();
-            }
+            logHistory.print();
         } else {
             System.out.println(errMsg + " To debug this issue, set LogConsoleWriter.DEBUG_CLOSED_STDOUT to true.");
         }
         System.out.println("#$#$ END OF LOGGING ERROR REPORT");
-        terminateJvm();
     }
 
     @FunctionalInterface
     public interface LogInterceptor {
         void onLog(LogRecordUtf8Sink sink);
+    }
+
+    private static class LogHistory {
+        private final Utf8StringSink[] logLineArray;
+        private long arrayPos = 0;
+
+        LogHistory() {
+            logLineArray = new Utf8StringSink[DEBUG_LOG_HISTORY_LENGTH];
+            Arrays.setAll(logLineArray, i -> new Utf8StringSink(512));
+        }
+
+        void addLine(LogRecordUtf8Sink sink) {
+            Utf8StringSink debugSink = logLineArray[(int) (arrayPos++ % logLineArray.length)];
+            debugSink.clear();
+            debugSink.put((DirectUtf8Sequence) sink); // disambiguation cast, guaranteed to succeed
+        }
+
+        void print() {
+            for (int i = 0; i < logLineArray.length; i++) {
+                Utf8StringSink sink = logLineArray[(int) ((arrayPos + i) % logLineArray.length)];
+                if (sink.size() == 0) {
+                    continue;
+                }
+                System.out.print(sink);
+                sink.clear();
+            }
+        }
     }
 }
