@@ -296,8 +296,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
             maxTs = Math.min(maxTs, periodHi);
 
-            if (incrementalRefresh && viewDefinition.getRefreshType() == MatViewDefinition.MANUAL_REFRESH_TYPE) {
-                // Incremental refresh on a manual mat view works in a special way.
+            if (incrementalRefresh) {
+                // Incremental refresh on a period mat view works in a special way.
                 // We need to refresh whatever is in the txn intervals and all periods
                 // that became complete since the last refresh.
                 long periodLo = viewState.getLastPeriodHi();
@@ -312,8 +312,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     maxTs = periodHi;
                     refreshIntervals.setPeriodHi(periodHi);
                 }
-            } else if (!incrementalRefresh) {
-                // It's a full refresh, so we also need to bump lastPeriodHi once we're done.
+            } else {
+                // It's a full refresh, so we need to bump lastPeriodHi once we're done.
                 refreshIntervals.setPeriodHi(periodHi);
             }
         }
@@ -961,7 +961,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
                 try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
                     try {
-                        refreshed |= refreshIncremental0(viewState, baseTableToken, walWriter, refreshTriggerTimestamp);
+                        refreshed |= refreshIncremental0(baseTableToken, viewToken, viewState, walWriter, refreshTriggerTimestamp);
                     } catch (Throwable th) {
                         refreshFailState(viewState, walWriter, th);
                     }
@@ -1054,7 +1054,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
 
             try {
-                return refreshIncremental0(viewState, baseTableToken, walWriter, refreshTriggerTimestamp);
+                return refreshIncremental0(baseTableToken, viewToken, viewState, walWriter, refreshTriggerTimestamp);
             } catch (Throwable th) {
                 LOG.error()
                         .$("could not perform incremental refresh [view=").$(viewToken)
@@ -1086,8 +1086,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private boolean refreshIncremental0(
-            @NotNull MatViewState viewState,
             @NotNull TableToken baseTableToken,
+            @NotNull TableToken viewToken,
+            @NotNull MatViewState viewState,
             @NotNull WalWriter walWriter,
             long refreshTriggerTimestamp
     ) throws SqlException {
@@ -1097,9 +1098,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long toBaseTxn = baseSeqTracker.getWriterTxn();
 
         final long fromBaseTxn = viewState.getLastRefreshBaseTxn();
-        final int refreshType = viewState.getViewDefinition().getRefreshType();
-        if (refreshType != MatViewDefinition.MANUAL_REFRESH_TYPE && fromBaseTxn >= 0 && fromBaseTxn >= toBaseTxn) {
-            // Non-manual trigger and already refreshed.
+        final int periodLength;
+        try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
+            periodLength = matViewMeta.getMatViewPeriodLength();
+        }
+
+        if (periodLength == 0 && fromBaseTxn >= 0 && fromBaseTxn >= toBaseTxn) {
+            // Non-period mat view which is already refreshed.
             return false;
         }
 
