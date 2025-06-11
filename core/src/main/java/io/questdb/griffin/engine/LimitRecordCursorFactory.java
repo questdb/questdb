@@ -136,6 +136,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long hi;
         private boolean isLimitCounted;
+        private long countedLimit;
         private long limit;
         private long lo;
         private long rowCount;
@@ -212,12 +213,25 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 hiFunction.init(base, executionContext);
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
-            toTop();
+            rowCount = -1;
+            size = -1;
+            lo = loFunction.getLong(null);
+            hi = hiFunction != null ? hiFunction.getLong(null) : -1;
+            if (hi != -1 && hi < lo && Numbers.sameSign(lo, hi)) {
+                final long l = hi;
+                hi = lo;
+                lo = l;
+            }
+            skipToRows = -1;
+            skippedRows = 0;
+            isLimitCounted = false;
+            areRowsCounted = false;
+            counter.clear();
         }
 
         @Override
         public long preComputedStateSize() {
-            return RecordCursor.fromBool(areRowsCounted) + RecordCursor.fromBool(isLimitCounted);
+            return RecordCursor.fromBool(areRowsCounted) + RecordCursor.fromBool(isLimitCounted) + base.preComputedStateSize();
         }
 
         @Override
@@ -234,20 +248,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void toTop() {
             base.toTop();
-            rowCount = -1;
-            size = -1;
+            limit = countedLimit;
             skipToRows = -1;
-            lo = loFunction.getLong(null);
-            hi = hiFunction != null ? hiFunction.getLong(null) : -1;
-            if (hi != -1 && hi < lo && Numbers.sameSign(lo, hi)) {
-                final long l = hi;
-                hi = lo;
-                lo = l;
-            }
-            isLimitCounted = false;
-            areRowsCounted = false;
-            counter.clear();
-            skippedRows = 0;
+            skipRows(skippedRows);
         }
 
         private void countLimit() {
@@ -339,6 +342,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private void countLimitIfNotCounted() {
             if (!isLimitCounted) {
                 countLimit();
+                countedLimit = limit;
                 isLimitCounted = true;
             }
         }

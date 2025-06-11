@@ -32,6 +32,8 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -118,12 +120,14 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         Misc.free(cursor);
     }
 
-    private static class DistinctRecordCursor implements RecordCursor {
+    private static class DistinctRecordCursor implements NoRandomAccessRecordCursor {
         private final Map dataMap;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean isMapBuilt;
         private boolean isOpen;
-        private Record record;
+        private RecordCursor mapCursor;
+        private MapRecord recordA;
         private RecordSink recordSink;
 
         public DistinctRecordCursor(CairoConfiguration configuration, RecordMetadata metadata) {
@@ -135,19 +139,14 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         public void close() {
             if (isOpen) {
                 isOpen = false;
-                Misc.free(baseCursor);
+                baseCursor = Misc.free(baseCursor);
                 Misc.free(dataMap);
             }
         }
 
         @Override
         public Record getRecord() {
-            return record;
-        }
-
-        @Override
-        public Record getRecordB() {
-            return baseCursor.getRecordB();
+            return recordA;
         }
 
         @Override
@@ -157,15 +156,8 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                MapKey key = dataMap.withKey();
-                recordSink.copy(record, key);
-                if (key.create()) {
-                    return true;
-                }
-            }
-            return false;
+            buildMap();
+            return mapCursor.hasNext();
         }
 
         @Override
@@ -175,23 +167,14 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
 
         public void of(RecordCursor baseCursor, RecordSink recordSink, SqlExecutionCircuitBreaker circuitBreaker) {
             this.baseCursor = baseCursor;
-            record = baseCursor.getRecord();
             if (!isOpen) {
                 isOpen = true;
                 dataMap.reopen();
             }
+            this.isMapBuilt = false;
+            this.recordA = dataMap.getRecord();
             this.recordSink = recordSink;
             this.circuitBreaker = circuitBreaker;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            baseCursor.recordAt(record, atRowId);
-        }
-
-        @Override
-        public long size() {
-            return -1;
         }
 
         @Override
@@ -200,9 +183,34 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long size() {
+            buildMap();
+            return dataMap.size();
+        }
+
+        @Override
         public void toTop() {
-            baseCursor.toTop();
-            dataMap.clear();
+            if (isMapBuilt && mapCursor != null) {
+                mapCursor.toTop();
+            }
+        }
+
+        private void buildMap() {
+            if (!isMapBuilt) {
+                buildMapSlow();
+            }
+        }
+
+        private void buildMapSlow() {
+            Record record = baseCursor.getRecord();
+            while (baseCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                MapKey key = dataMap.withKey();
+                recordSink.copy(record, key);
+                key.create();
+            }
+            mapCursor = dataMap.getCursor();
+            isMapBuilt = true;
         }
     }
 }

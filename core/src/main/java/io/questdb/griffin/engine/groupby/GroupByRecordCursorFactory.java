@@ -243,7 +243,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void toTop() {
             super.toTop();
-            isDataMapBuilt = false;
             rowId = 0;
         }
 

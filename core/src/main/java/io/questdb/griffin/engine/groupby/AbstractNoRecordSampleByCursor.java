@@ -122,7 +122,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
 
     @Override
     public long preComputedStateSize() {
-        return baseCursor.preComputedStateSize() + (areTimestampsInitialized ? 1 : 0);
+        return baseCursor.preComputedStateSize();
     }
 
     @Override

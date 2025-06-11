@@ -202,7 +202,6 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         if (filter != null) {
             filter.toTop();
         }
-        areCursorsPrepared = false;
         rowCursor = null;
         isSkipped = false;
         super.toTop();

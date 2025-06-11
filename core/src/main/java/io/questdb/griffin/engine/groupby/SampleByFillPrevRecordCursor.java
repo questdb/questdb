@@ -136,11 +136,6 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
     }
 
     @Override
-    public long preComputedStateSize() {
-        return map.size() + (isMapInitialized && !isMapBuildPending ? 1 : 0) + super.preComputedStateSize();
-    }
-
-    @Override
     public void toTop() {
         super.toTop();
         map.clear();

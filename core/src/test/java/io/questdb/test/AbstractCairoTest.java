@@ -221,13 +221,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
 
         TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+        long preComputerStateSize = cursor.preComputedStateSize();
 
         testSymbolAPI(metadata, cursor, fragmentedSymbolTables);
         cursor.toTop();
+        Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
         testStringsLong256AndBinary(metadata, cursor);
 
         // test API where the same record is being updated by cursor
         cursor.toTop();
+        Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
         Record record = cursor.getRecord();
         Assert.assertNotNull(record);
         sink.clear();
@@ -257,6 +260,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
         if (supportsRandomAccess) {
             cursor.toTop();
+            Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
             sink.clear();
             rows.clear();
             while (cursor.hasNext()) {
@@ -288,6 +292,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 sink.clear();
 
                 cursor.toTop();
+                Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
                 int target = rows.size() / 2;
                 CursorPrinter.println(metadata, sink);
                 while (target-- > 0 && cursor.hasNext()) {
@@ -579,7 +584,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             cursor.calculateSize(circuitBreaker, counter);
             size = counter.get();
+            long preComputeStateSize = cursor.preComputedStateSize();
             cursor.toTop();
+            Assert.assertEquals(preComputeStateSize, cursor.preComputedStateSize());
             counter.clear();
             cursor.calculateSize(circuitBreaker, counter);
             long sizeAfterToTop = counter.get();

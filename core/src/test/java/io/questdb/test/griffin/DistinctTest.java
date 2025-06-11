@@ -132,7 +132,7 @@ public class DistinctTest extends AbstractCairoTest {
                         ") timestamp(created);",
                 null,
                 false,
-                false
+                true
         );
     }
 
@@ -151,7 +151,7 @@ public class DistinctTest extends AbstractCairoTest {
                         ") timestamp(created);",
                 null,
                 false,
-                false
+                true
         );
     }
 }
