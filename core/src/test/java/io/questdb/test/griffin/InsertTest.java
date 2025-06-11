@@ -347,24 +347,31 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertAsSelectISODateStringToDesignatedTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000Z\n";
 
-        assertInsertTimestamp(expected, "insert into tab select 1, '2021-01-03'", null, false);
+        assertInsertTimestamp(expected, "insert into tab select 1, '2021-01-03'", null, false, "timestamp");
+    }
+
+    @Test
+    public void testInsertAsSelectISODateStringToDesignatedTimestampNSColumn() throws Exception {
+        final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000000Z\n";
+
+        assertInsertTimestamp(expected, "insert into tab select 1, '2021-01-03'", null, false, "timestamp_ns");
     }
 
     @Test
     public void testInsertAsSelectISODateVarcharToDesignatedTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000Z\n";
 
-        assertInsertTimestamp(expected, "insert into tab select 1, '2021-01-03'::varchar", null, false);
+        assertInsertTimestamp(expected, "insert into tab select 1, '2021-01-03'::varchar", null, false, "timestamp");
     }
 
     @Test
     public void testInsertAsSelectNumberStringToDesignatedTimestampColumn() throws Exception {
-        assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456Z\n", "insert atomic into tab select 1, '123456'", null, false);
+        assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456Z\n", "insert atomic into tab select 1, '123456'", null, false, "timestamp");
     }
 
     @Test
     public void testInsertAsSelectNumberVarcharToDesignatedTimestampColumn() throws Exception {
-        assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456Z\n", "insert atomic into tab select 1, '123456'::varchar", null, false);
+        assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456Z\n", "insert atomic into tab select 1, '123456'::varchar", null, false, "timestamp");
     }
 
     @Test
@@ -384,12 +391,12 @@ public class InsertTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsWith_string() throws Exception {
-        assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456Z\n", "with x as (select 1, '123456') insert atomic into tab select * from x", null, false);
+        assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456Z\n", "with x as (select 1, '123456') insert atomic into tab select * from x", null, false, "timestamp");
     }
 
     @Test
     public void testInsertAsWith_varchar() throws Exception {
-        assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456Z\n", "with x as (select 1, '123456'::varchar) insert atomic into tab select * from x", null, false);
+        assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456Z\n", "with x as (select 1, '123456'::varchar) insert atomic into tab select * from x", null, false, "timestamp");
     }
 
     @Test
@@ -527,94 +534,101 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertISODateStringToDesignatedTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000Z\n";
 
-        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03')", null, true);
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03')", null, true, "timestamp");
+    }
+
+    @Test
+    public void testInsertISODateStringToDesignatedTimestampNSColumn() throws Exception {
+        final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000000Z\n";
+
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03')", null, true, "timestamp_ns");
     }
 
     @Test
     public void testInsertISODateVarcharToDesignatedTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000Z\n";
 
-        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03'::varchar)", null, true);
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03'::varchar)", null, true, "timestamp");
     }
 
     @Test
     public void testInsertISOMicroStringTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000Z\n";
 
-        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00.000000Z')", null, true);
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00.000000Z')", null, true, "timestamp");
     }
 
     @Test
     public void testInsertISOMicroStringTimestampColumnNoTimezone() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000Z\n";
 
-        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00.000000')", null, true);
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00.000000')", null, true, "timestamp");
     }
 
     @Test
     public void testInsertISOMicroVarcharTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000Z\n";
 
-        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00.000000Z'::varchar)", null, true);
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00.000000Z'::varchar)", null, true, "timestamp");
     }
 
     @Test
     public void testInsertISOMicroVarcharTimestampColumnNoTimezone() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000Z\n";
 
-        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00.000000'::varchar)", null, true);
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00.000000'::varchar)", null, true, "timestamp");
     }
 
     @Test
     public void testInsertISOMilliWithTzDateStringTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-02T23:00:00.000000Z\n";
 
-        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00+01')", null, true);
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00+01')", null, true, "timestamp");
     }
 
     @Test
     public void testInsertISOMilliWithTzDateStringTimestampColumn2() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-03T03:30:00.000000Z\n";
 
-        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T02:00:00-01:30')", null, true);
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T02:00:00-01:30')", null, true, "timestamp");
     }
 
     @Test
     public void testInsertISOMilliWithTzDateStringTimestampColumnFails() throws Exception {
-        assertInsertTimestamp("inconvertible value: `2021-01-03T02:00:00-:30` [STRING -> TIMESTAMP]", "insert into tab values (1, '2021-01-03T02:00:00-:30')", ImplicitCastException.class, true);
+        assertInsertTimestamp("inconvertible value: `2021-01-03T02:00:00-:30` [STRING -> TIMESTAMP]", "insert into tab values (1, '2021-01-03T02:00:00-:30')", ImplicitCastException.class, true, "timestamp");
     }
 
     @Test
     public void testInsertISOMilliWithTzDateVarcharTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-02T23:00:00.000000Z\n";
 
-        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00+01'::varchar)", null, true);
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00+01'::varchar)", null, true, "timestamp");
     }
 
     @Test
     public void testInsertISOMilliWithTzDateVarcharTimestampColumn2() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-03T03:30:00.000000Z\n";
 
-        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T02:00:00-01:30'::varchar)", null, true);
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T02:00:00-01:30'::varchar)", null, true, "timestamp");
     }
 
     @Test
     public void testInsertISOMilliWithTzDateVarcharTimestampColumnFails() throws Exception {
-        assertInsertTimestamp("inconvertible value: `2021-01-03T02:00:00-:30` [VARCHAR -> TIMESTAMP]", "insert into tab values (1, '2021-01-03T02:00:00-:30'::varchar)", ImplicitCastException.class, true);
+        assertInsertTimestamp("inconvertible value: `2021-01-03T02:00:00-:30` [VARCHAR -> TIMESTAMP]", "insert into tab values (1, '2021-01-03T02:00:00-:30'::varchar)", ImplicitCastException.class, true, "timestamp");
     }
 
     @Test
     public void testInsertISOSecondsDateStringTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000Z\n";
 
-        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00Z')", null, true);
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00Z')", null, true, "timestamp");
     }
 
     @Test
     public void testInsertISOSecondsDateVarcharTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000Z\n";
 
-        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00Z'::varchar)", null, true);
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00Z'::varchar)", null, true, "timestamp");
     }
 
     @Test
@@ -667,12 +681,12 @@ public class InsertTest extends AbstractCairoTest {
 
     @Test
     public void testInsertInvalidDateStringTimestampColumn() throws Exception {
-        assertInsertTimestamp("inconvertible value: `2021-23-03T00:00:00Z` [STRING -> TIMESTAMP]", "insert into tab values (1, '2021-23-03T00:00:00Z')", ImplicitCastException.class, true);
+        assertInsertTimestamp("inconvertible value: `2021-23-03T00:00:00Z` [STRING -> TIMESTAMP]", "insert into tab values (1, '2021-23-03T00:00:00Z')", ImplicitCastException.class, true, "timestamp");
     }
 
     @Test
     public void testInsertInvalidDateVarcharTimestampColumn() throws Exception {
-        assertInsertTimestamp("inconvertible value: `2021-23-03T00:00:00Z` [VARCHAR -> TIMESTAMP]", "insert into tab values (1, '2021-23-03T00:00:00Z'::varchar)", ImplicitCastException.class, true);
+        assertInsertTimestamp("inconvertible value: `2021-23-03T00:00:00Z` [VARCHAR -> TIMESTAMP]", "insert into tab values (1, '2021-23-03T00:00:00Z'::varchar)", ImplicitCastException.class, true, "timestamp");
     }
 
     @Test
@@ -1234,10 +1248,10 @@ public class InsertTest extends AbstractCairoTest {
         });
     }
 
-    private void assertInsertTimestamp(String expected, String ddl2, Class<?> exceptionType, boolean commitInsert) throws Exception {
+    private void assertInsertTimestamp(String expected, String ddl2, Class<?> exceptionType, boolean commitInsert, String timestampType) throws Exception {
         assertMemoryLeak(() -> {
             if (commitInsert) {
-                execute("create table tab(seq long, ts timestamp) timestamp(ts)");
+                execute("create table tab(seq long, ts #TIMESTAMP_TYPE) timestamp(ts)".replace("#TIMESTAMP_TYPE", timestampType));
                 try {
                     execute(ddl2);
                     if (exceptionType != null) {
@@ -1252,7 +1266,7 @@ public class InsertTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), expected);
                 }
             } else {
-                execute("create table tab(seq long, ts timestamp) timestamp(ts)");
+                execute("create table tab(seq long, ts #TIMESTAMP_TYPE) timestamp(ts)".replace("#TIMESTAMP_TYPE", timestampType));
                 try {
                     execute(ddl2);
                     if (exceptionType != null) {
@@ -1269,7 +1283,7 @@ public class InsertTest extends AbstractCairoTest {
             execute("drop table tab");
 
             if (commitInsert) {
-                execute("create table tab(seq long, ts timestamp)");
+                execute("create table tab(seq long, ts #TIMESTAMP_TYPE)".replace("#TIMESTAMP_TYPE", timestampType));
                 try {
                     execute(ddl2);
                     if (exceptionType != null) {
@@ -1282,7 +1296,7 @@ public class InsertTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), expected);
                 }
             } else {
-                execute("create table tab(seq long, ts timestamp)");
+                execute("create table tab(seq long, ts #TIMESTAMP_TYPE)".replace("#TIMESTAMP_TYPE", timestampType));
                 try {
                     execute(ddl2, sqlExecutionContext);
                     if (exceptionType != null) {
