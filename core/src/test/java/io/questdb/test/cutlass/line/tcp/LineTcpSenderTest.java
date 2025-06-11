@@ -676,7 +676,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()
             ) {
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2024-02-27");
+                long tsMicros = MicrosTimestampDriver.floor("2024-02-27");
                 sender.table(table)
                         .stringColumn("string1", "some string")
                         .stringColumn("string2", "another string")
