@@ -244,17 +244,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Range refresh.
             if (rangeFrom == Numbers.LONG_NULL) {
                 // Timer-triggered period refresh.
-                final long periodHi = rangeTo;
                 long periodLo = viewState.getLastPeriodHi();
                 if (periodLo == Numbers.LONG_NULL) {
                     periodLo = viewDefinition.getTimerTzRules() != null
                             ? timerStart - viewDefinition.getTimerTzRules().getOffset(timerStart)
                             : timerStart;
                 }
-                if (periodLo < periodHi) {
+                if (periodLo < rangeTo) {
                     minTs = periodLo;
-                    maxTs = periodHi;
-                    refreshIntervals.setPeriodHi(periodHi);
+                    maxTs = rangeTo;
+                    refreshIntervals.setPeriodHi(rangeTo);
                 }
             } else {
                 // User-defined range refresh.
@@ -679,25 +678,28 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             }
 
+            final long recordRowCopierMetadataVersion = walWriter.getMetadata().getMetadataVersion();
             if (baseTableTxn == -1) {
                 // It's a range refresh, so we don't bump last refresh base table txn.
                 // Keep the last refresh txn as is and only update the finish timestamp.
                 viewState.rangeRefreshSuccess(
                         factory,
                         copier,
-                        walWriter.getMetadata().getMetadataVersion(),
+                        recordRowCopierMetadataVersion,
                         refreshFinishTimestamp,
-                        refreshTriggerTimestamp
+                        refreshTriggerTimestamp,
+                        commitPeriodHi
                 );
             } else {
                 // It's an incremental/full refresh.
                 viewState.refreshSuccess(
                         factory,
                         copier,
-                        walWriter.getMetadata().getMetadataVersion(),
+                        recordRowCopierMetadataVersion,
                         refreshFinishTimestamp,
                         refreshTriggerTimestamp,
-                        baseTableTxn
+                        baseTableTxn,
+                        commitPeriodHi
                 );
             }
         } catch (Throwable th) {

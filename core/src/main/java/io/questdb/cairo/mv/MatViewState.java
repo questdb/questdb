@@ -246,13 +246,15 @@ public class MatViewState implements QuietCloseable {
             RecordToRowCopier copier,
             long recordRowCopierMetadataVersion,
             long refreshFinishedTimestamp,
-            long refreshTriggeredTimestamp
+            long refreshTriggeredTimestamp,
+            long periodHi
     ) {
         assert latch.get();
         this.cursorFactory = factory;
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
         this.lastRefreshFinishTimestamp = refreshFinishedTimestamp;
+        this.lastPeriodHi = periodHi;
         telemetryFacade.store(
                 MAT_VIEW_REFRESH_SUCCESS,
                 viewDefinition.getMatViewToken(),
@@ -275,7 +277,8 @@ public class MatViewState implements QuietCloseable {
             long recordRowCopierMetadataVersion,
             long refreshFinishedTimestamp,
             long refreshTriggeredTimestamp,
-            long baseTableTxn
+            long baseTableTxn,
+            long periodHi
     ) {
         assert latch.get();
         this.cursorFactory = factory;
@@ -283,6 +286,7 @@ public class MatViewState implements QuietCloseable {
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
         this.lastRefreshFinishTimestamp = refreshFinishedTimestamp;
         this.lastRefreshBaseTxn = baseTableTxn;
+        this.lastPeriodHi = periodHi;
         telemetryFacade.store(
                 MAT_VIEW_REFRESH_SUCCESS,
                 viewDefinition.getMatViewToken(),
