@@ -218,12 +218,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         final long now = microsecondClock.getTicks();
-        final boolean rangeRefresh = rangeFrom != Numbers.LONG_NULL && rangeTo != Numbers.LONG_NULL;
+        final boolean rangeRefresh = rangeTo != Numbers.LONG_NULL;
         final boolean incrementalRefresh = lastRefreshTxn > 0;
 
         LongList txnIntervals = null;
-        long minTs;
-        long maxTs;
+        long minTs = Long.MAX_VALUE;
+        long maxTs = Long.MIN_VALUE;
         if (incrementalRefresh) {
             // Incremental refresh.
             // Find min/max timestamps from WAL transactions.
@@ -242,10 +242,27 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
         } else if (rangeRefresh) {
             // Range refresh.
-            // Consider actual min/max timestamps in the table data to avoid redundant
-            // query executions.
-            minTs = Math.max(rangeFrom, baseTableReader.getMinTimestamp());
-            maxTs = Math.min(rangeTo, baseTableReader.getMaxTimestamp());
+            if (rangeFrom == Numbers.LONG_NULL) {
+                // Timer-triggered period refresh.
+                final long periodHi = rangeTo;
+                long periodLo = viewState.getLastPeriodHi();
+                if (periodLo == Numbers.LONG_NULL) {
+                    periodLo = viewDefinition.getTimerTzRules() != null
+                            ? timerStart - viewDefinition.getTimerTzRules().getOffset(timerStart)
+                            : timerStart;
+                }
+                if (periodLo < periodHi) {
+                    minTs = periodLo;
+                    maxTs = periodHi;
+                    refreshIntervals.setPeriodHi(periodHi);
+                }
+            } else {
+                // User-defined range refresh.
+                // Consider actual min/max timestamps in the table data to avoid redundant
+                // query executions.
+                minTs = Math.max(rangeFrom, baseTableReader.getMinTimestamp());
+                maxTs = Math.min(rangeTo, baseTableReader.getMaxTimestamp());
+            }
         } else {
             // Full refresh.
             // When the table is empty, min timestamp is set to Long.MAX_VALUE,
