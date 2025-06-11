@@ -360,6 +360,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         // is out of order data hitting the last partition?
         // if so we do not need to re-open files and write to existing file descriptors
+        o3TimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
+        o3TimestampHi = getTimestampIndexValue(sortedTimestampsAddr, srcOooHi);
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
 
@@ -525,6 +527,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // so for prefix and suffix we will need a flag indicating source of the data
                 // as well as range of rows in that source
 
+                prefixType = O3_BLOCK_NONE;
+                prefixLo = -1;
+                prefixHi = -1;
                 mergeType = O3_BLOCK_NONE;
                 mergeDataLo = -1;
                 mergeDataHi = -1;
@@ -569,10 +574,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         suffixType = O3_BLOCK_O3;
                         suffixLo = srcOooLo;
                         suffixHi = srcOooHi;
-
-                        prefixType = O3_BLOCK_DATA;
-                        prefixLo = 0;
-                        prefixHi = srcDataMax - 1;
                     } else {
 
                         //
@@ -582,6 +583,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // | data | | OOO |
                         // +------+
 
+                        prefixType = O3_BLOCK_DATA;
                         prefixLo = 0;
                         // When deduplication is enabled, take into the merge the rows which are equals
                         // to the o3TimestampLo in the else block, e.g. reduce the prefix size
@@ -592,7 +594,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 srcDataMax - 1,
                                 Vect.BIN_SEARCH_SCAN_DOWN
                         );
-                        prefixType = prefixLo <= prefixHi ? O3_BLOCK_DATA : O3_BLOCK_NONE;
                         mergeDataLo = prefixHi + 1;
                         mergeO3Lo = srcOooLo;
 
@@ -1009,13 +1010,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
 
-                boolean canAppendOnly = !partitionSplit;
-                if (tableWriter.isCommitReplaceMode()) {
-                    canAppendOnly &= (!overlaps && suffixType == O3_BLOCK_O3);
-                } else {
-                    canAppendOnly &= mergeType == O3_BLOCK_NONE && (prefixType == O3_BLOCK_NONE || prefixType == O3_BLOCK_DATA);
-                }
-                if (canAppendOnly) {
+                if (!partitionSplit && prefixType == O3_BLOCK_NONE) {
                     // We do not need to create a copy of partition when we simply need to append
                     // to the existing one.
                     openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
@@ -2145,7 +2140,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (!ColumnType.isVarSize(columnType)) {
                     activeFixFd = mem1.getFd();
                     activeVarFd = 0;
-                    srcOooFixAddr = (i == timestampIndex) ? sortedTimestampsAddr : oooMem1.addressOf(0);
+                    srcOooFixAddr = oooMem1.addressOf(0);
                     srcOooVarAddr = 0;
                 } else {
                     activeFixFd = mem2.getFd();
