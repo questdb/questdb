@@ -1091,8 +1091,8 @@ public class Utf8sTest {
         Assert.assertEquals(inputString, expectedUtf8ByteRead, n);
         TestUtils.assertEquals(expectedDecodedString, utf16Sink);
 
-        Assert.assertEquals(inputString, Utf8s.stringFromUtf8Bytes(utf8Sink));
-        Assert.assertEquals(inputString, Utf8s.stringFromUtf8Bytes(utf8Sink.lo(), utf8Sink.hi()));
+        Assert.assertEquals(inputString, Utf8s.stringFromUtf8BytesSafe(utf8Sink));
+        Assert.assertEquals(inputString, Utf8s.stringFromUtf8BytesSafe(utf8Sink.lo(), utf8Sink.hi()));
 
         Assert.assertEquals(inputString, utf8Sink.toString());
     }

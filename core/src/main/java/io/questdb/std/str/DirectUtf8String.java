@@ -116,7 +116,7 @@ public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
     @NotNull
     @Override
     public String toString() {
-        return Utf8s.stringFromUtf8Bytes(lo, hi);
+        return Utf8s.stringFromUtf8BytesSafe(lo, hi);
     }
 
     public static final class Factory implements ObjectFactory<DirectUtf8String> {

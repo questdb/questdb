@@ -1013,18 +1013,30 @@ public final class Utf8s {
         }
         Utf16Sink b = getThreadLocalSink();
         if (!utf8ToUtf16(lo, hi, b)) {
-            return "#$#$ Error converting UTF-8 sequence to UTF-16. Partial result: \n" + b + "\n#$#$ End partial result";
+            throw CairoException.nonCritical()
+                    .put("Error converting UTF-8 sequence to UTF-16 [partialResult=" + b + "]");
         }
         return b.toString();
     }
 
-    public static String stringFromUtf8Bytes(@NotNull Utf8Sequence seq) {
+    public static String stringFromUtf8BytesSafe(long lo, long hi) {
+        if (hi == lo) {
+            return "";
+        }
+        Utf16Sink b = getThreadLocalSink();
+        if (!utf8ToUtf16(lo, hi, b)) {
+            return "#$#$ Error converting UTF-8 sequence to UTF-16. Partial result: \n" + b + "\n#$#$ END partial result";
+        }
+        return b.toString();
+    }
+
+    public static String stringFromUtf8BytesSafe(@NotNull Utf8Sequence seq) {
         if (seq.size() == 0) {
             return "";
         }
         Utf16Sink b = getThreadLocalSink();
         if (!utf8ToUtf16(seq, b)) {
-            return "#$#$ Error converting UTF-8 sequence to UTF-16. Partial result: \n" + b + '\n';
+            return "#$#$ Error converting UTF-8 sequence to UTF-16. Partial result: \n" + b + "\n#$#$ END partial result";
         }
         return b.toString();
     }

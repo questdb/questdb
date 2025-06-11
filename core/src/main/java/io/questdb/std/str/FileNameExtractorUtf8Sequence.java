@@ -74,6 +74,6 @@ public class FileNameExtractorUtf8Sequence implements Utf8Sequence {
 
     @Override
     public @NotNull String toString() {
-        return Utf8s.stringFromUtf8Bytes(lo, hi);
+        return Utf8s.stringFromUtf8BytesSafe(lo, hi);
     }
 }

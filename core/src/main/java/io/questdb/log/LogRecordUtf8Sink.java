@@ -27,7 +27,15 @@ package io.questdb.log;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.*;
+import io.questdb.std.str.AsciiCharSequence;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkEncoding;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -213,7 +221,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
 
     @Override
     public @NotNull String toString() {
-        return Utf8s.stringFromUtf8Bytes(address, _wptr);
+        return Utf8s.stringFromUtf8BytesSafe(address, _wptr);
     }
 
     private static int utf8ByteClass(byte b) {
