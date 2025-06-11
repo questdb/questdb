@@ -3146,7 +3146,8 @@ public class SqlOptimiser implements Mutable {
         boolean isOrderByPresent = false;
         boolean isValidWherClause = false;
         boolean isLimitPresent = false;
-        if(model!= null && model.getNestedModel()!= null  && model.getNestedModel().getJoinModels().size() > 1) {
+        if(model!= null && model.getNestedModel()!= null  && model.getNestedModel().getJoinModels().size() > 1 &&
+          model.getNestedModel().getJoinModels().get(1).getJoinType() == QueryModel.JOIN_ASOF) {
             CharSequence slaveTableName = model.getNestedModel().getJoinModels().get(1).getTableNameExpr().token;
             for (int i = 0; i < model.getNestedModel().getOrderBy().size(); i++) {
                 isOrderByPresent = true;
