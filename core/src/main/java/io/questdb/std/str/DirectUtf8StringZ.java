@@ -76,6 +76,6 @@ public class DirectUtf8StringZ implements LPSZ {
 
     @Override
     public @NotNull String toString() {
-        return Utf8s.stringFromUtf8BytesSafe(ptr, ptr + size);
+        return Utf8s.stringFromUtf8Bytes(ptr, ptr + size);
     }
 }

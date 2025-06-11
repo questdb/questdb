@@ -221,7 +221,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
 
     @Override
     public @NotNull String toString() {
-        return Utf8s.stringFromUtf8BytesSafe(address, _wptr);
+        return Utf8s.stringFromUtf8Bytes(address, _wptr);
     }
 
     private static int utf8ByteClass(byte b) {

@@ -159,7 +159,7 @@ public class Utf8StringSink implements MutableUtf8Sink {
 
     @Override
     public @NotNull String toString() {
-        return Utf8s.stringFromUtf8BytesSafe(this);
+        return Utf8s.stringFromUtf8Bytes(this);
     }
 
     private void checkCapacity(int extra) {

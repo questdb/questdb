@@ -215,7 +215,7 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
 
         @Override
         public @NotNull String toString() {
-            return Utf8s.stringFromUtf8BytesSafe(this);
+            return Utf8s.stringFromUtf8Bytes(this);
         }
     }
 

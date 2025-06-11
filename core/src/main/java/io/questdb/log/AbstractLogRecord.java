@@ -233,7 +233,8 @@ abstract class AbstractLogRecord implements LogRecord, Log {
             if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
                 tlLogRecordInProgress.set(false);
                 if (Utf8s.validateUtf8(sink) < 0) {
-                    LogError e = new LogError("Logging error: " + sink);
+                    LogError e = new LogError("#$#$ Logging error: invalid UTF-8. Partial message: \n"
+                            + Utf8s.stringFromUtf8BytesSafe(sink) + "\n#$#$ END partial message");
                     sink.clear();
                     e.printStackTrace(System.out);
                     ERROR_COUNT.incrementAndGet();

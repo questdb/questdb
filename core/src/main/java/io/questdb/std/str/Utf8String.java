@@ -102,7 +102,7 @@ public class Utf8String implements Utf8Sequence {
 
     @Override
     public @NotNull String toString() {
-        return Utf8s.stringFromUtf8BytesSafe(this);
+        return Utf8s.stringFromUtf8Bytes(this);
     }
 
     @Override

@@ -1019,13 +1019,14 @@ public final class Utf8s {
         return b.toString();
     }
 
-    public static String stringFromUtf8BytesSafe(long lo, long hi) {
-        if (hi == lo) {
+    public static String stringFromUtf8Bytes(@NotNull Utf8Sequence seq) {
+        if (seq.size() == 0) {
             return "";
         }
         Utf16Sink b = getThreadLocalSink();
-        if (!utf8ToUtf16(lo, hi, b)) {
-            return "#$#$ Error converting UTF-8 sequence to UTF-16. Partial result: \n" + b + "\n#$#$ END partial result";
+        if (!utf8ToUtf16(seq, b)) {
+            throw CairoException.nonCritical()
+                    .put("Error converting UTF-8 sequence to UTF-16 [partialResult=" + b + "]");
         }
         return b.toString();
     }
@@ -1035,9 +1036,7 @@ public final class Utf8s {
             return "";
         }
         Utf16Sink b = getThreadLocalSink();
-        if (!utf8ToUtf16(seq, b)) {
-            return "#$#$ Error converting UTF-8 sequence to UTF-16. Partial result: \n" + b + "\n#$#$ END partial result";
-        }
+        utf8ToUtf16(seq, b);
         return b.toString();
     }
 
