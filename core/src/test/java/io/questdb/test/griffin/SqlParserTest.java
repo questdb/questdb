@@ -6875,6 +6875,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testNestedWindowFunctionNotSupported() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSyntaxError(
+                    "select a,b, 1 + f(c) over (partition by b order by a groups between unbounded preceding and 10 day following) from xyz",
+                    21,
+                    "Nested window functions' context are not currently supported."
+            );
+
+            assertSyntaxError(
+                    "select a,b,cast(f(c) over (order by a) as int) from xyz",
+                    21,
+                    "Nested window functions' context are not currently supported."
+            );
+        });
+    }
+
+    @Test
     public void testNonAggFunctionWithAggFunctionSampleBy() throws SqlException {
         assertQuery(
                 "select-virtual day(ts) day, isin, last from (select-group-by [ts, isin, last(start_price) last] ts, isin, last(start_price) last from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4') sample by 1d)",
@@ -10248,8 +10265,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSelectWindowOperator() throws Exception {
         assertSyntaxError(
                 "select sum(x), 2*x over() from tab",
-                16,
-                "Window function expected",
+                19,
+                "Nested window functions' context are not currently supported.",
                 modelOf("tab").col("x", ColumnType.INT)
         );
     }
