@@ -108,7 +108,8 @@ public class TableSequencerAPI implements QuietCloseable {
                 seq.unlockWrite();
             }
         } catch (CairoException e) {
-            LOG.info().$("failed to drop wal table [name=").$(tableToken).$(", dirName=").utf8(tableToken.getDirName()).I$();
+            LOG.info().$("failed to drop wal table [name=").$(tableToken).$(", dirName=")
+                    .$safe(tableToken.getDirNameUtf8()).I$();
             if (!failedCreate) {
                 throw e;
             }
@@ -316,7 +317,8 @@ public class TableSequencerAPI implements QuietCloseable {
             isDropped = seq.isDropped();
             seq.unlockWrite();
         } catch (CairoException e) {
-            LOG.info().$("cannot open sequencer files, assumed table converted to non-wal [name=").$(tableToken).$(", dirName=").utf8(tableToken.getDirName()).I$();
+            LOG.info().$("cannot open sequencer files, assumed table converted to non-wal [name=")
+                    .utf8(tableToken.getTableName()).$(", dirName=").$safe(tableToken.getDirNameUtf8()).I$();
             return true;
         }
 

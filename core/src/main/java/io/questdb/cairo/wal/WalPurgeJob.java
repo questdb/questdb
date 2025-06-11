@@ -191,7 +191,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             if (tableDropped || (lastTxn < 0 && engine.isTableDropped(tableToken))) {
                 if (logic.hasPendingTasks()) {
                     LOG.info().$("table is dropped, but has WALs containing segments with pending tasks ")
-                            .$("[tableDir=").$(tableToken.getDirName()).I$();
+                            .$("[tableDir=").$safe(tableToken.getDirNameUtf8()).I$();
                 } else if (
                         TableUtils.exists(
                                 ff,
@@ -226,7 +226,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         LOG.info().$("could not fully remove table, some files left on the disk [tableDir=").$(pathToDelete).I$();
                     }
                 } else {
-                    LOG.info().$("table is not fully dropped, pinging WAL Apply job to delete table files [tableDir=").$(tableToken.getDirName()).I$();
+                    LOG.info().$("table is not fully dropped, pinging WAL Apply job to delete table files [tableDir=")
+                            .$safe(tableToken.getDirNameUtf8()).I$();
                     // Ping ApplyWal2TableJob to clean up the table files
                     engine.notifyWalTxnCommitted(tableToken);
                 }
@@ -660,8 +661,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             LogRecord log = LOG.info();
 
             try {
-                log.$("table=").put(tableToken.getDirName())
-                        .put(", discovered=[");
+                log.$("table=").$safe(tableToken.getDirNameUtf8())
+                        .$(", discovered=[");
 
                 for (int i = 0, n = getStateSize(); i < n; i++) {
                     final int walId = getWalId(i);
@@ -706,7 +707,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         @Override
         public void deleteSegmentDirectory(int walId, int segmentId, long lockFd) {
-            LOG.debug().$("deleting WAL segment directory [table=").utf8(tableToken.getDirName())
+            LOG.debug().$("deleting WAL segment directory [table=").$safe(tableToken.getDirNameUtf8())
                     .$(", walId=").$(walId)
                     .$(", segmentId=").$(segmentId)
                     .I$();
@@ -719,7 +720,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         @Override
         public void deleteSequencerPart(int seqPart) {
-            LOG.debug().$("deleting sequencer part [table=").utf8(tableToken.getDirName())
+            LOG.debug().$("deleting sequencer part [table=").$safe(tableToken.getDirNameUtf8())
                     .$(", part=").$(seqPart)
                     .I$();
             Path path = setSeqPartPath(tableToken).put(Files.SEPARATOR).put(seqPart);
@@ -729,7 +730,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         @Override
         public void deleteWalDirectory(int walId, long lockFd) {
-            LOG.debug().$("deleting WAL directory [table=").utf8(tableToken.getDirName())
+            LOG.debug().$("deleting WAL directory [table=").$safe(tableToken.getDirNameUtf8())
                     .$(", walId=").$(walId)
                     .I$();
             if (recursiveDelete(setWalPath(tableToken, walId))) {

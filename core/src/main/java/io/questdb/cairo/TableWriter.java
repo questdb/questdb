@@ -1744,7 +1744,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void destroy() {
         // Closes all the files and makes this instance unusable e.g., it cannot return to the pool on close.
         LOG.info().$("closing table files [table=").utf8(tableToken.getTableName())
-                .$(", dirName=").utf8(tableToken.getDirName()).I$();
+                .$(", dirName=").$safe(tableToken.getDirNameUtf8()).I$();
         distressed = true;
         doClose(false);
     }
@@ -3742,8 +3742,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (lastErrno == O3_ERRNO_FATAL) {
                 distressed = true;
                 throw new CairoError("commit failed with fatal error, see logs for details [table=" +
-                        tableToken.getTableName() +
-                        ", tableDir=" + tableToken.getDirName() + "]");
+                        tableToken.getTableName() + ", tableDir=" + tableToken.getDirName() + "]");
             } else {
                 throw CairoException.critical(lastErrno)
                         .setOutOfMemory(o3oomObserved)
@@ -4918,7 +4917,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     DedupColumnCommitAddresses.getAddress(dedupCommitAddr)
             );
 
-            LOG.info().$("WAL dedup sorted commit index [table=").utf8(tableToken.getDirName())
+            LOG.info().$("WAL dedup sorted commit index [table=").$safe(tableToken.getDirNameUtf8())
                     .$(", totalRows=").$(longIndexLength)
                     .$(", lagRows=").$(lagRows)
                     .$(", dups=")
@@ -7589,7 +7588,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        LOG.info().$("processing WAL transaction block [table=").utf8(tableToken.getDirName())
+        LOG.info().$("processing WAL transaction block [table=").$safe(tableToken.getDirNameUtf8())
                 .$(", seqTxn=").$(startSeqTxn).$("..").$(startSeqTxn + blockTransactionCount - 1)
                 .$(", rows=").$(segmentCopyInfo.getTotalRows())
                 .$(", segments=").$(segmentCopyInfo.getSegmentCount())
@@ -7611,7 +7610,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3LoHi;
 
             if (!isCommitDedupMode() && segmentCopyInfo.getAllTxnDataInOrder() && segmentCopyInfo.getSegmentCount() == 1) {
-                LOG.info().$("all data in order, single segment, processing optimised [table=").utf8(tableToken.getDirName()).I$();
+                LOG.info().$("all data in order, single segment, processing optimised [table=")
+                        .$safe(tableToken.getDirNameUtf8()).I$();
                 // all data comes from a single segment and is already sorted
                 if (denseSymbolMapWriters.size() > 0) {
                     segmentFileCache.mmapWalColsEager();
@@ -7776,7 +7776,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             tsAddresses.set(0, 0L);
 
             if (!Vect.isIndexSuccess(indexFormat)) {
-                LOG.info().$("transaction sort error, will switch to 1 commit [table=").utf8(tableToken.getDirName())
+                LOG.info().$("transaction sort error, will switch to 1 commit [table=")
+                        .$safe(tableToken.getDirNameUtf8())
                         .$(", totalRows=").$(totalRows)
                         .$(", indexFormat=").$(indexFormat)
                         .I$();
@@ -7811,7 +7812,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // to understand the difference
 
                 if (!Vect.isIndexSuccess(indexFormat)) {
-                    LOG.critical().$("WAL dedup sorted index failed will switch to 1 commit [table=").utf8(tableToken.getDirName())
+                    LOG.critical().$("WAL dedup sorted index failed will switch to 1 commit [table=")
+                            .$safe(tableToken.getDirNameUtf8())
                             .$(", totalRows=").$(totalRows)
                             .$(", indexFormat=").$(indexFormat)
                             .I$();
@@ -7820,7 +7822,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 long dedupedRowCount = Vect.readIndexResultRowCount(indexFormat);
-                LOG.info().$("WAL dedup sorted commit index [table=").utf8(tableToken.getDirName())
+                LOG.info().$("WAL dedup sorted commit index [table=").$safe(tableToken.getDirNameUtf8())
                         .$(", totalRows=").$(totalRows)
                         .$(", dups=").$(totalRows - dedupedRowCount)
                         .I$();
@@ -7830,7 +7832,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 totalRows = dedupedRowCount;
             }
 
-            LOG.debug().$("shuffling [table=").utf8(tableToken.getDirName()).$(", columCount=")
+            LOG.debug().$("shuffling [table=").$safe(tableToken.getDirNameUtf8()).$(", columCount=")
                     .$(metadata.getColumnCount() - 1)
                     .$(", rows=").$(totalRows)
                     .$(", indexFormat=").$(indexFormat).I$();

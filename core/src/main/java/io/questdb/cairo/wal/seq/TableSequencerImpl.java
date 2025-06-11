@@ -110,7 +110,7 @@ public class TableSequencerImpl implements TableSequencer {
                 }
             }
         } catch (Throwable th) {
-            LOG.critical().$("could not create sequencer [name=").utf8(tableToken.getDirName())
+            LOG.critical().$("could not create sequencer [name=").$(tableToken)
                     .$(", error=").utf8(th.getMessage())
                     .I$();
             closeLocked();
@@ -126,20 +126,21 @@ public class TableSequencerImpl implements TableSequencer {
                 throw ex;
             }
             if (ex.errnoFileCannotRead() && engine.isTableDropped(tableToken)) {
-                LOG.info().$("could not open sequencer, table is dropped [name=").utf8(tableToken.getDirName())
+                LOG.info().$("could not open sequencer, table is dropped [name=")
+                        .$safe(tableToken.getDirNameUtf8())
                         .$(", path=").$(path)
                         .$(", error=").utf8(ex.getMessage())
                         .I$();
                 throw CairoException.tableDropped(tableToken);
             }
-            LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
+            LOG.critical().$("could not open sequencer [name=").$safe(tableToken.getDirNameUtf8())
                     .$(", path=").$(path)
                     .$(", errno=").$(ex.getErrno())
                     .$(", error=").utf8(ex.getMessage())
                     .I$();
             throw ex;
         } catch (Throwable th) {
-            LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
+            LOG.critical().$("could not open sequencer [name=").$safe(tableToken.getDirNameUtf8())
                     .$(", path=").$(path)
                     .$(", error=").utf8(th.getMessage())
                     .I$();
@@ -323,7 +324,7 @@ public class TableSequencerImpl implements TableSequencer {
                 applyToMetadata(deserializedAlter);
                 if (metadata.getMetadataVersion() != expectedStructureVersion + 1) {
                     throw CairoException.critical(0)
-                            .put("applying structure change to WAL table failed [table=").put(tableToken.getDirName())
+                            .put("applying structure change to WAL table failed [table=").put(tableToken.getDirNameUtf8())
                             .put(", oldVersion: ").put(expectedStructureVersion)
                             .put(", newVersion: ").put(metadata.getMetadataVersion())
                             .put(']');
@@ -346,7 +347,7 @@ public class TableSequencerImpl implements TableSequencer {
             }
         } catch (Throwable th) {
             distressed = true;
-            LOG.critical().$("could not apply structure change to WAL table sequencer [table=").utf8(tableToken.getDirName())
+            LOG.critical().$("could not apply structure change to WAL table sequencer [table=").$(tableToken)
                     .$(", error=").utf8(th.getMessage())
                     .I$();
             throw th;
@@ -378,8 +379,7 @@ public class TableSequencerImpl implements TableSequencer {
             }
         } catch (Throwable th) {
             distressed = true;
-            LOG.critical().$("could not apply transaction to WAL table sequencer [table=")
-                    .utf8(tableToken.getDirName())
+            LOG.critical().$("could not apply transaction to WAL table sequencer [table=").$(tableToken)
                     .$(", error=").utf8(th.getMessage())
                     .I$();
             throw th;
@@ -417,7 +417,7 @@ public class TableSequencerImpl implements TableSequencer {
         }
         long lastTxn = tableTransactionLog.lastTxn();
         LOG.info()
-                .$("reloaded table sequencer [name=").utf8(tableToken.getDirName())
+                .$("reloaded table sequencer [name=").$safe(tableToken.getDirNameUtf8())
                 .$(", lastTxn=").$(lastTxn)
                 .I$();
         seqTxnTracker.notifyOnCommit(lastTxn);

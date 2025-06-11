@@ -173,7 +173,7 @@ public class WalWriter implements TableWriterAPI {
             DdlListener ddlListener,
             WalDirectoryPolicy walDirectoryPolicy
     ) {
-        LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
+        LOG.info().$("open '").$safe(tableToken.getDirNameUtf8()).$('\'').$();
         this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
         this.ddlListener = ddlListener;

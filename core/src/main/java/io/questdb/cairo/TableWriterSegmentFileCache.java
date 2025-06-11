@@ -83,7 +83,7 @@ public class TableWriterSegmentFileCache {
     }
 
     public void closeWalFiles(boolean isLastSegmentUsage, long walSegmentId, int lo) {
-        LOG.debug().$("closing wal columns [table=").utf8(tableToken.getDirName())
+        LOG.debug().$("closing wal columns [table=").$safe(tableToken.getDirNameUtf8())
                 .$(", walSegmentId=").$(walSegmentId)
                 .$(", isLastSegmentUsage=").$(isLastSegmentUsage)
                 .I$();
@@ -195,7 +195,7 @@ public class TableWriterSegmentFileCache {
 
     public void mmapSegments(TableMetadata metadata, @Transient Path walPath, long walSegmentId, long rowLo, long rowHi) {
         int timestampIndex = metadata.getTimestampIndex();
-        LOG.debug().$("open columns [table=").utf8(tableToken.getDirName())
+        LOG.debug().$("open columns [table=").$safe(tableToken.getDirNameUtf8())
                 .$(", walSegmentId=").$(walSegmentId)
                 .I$();
         int walPathLen = walPath.size();

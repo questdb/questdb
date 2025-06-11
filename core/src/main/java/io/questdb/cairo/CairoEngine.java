@@ -558,7 +558,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 matViewGraph.removeView(tableToken);
             } else {
                 LOG.info().$("table is already dropped [table=").$(tableToken)
-                        .$(", dirName=").utf8(tableToken.getDirName())
+                        .$(", dirName=").$safe(tableToken.getDirNameUtf8())
                         .I$();
             }
         } else {
@@ -1075,7 +1075,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (lockedReason == null) {
                     // not locked
                     if (readerPool.lock(tableToken)) {
-                        LOG.info().$("locked [table=`").utf8(tableToken.getDirName())
+                        LOG.info().$("locked [table=`").$safe(tableToken.getDirNameUtf8())
                                 .$("`, thread=").$(Thread.currentThread().getId())
                                 .I$();
                         return null;
@@ -1182,7 +1182,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 return true;
             } else if (cursor == -1L) {
                 LOG.info().$("cannot publish WAL notifications, queue is full [current=").$(pubSeq.current())
-                        .$(", table=").utf8(tableToken.getDirName())
+                        .$(", table=").$safe(tableToken.getDirNameUtf8())
                         .I$();
                 // queue overflow, throw away notification and notify a job to rescan all tables
                 notifyWalTxnRepublisher(tableToken);
@@ -1736,7 +1736,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private void tryRepairTable(TableToken tableToken, CairoException rethrow) {
         LOG.info()
                 .$("starting table repair [table=").$(tableToken)
-                .$(", dirName=").utf8(tableToken.getDirName())
+                .$(", dirName=").$safe(tableToken.getDirNameUtf8())
                 .$(", cause=").utf8(rethrow.getFlyweightMessage())
                 .I$();
         try {
@@ -1748,7 +1748,7 @@ public class CairoEngine implements Closeable, WriterSource {
             throw rethrow;
         } catch (Throwable th) {
             LOG.critical()
-                    .$("table repair failed [dirName=").utf8(tableToken.getDirName())
+                    .$("table repair failed [dirName=").$safe(tableToken.getDirNameUtf8())
                     .$(", error=").utf8(th.getMessage())
                     .I$();
             throw rethrow;

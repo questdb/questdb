@@ -279,7 +279,7 @@ public class ConvertOperatorImpl implements Closeable {
                             columnVersionWriter.upsertColumnTop(partTs, columnIndex, columnTop > -1 ? columnTop : maxRow);
                         }
                     } catch (Throwable th) {
-                        LOG.error().$("error converting column [at=").$safe(tableWriter.getTableToken().getDirNameUtf8())
+                        LOG.error().$("error converting column [at=").$(tableWriter.getTableToken())
                                 .$(", column=").utf8(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                                 .$(", to=").$(ColumnType.nameOf(newType))
                                 .$(", error=").$(th).I$();
