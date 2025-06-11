@@ -3143,11 +3143,13 @@ public class SqlOptimiser implements Mutable {
 
     private boolean isModelEligibleForOptimisation(QueryModel model) {
         boolean isValidOrderBy = true;
+        boolean isOrderByPresent = false;
         boolean isValidWherClause = false;
         boolean isLimitPresent = false;
         if(model!= null && model.getNestedModel()!= null  && model.getNestedModel().getJoinModels().size() > 1) {
             CharSequence slaveTableName = model.getNestedModel().getJoinModels().get(1).getTableNameExpr().token;
             for (int i = 0; i < model.getNestedModel().getOrderBy().size(); i++) {
+                isOrderByPresent = true;
                 String orderByColumn = model.getNestedModel().getOrderBy().get(i).token.toString();
                 int dot = orderByColumn.indexOf('.');
                 String orderByTableName = dot != -1 ? orderByColumn.substring(0, dot) : orderByColumn;
@@ -3163,11 +3165,21 @@ public class SqlOptimiser implements Mutable {
                 whereClauseTableName = whereClauseToken.substring(0, dot);
             }
             isLimitPresent = model.getNestedModel().getLimitLo() != null;
-            isValidWherClause = whereClauseTableName != slaveTableName;
+            isValidWherClause = whereClauseTableName!=null && whereClauseTableName != slaveTableName;
+            return (isOrderByPresent && isValidOrderBy && isLimitPresent) || isValidWherClause;
         }
-        return (isValidOrderBy && isLimitPresent) || isValidWherClause;
+       return false;
     }
 
+    /**
+     * Optimises models with ASOF joins, to push up .
+     * <p>
+     * This method traverses the query model and optimises it by restructuring
+     * the nested models to facilitate ASOF joins.
+     *
+     * @param model the query model to optimise
+     * @throws SqlException if an error occurs during optimisation
+     */
     private void optimiseModelsWithASOFJoins(QueryModel model) throws SqlException {
 
         if(!isModelEligibleForOptimisation(model))
@@ -6804,6 +6816,7 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
+            System.out.println("****" + rewrittenModel.toString0());
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions than need to be freed
