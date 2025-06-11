@@ -28,6 +28,7 @@ import io.questdb.std.Os;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -69,7 +70,12 @@ public class TestOs {
 
         URL resource = TestOs.class.getResource("/io/questdb/bin/" + Os.name + '-' + Os.archName + '/' + rustLibName);
         if (resource != null) {
-            String absolutePathPreCompiled = resource.getPath();
+            String absolutePathPreCompiled;
+            try {
+                absolutePathPreCompiled = resource.toURI().getPath();
+            } catch (URISyntaxException e) {
+                throw new RuntimeException(e);
+            }
             if (Os.isWindows() && absolutePathPreCompiled.charAt(0) == '/') {
                 // Remove forward /
                 absolutePathPreCompiled = absolutePathPreCompiled.substring(1);
