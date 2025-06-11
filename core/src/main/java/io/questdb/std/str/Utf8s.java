@@ -1013,7 +1013,7 @@ public final class Utf8s {
         }
         Utf16Sink b = getThreadLocalSink();
         if (!utf8ToUtf16(lo, hi, b)) {
-            return "#$#$ Error converting UTF-8 sequence to UTF-16. Partial result: \n" + b + '\n';
+            return "#$#$ Error converting UTF-8 sequence to UTF-16. Partial result: \n" + b + "\n#$#$ End partial result";
         }
         return b.toString();
     }
