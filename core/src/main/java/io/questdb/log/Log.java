@@ -24,11 +24,7 @@
 
 package io.questdb.log;
 
-import java.util.concurrent.atomic.AtomicLong;
-
 public interface Log {
-    AtomicLong ERROR_COUNT = new AtomicLong();
-
     LogRecord advisory();
 
     LogRecord advisoryW();

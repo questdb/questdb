@@ -45,7 +45,6 @@ public class LogParanoiaTest {
         final String good = "" + lead2 + cont + a + a;
         final int iterCount = 10;
 
-        Log.ERROR_COUNT.set(0);
         for (int i = 0; i < iterCount; i++) {
             LOG.info().$("broken follows").$();
             try {
@@ -58,13 +57,11 @@ public class LogParanoiaTest {
             LOG.info().$(good).$();
             LOG.info().$("end").$();
         }
-        Assert.assertEquals(iterCount, Log.ERROR_COUNT.get());
     }
 
     @Test
     public void testLeakedRecordRaisesError() {
         final int iterCount = 10;
-        Log.ERROR_COUNT.set(0);
         LOG.info().$("initial record").$();
         for (int i = 0; i < iterCount; i++) {
             LOG.info().$("leaked record");
@@ -76,7 +73,6 @@ public class LogParanoiaTest {
             }
             LOG.info().$("good record").$();
         }
-        Assert.assertEquals(iterCount, Log.ERROR_COUNT.get());
     }
 
     // ParanoiaState.LOG_PARANOIA_MODE is set during class init and checks its stack

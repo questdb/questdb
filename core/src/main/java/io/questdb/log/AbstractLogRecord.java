@@ -237,7 +237,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
                             + Utf8s.stringFromUtf8BytesSafe(sink) + "\n#$#$ END partial message");
                     sink.clear();
                     e.printStackTrace(System.out);
-                    ERROR_COUNT.incrementAndGet();
                     throw e;
                 }
             }
@@ -551,7 +550,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         LogError exception = tlRecordLeakException.get();
         if (isRecordInProgress.get()) {
             exception.printStackTrace(System.out);
-            ERROR_COUNT.incrementAndGet();
             isRecordInProgress.set(false);
             throw exception;
         }
