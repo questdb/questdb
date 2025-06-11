@@ -355,8 +355,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long partitionUpdateSinkAddr,
             long dedupColSinkAddr,
             boolean isParquet,
-            final long o3TimestampLo,
-            final long o3TimestampHi
+            long o3TimestampLo,
+            long o3TimestampHi
     ) {
         // is out of order data hitting the last partition?
         // if so we do not need to re-open files and write to existing file descriptors
@@ -525,9 +525,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // so for prefix and suffix we will need a flag indicating source of the data
                 // as well as range of rows in that source
 
-                prefixType = O3_BLOCK_NONE;
-                prefixLo = -1;
-                prefixHi = -1;
                 mergeType = O3_BLOCK_NONE;
                 mergeDataLo = -1;
                 mergeDataHi = -1;
@@ -573,11 +570,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         suffixLo = srcOooLo;
                         suffixHi = srcOooHi;
 
-//                        if (prefixType != O3_BLOCK_DATA || prefixLo != 0) {
-//                        prefixType = O3_BLOCK_DATA;
-//                        prefixLo = 0;
-//                        prefixHi = srcDataMax - 1;
-//                        }
+                        prefixType = O3_BLOCK_DATA;
+                        prefixLo = 0;
+                        prefixHi = srcDataMax - 1;
                     } else {
 
                         //
@@ -946,6 +941,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Split partition if the prefix is large enough (relatively and absolutely)
                 if (
                         prefixType == O3_BLOCK_DATA
+                                && (mergeType == O3_BLOCK_MERGE || mergeType == O3_BLOCK_O3)
                                 && prefixHi >= tableWriter.getPartitionO3SplitThreshold()
                                 && prefixHi > 2 * (mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)
                 ) {
@@ -2150,7 +2146,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (!ColumnType.isVarSize(columnType)) {
                     activeFixFd = mem1.getFd();
                     activeVarFd = 0;
-                    srcOooFixAddr = oooMem1.addressOf(0);
+                    srcOooFixAddr = (i == timestampIndex) ? sortedTimestampsAddr : oooMem1.addressOf(0);
                     srcOooVarAddr = 0;
                 } else {
                     activeFixFd = mem2.getFd();
