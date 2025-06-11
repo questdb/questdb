@@ -298,6 +298,10 @@ public class BytecodeAssembler {
         }
     }
 
+    public void idiv() {
+        putByte(0x6c);
+    }
+
     public int if_icmpge() {
         return genericGoto(0xa2);
     }
@@ -327,6 +331,10 @@ public class BytecodeAssembler {
 
     public void iload(int value) {
         optimisedIO(iload_0, iload_1, iload_2, iload_3, iload, value);
+    }
+
+    public void imul() {
+        putByte(0x68);
     }
 
     public void ineg() {
