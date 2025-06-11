@@ -29,8 +29,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.mv.MatViewRefreshExecutionContext;
 import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.mv.MatViewRefreshSqlExecutionContext;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -1985,12 +1985,6 @@ public class MatViewTest extends AbstractCairoTest {
                     null
             );
 
-            final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn, " +
-                    "timer_time_zone, timer_start, timer_interval, timer_interval_unit, " +
-                    "period_length, period_length_unit, period_delay, period_delay_unit " +
-                    "from materialized_views";
-
             // the first period still hasn't finished
             currentMicros = parseFloorPartialTimestamp("2000-01-01T23:59:59.999999Z");
             execute("refresh materialized view price_1h incremental;");
@@ -2001,44 +1995,52 @@ public class MatViewTest extends AbstractCairoTest {
                     "sym\tprice\tts\n",
                     "price_1h order by sym"
             );
-            assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
-                            "price_1h\tmanual\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t-1\t1\t\t\t0\t\t1\tDAY\t0\t\n",
-                    matViewsSql,
-                    null
-            );
 
             // the first period still hasn't finished
             currentMicros = parseFloorPartialTimestamp("2000-01-01T23:59:59.999999Z");
             execute("refresh materialized view price_1h incremental;");
             drainMatViewTimerQueue(timerJob);
             drainQueues();
-
             assertQueryNoLeakCheck(
                     "sym\tprice\tts\n",
                     "price_1h order by sym"
             );
+
+            // the first period has finished - only half of the rows should be aggregated
+            currentMicros = parseFloorPartialTimestamp("2000-01-02T00:00:01.000000Z");
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
-                            "price_1h\tmanual\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t-1\t1\t\t\t0\t\t1\tDAY\t0\t\n",
-                    matViewsSql,
-                    null
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.321\t2000-01-01T00:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2000-01-01T00:00:00.000000Z\n",
+                    "price_1h order by sym"
             );
 
-            // finally, the first period has finished
-            currentMicros = parseFloorPartialTimestamp("2000-01-02T00:00:00.000000Z");
+            // finally, the second period has finished - all rows should be aggregated
+            currentMicros = parseFloorPartialTimestamp("2000-01-03T00:00:01.000000Z");
             execute("refresh materialized view price_1h incremental;");
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n",
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.321\t2000-01-01T00:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2000-01-02T00:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2000-01-01T00:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2000-01-02T00:00:00.000000Z\n",
                     "price_1h order by sym"
             );
+
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
-                            "price_1h\tmanual\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t-1\t1\t\t\t0\t\t1\tDAY\t0\t\n",
-                    matViewsSql,
+                            "price_1h\tmanual\tbase_price\t2000-01-03T00:00:01.000000Z\t2000-01-03T00:00:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t1\t1\t\t\t0\t\t1\tDAY\t0\t\n",
+                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "view_sql, view_status, refresh_base_table_txn, base_table_txn, " +
+                            "timer_time_zone, timer_start, timer_interval, timer_interval_unit, " +
+                            "period_length, period_length_unit, period_delay, period_delay_unit " +
+                            "from materialized_views",
                     null
             );
         });
@@ -3145,7 +3147,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
 
-            final MatViewRefreshExecutionContext refreshExecutionContext = new MatViewRefreshExecutionContext(engine, 1, 1);
+            final MatViewRefreshSqlExecutionContext refreshExecutionContext = new MatViewRefreshSqlExecutionContext(engine, 1, 1);
 
             try (TableReader baseReader = engine.getReader("x")) {
                 refreshExecutionContext.of(baseReader);

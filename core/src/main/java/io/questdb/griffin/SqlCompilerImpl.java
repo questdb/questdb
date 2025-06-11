@@ -2656,7 +2656,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         tok = expectToken(lexer, "'full' or 'incremental' or 'range'");
-        final boolean full = isFullKeyword(tok);
+        final boolean fullRefresh = isFullKeyword(tok);
         long from = Numbers.LONG_NULL;
         long to = Numbers.LONG_NULL;
         if (isRangeKeyword(tok)) {
@@ -2677,7 +2677,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (from > to) {
                 throw SqlException.$(lexer.lastTokenPosition(), "TO timestamp must not be earlier than FROM timestamp");
             }
-        } else if (!full && !isIncrementalKeyword(tok)) {
+        } else if (!fullRefresh && !isIncrementalKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "'full' or 'incremental' or 'range' expected");
         }
 
@@ -2688,7 +2688,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
         executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
-        if (full) {
+        if (fullRefresh) {
             matViewStateStore.enqueueFullRefresh(matViewToken);
         } else if (from != Numbers.LONG_NULL) {
             matViewStateStore.enqueueRangeRefresh(matViewToken, from, to);
