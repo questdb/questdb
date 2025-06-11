@@ -419,7 +419,7 @@ public final class ColumnType {
 
     public static boolean isToSameOrWider(int fromType, int toType) {
         return (tagOf(fromType) == tagOf(toType) && !isArray(fromType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
-                || isBuiltInWideningCast(fromType, toType)
+                || isBuiltInWideningCast(tagOf(fromType), tagOf(toType))
                 || isStringCast(fromType, toType)
                 || isVarcharCast(fromType, toType)
                 || isGeoHashWideningCast(fromType, toType)

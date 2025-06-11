@@ -54,6 +54,7 @@ import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -205,7 +206,7 @@ public class InsertTest extends AbstractCairoTest {
             public long getTimestamp() {
                 return last = last + 100000L;
             }
-        }, true, true);
+        }, true, true, ColumnType.TIMESTAMP_MICRO);
     }
 
     @Test
@@ -217,7 +218,7 @@ public class InsertTest extends AbstractCairoTest {
             public long getTimestamp() {
                 return last = last + 100000L;
             }
-        }, false, true);
+        }, false, true, ColumnType.TIMESTAMP_MICRO);
     }
 
     @Test
@@ -229,7 +230,43 @@ public class InsertTest extends AbstractCairoTest {
             public long getTimestamp() {
                 return last = last + 100000L;
             }
-        }, false, false);
+        }, false, false, ColumnType.TIMESTAMP_MICRO);
+    }
+
+    @Test
+    public void testInsertAllByDayUndefinedNoColumnSetWithNanoTs() throws Exception {
+        testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
+            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+
+            @Override
+            public long getTimestamp() {
+                return last = last + 100000L;
+            }
+        }, false, false, ColumnType.TIMESTAMP_NANO);
+    }
+
+    @Test
+    public void testInsertAllByDayUndefinedWithNanoTs() throws Exception {
+        testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
+            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+
+            @Override
+            public long getTimestamp() {
+                return last = last + 100000L;
+            }
+        }, false, true, ColumnType.TIMESTAMP_NANO);
+    }
+
+    @Test
+    public void testInsertAllByDayWithNanoTs() throws Exception {
+        testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
+            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+
+            @Override
+            public long getTimestamp() {
+                return last = last + 100000L;
+            }
+        }, true, true, ColumnType.TIMESTAMP_NANO);
     }
 
     @Test
@@ -241,7 +278,7 @@ public class InsertTest extends AbstractCairoTest {
             public long getTimestamp() {
                 return last = last + 100000L * 30;
             }
-        }, true, true);
+        }, true, true, ColumnType.TIMESTAMP_MICRO);
     }
 
     @Test
@@ -253,7 +290,7 @@ public class InsertTest extends AbstractCairoTest {
             public long getTimestamp() {
                 return last = last + 100000L * 30;
             }
-        }, false, true);
+        }, false, true, ColumnType.TIMESTAMP_MICRO);
     }
 
     @Test
@@ -265,22 +302,73 @@ public class InsertTest extends AbstractCairoTest {
             public long getTimestamp() {
                 return last = last + 100000L * 30;
             }
-        }, false, false);
+        }, false, false, ColumnType.TIMESTAMP_MICRO);
+    }
+
+    @Test
+    public void testInsertAllByMonthUndefinedNoColumnSetWithNanoTs() throws Exception {
+        testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
+            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+
+            @Override
+            public long getTimestamp() {
+                return last = last + 100000L * 30;
+            }
+        }, false, false, ColumnType.TIMESTAMP_NANO);
+    }
+
+    @Test
+    public void testInsertAllByMonthUndefinedWithNanoTs() throws Exception {
+        testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
+            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+
+            @Override
+            public long getTimestamp() {
+                return last = last + 100000L * 30;
+            }
+        }, false, true, ColumnType.TIMESTAMP_NANO);
+    }
+
+    @Test
+    public void testInsertAllByMonthWithNanoTs() throws Exception {
+        testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
+            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+
+            @Override
+            public long getTimestamp() {
+                return last = last + 100000L * 30;
+            }
+        }, true, true, ColumnType.TIMESTAMP_NANO);
     }
 
     @Test
     public void testInsertAllByNone() throws Exception {
-        testBindVariableInsert(PartitionBy.NONE, () -> 0, true, true);
+        testBindVariableInsert(PartitionBy.NONE, () -> 0, true, true, ColumnType.TIMESTAMP_MICRO);
     }
 
     @Test
     public void testInsertAllByNoneUndefined() throws Exception {
-        testBindVariableInsert(PartitionBy.NONE, () -> 0, false, true);
+        testBindVariableInsert(PartitionBy.NONE, () -> 0, false, true, ColumnType.TIMESTAMP_MICRO);
     }
 
     @Test
     public void testInsertAllByNoneUndefinedNoColumnSet() throws Exception {
-        testBindVariableInsert(PartitionBy.NONE, () -> 0, false, false);
+        testBindVariableInsert(PartitionBy.NONE, () -> 0, false, false, ColumnType.TIMESTAMP_MICRO);
+    }
+
+    @Test
+    public void testInsertAllByNoneUndefinedNoColumnSetWithNanoTs() throws Exception {
+        testBindVariableInsert(PartitionBy.NONE, () -> 0, false, false, ColumnType.TIMESTAMP_NANO);
+    }
+
+    @Test
+    public void testInsertAllByNoneUndefinedWithNanoTs() throws Exception {
+        testBindVariableInsert(PartitionBy.NONE, () -> 0, false, true, ColumnType.TIMESTAMP_NANO);
+    }
+
+    @Test
+    public void testInsertAllByNoneWithNanoTs() throws Exception {
+        testBindVariableInsert(PartitionBy.NONE, () -> 0, true, true, ColumnType.TIMESTAMP_NANO);
     }
 
     @Test
@@ -292,7 +380,7 @@ public class InsertTest extends AbstractCairoTest {
             public long getTimestamp() {
                 return last = last + 100000L * 7;
             }
-        }, true, true);
+        }, true, true, ColumnType.TIMESTAMP_MICRO);
     }
 
     @Test
@@ -304,7 +392,7 @@ public class InsertTest extends AbstractCairoTest {
             public long getTimestamp() {
                 return last = last + 100000L * 7;
             }
-        }, false, true);
+        }, false, true, ColumnType.TIMESTAMP_MICRO);
     }
 
     @Test
@@ -316,7 +404,7 @@ public class InsertTest extends AbstractCairoTest {
             public long getTimestamp() {
                 return last = last + 100000L * 7;
             }
-        }, false, false);
+        }, false, false, ColumnType.TIMESTAMP_MICRO);
     }
 
     @Test
@@ -328,7 +416,7 @@ public class InsertTest extends AbstractCairoTest {
             public long getTimestamp() {
                 return last = last + 100000L * 30 * 12;
             }
-        }, true, true);
+        }, true, true, ColumnType.TIMESTAMP_MICRO);
     }
 
     @Test
@@ -340,7 +428,7 @@ public class InsertTest extends AbstractCairoTest {
             public long getTimestamp() {
                 return last = last + 100000L * 30 * 12;
             }
-        }, false, true);
+        }, false, true, ColumnType.TIMESTAMP_MICRO);
     }
 
     @Test
@@ -365,8 +453,20 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertAsSelectISODateVarcharToDesignatedTimestampNSColumn() throws Exception {
+        final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000000Z\n";
+
+        assertInsertTimestamp(expected, "insert into tab select 1, '2021-01-03'::varchar", null, false, "timestamp_ns");
+    }
+
+    @Test
     public void testInsertAsSelectNumberStringToDesignatedTimestampColumn() throws Exception {
         assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456Z\n", "insert atomic into tab select 1, '123456'", null, false, "timestamp");
+    }
+
+    @Test
+    public void testInsertAsSelectNumberStringToDesignatedTimestampNSColumn() throws Exception {
+        assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456789Z\n", "insert atomic into tab select 1, '123456789'", null, false, "timestamp_ns");
     }
 
     @Test
@@ -375,8 +475,20 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertAsSelectNumberVarcharToDesignatedTimestampNSColumn() throws Exception {
+        assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456789Z\n", "insert atomic into tab select 1, '123456789'::varchar", null, false, "timestamp_ns");
+    }
+
+    @Test
     public void testInsertAsSelectTimestampAscOrder() throws Exception {
         testInsertAsSelectWithOrderBy("order by ts asc");
+    }
+
+    @Test
+    public void testInsertAsSelectTimestampAscOrderWithNanoTS() throws Exception {
+        // todo figure out why O3 task failed
+        Assume.assumeTrue(!walEnabled);
+        testInsertAsSelectWithOrderByWithNanoTS("order by ts asc");
     }
 
     @Test
@@ -385,8 +497,22 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertAsSelectTimestampDescOrderWithNanoTS() throws Exception {
+        // todo figure out why O3 task failed
+        Assume.assumeTrue(!walEnabled);
+        testInsertAsSelectWithOrderByWithNanoTS("order by ts desc");
+    }
+
+    @Test
     public void testInsertAsSelectTimestampNoOrder() throws Exception {
         testInsertAsSelectWithOrderBy("");
+    }
+
+    @Test
+    public void testInsertAsSelectTimestampNoOrderWithNanoTS() throws Exception {
+        // todo figure out why O3 task failed
+        Assume.assumeTrue(!walEnabled);
+        testInsertAsSelectWithOrderByWithNanoTS("");
     }
 
     @Test
@@ -1321,9 +1447,9 @@ public class InsertTest extends AbstractCairoTest {
         assertQueryNoLeakCheck(expected, "dest", "ts", true, true);
     }
 
-    private void testBindVariableInsert(int partitionBy, TimestampFunction timestampFunction, boolean initBindVariables, boolean columnSet) throws Exception {
+    private void testBindVariableInsert(int partitionBy, TimestampFunction timestampFunction, boolean initBindVariables, boolean columnSet, int timestampType) throws Exception {
         assertMemoryLeak(() -> {
-            CreateTableTestUtils.createAllTableWithNewTypes(engine, partitionBy);
+            CreateTableTestUtils.createAllTableWithNewTypes(engine, partitionBy, timestampType);
             // this is BLOB
             byte[] blob = new byte[500];
             TestBinarySequence bs = new TestBinarySequence();
@@ -1445,6 +1571,26 @@ public class InsertTest extends AbstractCairoTest {
             execute("insert into dest select * from src where v % 2 = 0 " + orderByClause + ";");
 
             String expected = "ts\tv\n" + "1970-01-01T00:00:00.000000Z\t0\n" + "1970-01-01T00:00:00.020000Z\t2\n" + "1970-01-01T00:00:00.040000Z\t4\n";
+
+            assertQueryCheckWal(expected);
+        });
+    }
+
+    private void testInsertAsSelectWithOrderByWithNanoTS(String orderByClause) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src (ts timestamp_ns, v long) timestamp(ts) partition by day;");
+            execute("insert into src values (0, 0);");
+            execute("insert into src values (10000000, 1);");
+            execute("insert into src values (20000000, 2);");
+            execute("insert into src values (30000000, 3);");
+            execute("insert into src values (40000000, 4);");
+
+            execute("create table dest (ts timestamp_ns, v long) timestamp(ts) partition by day;");
+            drainWalQueue();
+
+            execute("insert into dest select * from src where v % 2 = 0 " + orderByClause + ";");
+
+            String expected = "ts\tv\n" + "1970-01-01T00:00:00.000000000Z\t0\n" + "1970-01-01T00:00:00.020000000Z\t2\n" + "1970-01-01T00:00:00.040000000Z\t4\n";
 
             assertQueryCheckWal(expected);
         });

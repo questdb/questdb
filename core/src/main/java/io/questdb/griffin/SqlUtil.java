@@ -770,6 +770,18 @@ public class SqlUtil {
         return parser;
     }
 
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static long implicitCastTimestampAsDate(long value) {
+        return value == Numbers.LONG_NULL ? Numbers.LONG_NULL : value / 1000L;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static long implicitCastTimestampNSAsDate(long value) {
+        return value == Numbers.LONG_NULL ? Numbers.LONG_NULL : value / 1000_000L;
+    }
+
     public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink<?> sink) {
         if (Uuid.isNull(lo, hi)) {
             return false;

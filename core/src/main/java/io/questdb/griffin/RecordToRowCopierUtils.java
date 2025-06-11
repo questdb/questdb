@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TimestampUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -158,6 +159,11 @@ public class RecordToRowCopierUtils {
         int implicitCastLongAsInt = asm.poolMethod(SqlUtil.class, "implicitCastLongAsInt", "(J)I");
         int implicitCastFloatAsInt = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsInt", "(F)I");
         int implicitCastDoubleAsInt = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsInt", "(D)I");
+
+        int implicitCastTimestampAsDate = asm.poolMethod(SqlUtil.class, "implicitCastTimestampAsDate", "(J)J");
+        int implicitCastTimestampNSAsDate = asm.poolMethod(SqlUtil.class, "implicitCastTimestampNSAsDate", "(J)J");
+        int implicitCastTimestampMicroAsNanos = asm.poolMethod(TimestampUtils.class, "microsToNanos", "(J)J");
+        int implicitCastTimestampNanosAsMicros = asm.poolMethod(TimestampUtils.class, "nanosToMacros", "(J)J");
 
         int implicitCastFloatAsLong = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsLong", "(F)J");
         int implicitCastDoubleAsLong = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsLong", "(D)J");
@@ -469,9 +475,21 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         case ColumnType.DATE:
+                            if (toColumnType == ColumnType.TIMESTAMP_MICRO) {
+                                asm.invokeStatic(implicitCastTimestampAsDate);
+                            } else {
+                                asm.invokeStatic(implicitCastTimestampNSAsDate);
+                            }
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
+                            if (fromColumnType != toColumnType) {
+                                if (fromColumnType == ColumnType.TIMESTAMP_MICRO) {
+                                    asm.invokeStatic(implicitCastTimestampMicroAsNanos);
+                                } else {
+                                    asm.invokeStatic(implicitCastTimestampNanosAsMicros);
+                                }
+                            }
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         default:

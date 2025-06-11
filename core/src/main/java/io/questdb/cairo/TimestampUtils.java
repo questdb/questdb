@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -44,6 +45,17 @@ public class TimestampUtils {
         return leap & m == 2 ? 29 : DAYS_PER_MONTH[m - 1];
     }
 
+    public static TimestampUnitConverter getTimestampUnitConverter(int fromTimestampType, int toTimestampType) {
+        if (fromTimestampType == toTimestampType) {
+            return null;
+        }
+        if (fromTimestampType == ColumnType.TIMESTAMP_MICRO) {
+            return TimestampUtils::microsToNanos;
+        } else {
+            return TimestampUtils::nanosToMacros;
+        }
+    }
+
     /**
      * Calculates if year is leap year using following algorithm:
      * <p>
@@ -54,6 +66,21 @@ public class TimestampUtils {
      */
     public static boolean isLeapYear(int year) {
         return ((year & 3) == 0) && ((year % 100) != 0 || (year % 400) == 0);
+    }
+
+    public static long microsToNanos(long micros) {
+        if (micros == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        try {
+            return Math.multiplyExact(micros, 1000L);
+        } catch (ArithmeticException e) {
+            throw ImplicitCastException.inconvertibleValue(micros, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO);
+        }
+    }
+
+    public static long nanosToMacros(long nanos) {
+        return nanos == Numbers.LONG_NULL ? Numbers.LONG_NULL : nanos / 1000L;
     }
 
     protected static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
@@ -157,5 +184,10 @@ public class TimestampUtils {
             default:
                 throw NumericException.INSTANCE;
         }
+    }
+
+    @FunctionalInterface
+    public interface TimestampUnitConverter {
+        long convert(long timestamp);
     }
 }
