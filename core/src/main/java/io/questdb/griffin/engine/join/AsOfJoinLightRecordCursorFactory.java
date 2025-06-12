@@ -186,6 +186,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
             if (masterHasNext) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+                final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL ? 0 : masterTimestamp - toleranceInterval;
                 MapKey key;
                 MapValue value;
                 long slaveTimestamp = this.slaveTimestamp;
@@ -193,21 +194,21 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 if (slaveTimestamp <= masterTimestamp) {
                     if (lastSlaveRowID != Numbers.LONG_NULL) {
                         slaveCursor.recordAt(slaveRecord, lastSlaveRowID);
-                        key = joinKeyMap.withKey();
-                        key.put(slaveRecord, slaveKeySink);
-                        value = key.createValue();
-                        value.putLong(0, lastSlaveRowID);
+                        slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
+                        if (slaveTimestamp >= minSlaveTimestamp) {
+                            key = joinKeyMap.withKey();
+                            key.put(slaveRecord, slaveKeySink);
+                            value = key.createValue();
+                            value.putLong(0, lastSlaveRowID);
+                        }
                     }
 
                     final Record rec = slaveCursor.getRecord();
-                    // toleranceInterval can be LONG_NULL, which means no tolerance. in this case minSlaveTimestamp is going to be a non-sense, but we don't care
-                    // since we won't use it
-                    final long minSlaveTimestamp = masterTimestamp - toleranceInterval;
                     while (slaveCursor.hasNext()) {
                         slaveTimestamp = rec.getTimestamp(slaveTimestampIndex);
                         slaveRowID = rec.getRowId();
                         if (slaveTimestamp <= masterTimestamp) {
-                            if (toleranceInterval == Numbers.LONG_NULL || slaveTimestamp >= minSlaveTimestamp) {
+                            if (slaveTimestamp >= minSlaveTimestamp) {
                                 key = joinKeyMap.withKey();
                                 key.put(rec, slaveKeySink);
                                 value = key.createValue();

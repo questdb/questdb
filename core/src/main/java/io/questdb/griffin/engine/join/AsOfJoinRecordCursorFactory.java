@@ -32,6 +32,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.sql.Record;
@@ -55,6 +56,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
     private final RecordSink slaveKeySink;
     private final int slaveValueTimestampIndex;
     private final long toleranceInterval;
+    private static final int MAP_EVACUATION_THRESHOLD = 10_000_000; // todo: configurable
 
     public AsOfJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -78,11 +80,13 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         try {
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
-            Map joinKeyMap = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes);
+            Map joinKeyMapA = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes);
+            Map joinKeyMapB = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes);
             int slaveWrappedOverMaster = slaveColumnTypes.getColumnCount() - masterTableKeyColumns.getColumnCount();
             this.cursor = new AsOfJoinRecordCursor(
                     columnSplit,
-                    joinKeyMap,
+                    joinKeyMapA,
+                    joinKeyMapB,
                     NullRecordFactory.getInstance(slaveColumnTypes),
                     masterFactory.getMetadata().getTimestampIndex(),
                     slaveFactory.getMetadata().getTimestampIndex(),
@@ -150,7 +154,9 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
     }
 
     private class AsOfJoinRecordCursor extends AbstractSymbolWrapOverCursor {
-        private final Map joinKeyMap;
+        private final Map joinKeyMapA;
+        private final Map joinKeyMapB;
+        private Map currentJoinKeyMap;
         private final int masterTimestampIndex;
         private final SymbolWrapOverJoinRecord record;
         private final int slaveTimestampIndex;
@@ -165,7 +171,8 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
         public AsOfJoinRecordCursor(
                 int columnSplit,
-                Map joinKeyMap,
+                Map joinKeyMapA,
+                Map joinKeyMapB,
                 Record nullRecord,
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
@@ -176,7 +183,9 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         ) {
             super(columnSplit, slaveWrappedOverMaster, masterTableKeyColumns, slaveColumnIndex);
             this.record = new SymbolWrapOverJoinRecord(columnSplit, nullRecord, slaveWrappedOverMaster, masterTableKeyColumns);
-            this.joinKeyMap = joinKeyMap;
+            this.joinKeyMapA = joinKeyMapA;
+            this.joinKeyMapB = joinKeyMapB;
+            this.currentJoinKeyMap = joinKeyMapA;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             this.valueSink = valueSink;
@@ -191,7 +200,8 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         @Override
         public void close() {
             if (isOpen) {
-                joinKeyMap.close();
+                joinKeyMapA.close();
+                joinKeyMapB.close();
                 isOpen = false;
                 super.close();
             }
@@ -210,25 +220,32 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             }
             if (masterHasNext) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+                final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL ? 0 : masterTimestamp - toleranceInterval;
                 MapKey key;
                 MapValue value;
                 long slaveTimestamp = this.slaveTimestamp;
                 if (slaveTimestamp <= masterTimestamp) {
                     if (danglingSlaveRecord) {
-                        key = joinKeyMap.withKey();
-                        key.put(slaveRecord, slaveKeySink);
-                        value = key.createValue();
-                        valueSink.copy(slaveRecord, value);
+                        if (slaveTimestamp >= minSlaveTimestamp) {
+                            key = currentJoinKeyMap.withKey();
+                            key.put(slaveRecord, slaveKeySink);
+                            value = key.createValue();
+                            valueSink.copy(slaveRecord, value);
+                        }
                         danglingSlaveRecord = false;
                     }
+
+                    evacuateJoinKeyMap(masterTimestamp);
 
                     while (slaveCursor.hasNext()) {
                         slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
                         if (slaveTimestamp <= masterTimestamp) {
-                            key = joinKeyMap.withKey();
-                            key.put(slaveRecord, slaveKeySink);
-                            value = key.createValue();
-                            valueSink.copy(slaveRecord, value);
+                            if (slaveTimestamp >= minSlaveTimestamp) {
+                                key = currentJoinKeyMap.withKey();
+                                key.put(slaveRecord, slaveKeySink);
+                                value = key.createValue();
+                                valueSink.copy(slaveRecord, value);
+                            }
                         } else {
                             danglingSlaveRecord = true;
                             break;
@@ -238,7 +255,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                     this.slaveTimestamp = slaveTimestamp;
                 }
 
-                key = joinKeyMap.withKey();
+                key = currentJoinKeyMap.withKey();
                 key.put(masterRecord, masterKeySink);
                 value = key.findValue();
                 if (value != null) {
@@ -260,6 +277,38 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             return false;
         }
 
+        private void evacuateJoinKeyMap(long masterTimestamp) {
+            if (currentJoinKeyMap.size() < MAP_EVACUATION_THRESHOLD || toleranceInterval == Numbers.LONG_NULL) {
+                return; // no need to evacuate small maps
+            }
+            Map dstMap = currentJoinKeyMap == joinKeyMapA ? joinKeyMapB : joinKeyMapA;
+            assert dstMap.size() == 0 : "Evacuating non-empty map: " + dstMap.size();
+
+            MapRecordCursor srcMapCursor = currentJoinKeyMap.getCursor();
+            MapRecord srcRecord = currentJoinKeyMap.getRecord();
+            long minTimestamp = masterTimestamp - toleranceInterval;
+            while (srcMapCursor.hasNext()) {
+                MapValue srcValue = srcRecord.getValue();
+                long srcTimestamp = srcValue.getTimestamp(slaveValueTimestampIndex);
+                if (srcTimestamp < minTimestamp) {
+                    continue; // skip records that are too old
+                }
+                long srcKeyHash = srcRecord.keyHashCode();
+                MapKey dstKey = dstMap.withKey();
+                srcRecord.copyToKey(dstKey);
+                MapValue dstValue = dstKey.createValue(srcKeyHash);
+                srcRecord.copyValue(dstValue);
+            }
+            currentJoinKeyMap.clear();
+            currentJoinKeyMap = dstMap;
+
+            // we need to update the record to point to the new map
+            // and we have to preserve the slave record state too since of() implicitly set hasSlave() to true
+            boolean hasSlave = record.hasSlave();
+            record.of(masterRecord, currentJoinKeyMap.getRecord());
+            record.hasSlave(hasSlave);
+        }
+
         @Override
         public long size() {
             return masterCursor.size();
@@ -267,7 +316,9 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
         @Override
         public void toTop() {
-            joinKeyMap.clear();
+            currentJoinKeyMap.clear();
+            currentJoinKeyMap = joinKeyMapA;
+            assert currentJoinKeyMap.size() == 0;
             slaveTimestamp = Long.MIN_VALUE;
             danglingSlaveRecord = false;
             masterCursor.toTop();
@@ -278,15 +329,17 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
             if (!isOpen) {
                 isOpen = true;
-                joinKeyMap.reopen();
+                joinKeyMapA.reopen();
+                joinKeyMapB.reopen();
             }
+            currentJoinKeyMap = joinKeyMapA;
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             slaveTimestamp = Long.MIN_VALUE;
             danglingSlaveRecord = false;
             masterRecord = masterCursor.getRecord();
             slaveRecord = slaveCursor.getRecord();
-            MapRecord mapRecord = joinKeyMap.getRecord();
+            MapRecord mapRecord = currentJoinKeyMap.getRecord();
             mapRecord.setSymbolTableResolver(slaveCursor, columnIndex);
             record.of(masterRecord, mapRecord);
             isMasterHasNextPending = true;
