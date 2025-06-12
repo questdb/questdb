@@ -186,11 +186,16 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 break;
             case REMOVE_SYMBOL_COLUMN:
                 if (joinType == JoinType.ASOF) {
-//                     key-ed ASOF join can't remove symbol column since it is used as a JOIN key
+                    //  key-ed ASOF join can't remove symbol column since it is used as a JOIN key
                     return;
                 }
                 projection = "ts, i, ts";
                 break;
+            case REMOVE_TIMESTAMP_COLUMN:
+                projection = "i, s";
+                break;
+            default:
+                throw new IllegalArgumentException("Unexpected projection type: " + projectionType);
         }
 
         String outerProjection = "*";
@@ -323,6 +328,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         CROSS_COLUMN,
         RENAME_COLUMN,
         ADD_COLUMN,
-        REMOVE_SYMBOL_COLUMN
+        REMOVE_SYMBOL_COLUMN,
+        REMOVE_TIMESTAMP_COLUMN
     }
 }
