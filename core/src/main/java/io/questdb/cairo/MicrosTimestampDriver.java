@@ -203,6 +203,23 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long castAsDate(long timestamp) {
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / 1000L;
+    }
+
+    @Override
+    public long castDateAs(long date) {
+        if (date == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        try {
+            return Math.multiplyExact(date, 1000L);
+        } catch (ArithmeticException e) {
+            throw ImplicitCastException.inconvertibleValue(date, ColumnType.DATE, ColumnType.TIMESTAMP_MICRO);
+        }
+    }
+
+    @Override
     public boolean convertToVar(long fixedAddr, CharSink<?> sink) {
         long value = Unsafe.getUnsafe().getLong(fixedAddr);
         if (value != Numbers.LONG_NULL) {
@@ -304,6 +321,15 @@ public class MicrosTimestampDriver implements TimestampDriver {
             default:
                 return null;
         }
+    }
+
+    @Override
+    public TimestampUtils.TimestampUnitConverter getTimestampUnitConverter(int fromTimestampType) {
+        assert ColumnType.tagOf(fromTimestampType) == ColumnType.TIMESTAMP;
+        if (fromTimestampType == ColumnType.TIMESTAMP_MICRO) {
+            return null;
+        }
+        return this::toNanos;
     }
 
     @Override
@@ -721,6 +747,23 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 }
             }
             throw expectedPartitionDirNameFormatCairoException(partitionName, lo, hi, partitionBy);
+        }
+    }
+
+    @Override
+    public long toMacros(long timestamp) {
+        return timestamp;
+    }
+
+    @Override
+    public long toNanos(long micros) {
+        if (micros == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        try {
+            return Math.multiplyExact(micros, 1000L);
+        } catch (ArithmeticException e) {
+            throw ImplicitCastException.inconvertibleValue(micros, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO);
         }
     }
 

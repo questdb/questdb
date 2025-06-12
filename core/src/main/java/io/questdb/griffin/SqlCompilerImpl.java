@@ -586,7 +586,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
-        TimestampUtils.TimestampUnitConverter converter = TimestampUtils.getTimestampUnitConverter(fromTimestampType, writer.getMetadata().getTimestampType());
+        TimestampUtils.TimestampUnitConverter converter = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType()).getTimestampUnitConverter(fromTimestampType);
         if (converter == null) {
             while (cursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -598,7 +598,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } else {
             while (cursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
-                TableWriter.Row row = writer.newRow(converter.convert(record.getTimestamp(cursorTimestampIndex) * 1000));
+                TableWriter.Row row = writer.newRow(converter.convert(record.getTimestamp(cursorTimestampIndex)));
                 copier.copy(record, row);
                 row.append();
                 rowCount++;
@@ -622,7 +622,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
-        TimestampUtils.TimestampUnitConverter converter = TimestampUtils.getTimestampUnitConverter(fromTimestampType, writer.getMetadata().getTimestampType());
+        TimestampUtils.TimestampUnitConverter converter = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType()).getTimestampUnitConverter(fromTimestampType);
         if (converter == null) {
             while (cursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();

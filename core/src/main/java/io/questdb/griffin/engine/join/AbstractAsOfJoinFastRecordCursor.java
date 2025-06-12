@@ -262,10 +262,15 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     }
 
     protected static long scaleTimestamp(long timestamp, long scale) {
-        if (timestamp == Long.MIN_VALUE || timestamp == Long.MAX_VALUE) {
+        if (scale == 1 || timestamp == Long.MIN_VALUE) {
             return timestamp;
         }
-        return scale * timestamp;
+        try {
+            return Math.multiplyExact(timestamp, scale);
+        } catch (ArithmeticException e) {
+            // May "overflow" when micros scales to nanos, which will return max timestamp.
+            return Long.MAX_VALUE;
+        }
     }
 
     // Finds the last value less or equal to the master timestamp.

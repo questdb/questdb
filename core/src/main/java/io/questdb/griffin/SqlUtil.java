@@ -92,18 +92,6 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, fromColumnType, ColumnType.TIMESTAMP);
     }
 
-    // used by Copier assembler
-    @SuppressWarnings("unused")
-    public static long dateToTimestamp(long millis) {
-        return millis != Numbers.LONG_NULL ? millis * 1000L : millis;
-    }
-
-    // used by Copier assembler
-    @SuppressWarnings("unused")
-    public static long dateToTimestampNs(long millis) {
-        return millis != Numbers.LONG_NULL ? millis * 1000_000L : millis;
-    }
-
     public static long expectMicros(CharSequence tok, int position) throws SqlException {
         int k = -1;
 
@@ -768,18 +756,6 @@ public class SqlUtil {
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
         }
         return parser;
-    }
-
-    @SuppressWarnings("unused")
-    // used by the row copier
-    public static long implicitCastTimestampAsDate(long value) {
-        return value == Numbers.LONG_NULL ? Numbers.LONG_NULL : value / 1000L;
-    }
-
-    @SuppressWarnings("unused")
-    // used by the row copier
-    public static long implicitCastTimestampNSAsDate(long value) {
-        return value == Numbers.LONG_NULL ? Numbers.LONG_NULL : value / 1000_000L;
     }
 
     public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink<?> sink) {

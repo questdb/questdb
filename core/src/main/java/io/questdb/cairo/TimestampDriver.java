@@ -55,6 +55,14 @@ public interface TimestampDriver {
 
     void appendPGWireText(CharSink<?> sink, long timestamp);
 
+    @SuppressWarnings("unused")
+        // used by the row copier
+    long castAsDate(long timestamp);
+
+    @SuppressWarnings("unused")
+        // used by the row copier
+    long castDateAs(long timestamp);
+
     default long castStr(CharSequence value, int tupleIndex, short fromType, short toType) {
         try {
             return parseFloorLiteral(value);
@@ -81,6 +89,8 @@ public interface TimestampDriver {
     DateFormat getPartitionDirFormatMethod(int partitionBy);
 
     PartitionFloorMethod getPartitionFloorMethod(int partitionBy);
+
+    TimestampUtils.TimestampUnitConverter getTimestampUnitConverter(int fromTimestampType);
 
     default long implicitCast(CharSequence value, int typeFrom) {
         assert typeFrom == ColumnType.STRING || typeFrom == ColumnType.SYMBOL;
@@ -150,6 +160,10 @@ public interface TimestampDriver {
     void parseInterval(CharSequence input, int pos, int lim, short operation, LongList out) throws NumericException;
 
     long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi);
+
+    long toMacros(long timestamp);
+
+    long toNanos(long timestamp);
 
     long toNanosScale();
 

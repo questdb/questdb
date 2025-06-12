@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.cairo.TimestampUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -135,8 +134,6 @@ public class RecordToRowCopierUtils {
         int implicitCastStrAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong256", "(Ljava/lang/CharSequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
         int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
         int transferStrToTimestampCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferStrToTimestampCol", "(Lio/questdb/cairo/TableWriter$Row;ILjava/lang/CharSequence;Lio/questdb/cairo/TimestampDriver;)V");
-        int implicitCastDateAsTimestamp = asm.poolMethod(SqlUtil.class, "dateToTimestamp", "(J)J");
-        int implicitCastDateAsTimestampNs = asm.poolMethod(SqlUtil.class, "dateToTimestampNs", "(J)J");
         int implicitCastShortAsByte = asm.poolMethod(SqlUtil.class, "implicitCastShortAsByte", "(S)B");
         int implicitCastIntAsByte = asm.poolMethod(SqlUtil.class, "implicitCastIntAsByte", "(I)B");
         int implicitCastLongAsByte = asm.poolMethod(SqlUtil.class, "implicitCastLongAsByte", "(J)B");
@@ -160,10 +157,10 @@ public class RecordToRowCopierUtils {
         int implicitCastFloatAsInt = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsInt", "(F)I");
         int implicitCastDoubleAsInt = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsInt", "(D)I");
 
-        int implicitCastTimestampAsDate = asm.poolMethod(SqlUtil.class, "implicitCastTimestampAsDate", "(J)J");
-        int implicitCastTimestampNSAsDate = asm.poolMethod(SqlUtil.class, "implicitCastTimestampNSAsDate", "(J)J");
-        int implicitCastTimestampMicroAsNanos = asm.poolMethod(TimestampUtils.class, "microsToNanos", "(J)J");
-        int implicitCastTimestampNanosAsMicros = asm.poolMethod(TimestampUtils.class, "nanosToMacros", "(J)J");
+        int implicitCastDateAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "castDateAs", "(J)J");
+        int implicitCastTimestampAsDate = asm.poolInterfaceMethod(TimestampDriver.class, "castAsDate", "(J)J");
+        int implicitCastTimestampMicroAsNanos = asm.poolInterfaceMethod(TimestampDriver.class, "toNanos", "(J)J");
+        int implicitCastTimestampNanosAsMicros = asm.poolInterfaceMethod(TimestampDriver.class, "toMacros", "(J)J");
 
         int implicitCastFloatAsLong = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsLong", "(F)J");
         int implicitCastDoubleAsLong = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsLong", "(D)J");
@@ -285,13 +282,37 @@ public class RecordToRowCopierUtils {
 
             final int toColumnType = to.getColumnType(toColumnIndex);
             final int fromColumnType = from.getColumnType(i);
+            int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
             final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
             final int toColumnWriterIndex = to.getWriterIndex(toColumnIndex);
+
+            int timestampDriverRef = -1;
+            // determine the `TimestampDriver` during bytecode generation to avoid
+            // calling `ColumnType.getTimestampDriver()` at runtime much times.
+            if (toColumnTypeTag == ColumnType.DATE && fromColumnTypeTag == ColumnType.TIMESTAMP) { // Timestamp -> Date
+                if (fromColumnType == ColumnType.TIMESTAMP_MICRO) {
+                    timestampDriverRef = microTimestampDriverRef;
+                } else {
+                    timestampDriverRef = nanoTimestampDriverRef;
+                }
+            } else if (toColumnTypeTag == ColumnType.TIMESTAMP && fromColumnTypeTag == ColumnType.DATE) { // Date -> Timestamp
+                if (toColumnType == ColumnType.TIMESTAMP_MICRO) {
+                    timestampDriverRef = microTimestampDriverRef;
+                } else {
+                    timestampDriverRef = nanoTimestampDriverRef;
+                }
+            } else if (toColumnTypeTag == ColumnType.TIMESTAMP && fromColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != toColumnType) { // Timestamp -> Timestamp
+                if (toColumnType == ColumnType.TIMESTAMP_MICRO) {
+                    timestampDriverRef = nanoTimestampDriverRef;
+                } else {
+                    timestampDriverRef = microTimestampDriverRef;
+                }
+            }
 
             // todo: this branch is not great, but we need parser
             // inside the stack building block, not sure how to do it better
             if (toColumnTypeTag == ColumnType.ARRAY &&
-                    ColumnType.tagOf(fromColumnType) == ColumnType.STRING) {
+                    fromColumnTypeTag == ColumnType.STRING) {
                 // Build stack with parser in the right position
                 asm.aload(2);
                 // Stack: [rowWriter]
@@ -311,14 +332,18 @@ public class RecordToRowCopierUtils {
                 // stack: [rowWriter]
                 asm.iconst(toColumnWriterIndex);
                 // stack: [rowWriter, toColumnIndex]
+
+                if (timestampDriverRef != -1) {
+                    asm.getStatic(timestampDriverRef);
+                    // stack: [rowWriter, toColumnIndex, timestampDriver]
+                }
+
                 asm.aload(1);
-                // stack: [rowWriter, toColumnIndex, record]
+                // stack: [rowWriter, toColumnIndex, [timestampDriver], record]
                 asm.iconst(i);
-                // stack: [rowWriter, toColumnIndex, record, fromColumnIndex]
+                // stack: [rowWriter, toColumnIndex, [timestampDriver], record, fromColumnIndex]
             }
 
-
-            int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
             if (fromColumnTypeTag == ColumnType.NULL) {
                 fromColumnTypeTag = toColumnTypeTag;
             }
@@ -428,11 +453,7 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            if (toColumnType == ColumnType.TIMESTAMP_MICRO) {
-                                asm.invokeStatic(implicitCastDateAsTimestamp);
-                            } else {
-                                asm.invokeStatic(implicitCastDateAsTimestampNs);
-                            }
+                            asm.invokeInterface(implicitCastDateAsTimestamp, 2);
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.FLOAT:
@@ -475,19 +496,15 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         case ColumnType.DATE:
-                            if (fromColumnType == ColumnType.TIMESTAMP_MICRO) {
-                                asm.invokeStatic(implicitCastTimestampAsDate);
-                            } else {
-                                asm.invokeStatic(implicitCastTimestampNSAsDate);
-                            }
+                            asm.invokeInterface(implicitCastTimestampAsDate, 2);
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
                             if (fromColumnType != toColumnType) {
-                                if (fromColumnType == ColumnType.TIMESTAMP_MICRO) {
-                                    asm.invokeStatic(implicitCastTimestampMicroAsNanos);
+                                if (toColumnType == ColumnType.TIMESTAMP_MICRO) {
+                                    asm.invokeInterface(implicitCastTimestampNanosAsMicros, 2);
                                 } else {
-                                    asm.invokeStatic(implicitCastTimestampNanosAsMicros);
+                                    asm.invokeInterface(implicitCastTimestampMicroAsNanos, 2);
                                 }
                             }
                             asm.invokeInterface(wPutTimestamp, 3);

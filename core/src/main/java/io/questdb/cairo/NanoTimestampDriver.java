@@ -202,6 +202,23 @@ public class NanoTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long castAsDate(long timestamp) {
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / 1000_000L;
+    }
+
+    @Override
+    public long castDateAs(long date) {
+        if (date == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        try {
+            return Math.multiplyExact(date, 1000_000L);
+        } catch (ArithmeticException e) {
+            throw ImplicitCastException.inconvertibleValue(date, ColumnType.DATE, ColumnType.TIMESTAMP_NANO);
+        }
+    }
+
+    @Override
     public boolean convertToVar(long fixedAddr, CharSink<?> sink) {
         long value = Unsafe.getUnsafe().getLong(fixedAddr);
         if (value != Numbers.LONG_NULL) {
@@ -303,6 +320,15 @@ public class NanoTimestampDriver implements TimestampDriver {
             default:
                 return null;
         }
+    }
+
+    @Override
+    public TimestampUtils.TimestampUnitConverter getTimestampUnitConverter(int fromTimestampType) {
+        assert ColumnType.tagOf(fromTimestampType) == ColumnType.TIMESTAMP;
+        if (fromTimestampType == ColumnType.TIMESTAMP_NANO) {
+            return null;
+        }
+        return this::toMacros;
     }
 
     @Override
@@ -702,6 +728,16 @@ public class NanoTimestampDriver implements TimestampDriver {
             }
             throw expectedPartitionDirNameFormatCairoException(partitionName, lo, hi, partitionBy);
         }
+    }
+
+    @Override
+    public long toMacros(long nanos) {
+        return nanos == Numbers.LONG_NULL ? Numbers.LONG_NULL : nanos / 1000L;
+    }
+
+    @Override
+    public long toNanos(long timestamp) {
+        return timestamp;
     }
 
     @Override
