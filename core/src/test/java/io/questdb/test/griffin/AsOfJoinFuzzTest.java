@@ -199,8 +199,15 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             outerProjection = "t1.ts, t2.i" + mainProjectionSuffix;
         }
 
-        // we can always hint to use BINARY_SEARCH, it's ignored in cases where it doesn't apply
-        String query = "select " + (avoidBinarySearchHint ? " /*+ AVOID_ASOF_BINARY_SEARCH(t1 t2) */ " : "") + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
+        String hint = "";
+        if (avoidBinarySearchHint) {
+            if (joinType == JoinType.LT_NONKEYD) {
+                hint = " /*+ AVOID_LT_BINARY_SEARCH(t1 t2) */ ";
+            } else {
+                hint = " /*+ AVOID_ASOF_BINARY_SEARCH(t1 t2) */ ";
+            }
+        }
+        String query = "select " + hint + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
         int limit;
         switch (limitType) {
             case POSITIVE_LIMIT:
@@ -220,12 +227,12 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         printSql(query, true);
         expectedSink.put(sink);
 
-
+        sink.clear();
+        printSql("EXPLAIN " + query, false);
         if (avoidBinarySearchHint) {
             TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
+            TestUtils.assertNotContains(sink, "Lt Join Fast Scan");
         } else if (joinType == JoinType.ASOF_NONKEYD || (joinType == JoinType.ASOF && projectionType == ProjectionType.NONE && !exerciseFilters && !exerciseIntervals)) {
-            sink.clear();
-            printSql("EXPLAIN " + query, false);
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
         }
 
