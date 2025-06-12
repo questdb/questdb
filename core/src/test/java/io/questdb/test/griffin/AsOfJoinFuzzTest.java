@@ -131,6 +131,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             case LT_NONKEYD:
                 join = " LT";
                 break;
+            case LT:
+                join = " LT";
+                onSuffix = (projectionType == ProjectionType.RENAME_COLUMN) ? " on t1.s = t2.s2 " : " on s ";
+                break;
             default:
                 throw new IllegalArgumentException("Unexpected join type: " + joinType);
         }
@@ -195,8 +199,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 projection = "*, i as i2";
                 break;
             case REMOVE_SYMBOL_COLUMN:
-                if (joinType == JoinType.ASOF) {
-                    //  key-ed ASOF join can't remove symbol column since it is used as a JOIN key
+                if (joinType == JoinType.ASOF || joinType == JoinType.LT) {
+                    //  key-ed joins can't remove symbol column since it is used as a JOIN key
                     return;
                 }
                 projection = "ts, i, ts";
@@ -218,10 +222,19 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
 
         String hint = "";
         if (avoidBinarySearchHint) {
-            if (joinType == JoinType.LT_NONKEYD) {
-                hint = " /*+ AVOID_LT_BINARY_SEARCH(t1 t2) */ ";
-            } else {
-                hint = " /*+ AVOID_ASOF_BINARY_SEARCH(t1 t2) */ ";
+            switch (joinType) {
+                case ASOF:
+                    // intentional fallthrough
+                case ASOF_NONKEYD:
+                    hint = " /*+ AVOID_ASOF_BINARY_SEARCH(t1 t2) */ ";
+                    break;
+                case LT:
+                    // intentional fallthrough
+                case LT_NONKEYD:
+                    hint = " /*+ AVOID_LT_BINARY_SEARCH(t1 t2) */ ";
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unexpected join type: " + joinType);
             }
         }
         String query = "select " + hint + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
@@ -346,7 +359,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
     }
 
     private enum JoinType {
-        ASOF, ASOF_NONKEYD, LT_NONKEYD
+        ASOF, ASOF_NONKEYD, LT_NONKEYD, LT
     }
 
     private enum LimitType {
