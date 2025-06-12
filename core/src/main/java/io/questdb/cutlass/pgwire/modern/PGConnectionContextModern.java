@@ -1458,9 +1458,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 pipelineCurrentEntry = nextEntry;
             } else {
                 LOG.debug().$("pipeline entry not consumed [instance=)").$(pipelineCurrentEntry)
-                        .$(", sql=").$(pipelineCurrentEntry.getSqlText())
-                        .$(", stmt=").$(pipelineCurrentEntry.getNamedStatement())
-                        .$(", portal=").$(pipelineCurrentEntry.getNamedPortal())
+                        .$(", sql=").utf8(pipelineCurrentEntry.getSqlText())
+                        .$(", stmt=").$safe(pipelineCurrentEntry.getNamedStatement())
+                        .$(", portal=").$safe(pipelineCurrentEntry.getNamedPortal())
                         .I$();
                 break;
             }
