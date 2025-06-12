@@ -35,10 +35,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 
-public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfLightJoinRecordCursor cursor;
 
-    public AsOfJoinNoKeyRecordCursorFactory(
+    public AsOfJoinLightNoKeyRecordCursorFactory(
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,

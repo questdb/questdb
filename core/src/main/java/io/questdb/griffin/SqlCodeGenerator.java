@@ -194,7 +194,7 @@ import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
-import io.questdb.griffin.engine.join.AsOfJoinNoKeyRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
@@ -2674,7 +2674,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                                         // slow path: this always works, but can be quite slow, especially with large slave tables
                                         if (!created) {
-                                            master = new AsOfJoinNoKeyRecordCursorFactory(
+                                            master = new AsOfJoinLightNoKeyRecordCursorFactory(
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                                     master,
                                                     slave,
