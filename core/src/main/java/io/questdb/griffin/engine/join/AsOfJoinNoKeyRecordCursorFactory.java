@@ -112,8 +112,8 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
         private Record masterRecord;
         private long slaveATimestamp = Long.MIN_VALUE;
         private long slaveBTimestamp = Long.MIN_VALUE;
-        private Record slaveRecA; // used for internal navigation
-        private Record slaveRecB; // used to inside outer join record
+        private Record slaveRecA; // used by this cursor for internal navigation, never exposed to users
+        private Record slaveRecB; // used by OuterJoinRecord
 
         public AsOfLightJoinRecordCursor(
                 int columnSplit,
