@@ -48,7 +48,7 @@ import static io.questdb.ParanoiaState.*;
 abstract class AbstractLogRecord implements LogRecord, Log {
     private static final ThreadLocal<Boolean> tlLogRecordInProgress =
             LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE ? ThreadLocal.withInitial(() -> false) : null;
-    private static final ThreadLocal<LogError> tlRecordLeakException = createRecordLeakExceptionThreadLocal();
+    private static final ThreadLocal<LogError> tlRecordLeakError = createRecordLeakErrorThreadLocal();
     private static final ThreadLocal<ObjHashSet<Throwable>> tlSet = ThreadLocal.withInitial(ObjHashSet::new);
     protected final RingQueue<LogRecordUtf8Sink> advisoryRing;
     protected final Sequence advisorySeq;
@@ -226,9 +226,9 @@ abstract class AbstractLogRecord implements LogRecord, Log {
 
     @Override
     public void $() {
-        LogRecordUtf8Sink sink = sink();
-        sink.putEOL();
         CursorHolder h = tl.get();
+        LogRecordUtf8Sink sink = h.ring.get(h.cursor);
+        sink.putEOL();
         try {
             if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
                 tlLogRecordInProgress.set(false);
@@ -460,7 +460,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         return nextWaiting(infoSeq, infoRing, LogLevel.INFO);
     }
 
-    private static @Nullable ThreadLocal<LogError> createRecordLeakExceptionThreadLocal() {
+    private static @Nullable ThreadLocal<LogError> createRecordLeakErrorThreadLocal() {
         switch (LOG_PARANOIA_MODE) {
             case LOG_PARANOIA_MODE_NONE:
                 return null;
@@ -552,19 +552,22 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         }
     }
 
-    private void checkLogRecordLeakTrap() {
+    private void checkLogRecordLeakTrap() throws LogError {
         ThreadLocal<Boolean> isRecordInProgress = tlLogRecordInProgress;
         if (isRecordInProgress == null) {
             return;
         }
-        LogError exception = tlRecordLeakException.get();
+        LogError logError = tlRecordLeakError.get();
         if (isRecordInProgress.get()) {
-            exception.printStackTrace(System.out);
+            CursorHolder h = tl.get();
+            h.ring.get(h.cursor).putEOL();
+            h.seq.done(h.cursor);
+            logError.printStackTrace(System.out);
             isRecordInProgress.set(false);
-            throw exception;
+            throw logError;
         }
         isRecordInProgress.set(true);
-        exception.fillInStackTrace();
+        logError.fillInStackTrace();
     }
 
     protected LogRecord addTimestamp(LogRecord rec, String level) {
@@ -580,6 +583,12 @@ abstract class AbstractLogRecord implements LogRecord, Log {
 
     @NotNull
     protected LogRecord prepareLogRecord(Sequence seq, RingQueue<LogRecordUtf8Sink> ring, int level, long cursor) {
+        LogError logError = null;
+        try {
+            checkLogRecordLeakTrap();
+        } catch (LogError e) {
+            logError = e;
+        }
         CursorHolder h = tl.get();
         h.cursor = cursor;
         h.seq = seq;
@@ -587,7 +596,10 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         LogRecordUtf8Sink r = ring.get(cursor);
         r.setLevel(level);
         r.clear();
-        checkLogRecordLeakTrap();
+        if (logError != null) {
+            seq.done(cursor);
+            throw logError;
+        }
         return this;
     }
 
