@@ -580,7 +580,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
 
     @NotNull
     protected LogRecord prepareLogRecord(Sequence seq, RingQueue<LogRecordUtf8Sink> ring, int level, long cursor) {
-        checkLogRecordLeakTrap();
         CursorHolder h = tl.get();
         h.cursor = cursor;
         h.seq = seq;
@@ -588,6 +587,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         LogRecordUtf8Sink r = ring.get(cursor);
         r.setLevel(level);
         r.clear();
+        checkLogRecordLeakTrap();
         return this;
     }
 
