@@ -1144,11 +1144,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
         assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE 10X",
                 59,
-                "unsupported interval qualifier");
+                "unsupported TOLERANCE unit [unit=X]");
 
         assertException("select * from trades t JOIN quotes q on tag TOLERANCE 10s",
                 44,
                 "TOLERANCE is only supported for ASOF and LT joins");
+
+        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE",
+                49,
+                "ASOF JOIN TOLERANCE period expected");
+
+        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE -5m",
+                60,
+                "ASOF JOIN TOLERANCE must be positive");
+
+        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE $1",
+                59,
+                "ASOF JOIN TOLERANCE must be a constant");
     }
 
     @Test

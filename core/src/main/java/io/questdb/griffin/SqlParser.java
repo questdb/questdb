@@ -2580,13 +2580,13 @@ public class SqlParser {
 
         final ExpressionNode n = expr(lexer, null, sqlParserCallback, decls);
         if (n == null) {
-            throw SqlException.$(lexer.lastTokenPosition(), "ASOF JOIN tolerance period expected");
+            throw SqlException.$(lexer.lastTokenPosition(), "ASOF JOIN TOLERANCE period expected");
         }
         if (n.type == ExpressionNode.OPERATION && n.token != null && Chars.equals(n.token, "-")) {
-            throw SqlException.$(lexer.lastTokenPosition(), "ASOF JOIN tolerance must not be negative");
+            throw SqlException.$(lexer.lastTokenPosition(), "ASOF JOIN TOLERANCE must be positive");
         }
         if (n.type != ExpressionNode.CONSTANT) {
-            throw SqlException.$(lexer.lastTokenPosition(), "ASOF JOIN tolerance must be a constant");
+            throw SqlException.$(lexer.lastTokenPosition(), "ASOF JOIN TOLERANCE must be a constant");
         }
 
         joinModel.setAsOfJoinTolerance(n);
