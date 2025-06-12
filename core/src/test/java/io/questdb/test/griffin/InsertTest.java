@@ -54,7 +54,6 @@ import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -486,8 +485,6 @@ public class InsertTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsSelectTimestampAscOrderWithNanoTS() throws Exception {
-        // todo figure out why O3 task failed
-        Assume.assumeTrue(!walEnabled);
         testInsertAsSelectWithOrderByWithNanoTS("order by ts asc");
     }
 
@@ -498,8 +495,6 @@ public class InsertTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsSelectTimestampDescOrderWithNanoTS() throws Exception {
-        // todo figure out why O3 task failed
-        Assume.assumeTrue(!walEnabled);
         testInsertAsSelectWithOrderByWithNanoTS("order by ts desc");
     }
 
@@ -510,9 +505,17 @@ public class InsertTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsSelectTimestampNoOrderWithNanoTS() throws Exception {
-        // todo figure out why O3 task failed
-        Assume.assumeTrue(!walEnabled);
         testInsertAsSelectWithOrderByWithNanoTS("");
+    }
+
+    @Test
+    public void testInsertAsWithNanos_string() throws Exception {
+        assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456789Z\n", "with x as (select 1, '123456789') insert atomic into tab select * from x", null, false, "timestamp_ns");
+    }
+
+    @Test
+    public void testInsertAsWithNanos_varchar() throws Exception {
+        assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456789Z\n", "with x as (select 1, '123456789'::varchar) insert atomic into tab select * from x", null, false, "timestamp_ns");
     }
 
     @Test
@@ -635,6 +638,28 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertExplicitTimestampNSPos1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE TS (timestamp TIMESTAMP_NS, field STRING, value DOUBLE) TIMESTAMP(timestamp) partition by day");
+            execute("INSERT INTO TS(field, value, timestamp) values('X',123.33, to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'))");
+            String expected = "timestamp\tfield\tvalue\n" + "2019-12-04T13:20:49.000000000Z\tX\t123.33\n";
+
+            assertReaderCheckWal(expected, "TS");
+        });
+    }
+
+    @Test
+    public void testInsertExplicitTimestampNSPos1_varchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE TS (timestamp TIMESTAMP_NS, field STRING, value DOUBLE) TIMESTAMP(timestamp) partition by day");
+            execute("INSERT INTO TS(field, value, timestamp) values('X',123.33, to_timestamp('2019-12-04T13:20:49'::varchar, 'yyyy-MM-ddTHH:mm:ss'))");
+            String expected = "timestamp\tfield\tvalue\n" + "2019-12-04T13:20:49.000000000Z\tX\t123.33\n";
+
+            assertReaderCheckWal(expected, "TS");
+        });
+    }
+
+    @Test
     public void testInsertExplicitTimestampPos1() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)");
@@ -678,6 +703,13 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertISODateVarcharToDesignatedTimestampNSColumn() throws Exception {
+        final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000000Z\n";
+
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03'::varchar)", null, true, "timestamp_ns");
+    }
+
+    @Test
     public void testInsertISOMicroStringTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000Z\n";
 
@@ -685,10 +717,24 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertISOMicroStringTimestampColumnNSNoTimezone() throws Exception {
+        final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000001Z\n";
+
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00.000000001')", null, true, "timestamp_ns");
+    }
+
+    @Test
     public void testInsertISOMicroStringTimestampColumnNoTimezone() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000Z\n";
 
         assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00.000000')", null, true, "timestamp");
+    }
+
+    @Test
+    public void testInsertISOMicroStringTimestampNSColumn() throws Exception {
+        final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000000Z\n";
+
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00.000000000Z')", null, true, "timestamp_ns");
     }
 
     @Test
@@ -703,6 +749,13 @@ public class InsertTest extends AbstractCairoTest {
         final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000Z\n";
 
         assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00.000000'::varchar)", null, true, "timestamp");
+    }
+
+    @Test
+    public void testInsertISOMicroVarcharTimestampNSColumnNoTimezone() throws Exception {
+        final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000123Z\n";
+
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00.000000123'::varchar)", null, true, "timestamp_ns");
     }
 
     @Test
@@ -725,6 +778,25 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertISOMilliWithTzDateStringTimestampNSColumn() throws Exception {
+        final String expected = "seq\tts\n" + "1\t2021-01-02T23:00:00.000000000Z\n";
+
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00+01')", null, true, "timestamp_ns");
+    }
+
+    @Test
+    public void testInsertISOMilliWithTzDateStringTimestampNSColumn2() throws Exception {
+        final String expected = "seq\tts\n" + "1\t2021-01-03T03:30:00.000000000Z\n";
+
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T02:00:00-01:30')", null, true, "timestamp_ns");
+    }
+
+    @Test
+    public void testInsertISOMilliWithTzDateStringTimestampNSColumnFails() throws Exception {
+        assertInsertTimestamp("inconvertible value: `2021-01-03T02:00:00-:30` [STRING -> TIMESTAMP_NS]", "insert into tab values (1, '2021-01-03T02:00:00-:30')", ImplicitCastException.class, true, "timestamp_ns");
+    }
+
+    @Test
     public void testInsertISOMilliWithTzDateVarcharTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-02T23:00:00.000000Z\n";
 
@@ -744,10 +816,36 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertISOMilliWithTzDateVarcharTimestampNSColumn() throws Exception {
+        final String expected = "seq\tts\n" + "1\t2021-01-02T23:00:00.000000000Z\n";
+
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00+01'::varchar)", null, true, "timestamp_ns");
+    }
+
+    @Test
+    public void testInsertISOMilliWithTzDateVarcharTimestampNSColumn2() throws Exception {
+        final String expected = "seq\tts\n" + "1\t2021-01-03T03:30:00.000000000Z\n";
+
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T02:00:00-01:30'::varchar)", null, true, "timestamp_ns");
+    }
+
+    @Test
+    public void testInsertISOMilliWithTzDateVarcharTimestampNSColumnFails() throws Exception {
+        assertInsertTimestamp("inconvertible value: `2021-01-03T02:00:00-:30` [VARCHAR -> TIMESTAMP_NS]", "insert into tab values (1, '2021-01-03T02:00:00-:30'::varchar)", ImplicitCastException.class, true, "timestamp_ns");
+    }
+
+    @Test
     public void testInsertISOSecondsDateStringTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000Z\n";
 
         assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00Z')", null, true, "timestamp");
+    }
+
+    @Test
+    public void testInsertISOSecondsDateStringTimestampNSColumn() throws Exception {
+        final String expected = "seq\tts\n" + "1\t2021-01-03T00:00:00.000000000Z\n";
+
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00Z')", null, true, "timestamp_ns");
     }
 
     @Test
@@ -811,8 +909,18 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertInvalidDateStringTimestampNSColumn() throws Exception {
+        assertInsertTimestamp("inconvertible value: `2021-23-03T00:00:00Z` [STRING -> TIMESTAMP_NS]", "insert into tab values (1, '2021-23-03T00:00:00Z')", ImplicitCastException.class, true, "timestamp_ns");
+    }
+
+    @Test
     public void testInsertInvalidDateVarcharTimestampColumn() throws Exception {
         assertInsertTimestamp("inconvertible value: `2021-23-03T00:00:00Z` [VARCHAR -> TIMESTAMP]", "insert into tab values (1, '2021-23-03T00:00:00Z'::varchar)", ImplicitCastException.class, true, "timestamp");
+    }
+
+    @Test
+    public void testInsertInvalidDateVarcharTimestampNSColumn() throws Exception {
+        assertInsertTimestamp("inconvertible value: `2021-23-03T00:00:00Z` [VARCHAR -> TIMESTAMP_NS]", "insert into tab values (1, '2021-23-03T00:00:00Z'::varchar)", ImplicitCastException.class, true, "timestamp_ns");
     }
 
     @Test
@@ -922,7 +1030,14 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertMultipleRowsOutOfOrder() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trades (ts timestamp) timestamp(ts);");
+            execute("create table trades (ts timestamp) timestamp(ts) partition by day;");
+            try {
+                execute("insert into trades VALUES (1), (3), (2);");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot insert rows out of order to non-partitioned table.");
+            }
+
+            execute("create table trades_ns (ts timestamp_ns) timestamp(ts) partition by day;");
             try {
                 execute("insert into trades VALUES (1), (3), (2);");
             } catch (CairoException e) {
@@ -1169,6 +1284,88 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertTimestampNSOverflowException() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (t1 timestamp_ns) timestamp(t1) partition by day;");
+            assertException("insert into tab values ('2300-01-03T00:00:00.000001123')", 24, "timestamp_ns before 1970-01-01 and beyond 2262-04-11 23:47:16.854775807 is not allowed");
+        });
+    }
+
+    @Test
+    public void testInsertTimestampNSOverflowException2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (t1 timestamp_ns, t2 timestamp_ns) timestamp(t2) partition by day;");
+            assertException("insert into tab values ('2300-01-03T00:00:00.000001123', '2000-01-03T00:00:00.000001123')", 0, "timestamp_ns before 1970-01-01 and beyond 2262-04-11 23:47:16.854775807 is not allowed");
+        });
+    }
+
+    @Test
+    public void testInsertTimestampNSOverflowException3() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (t1 timestamp, t2 timestamp) timestamp(t2) partition by DAY;");
+            execute("insert into tab values ('2321-01-03T00:00:00.123', '2021-01-03T00:00:00.456');");
+            assertReaderCheckWal("t1\tt2\n" +
+                    "2321-01-03T00:00:00.123000Z\t2021-01-03T00:00:00.456000Z\n", "tab");
+            execute("create table tab1 (t1 timestamp_ns, t2 timestamp_ns) timestamp(t2) partition by DAY;");
+            assertException("insert into tab1 select t1, t2 from tab", 0, "inconvertible value: 11076652800123000 [TIMESTAMP -> TIMESTAMP_NS]");
+        });
+    }
+
+    @Test
+    public void testInsertTimestampNSWithTimeZone() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (timestamp timestamp_ns) timestamp(timestamp) partition by day;");
+            execute("insert into t values (timestamp with time zone '2020-12-31 15:15:51.663+00:00')");
+
+            String expected1 = "timestamp\n" + "2020-12-31T15:15:51.663000000Z\n";
+
+            assertReaderCheckWal(expected1, "t");
+
+            execute("insert into t values (cast('2021-12-31 15:15:51.663+00:00' as timestamp with time zone))");
+
+            String expected2 = expected1 + "2021-12-31T15:15:51.663000000Z\n";
+
+            assertReaderCheckWal(expected2, "t");
+
+            assertException("insert into t values  (timestamp with time zone)", 47, "String literal expected after 'timestamp with time zone'");
+        });
+    }
+
+    @Test
+    public void testInsertTimestampNSWithTimeZone_varchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (timestamp timestamp_ns) timestamp(timestamp) partition by day;");
+            execute("insert into t values (timestamp with time zone '2020-12-31 15:15:51.663+00:00')");
+
+            String expected1 = "timestamp\n" + "2020-12-31T15:15:51.663000000Z\n";
+
+            assertReaderCheckWal(expected1, "t");
+
+            execute("insert into t values (cast('2021-12-31 15:15:51.663+00:00'::varchar as timestamp with time zone))");
+
+            String expected2 = expected1 + "2021-12-31T15:15:51.663000000Z\n";
+
+            assertReaderCheckWal(expected2, "t");
+
+            assertException("insert into t values  (timestamp with time zone)", 47, "String literal expected after 'timestamp with time zone'");
+        });
+    }
+
+    @Test
+    public void testInsertTimestampNS_timestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (t1 timestamp, t2 timestamp) timestamp(t2) partition by DAY;");
+            execute("insert into tab values ('2021-01-03T00:00:00.123', '2021-01-03T00:00:00.456');");
+            assertReaderCheckWal("t1\tt2\n" +
+                    "2021-01-03T00:00:00.123000Z\t2021-01-03T00:00:00.456000Z\n", "tab");
+            execute("create table tab1 (t1 timestamp_ns, t2 timestamp_ns) timestamp(t2) partition by DAY;");
+            execute("insert into tab1 select t1, t2 from tab;");
+            assertReaderCheckWal("t1\tt2\n" +
+                    "2021-01-03T00:00:00.123000000Z\t2021-01-03T00:00:00.456000000Z\n", "tab1");
+        });
+    }
+
+    @Test
     public void testInsertTimestampWithTimeZone() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (timestamp timestamp) timestamp(timestamp);");
@@ -1213,6 +1410,20 @@ public class InsertTest extends AbstractCairoTest {
             assertReaderCheckWal(expected2, "t");
 
             assertException("insert into t values  (timestamp with time zone)", 47, "String literal expected after 'timestamp with time zone'");
+        });
+    }
+
+    @Test
+    public void testInsertTimestamp_timestampNS() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (t1 timestamp_ns, t2 timestamp_ns) timestamp(t2) partition by day;");
+            execute("insert into tab values ('2021-01-03T00:00:00.000001123', '2021-01-03T00:00:00.000004456');");
+            assertReaderCheckWal("t1\tt2\n" +
+                    "2021-01-03T00:00:00.000001123Z\t2021-01-03T00:00:00.000004456Z\n", "tab");
+            execute("create table tab1 (t1 timestamp, t2 timestamp) timestamp(t2) partition by day;");
+            execute("insert into tab1 select t1, t2 from tab;");
+            assertReaderCheckWal("t1\tt2\n" +
+                    "2021-01-03T00:00:00.000001Z\t2021-01-03T00:00:00.000004Z\n", "tab1");
         });
     }
 
@@ -1377,11 +1588,14 @@ public class InsertTest extends AbstractCairoTest {
     private void assertInsertTimestamp(String expected, String ddl2, Class<?> exceptionType, boolean commitInsert, String timestampType) throws Exception {
         assertMemoryLeak(() -> {
             if (commitInsert) {
-                execute("create table tab(seq long, ts #TIMESTAMP_TYPE) timestamp(ts)".replace("#TIMESTAMP_TYPE", timestampType));
+                execute("create table tab(seq long, ts #TIMESTAMP_TYPE) timestamp(ts) partition by day".replace("#TIMESTAMP_TYPE", timestampType));
                 try {
                     execute(ddl2);
                     if (exceptionType != null) {
                         Assert.fail("SqlException expected");
+                    }
+                    if (walEnabled) {
+                        drainWalQueue();
                     }
                     assertSql(expected, "tab");
                 } catch (Throwable e) {
@@ -1392,11 +1606,14 @@ public class InsertTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), expected);
                 }
             } else {
-                execute("create table tab(seq long, ts #TIMESTAMP_TYPE) timestamp(ts)".replace("#TIMESTAMP_TYPE", timestampType));
+                execute("create table tab(seq long, ts #TIMESTAMP_TYPE) timestamp(ts) partition by day".replace("#TIMESTAMP_TYPE", timestampType));
                 try {
                     execute(ddl2);
                     if (exceptionType != null) {
                         Assert.fail("SqlException expected");
+                    }
+                    if (walEnabled) {
+                        drainWalQueue();
                     }
                     assertSql(expected, "tab");
                 } catch (Throwable e) {

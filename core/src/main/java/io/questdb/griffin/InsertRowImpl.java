@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TimestampUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.std.Misc;
@@ -39,12 +40,13 @@ import io.questdb.std.QuietCloseable;
 public final class InsertRowImpl implements QuietCloseable {
     private final RecordToRowCopier copier;
     private final RowFactory rowFactory;
+    private final TimestampDriver timestampDriver;
     private final Function timestampFunction;
+    private final TimestampUtils.TimestampUnitConverter timestampFunctionConverter;
     private final int timestampFunctionPosition;
+    private final int timestampType;
     private final int tupleIndex;
     private final VirtualRecord virtualRecord;
-    private final TimestampDriver timestampDriver;
-    private final int timestampType;
 
     public InsertRowImpl(
             VirtualRecord virtualRecord,
@@ -65,10 +67,17 @@ public final class InsertRowImpl implements QuietCloseable {
             int type = timestampFunction.getType();
             if (ColumnType.isString(type) || ColumnType.isVarchar(type)) {
                 rowFactory = this::getRowWithStringTimestamp;
+                this.timestampFunctionConverter = null;
             } else {
-                rowFactory = this::getRowWithTimestamp;
+                timestampFunctionConverter = timestampDriver.getTimestampUnitConverter(type);
+                if (timestampFunctionConverter == null) {
+                    rowFactory = this::getRowWithTimestamp;
+                } else {
+                    rowFactory = this::getRowWithTimestampWithConverter;
+                }
             }
         } else {
+            this.timestampFunctionConverter = null;
             rowFactory = this::getRowWithoutTimestamp;
         }
     }
@@ -106,8 +115,8 @@ public final class InsertRowImpl implements QuietCloseable {
                         timestampDriver.castStr(
                                 timestampFunction.getStrA(null),
                                 tupleIndex,
-                                (short) timestampFunction.getType(),
-                                (short) timestampType
+                                timestampFunction.getType(),
+                                timestampType
                         )
                 );
             } catch (CairoException e) {
@@ -123,6 +132,17 @@ public final class InsertRowImpl implements QuietCloseable {
     private TableWriter.Row getRowWithTimestamp(TableWriterAPI tableWriter) {
         try {
             return tableWriter.newRow(timestampFunction.getTimestamp(null));
+        } catch (CairoException e) {
+            if (!e.isCritical()) {
+                e.position(timestampFunctionPosition);
+            }
+            throw e;
+        }
+    }
+
+    private TableWriter.Row getRowWithTimestampWithConverter(TableWriterAPI tableWriter) {
+        try {
+            return tableWriter.newRow(timestampFunctionConverter.convert(timestampFunction.getTimestamp(null)));
         } catch (CairoException e) {
             if (!e.isCritical()) {
                 e.position(timestampFunctionPosition);

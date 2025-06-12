@@ -80,7 +80,7 @@ public class SqlUtil {
         model.setArtificialStar(true);
     }
 
-    public static long castPGDates(CharSequence value, int fromColumnType) {
+    public static long castPGDates(CharSequence value, int fromColumnType, int toTimestampType) {
         final int hi = value.length();
         for (int i = 0; i < IMPLICIT_CAST_FORMATS_SIZE; i++) {
             try {
@@ -89,7 +89,7 @@ public class SqlUtil {
             } catch (NumericException ignore) {
             }
         }
-        throw ImplicitCastException.inconvertibleValue(value, fromColumnType, ColumnType.TIMESTAMP);
+        throw ImplicitCastException.inconvertibleValue(value, fromColumnType, toTimestampType);
     }
 
     public static long expectMicros(CharSequence tok, int position) throws SqlException {

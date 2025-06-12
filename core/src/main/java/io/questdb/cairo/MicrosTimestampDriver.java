@@ -250,6 +250,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public int getColumnType() {
+        return ColumnType.TIMESTAMP_MICRO;
+    }
+
+    @Override
     public PartitionAddMethod getPartitionAddMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
@@ -324,9 +329,9 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimestampUtils.TimestampUnitConverter getTimestampUnitConverter(int toTimestampType) {
-        if (toTimestampType == ColumnType.TIMESTAMP_NANO) {
-            return this::toNanos;
+    public TimestampUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType) {
+        if (srcTimestampType == ColumnType.TIMESTAMP_NANO) {
+            return TimestampUtils::nanosToMicros;
         }
         return null;
     }
@@ -750,20 +755,13 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long toMacros(long timestamp) {
+    public long toMicros(long timestamp) {
         return timestamp;
     }
 
     @Override
     public long toNanos(long micros) {
-        if (micros == Numbers.LONG_NULL) {
-            return Numbers.LONG_NULL;
-        }
-        try {
-            return Math.multiplyExact(micros, 1000L);
-        } catch (ArithmeticException e) {
-            throw ImplicitCastException.inconvertibleValue(micros, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO);
-        }
+        return TimestampUtils.microsToNanos(micros);
     }
 
     @Override

@@ -63,7 +63,7 @@ public interface TimestampDriver {
         // used by the row copier
     long castDateAs(long timestamp);
 
-    default long castStr(CharSequence value, int tupleIndex, short fromType, short toType) {
+    default long castStr(CharSequence value, int tupleIndex, int fromType, int toType) {
         try {
             return parseFloorLiteral(value);
         } catch (NumericException e) {
@@ -82,6 +82,8 @@ public interface TimestampDriver {
 
     long fromSeconds(int seconds);
 
+    int getColumnType();
+
     PartitionAddMethod getPartitionAddMethod(int partitionBy);
 
     PartitionCeilMethod getPartitionCeilMethod(int partitionBy);
@@ -90,7 +92,7 @@ public interface TimestampDriver {
 
     PartitionFloorMethod getPartitionFloorMethod(int partitionBy);
 
-    TimestampUtils.TimestampUnitConverter getTimestampUnitConverter(int toTimestampType);
+    TimestampUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType);
 
     default long implicitCast(CharSequence value, int typeFrom) {
         assert typeFrom == ColumnType.STRING || typeFrom == ColumnType.SYMBOL;
@@ -106,7 +108,7 @@ public interface TimestampDriver {
             } catch (NumericException ignore) {
             }
 
-            return castPGDates(value, typeFrom);
+            return castPGDates(value, typeFrom, getColumnType());
         }
         return Numbers.LONG_NULL;
     }
@@ -130,9 +132,9 @@ public interface TimestampDriver {
 
             // all formats are ascii
             if (value.isAscii()) {
-                return castPGDates(value.asAsciiCharSequence(), ColumnType.VARCHAR);
+                return castPGDates(value.asAsciiCharSequence(), ColumnType.VARCHAR, getColumnType());
             }
-            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.TIMESTAMP);
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, getColumnType());
         }
         return Numbers.LONG_NULL;
     }
@@ -161,7 +163,7 @@ public interface TimestampDriver {
 
     long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi);
 
-    long toMacros(long timestamp);
+    long toMicros(long timestamp);
 
     long toNanos(long timestamp);
 

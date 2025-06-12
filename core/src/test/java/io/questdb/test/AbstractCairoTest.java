@@ -42,6 +42,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -621,8 +622,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     fut.await();
                 }
             } else {
-                // make sure to close update operation
-                try (UpdateOperation ignore = cq.getUpdateOperation()) {
+                // make sure to close update/insert operation
+                try (UpdateOperation ignore = cq.getUpdateOperation();
+                     InsertOperation insert = cq.popInsertOperation();) {
                     execute(compiler, sql, sqlExecutionContext);
                 }
             }

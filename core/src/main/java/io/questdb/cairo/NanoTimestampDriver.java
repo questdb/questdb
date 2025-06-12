@@ -46,7 +46,6 @@ import static io.questdb.std.datetime.microtime.TimestampFormatUtils.*;
 
 public class NanoTimestampDriver implements TimestampDriver {
     public static final TimestampDriver INSTANCE = new NanoTimestampDriver();
-
     private static final PartitionAddMethod ADD_DD = Nanos::addDays;
     private static final PartitionAddMethod ADD_HH = Nanos::addHours;
     private static final PartitionAddMethod ADD_MM = Nanos::addMonths;
@@ -78,6 +77,7 @@ public class NanoTimestampDriver implements TimestampDriver {
     private static final PartitionFloorMethod FLOOR_MM = Nanos::floorMM;
     private static final PartitionFloorMethod FLOOR_WW = Nanos::floorWW;
     private static final PartitionFloorMethod FLOOR_YYYY = Nanos::floorYYYY;
+    private static final String MAX_NANO_TIMESTAMP = "2262-04-11 23:47:16.854775807";
     private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(FLOOR_DD, DAY_FORMAT);
     private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(FLOOR_HH, HOUR_FORMAT);
     private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(FLOOR_MM, MONTH_FORMAT);
@@ -249,6 +249,11 @@ public class NanoTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public int getColumnType() {
+        return ColumnType.TIMESTAMP_NANO;
+    }
+
+    @Override
     public PartitionAddMethod getPartitionAddMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
@@ -323,9 +328,9 @@ public class NanoTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimestampUtils.TimestampUnitConverter getTimestampUnitConverter(int toTimestampType) {
-        if (toTimestampType == ColumnType.TIMESTAMP_MICRO) {
-            return this::toMacros;
+    public TimestampUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType) {
+        if (srcTimestampType == ColumnType.TIMESTAMP_MICRO) {
+            return TimestampUtils::microsToNanos;
         }
         return null;
     }
@@ -535,6 +540,9 @@ public class NanoTimestampDriver implements TimestampDriver {
             // year
             ts = (Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(1, l));
         }
+        if (ts < 0L) {
+            throw CairoException.nonCritical().put("timestamp_ns before 1970-01-01 and beyond ").put(MAX_NANO_TIMESTAMP).put(" is not allowed");
+        }
         return ts;
     }
 
@@ -730,8 +738,8 @@ public class NanoTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long toMacros(long nanos) {
-        return nanos == Numbers.LONG_NULL ? Numbers.LONG_NULL : nanos / 1000L;
+    public long toMicros(long nanos) {
+        return TimestampUtils.nanosToMicros(nanos);
     }
 
     @Override
@@ -816,10 +824,10 @@ public class NanoTimestampDriver implements TimestampDriver {
 
     private static void validateBounds0(long timestamp) {
         if (timestamp == Long.MIN_VALUE) {
-            throw CairoException.nonCritical().put("designated nano timestamp column cannot be NULL");
+            throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
         }
         if (timestamp < TableWriter.TIMESTAMP_EPOCH) {
-            throw CairoException.nonCritical().put("designated nano timestamp before 1970-01-01 and beyond 2262-04-12 is not allowed");
+            throw CairoException.nonCritical().put("designated timestamp_ns before 1970-01-01 and beyond ").put(MAX_NANO_TIMESTAMP).put(" is not allowed");
         }
     }
 
@@ -893,6 +901,9 @@ public class NanoTimestampDriver implements TimestampDriver {
             } else {
                 // year
                 ts = (Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(1, l));
+            }
+            if (ts < 0L) {
+                throw CairoException.nonCritical().put("timestamp_ns before 1970-01-01 and beyond ").put(MAX_NANO_TIMESTAMP).put(" is not allowed");
             }
             return ts;
         }
