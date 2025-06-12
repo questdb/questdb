@@ -137,9 +137,7 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
                 nextSlave(masterTimestamp - 1);
                 if (toleranceInterval != Numbers.LONG_NULL && record.hasSlave()) {
                     slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                    if (slaveTimestamp < masterTimestamp - toleranceInterval) {
-                        record.hasSlave(false);
-                    }
+                    record.hasSlave(slaveTimestamp >= masterTimestamp - toleranceInterval);
                 }
                 isMasterHasNextPending = true;
                 return true;
