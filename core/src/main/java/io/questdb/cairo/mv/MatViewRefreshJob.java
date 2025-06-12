@@ -273,6 +273,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long nowLocal = viewDefinition.getTimerTzRules() != null
                     ? now + viewDefinition.getTimerTzRules().getOffset(now)
                     : now;
+            // Period hi is exclusive, but maxTs is inclusive, so we align them.
             final long periodHiLocal = periodSampler.round(nowLocal - delay) - 1;
             final long periodHi = viewDefinition.getTimerTzRules() != null
                     ? periodHiLocal - viewDefinition.getTimerTzRules().getOffset(periodHiLocal)
@@ -299,11 +300,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     txnIntervals.add(periodLo, periodHi);
                     IntervalUtils.unionInPlace(txnIntervals, txnIntervals.size() - 2);
                     maxTs = periodHi;
-                    refreshIntervals.periodHi = periodHi;
+                    // Period hi is exclusive, but previously we made its value inclusive.
+                    refreshIntervals.periodHi = periodHi + 1;
                 }
             } else {
                 // It's a full refresh, so we need to bump lastPeriodHi once we're done.
-                refreshIntervals.periodHi = periodHi;
+                refreshIntervals.periodHi = periodHi + 1;
             }
         }
 
