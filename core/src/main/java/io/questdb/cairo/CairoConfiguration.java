@@ -440,6 +440,8 @@ public interface CairoConfiguration {
 
     int getSqlAsOfJoinLookAhead();
 
+    int getSqlAsOfJoinShortCircuitCacheCapacity();
+
     int getSqlCharacterStoreCapacity();
 
     int getSqlCharacterStoreSequencePoolCapacity();

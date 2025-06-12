@@ -2547,7 +2547,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                                 && slaveMetadata.getColumnType(slaveColumnIndex) == ColumnType.SYMBOL
                                                                 && slaveMetadata.isSymbolTableStatic(slaveColumnIndex)
                                                 ) {
-                                                    symbolShortCircuit = new SymbolShortCircuit(masterColumnIndex, slaveColumnIndex);
+                                                    symbolShortCircuit = new SymbolShortCircuit(configuration, masterColumnIndex, slaveColumnIndex);
                                                 }
                                             }
 

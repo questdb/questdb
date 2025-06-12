@@ -375,6 +375,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String snapshotInstanceId;
     private final long spinLockTimeout;
     private final int sqlAsOfJoinLookahead;
+    private final int sqlAsOfJoinShortCircuitCacheCapacity;
     private final int sqlBindVariablePoolSize;
     private final int sqlCharacterStoreCapacity;
     private final int sqlCharacterStoreSequencePoolCapacity;
@@ -1336,6 +1337,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlHashJoinLightValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 128 * 1024);
             this.sqlHashJoinLightValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlAsOfJoinLookahead = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 100);
+            this.sqlAsOfJoinShortCircuitCacheCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, 10_000_000);
             this.useFastAsOfJoin = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_FAST, true);
             this.sqlSortValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16777216);
             this.sqlSortValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
@@ -3250,6 +3252,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlAsOfJoinLookAhead() {
             return sqlAsOfJoinLookahead;
+        }
+
+        @Override
+        public int getSqlAsOfJoinShortCircuitCacheCapacity() {
+            return sqlAsOfJoinShortCircuitCacheCapacity;
         }
 
         @Override

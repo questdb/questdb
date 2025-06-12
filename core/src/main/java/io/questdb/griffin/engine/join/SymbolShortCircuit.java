@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
@@ -31,16 +33,18 @@ import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.std.IntHashSet;
 
 public final class SymbolShortCircuit {
-    public static final SymbolShortCircuit DISABLED = new SymbolShortCircuit(-1, -1);
-    private final static int MAX_CACHE_SIZE = 1_000_000;
+    public static final SymbolShortCircuit DISABLED = new SymbolShortCircuit(null, -1, -1);
+    private final CairoConfiguration config;
     private final IntHashSet masterKeysExistingInSlaveCache = new IntHashSet();
     private final int masterSymbolIndex;
     private final int slaveSymbolIndex;
+    private int maxCacheSize = 0;
     private StaticSymbolTable slaveSymbolTable;
 
-    public SymbolShortCircuit(int masterSymbolIndex, int slaveSymbolIndex) {
+    public SymbolShortCircuit(CairoConfiguration config, int masterSymbolIndex, int slaveSymbolIndex) {
         this.masterSymbolIndex = masterSymbolIndex;
         this.slaveSymbolIndex = slaveSymbolIndex;
+        this.config = config;
     }
 
     private boolean isDisabled() {
@@ -75,7 +79,7 @@ public final class SymbolShortCircuit {
         }
 
         // we reserve space in the cache for null, so < instead of <=
-        if (masterKeysExistingInSlaveCache.size() < MAX_CACHE_SIZE) {
+        if (masterKeysExistingInSlaveCache.size() < maxCacheSize) {
             masterKeysExistingInSlaveCache.add(masterKey);
         }
         return false;
@@ -87,5 +91,6 @@ public final class SymbolShortCircuit {
         }
         this.slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
         this.masterKeysExistingInSlaveCache.clear();
+        this.maxCacheSize = config.getSqlAsOfJoinShortCircuitCacheCapacity();
     }
 }
