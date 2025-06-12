@@ -475,7 +475,7 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         case ColumnType.DATE:
-                            if (toColumnType == ColumnType.TIMESTAMP_MICRO) {
+                            if (fromColumnType == ColumnType.TIMESTAMP_MICRO) {
                                 asm.invokeStatic(implicitCastTimestampAsDate);
                             } else {
                                 asm.invokeStatic(implicitCastTimestampNSAsDate);
