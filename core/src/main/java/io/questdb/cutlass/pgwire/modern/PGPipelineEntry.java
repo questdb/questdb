@@ -696,7 +696,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     getErrorMessageSink().putAscii("Internal error. Exception type: ").putAscii(th.getClass().getSimpleName());
                 }
             }
-            LOG.error().$(getErrorMessageSink()).$();
+            if (th instanceof AssertionError) {
+                // assertion errors means either a questdb bug or data corruption ->
+                // we want to see a full stack trace in server logs and log it as critical
+                LOG.critical().$("error in pgwire execute, ex=").$(th).$();
+            } else {
+                LOG.error().$(getErrorMessageSink()).$();
+            }
         } finally {
             // after execute is complete, bind variable values have been used and no longer needed in the cache
             bindVariableCharacterStore.clear();
@@ -2140,6 +2146,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     getErrorMessageSink().put(msg);
                 } else {
                     getErrorMessageSink().putAscii("no message provided (internal error)");
+                }
+                if (th instanceof AssertionError) {
+                    // assertion errors means either a questdb bug or data corruption ->
+                    // we want to see a full stack trace in server logs and log it as critical
+                    LOG.critical().$("error in pgwire execute, ex=").$(th).$();
                 }
             }
         }
