@@ -146,7 +146,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             @Override
             public void close() {
                 tableBucket.clear();
-                tableIndex = -1;
                 txReader.close();
             }
 
@@ -184,7 +183,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             @Override
             public void toTop() {
-                close();
+                tableIndex = -1;
             }
 
             public class TableListRecord implements Record {
