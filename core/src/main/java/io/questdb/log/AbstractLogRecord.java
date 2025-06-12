@@ -542,7 +542,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
             return null;
         }
         $();
-        logError.printStackTrace(System.out);
         return logError;
     }
 
@@ -568,6 +567,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         sink.setLevel(level);
         sink.clear();
         if (logError != null) {
+            logError.printStackTrace(System.out);
             seq.done(cursor);
             throw logError;
         }
