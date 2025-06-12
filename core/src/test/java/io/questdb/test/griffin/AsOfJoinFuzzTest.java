@@ -24,12 +24,18 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
@@ -128,8 +134,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             default:
                 throw new IllegalArgumentException("Unexpected join type: " + joinType);
         }
+
+        long toleranceSeconds = 0;
         if (maxTolerance != -1) {
-            long toleranceSeconds = rnd.nextLong(maxTolerance) + 1;
+            toleranceSeconds = rnd.nextLong(maxTolerance) + 1;
             onSuffix += " tolerance " + toleranceSeconds + "s ";
         }
 
@@ -171,6 +179,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
 
         String projection = "";
         // (ts TIMESTAMP, i INT, s SYMBOL)
+        String slaveTimestampColumnName = "ts1";
         switch (projectionType) {
             case NONE:
                 projection = "*";
@@ -180,6 +189,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 break;
             case RENAME_COLUMN:
                 projection = "s as s2, ts as ts2, i as i2";
+                slaveTimestampColumnName = "ts2";
                 break;
             case ADD_COLUMN:
                 projection = "*, i as i2";
@@ -193,6 +203,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 break;
             case REMOVE_TIMESTAMP_COLUMN:
                 projection = "i, s";
+                slaveTimestampColumnName = null;
                 break;
             default:
                 throw new IllegalArgumentException("Unexpected projection type: " + projectionType);
@@ -202,6 +213,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         if (applyOuterProjection) {
             char mainProjectionSuffix = projectionType == ProjectionType.RENAME_COLUMN ? '2' : ' ';
             outerProjection = "t1.ts, t2.i" + mainProjectionSuffix;
+            slaveTimestampColumnName = null;
         }
 
         String hint = "";
@@ -241,12 +253,32 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
         }
 
-
         final StringSink actualSink = new StringSink();
         sink.clear();
         printSql(query, false);
         actualSink.put(sink);
         TestUtils.assertEquals(expectedSink, actualSink);
+
+        if (slaveTimestampColumnName != null) {
+            try (RecordCursorFactory factory = select(query);
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                RecordMetadata metadata = factory.getMetadata();
+                int masterColIndex = metadata.getColumnIndex("ts");
+                int slaveColIndex = metadata.getColumnIndex(slaveTimestampColumnName);
+                while (cursor.hasNext()) {
+                    long masterTimestamp = record.getTimestamp(masterColIndex);
+                    long slaveTimestamp = record.getTimestamp(slaveColIndex);
+                    Assert.assertTrue(slaveTimestamp <= masterTimestamp);
+
+                    if (maxTolerance != -1 && slaveTimestamp != Numbers.LONG_NULL) {
+                        long minSlaveTimestamp = masterTimestamp - (toleranceSeconds * Timestamps.SECOND_MICROS);
+                        Assert.assertTrue("Slave timestamp " + Timestamps.toString(slaveTimestamp) + " is less than minimum allowed " + Timestamps.toString(masterTimestamp),
+                                slaveTimestamp >= minSlaveTimestamp);
+                    }
+                }
+            }
+        }
     }
 
     private void testFuzz(int tsDuplicatePercentage) throws Exception {
