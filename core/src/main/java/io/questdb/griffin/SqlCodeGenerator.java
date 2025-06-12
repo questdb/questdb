@@ -788,7 +788,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     multiplier = Timestamps.WEEK_MICROS;
                     break;
                 default:
-                    throw SqlException.$(tolerance.position, "unsupported interval qualifier [qualifier=").put(unit).put(']');
+                    throw SqlException.$(tolerance.position, "unsupported TOLERANCE unit [unit=").put(unit).put(']');
             }
             toleranceInterval *= multiplier;
         }

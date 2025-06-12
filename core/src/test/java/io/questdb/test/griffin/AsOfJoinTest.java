@@ -487,8 +487,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testAsOfJoinTolerance() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 as (select x as id, (x + x*1_000_000)::timestamp ts from long_sequence(10)) timestamp(ts) partition by day;");
-
-            // x-th row in t2 is x*1 seconds before x-th row in t1
             execute("create table t2 as (select x as id, (x)::timestamp ts from long_sequence(5)) timestamp(ts) partition by day;");
 
 
@@ -559,6 +557,59 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinToleranceSupportedUnits() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 as (select x as id, (x + x*1_000_000)::timestamp ts from long_sequence(10)) timestamp(ts) partition by day;");
+            execute("create table t2 as (select x as id, (x)::timestamp ts from long_sequence(5)) timestamp(ts) partition by day;");
+
+
+            String expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                    "2\t1970-01-01T00:00:02.000002Z\tnull\t\n" +
+                    "3\t1970-01-01T00:00:03.000003Z\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004Z\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005Z\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006Z\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007Z\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008Z\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009Z\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
+
+            String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000000U;";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000T;";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1s;";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1m;";
+            expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                    "2\t1970-01-01T00:00:02.000002Z\t2\t1970-01-01T00:00:00.000002Z\n" +
+                    "3\t1970-01-01T00:00:03.000003Z\t3\t1970-01-01T00:00:00.000003Z\n" +
+                    "4\t1970-01-01T00:00:04.000004Z\t4\t1970-01-01T00:00:00.000004Z\n" +
+                    "5\t1970-01-01T00:00:05.000005Z\t5\t1970-01-01T00:00:00.000005Z\n" +
+                    "6\t1970-01-01T00:00:06.000006Z\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007Z\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008Z\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009Z\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1h;";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1d;";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1w;";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+        });
+    }
+
+    @Test
     public void testAsOfJoinToleranceNegative() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 as (select x as id, (x + x*1_000_000)::timestamp ts from long_sequence(10)) timestamp(ts) partition by day;");
@@ -570,6 +621,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 0s;";
             assertExceptionNoLeakCheck(query, 46, "zero is not a valid tolerance value");
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1Q;";
+            assertExceptionNoLeakCheck(query, 46, "unsupported TOLERANCE unit [unit=Q]");
         });
     }
 
