@@ -95,6 +95,8 @@ public interface LogRecord extends Utf8Sink {
 
     LogRecord $safe(@Nullable DirectUtf8Sequence sequence);
 
+    LogRecord $safe(@Nullable Utf8Sequence sequence);
+
     LogRecord $safe(long lo, long hi);
 
     LogRecord $size(long memoryBytes);

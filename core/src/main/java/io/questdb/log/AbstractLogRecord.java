@@ -286,6 +286,12 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $safe(@Nullable Utf8Sequence sequence) {
+        sink().put(sequence);
+        return this;
+    }
+
+    @Override
     public LogRecord $safe(long lo, long hi) {
         Utf8s.putSafe(lo, hi, sink());
         return this;

@@ -135,6 +135,11 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord $safe(@Nullable Utf8Sequence sequence) {
+        return this;
+    }
+
+    @Override
     public LogRecord $safe(long lo, long hi) {
         return this;
     }

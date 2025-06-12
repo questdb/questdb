@@ -429,6 +429,7 @@ public class Utf8sTest {
 
     @Test
     public void testPutSafeInvalid() {
+        final Utf8StringSink source = new Utf8StringSink();
         final Utf8StringSink sink = new Utf8StringSink();
         final byte[][] testBufs = {
                 {b(0b1101_0101)},
@@ -490,9 +491,18 @@ public class Utf8sTest {
         try {
             for (int n = testBufs.length, i = 0; i < n; i++) {
                 byte[] bytes = testBufs[i];
+
                 long hi = copyBytes(buf, bytes);
                 sink.clear();
                 Utf8s.putSafe(buf, hi, sink);
+                Assert.assertEquals(expectedStrs[i], sink.toString());
+
+                source.clear();
+                for (byte b : bytes) {
+                    source.putAny(b);
+                }
+                sink.clear();
+                Utf8s.putSafe(source, sink);
                 Assert.assertEquals(expectedStrs[i], sink.toString());
             }
         } finally {

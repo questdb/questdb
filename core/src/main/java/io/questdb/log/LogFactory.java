@@ -1008,6 +1008,11 @@ public class LogFactory implements Closeable {
         }
 
         @Override
+        public LogRecord $safe(@Nullable Utf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
         public LogRecord $safe(long lo, long hi) {
             return this;
         }
