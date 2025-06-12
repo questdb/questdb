@@ -27,8 +27,28 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 
-public interface SymbolShortCircuit {
-    boolean isShortCircuit(Record masterRecord);
+public final class ChainedSymbolShortCircuit implements SymbolShortCircuit {
 
-    void of(TimeFrameRecordCursor slaveCursor);
+    private final SymbolShortCircuit[] shortCircuits;
+
+    public ChainedSymbolShortCircuit(SymbolShortCircuit[] shortCircuits) {
+        this.shortCircuits = shortCircuits;
+    }
+
+    @Override
+    public boolean isShortCircuit(Record masterRecord) {
+        for (int i = 0, n = shortCircuits.length; i < n; i++) {
+            if (shortCircuits[i].isShortCircuit(masterRecord)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public void of(TimeFrameRecordCursor slaveCursor) {
+        for (int i = 0, n = shortCircuits.length; i < n; i++) {
+            shortCircuits[i].of(slaveCursor);
+        }
+    }
 }

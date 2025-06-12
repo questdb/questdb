@@ -196,6 +196,7 @@ import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
@@ -213,6 +214,7 @@ import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.SingleSymbolShortCircuit;
 import io.questdb.griffin.engine.join.SymbolShortCircuit;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
@@ -1446,6 +1448,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
+    private @NotNull SymbolShortCircuit createSymbolShortCircut(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
+        SymbolShortCircuit symbolShortCircuit = SingleSymbolShortCircuit.DISABLED;
+        assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
+        SymbolShortCircuit[] symbolShortCircuits = null;
+        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+            int masterIndex = listColumnFilterB.getColumnIndexFactored(i);
+            int slaveIndex = listColumnFilterA.getColumnIndexFactored(i);
+            if (masterMetadata.getColumnType(masterIndex) == ColumnType.SYMBOL && slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
+                if (symbolShortCircuit == SingleSymbolShortCircuit.DISABLED) {
+                    // ok, a single symbol short circuit
+                    symbolShortCircuit = new SingleSymbolShortCircuit(configuration, masterIndex, slaveIndex);
+                } else if (symbolShortCircuit instanceof SingleSymbolShortCircuit) {
+                    // 2 symbol short circuits, we need to chain them
+                    symbolShortCircuits = new SymbolShortCircuit[2];
+                    symbolShortCircuits[0] = symbolShortCircuit;
+                    symbolShortCircuits[1] = new SingleSymbolShortCircuit(configuration, masterIndex, slaveIndex);
+                    symbolShortCircuit = new ChainedSymbolShortCircuit(symbolShortCircuits);
+                } else {
+                    // ok, this is pretty uncommon - a join key with more than 2 symbol short circuits
+                    // this allocated arrays, but it should be very rare
+                    // todo: test
+                    int size = symbolShortCircuits.length;
+                    SymbolShortCircuit[] newSymbolShortCircuits = new SymbolShortCircuit[size + 1];
+                    System.arraycopy(symbolShortCircuits, 0, newSymbolShortCircuits, 0, size);
+                    newSymbolShortCircuits[size] = new SingleSymbolShortCircuit(configuration, masterIndex, slaveIndex);
+                    symbolShortCircuit = new ChainedSymbolShortCircuit(newSymbolShortCircuits);
+                    symbolShortCircuits = newSymbolShortCircuits;
+                }
+            }
+        }
+        return symbolShortCircuit;
+    }
+
     private ObjList<Function> generateCastFunctions(
             RecordMetadata castToMetadata,
             RecordMetadata castFromMetadata,
@@ -2538,18 +2573,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         );
                                         if (slave.supportsTimeFrameCursor() && fastAsOfJoins && !asOfAvoidBinarySearch) {
                                             // support for short-circuiting when joining on a single symbol column and the slave table does not have a matching key
-                                            SymbolShortCircuit symbolShortCircuit = SymbolShortCircuit.DISABLED;
-                                            if (listColumnFilterA.getColumnCount() == 1 && listColumnFilterB.getColumnCount() == 1) {
-                                                int slaveColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
-                                                int masterColumnIndex = listColumnFilterB.getColumnIndexFactored(0);
-                                                if (
-                                                        masterMetadata.getColumnType(masterColumnIndex) == ColumnType.SYMBOL
-                                                                && slaveMetadata.getColumnType(slaveColumnIndex) == ColumnType.SYMBOL
-                                                                && slaveMetadata.isSymbolTableStatic(slaveColumnIndex)
-                                                ) {
-                                                    symbolShortCircuit = new SymbolShortCircuit(configuration, masterColumnIndex, slaveColumnIndex);
-                                                }
-                                            }
+                                            SymbolShortCircuit symbolShortCircuit = createSymbolShortCircut(masterMetadata, slaveMetadata);
 
                                             master = new AsOfJoinFastRecordCursorFactory(
                                                     configuration,
