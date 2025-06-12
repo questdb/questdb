@@ -615,9 +615,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
             execute("create table t1 as (select x as id, (x + x*1_000_000)::timestamp ts from long_sequence(10)) timestamp(ts) partition by day;");
             execute("create table t2 as (select x as id, (x)::timestamp ts from long_sequence(5)) timestamp(ts) partition by day;");
 
-
             String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE -2s;";
-            assertExceptionNoLeakCheck(query, 49, "ASOF JOIN tolerance must not be negative");
+            assertExceptionNoLeakCheck(query, 49, "ASOF JOIN TOLERANCE must be positive");
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 0s;";
             assertExceptionNoLeakCheck(query, 46, "zero is not a valid tolerance value");

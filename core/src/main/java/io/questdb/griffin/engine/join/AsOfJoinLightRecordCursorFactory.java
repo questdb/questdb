@@ -200,14 +200,19 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                     }
 
                     final Record rec = slaveCursor.getRecord();
+                    // toleranceInterval can be LONG_NULL, which means no tolerance. in this case minSlaveTimestamp is going to be a non-sense, but we don't care
+                    // since we won't use it
+                    final long minSlaveTimestamp = masterTimestamp - toleranceInterval;
                     while (slaveCursor.hasNext()) {
                         slaveTimestamp = rec.getTimestamp(slaveTimestampIndex);
                         slaveRowID = rec.getRowId();
                         if (slaveTimestamp <= masterTimestamp) {
-                            key = joinKeyMap.withKey();
-                            key.put(rec, slaveKeySink);
-                            value = key.createValue();
-                            value.putLong(0, rec.getRowId());
+                            if (toleranceInterval == Numbers.LONG_NULL || slaveTimestamp >= minSlaveTimestamp) {
+                                key = joinKeyMap.withKey();
+                                key.put(rec, slaveKeySink);
+                                value = key.createValue();
+                                value.putLong(0, rec.getRowId());
+                            }
                         } else {
                             break;
                         }
