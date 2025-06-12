@@ -88,6 +88,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final MatViewStateStore stateStore;
     private final TimeZoneIntervalIterator timeZoneIterator = new TimeZoneIntervalIterator();
     private final WalTxnRangeLoader txnRangeLoader;
+    private final MatViewTableMeta viewTableMeta = new MatViewTableMeta();
     private final int workerId;
 
     public MatViewRefreshJob(int workerId, CairoEngine engine, int workerCount, int sharedWorkerCount) {
@@ -183,14 +184,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private MatViewRefreshJob.RefreshIntervals findRefreshIntervals(
             @NotNull TableReader baseTableReader,
             @NotNull MatViewState viewState,
+            @NotNull MatViewTableMeta viewTableMeta,
             long lastRefreshTxn
     ) throws SqlException {
-        return findRefreshIntervals(baseTableReader, viewState, lastRefreshTxn, Numbers.LONG_NULL, Numbers.LONG_NULL);
+        return findRefreshIntervals(baseTableReader, viewState, viewTableMeta, lastRefreshTxn, Numbers.LONG_NULL, Numbers.LONG_NULL);
     }
 
     private MatViewRefreshJob.RefreshIntervals findRefreshIntervals(
             @NotNull TableReader baseTableReader,
             @NotNull MatViewState viewState,
+            @NotNull MatViewTableMeta viewTableMeta,
             long lastRefreshTxn,
             long rangeFrom,
             long rangeTo
@@ -201,21 +204,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final TableToken baseTableToken = baseTableReader.getTableToken();
         final MatViewDefinition viewDefinition = viewState.getViewDefinition();
         final TableToken viewToken = viewDefinition.getMatViewToken();
-
-        final int refreshLimit;
-        final long timerStart;
-        final int periodLength;
-        final char periodLengthUnit;
-        final int periodDelay;
-        final char periodDelayUnit;
-        try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
-            refreshLimit = matViewMeta.getMatViewRefreshLimitHoursOrMonths();
-            timerStart = matViewMeta.getMatViewTimerStart();
-            periodLength = matViewMeta.getMatViewPeriodLength();
-            periodLengthUnit = matViewMeta.getMatViewPeriodLengthUnit();
-            periodDelay = matViewMeta.getMatViewPeriodDelay();
-            periodDelayUnit = matViewMeta.getMatViewPeriodDelayUnit();
-        }
 
         final long now = microsecondClock.getTicks();
         final boolean rangeRefresh = rangeTo != Numbers.LONG_NULL;
@@ -233,11 +221,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             minTs = txnRangeLoader.getMinTimestamp();
             maxTs = txnRangeLoader.getMaxTimestamp();
             // Check if refresh limit should be applied.
-            if (refreshLimit != 0) {
-                if (refreshLimit > 0) { // hours
-                    minTs = Math.max(minTs, now - Timestamps.HOUR_MICROS * refreshLimit);
+            if (viewTableMeta.refreshLimit != 0) {
+                if (viewTableMeta.refreshLimit > 0) { // hours
+                    minTs = Math.max(minTs, now - Timestamps.HOUR_MICROS * viewTableMeta.refreshLimit);
                 } else { // months
-                    minTs = Math.max(minTs, Timestamps.addMonths(now, -refreshLimit));
+                    minTs = Math.max(minTs, Timestamps.addMonths(now, -viewTableMeta.refreshLimit));
                 }
             }
         } else if (rangeRefresh) {
@@ -247,13 +235,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 long periodLo = viewState.getLastPeriodHi();
                 if (periodLo == Numbers.LONG_NULL) {
                     periodLo = viewDefinition.getTimerTzRules() != null
-                            ? timerStart - viewDefinition.getTimerTzRules().getOffset(timerStart)
-                            : timerStart;
+                            ? viewTableMeta.timerStart - viewDefinition.getTimerTzRules().getOffset(viewTableMeta.timerStart)
+                            : viewTableMeta.timerStart;
                 }
                 if (periodLo < rangeTo) {
                     minTs = periodLo;
                     maxTs = rangeTo;
-                    refreshIntervals.setPeriodHi(rangeTo);
+                    refreshIntervals.periodHi = rangeTo;
                 }
             } else {
                 // User-defined range refresh.
@@ -272,15 +260,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         // Check if we're doing incremental/full refresh on a period mat view.
         // If so, we may need to remove the incomplete period from the refresh interval.
-        if (!rangeRefresh && periodLength > 0) {
+        if (!rangeRefresh && viewTableMeta.periodLength > 0) {
             TimestampSampler periodSampler = viewDefinition.getPeriodSampler();
             if (periodSampler == null) {
-                periodSampler = TimestampSamplerFactory.getInstance(periodLength, periodLengthUnit, -1);
+                periodSampler = TimestampSamplerFactory.getInstance(viewTableMeta.periodLength, viewTableMeta.periodLengthUnit, -1);
                 viewDefinition.setPeriodSampler(periodSampler);
             }
-            periodSampler.setStart(timerStart);
+            periodSampler.setStart(viewTableMeta.timerStart);
 
-            final long delay = MatViewTimerJob.periodDelayMicros(periodDelay, periodDelayUnit);
+            final long delay = MatViewTimerJob.periodDelayMicros(viewTableMeta.periodDelay, viewTableMeta.periodDelayUnit);
             long nowLocal = viewDefinition.getTimerTzRules() != null
                     ? now + viewDefinition.getTimerTzRules().getOffset(now)
                     : now;
@@ -303,18 +291,18 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 long periodLo = viewState.getLastPeriodHi();
                 if (periodLo == Numbers.LONG_NULL) {
                     periodLo = viewDefinition.getTimerTzRules() != null
-                            ? timerStart - viewDefinition.getTimerTzRules().getOffset(timerStart)
-                            : timerStart;
+                            ? viewTableMeta.timerStart - viewDefinition.getTimerTzRules().getOffset(viewTableMeta.timerStart)
+                            : viewTableMeta.timerStart;
                 }
                 if (periodLo < periodHi) {
                     txnIntervals.add(periodLo, periodHi);
                     IntervalUtils.unionInPlace(txnIntervals, txnIntervals.size() - 2);
                     maxTs = periodHi;
-                    refreshIntervals.setPeriodHi(periodHi);
+                    refreshIntervals.periodHi = periodHi;
                 }
             } else {
                 // It's a full refresh, so we need to bump lastPeriodHi once we're done.
-                refreshIntervals.setPeriodHi(periodHi);
+                refreshIntervals.periodHi = periodHi;
             }
         }
 
@@ -363,7 +351,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", iteratorMaxTs<").$ts(iteratorMaxTs)
                     .I$();
 
-            refreshIntervals.setIntervalIterator(intervalIterator);
+            refreshIntervals.intervalIterator = intervalIterator;
             return refreshIntervals;
         }
 
@@ -427,16 +415,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     resetInvalidState(viewState, walWriter);
 
                     final long toBaseTxn = baseTableReader.getSeqTxn();
+                    final MatViewTableMeta viewTableMeta = getViewTableMeta(viewToken);
                     // Specify -1 as the last refresh txn, so that we scan all partitions.
-                    final RefreshIntervals refreshIntervals = findRefreshIntervals(baseTableReader, viewState, -1);
+                    final RefreshIntervals refreshIntervals = findRefreshIntervals(baseTableReader, viewState, viewTableMeta, -1);
                     if (refreshIntervals != null) {
                         insertAsSelect(
                                 viewState,
                                 walWriter,
-                                refreshIntervals.getIntervalIterator(),
+                                refreshIntervals.intervalIterator,
                                 toBaseTxn,
                                 refreshTriggerTimestamp,
-                                refreshIntervals.getPeriodHi()
+                                refreshIntervals.periodHi
                         );
                     }
                 } finally {
@@ -486,6 +475,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 tableWriter.getMetadata(),
                 columnFilter
         );
+    }
+
+    private MatViewTableMeta getViewTableMeta(TableToken viewToken) {
+        return viewTableMeta.of(engine, viewToken);
     }
 
     private boolean handleErrorRetryRefresh(
@@ -886,16 +879,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 engine.detachReader(baseTableReader);
                 refreshSqlExecutionContext.of(baseTableReader);
                 try {
+                    final MatViewTableMeta viewTableMeta = getViewTableMeta(viewToken);
                     // Specify -1 as the last refresh txn, so that we scan all partitions.
-                    final RefreshIntervals refreshIntervals = findRefreshIntervals(baseTableReader, viewState, -1, rangeFrom, rangeTo);
+                    final RefreshIntervals refreshIntervals = findRefreshIntervals(baseTableReader, viewState, viewTableMeta, -1, rangeFrom, rangeTo);
                     if (refreshIntervals != null) {
                         insertAsSelect(
                                 viewState,
                                 walWriter,
-                                refreshIntervals.getIntervalIterator(),
+                                refreshIntervals.intervalIterator,
                                 -1,
                                 refreshTriggerTimestamp,
-                                refreshIntervals.getPeriodHi()
+                                refreshIntervals.periodHi
                         );
                     }
                 } finally {
@@ -1098,12 +1092,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long toBaseTxn = baseSeqTracker.getWriterTxn();
 
         final long fromBaseTxn = viewState.getLastRefreshBaseTxn();
-        final int periodLength;
-        try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
-            periodLength = matViewMeta.getMatViewPeriodLength();
-        }
-
-        if (periodLength == 0 && fromBaseTxn >= 0 && fromBaseTxn >= toBaseTxn) {
+        final MatViewTableMeta viewTableMeta = getViewTableMeta(viewToken);
+        if (viewTableMeta.periodLength == 0 && fromBaseTxn >= 0 && fromBaseTxn >= toBaseTxn) {
             // Non-period mat view which is already refreshed.
             return false;
         }
@@ -1121,15 +1111,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             engine.detachReader(baseTableReader);
             refreshSqlExecutionContext.of(baseTableReader);
             try {
-                final RefreshIntervals refreshIntervals = findRefreshIntervals(baseTableReader, viewState, fromBaseTxn);
+                final RefreshIntervals refreshIntervals = findRefreshIntervals(baseTableReader, viewState, viewTableMeta, fromBaseTxn);
                 if (refreshIntervals != null) {
                     return insertAsSelect(
                             viewState,
                             walWriter,
-                            refreshIntervals.getIntervalIterator(),
+                            refreshIntervals.intervalIterator,
                             baseTableReader.getSeqTxn(),
                             refreshTriggerTimestamp,
-                            refreshIntervals.getPeriodHi()
+                            refreshIntervals.periodHi
                     );
                 }
             } finally {
@@ -1167,30 +1157,35 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         );
     }
 
+    private static class MatViewTableMeta {
+        public int periodDelay;
+        public char periodDelayUnit;
+        public int periodLength;
+        public char periodLengthUnit;
+        public int refreshLimit;
+        public long timerStart;
+
+        public MatViewTableMeta of(CairoEngine engine, TableToken viewToken) {
+            try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
+                refreshLimit = matViewMeta.getMatViewRefreshLimitHoursOrMonths();
+                timerStart = matViewMeta.getMatViewTimerStart();
+                periodLength = matViewMeta.getMatViewPeriodLength();
+                periodLengthUnit = matViewMeta.getMatViewPeriodLengthUnit();
+                periodDelay = matViewMeta.getMatViewPeriodDelay();
+                periodDelayUnit = matViewMeta.getMatViewPeriodDelayUnit();
+            }
+            return this;
+        }
+    }
+
     private static class RefreshIntervals implements Mutable {
-        private SampleByIntervalIterator intervalIterator;
-        private long periodHi = Numbers.LONG_NULL;
+        public SampleByIntervalIterator intervalIterator;
+        public long periodHi = Numbers.LONG_NULL;
 
         @Override
         public void clear() {
             intervalIterator = null;
             periodHi = Numbers.LONG_NULL;
-        }
-
-        public SampleByIntervalIterator getIntervalIterator() {
-            return intervalIterator;
-        }
-
-        public long getPeriodHi() {
-            return periodHi;
-        }
-
-        public void setIntervalIterator(SampleByIntervalIterator intervalIterator) {
-            this.intervalIterator = intervalIterator;
-        }
-
-        public void setPeriodHi(long periodHi) {
-            this.periodHi = periodHi;
         }
     }
 }
