@@ -201,11 +201,9 @@ public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCur
                     break;
                 }
             }
-            if (record.hasSlave()) {
+            if (toleranceInterval != Numbers.LONG_NULL && record.hasSlave()) {
                 slaveBTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                if (toleranceInterval != Numbers.LONG_NULL) {
-                    record.hasSlave(slaveBTimestamp >= masterTimestamp - toleranceInterval);
-                }
+                record.hasSlave(slaveBTimestamp >= masterTimestamp - toleranceInterval);
             }
             assert !record.hasSlave() || slaveBTimestamp <= masterTimestamp;
         }
