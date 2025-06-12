@@ -228,13 +228,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         sink.putEOL();
         try {
             if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
-                if (Utf8s.validateUtf8(sink) < 0) {
-                    LogError e = new LogError("Invalid UTF-8, partial message: \n"
-                            + Utf8s.stringFromUtf8BytesSafe(sink) + "\nEND partial message");
-                    sink.clear();
-                    e.printStackTrace(System.out);
-                    throw e;
-                }
+                validateUtf8(sink);
             }
         } finally {
             h.isLogRecordInProgress = false;
@@ -531,6 +525,16 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         sink.putAscii(e.getClass().getName());
         if (e.getMessage() != null) {
             sink.putAscii(": ").put(e.getMessage());
+        }
+    }
+
+    private static void validateUtf8(LogRecordUtf8Sink sink) {
+        if (Utf8s.validateUtf8(sink) < 0) {
+            LogError e = new LogError("Invalid UTF-8, partial message: \n"
+                    + Utf8s.stringFromUtf8BytesSafe(sink) + "\nEND partial message");
+            sink.clear();
+            e.printStackTrace(System.out);
+            throw e;
         }
     }
 
