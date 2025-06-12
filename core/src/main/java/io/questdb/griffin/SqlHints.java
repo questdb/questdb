@@ -28,25 +28,26 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public final class SqlHints {
     public static final String ASOF_JOIN_AVOID_BINARY_SEARCH_HINT = "avoid_asof_binary_search";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
     public static final String LT_JOIN_AVOID_BINARY_SEARCH_HINT = "avoid_lt_binary_search";
 
-    public static boolean hasAvoidAsOfJoinBinarySearchHint(@NotNull QueryModel queryModel, CharSequence tableNameA, CharSequence tableNameB) {
+    public static boolean hasAvoidAsOfJoinBinarySearchHint(@NotNull QueryModel queryModel, @Nullable CharSequence tableNameA, @Nullable CharSequence tableNameB) {
         return hasHintWithParams(queryModel, ASOF_JOIN_AVOID_BINARY_SEARCH_HINT, tableNameA, tableNameB);
     }
 
-    public static boolean hasAvoidLtJoinBinarySearchHint(@NotNull QueryModel queryModel, CharSequence tableNameA, CharSequence tableNameB) {
+    public static boolean hasAvoidLtJoinBinarySearchHint(@NotNull QueryModel queryModel, @Nullable CharSequence tableNameA, @Nullable CharSequence tableNameB) {
         return hasHintWithParams(queryModel, LT_JOIN_AVOID_BINARY_SEARCH_HINT, tableNameA, tableNameB);
     }
 
     private static boolean hasHintWithParams(
             @NotNull QueryModel queryModel,
             @NotNull CharSequence hintName,
-            @NotNull CharSequence tableNameA,
-            @NotNull CharSequence tableNameB
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
     ) {
         LowerCaseCharSequenceObjHashMap<CharSequence> hints = queryModel.getHints();
         CharSequence params = hints.get(hintName);

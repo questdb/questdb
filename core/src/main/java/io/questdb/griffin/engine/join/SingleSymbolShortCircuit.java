@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.std.CompactIntHashSet;
 
 public final class SingleSymbolShortCircuit implements SymbolShortCircuit {
-    public static final SingleSymbolShortCircuit DISABLED = new SingleSymbolShortCircuit(null, -1, -1);
     private final CairoConfiguration config;
     private final CompactIntHashSet masterKeysExistingInSlaveCache = new CompactIntHashSet(16, 0.4);
     private final int masterSymbolIndex;
@@ -48,9 +47,6 @@ public final class SingleSymbolShortCircuit implements SymbolShortCircuit {
 
     @Override
     public boolean isShortCircuit(Record masterRecord) {
-        if (isDisabled()) {
-            return false;
-        }
         assert slaveSymbolTable != null : "slaveSymbolTable must be set before calling isShortCircuit";
 
         int masterKey = masterRecord.getInt(masterSymbolIndex);
@@ -83,15 +79,8 @@ public final class SingleSymbolShortCircuit implements SymbolShortCircuit {
 
     @Override
     public void of(TimeFrameRecordCursor slaveCursor) {
-        if (isDisabled()) {
-            return;
-        }
         this.slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
         this.masterKeysExistingInSlaveCache.clear();
         this.maxCacheSize = config.getSqlAsOfJoinShortCircuitCacheCapacity();
-    }
-
-    private boolean isDisabled() {
-        return this == DISABLED;
     }
 }

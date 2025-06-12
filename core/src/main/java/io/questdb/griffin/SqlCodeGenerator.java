@@ -198,6 +198,7 @@ import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.DisabledSymbolShortCircuit;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinRecordCursorFactory;
@@ -1449,14 +1450,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private @NotNull SymbolShortCircuit createSymbolShortCircut(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
-        SymbolShortCircuit symbolShortCircuit = SingleSymbolShortCircuit.DISABLED;
+        SymbolShortCircuit symbolShortCircuit = DisabledSymbolShortCircuit.INSTANCE;
         assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
         SymbolShortCircuit[] symbolShortCircuits = null;
         for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
             int masterIndex = listColumnFilterB.getColumnIndexFactored(i);
             int slaveIndex = listColumnFilterA.getColumnIndexFactored(i);
             if (masterMetadata.getColumnType(masterIndex) == ColumnType.SYMBOL && slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
-                if (symbolShortCircuit == SingleSymbolShortCircuit.DISABLED) {
+                if (symbolShortCircuit == DisabledSymbolShortCircuit.INSTANCE) {
                     // ok, a single symbol short circuit
                     symbolShortCircuit = new SingleSymbolShortCircuit(configuration, masterIndex, slaveIndex);
                 } else if (symbolShortCircuit instanceof SingleSymbolShortCircuit) {
