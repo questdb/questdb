@@ -230,7 +230,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             periodLengthUnit = matViewMeta.getMatViewPeriodLengthUnit();
                             periodDelay = matViewMeta.getMatViewPeriodDelay();
                             periodDelayUnit = matViewMeta.getMatViewPeriodDelayUnit();
-                            if (matViewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
+                            if (matViewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE || periodLength > 0) {
                                 timerStart = matViewMeta.getMatViewTimerStart();
                                 timerInterval = matViewMeta.getMatViewTimerInterval();
                                 timerIntervalUnit = matViewMeta.getMatViewTimerUnit();

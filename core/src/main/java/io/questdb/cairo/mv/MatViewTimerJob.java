@@ -196,7 +196,8 @@ public class MatViewTimerJob extends SynchronizedJob {
                             }
                             break;
                         case Timer.PERIOD_REFRESH_TYPE:
-                            matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, timer.getPeriodHi());
+                            // range hi boundary is inclusive
+                            matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, timer.getPeriodHi() - 1);
                             break;
                         default:
                             LOG.error().$("unexpected timer type [view=").$(viewToken)

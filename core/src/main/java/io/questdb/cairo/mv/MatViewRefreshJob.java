@@ -241,7 +241,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 if (periodLo < rangeTo) {
                     minTs = periodLo;
                     maxTs = rangeTo;
-                    refreshIntervals.periodHi = rangeTo;
+                    // period hi is exclusive
+                    refreshIntervals.periodHi = rangeTo + 1;
                 }
             } else {
                 // User-defined range refresh.

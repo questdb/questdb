@@ -1931,6 +1931,46 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImmediatePeriodMatViewFullRefreshNoTimerJob() throws Exception {
+        testPeriodRefresh("immediate", "full", false);
+    }
+
+    @Test
+    public void testImmediatePeriodMatViewFullRefreshRunTimerJob() throws Exception {
+        testPeriodRefresh("immediate", "full", true);
+    }
+
+    @Test
+    public void testImmediatePeriodMatViewIncrementalRefreshNoTimerJob() throws Exception {
+        testPeriodRefresh("immediate", "incremental", false);
+    }
+
+    @Test
+    public void testImmediatePeriodMatViewIncrementalRefreshRunTimerJob() throws Exception {
+        testPeriodRefresh("immediate", "incremental", true);
+    }
+
+    @Test
+    public void testImmediatePeriodWithTzIncrementalRefreshNoTimerJob() throws Exception {
+        testPeriodWithTzRefresh("immediate", "incremental", false);
+    }
+
+    @Test
+    public void testImmediatePeriodWithTzIncrementalRefreshRunTimerJob() throws Exception {
+        testPeriodWithTzRefresh("immediate", "incremental", true);
+    }
+
+    @Test
+    public void testImmediatePeriodWithTzMatViewFullRefreshNoTimerJob() throws Exception {
+        testPeriodWithTzRefresh("immediate", "full", false);
+    }
+
+    @Test
+    public void testImmediatePeriodWithTzMatViewFullRefreshRunTimerJob() throws Exception {
+        testPeriodWithTzRefresh("immediate", "full", true);
+    }
+
+    @Test
     public void testIncrementalRefresh() throws Exception {
         testIncrementalRefresh0("select sym, last(price) as price, ts from base_price sample by 1h");
     }
@@ -2472,42 +2512,42 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testManualPeriodMatViewFullRefreshNoTimerJob() throws Exception {
-        testManualPeriodRefresh("manual", "full", false);
+        testPeriodRefresh("manual", "full", false);
     }
 
     @Test
     public void testManualPeriodMatViewFullRefreshRunTimerJob() throws Exception {
-        testManualPeriodRefresh("manual", "full", true);
+        testPeriodRefresh("manual", "full", true);
     }
 
     @Test
     public void testManualPeriodMatViewIncrementalRefreshNoTimerJob() throws Exception {
-        testManualPeriodRefresh("manual", "incremental", false);
+        testPeriodRefresh("manual", "incremental", false);
     }
 
     @Test
     public void testManualPeriodMatViewIncrementalRefreshRunTimerJob() throws Exception {
-        testManualPeriodRefresh("manual", "incremental", true);
+        testPeriodRefresh("manual", "incremental", true);
     }
 
     @Test
     public void testManualPeriodWithTzIncrementalRefreshNoTimerJob() throws Exception {
-        testManualPeriodWithTzRefresh("manual", "incremental", false);
+        testPeriodWithTzRefresh("manual", "incremental", false);
     }
 
     @Test
     public void testManualPeriodWithTzIncrementalRefreshRunTimerJob() throws Exception {
-        testManualPeriodWithTzRefresh("manual", "incremental", true);
+        testPeriodWithTzRefresh("manual", "incremental", true);
     }
 
     @Test
     public void testManualPeriodWithTzMatViewFullRefreshNoTimerJob() throws Exception {
-        testManualPeriodWithTzRefresh("manual", "full", false);
+        testPeriodWithTzRefresh("manual", "full", false);
     }
 
     @Test
     public void testManualPeriodWithTzMatViewFullRefreshRunTimerJob() throws Exception {
-        testManualPeriodWithTzRefresh("manual", "full", true);
+        testPeriodWithTzRefresh("manual", "full", true);
     }
 
     @Test
@@ -4013,6 +4053,26 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimerPeriodMatViewFullRefresh() throws Exception {
+        testPeriodRefresh("every 1h", "full", true);
+    }
+
+    @Test
+    public void testTimerPeriodMatViewIncrementalRefresh() throws Exception {
+        testPeriodRefresh("every 1h", "incremental", true);
+    }
+
+    @Test
+    public void testTimerPeriodWithTzFullRefresh() throws Exception {
+        testPeriodWithTzRefresh("every 1h", "full", true);
+    }
+
+    @Test
+    public void testTimerPeriodWithTzIncrementalRefresh() throws Exception {
+        testPeriodWithTzRefresh("every 1h", "incremental", true);
+    }
+
+    @Test
     public void testTimestampGetsRefreshedOnInvalidation() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -4322,7 +4382,7 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
-    private void testManualPeriodRefresh(String viewType, String refreshType, boolean runTimerJob) throws Exception {
+    private void testPeriodRefresh(String viewType, String refreshType, boolean runTimerJob) throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
@@ -4356,14 +4416,14 @@ public class MatViewTest extends AbstractCairoTest {
                     "sym\tprice\tts\n",
                     "price_1h order by sym"
             );
+            final String matViewsSql = "select view_name, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn, timer_time_zone, " +
+                    "timer_start, period_length, period_length_unit, period_delay, period_delay_unit " +
+                    "from materialized_views";
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
-                            "price_1h\tmanual\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t-1\t1\t\t\t0\t\t1\tDAY\t0\t\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn, " +
-                            "timer_time_zone, timer_start, timer_interval, timer_interval_unit, " +
-                            "period_length, period_length_unit, period_delay, period_delay_unit " +
-                            "from materialized_views",
+                    "view_name\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
+                            "price_1h\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t-1\t1\t\t2000-01-01T00:00:00.000000Z\t1\tDAY\t0\t\n",
+                    matViewsSql,
                     null
             );
 
@@ -4411,19 +4471,15 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
-                            "price_1h\tmanual\tbase_price\t2000-01-03T00:00:01.000000Z\t2000-01-03T00:00:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t1\t1\t\t\t0\t\t1\tDAY\t0\t\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn, " +
-                            "timer_time_zone, timer_start, timer_interval, timer_interval_unit, " +
-                            "period_length, period_length_unit, period_delay, period_delay_unit " +
-                            "from materialized_views",
+                    "view_name\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
+                            "price_1h\tbase_price\t2000-01-03T00:00:01.000000Z\t2000-01-03T00:00:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t1\t1\t\t2000-01-01T00:00:00.000000Z\t1\tDAY\t0\t\n",
+                    matViewsSql,
                     null
             );
         });
     }
 
-    private void testManualPeriodWithTzRefresh(String viewType, String refreshType, boolean runTimerJob) throws Exception {
+    private void testPeriodWithTzRefresh(String viewType, String refreshType, boolean runTimerJob) throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
@@ -4457,14 +4513,14 @@ public class MatViewTest extends AbstractCairoTest {
                     "sym\tprice\tts\n",
                     "price_1h order by sym"
             );
+            final String matViewsSql = "select view_name, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn, timer_time_zone, " +
+                    "timer_start, period_length, period_length_unit, period_delay, period_delay_unit " +
+                    "from materialized_views";
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
-                            "price_1h\tmanual\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t-1\t1\tEurope/Berlin\t\t0\t\t1\tDAY\t1\tHOUR\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn, " +
-                            "timer_time_zone, timer_start, timer_interval, timer_interval_unit, " +
-                            "period_length, period_length_unit, period_delay, period_delay_unit " +
-                            "from materialized_views",
+                    "view_name\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
+                            "price_1h\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t-1\t1\tEurope/Berlin\t2020-01-01T00:00:00.000000Z\t1\tDAY\t1\tHOUR\n",
+                    matViewsSql,
                     null
             );
 
@@ -4512,13 +4568,9 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
-                            "price_1h\tmanual\tbase_price\t2020-01-03T00:00:01.000000Z\t2020-01-03T00:00:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t1\t1\tEurope/Berlin\t\t0\t\t1\tDAY\t1\tHOUR\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn, " +
-                            "timer_time_zone, timer_start, timer_interval, timer_interval_unit, " +
-                            "period_length, period_length_unit, period_delay, period_delay_unit " +
-                            "from materialized_views",
+                    "view_name\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
+                            "price_1h\tbase_price\t2020-01-03T00:00:01.000000Z\t2020-01-03T00:00:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t1\t1\tEurope/Berlin\t2020-01-01T00:00:00.000000Z\t1\tDAY\t1\tHOUR\n",
+                    matViewsSql,
                     null
             );
         });
