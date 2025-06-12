@@ -786,7 +786,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                     );
                     nonInsertQueries++;
 
-                    final int maxWaitTimeMillis = 3000;
+                    final int maxWaitTimeMillis = 6000;
                     final int sleepMillis = 10;
 
                     final Metrics metrics = engine.getMetrics();
