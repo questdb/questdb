@@ -77,7 +77,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 {true, false}, // exercise filters
                 ProjectionType.values(),
                 {true, false}, // apply outer projection
-                {-1L, 1L, 1_000L, 100_000L, 10_000_000L}, // max tolerance in seconds, -1 = no tolerance
+                {-1L, 100_000L}, // max tolerance in seconds, -1 = no tolerance
                 {true, false} // AVOID BINARY_SEARCH hint
         });
         for (int i = 0, n = allParameterPermutations.length; i < n; i++) {

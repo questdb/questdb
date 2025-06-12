@@ -1449,7 +1449,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
-    private @NotNull SymbolShortCircuit createSymbolShortCircut(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
+    private @NotNull SymbolShortCircuit createSymbolShortCircut(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, boolean selfJoin) {
         SymbolShortCircuit symbolShortCircuit = DisabledSymbolShortCircuit.INSTANCE;
         assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
         SymbolShortCircuit[] symbolShortCircuits = null;
@@ -1457,6 +1457,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int masterIndex = listColumnFilterB.getColumnIndexFactored(i);
             int slaveIndex = listColumnFilterA.getColumnIndexFactored(i);
             if (masterMetadata.getColumnType(masterIndex) == ColumnType.SYMBOL && slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
+                if (selfJoin && masterIndex == slaveIndex) {
+                    // self join on the same column -> there is no point in attempting short-circuiting
+                    continue;
+                }
                 if (symbolShortCircuit == DisabledSymbolShortCircuit.INSTANCE) {
                     // ok, a single symbol short circuit
                     symbolShortCircuit = new SingleSymbolShortCircuit(configuration, masterIndex, slaveIndex);
@@ -2552,7 +2556,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case JOIN_ASOF:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "ASOF");
-                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                boolean selfJoin = isSameTable(master, slave);
+                                processJoinContext(index == 1, selfJoin, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 long asOfToleranceInterval = tolerance(slaveModel);
                                 boolean asOfAvoidBinarySearch = SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
@@ -2574,7 +2579,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         );
                                         if (slave.supportsTimeFrameCursor() && fastAsOfJoins && !asOfAvoidBinarySearch) {
                                             // support for short-circuiting when joining on a single symbol column and the slave table does not have a matching key
-                                            SymbolShortCircuit symbolShortCircuit = createSymbolShortCircut(masterMetadata, slaveMetadata);
+                                            SymbolShortCircuit symbolShortCircuit = createSymbolShortCircut(masterMetadata, slaveMetadata, selfJoin);
 
                                             master = new AsOfJoinFastRecordCursorFactory(
                                                     configuration,
