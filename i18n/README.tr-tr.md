@@ -1,24 +1,33 @@
 <div align="center">
-  <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
+  <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logosu" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
 </div>
 <p>&nbsp;</p>
 
 <p align="center">
-  <a href="https://slack.questdb.io">
-    <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
-  </a>
   <a href="#contribute">
-    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source contributors"/>
+    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB OSS Katkıda Bulunanlar"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
+    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="Maven Central'da QuestDB"/>
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](README.ja-ja.md) |
-Türkçe | [हिंदी](README.hn-in.md) | [Tiếng Việt](README.vi-vn.md)
+<p align="center">
+  <a href="../README.md">English</a> |
+  <a href="./README.zh-cn.md">简体中文</a> |
+  <a href="./README.zh-hk.md">繁體中文</a> |
+  <a href="./README.ar-dz.md">العربية</a> |
+  <a href="./README.it-it.md">Italiano</a> |
+  <a href="./README.ua-ua.md">Українська</a> |
+  <a href="./README.es-es.md">Español</a> |
+  <a href="./README.pt-pt.md">Português</a> |
+  <a href="./README.ja-ja.md">日本語</a> |
+  Türkçe |
+  <a href="./README.hn-in.md">हिंदी</a> |
+  <a href="./README.vi-vn.md">Tiếng Việt</a>
+</p>
 
-# QuestDB
+---
 
 QuestDB yüksek aktarım verimliliği gösteren, hızlı ve basit SQL sorguları sunan açık kaynak kodlu
 bir [time-series database](https://questdb.io/glossary/time-series-database/) 'dir.
@@ -38,7 +47,7 @@ ve garbage collection olmadan oluşturulmuştur.
 
 <div align="center">
   <a href="https://demo.questdb.io">
-    <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
+    <img alt="QuestDB Web Konsolu bir SQL sorgusu ve sorgu sonucunu gösteriyor" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
   </a>
 </div>
 
@@ -119,7 +128,7 @@ ile karşılaştırmaktadır.
 sonuçları:
 
 <div align="center">
-    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src="https://user-images.githubusercontent.com/91843271/197382161-e5f3f5b0-18bf-439a-94e4-83ab4bf91d7c.png" width="600"/>
+    <img alt="QuestDB, InfluxDB ve TimescaleDB'nin veri alma hızını karşılaştıran bir grafik." src="https://user-images.githubusercontent.com/91843271/197382161-e5f3f5b0-18bf-439a-94e4-83ab4bf91d7c.png" width="600"/>
   </a>
 </div>
 
