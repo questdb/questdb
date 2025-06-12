@@ -324,12 +324,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimestampUtils.TimestampUnitConverter getTimestampUnitConverter(int fromTimestampType) {
-        assert ColumnType.tagOf(fromTimestampType) == ColumnType.TIMESTAMP;
-        if (fromTimestampType == ColumnType.TIMESTAMP_MICRO) {
-            return null;
+    public TimestampUtils.TimestampUnitConverter getTimestampUnitConverter(int toTimestampType) {
+        if (toTimestampType == ColumnType.TIMESTAMP_NANO) {
+            return this::toNanos;
         }
-        return this::toNanos;
+        return null;
     }
 
     @Override

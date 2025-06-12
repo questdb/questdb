@@ -500,7 +500,7 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            if (fromColumnType != toColumnType) {
+                            if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL) {
                                 if (toColumnType == ColumnType.TIMESTAMP_MICRO) {
                                     asm.invokeInterface(implicitCastTimestampNanosAsMicros, 2);
                                 } else {

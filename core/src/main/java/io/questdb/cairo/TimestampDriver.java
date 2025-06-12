@@ -90,7 +90,7 @@ public interface TimestampDriver {
 
     PartitionFloorMethod getPartitionFloorMethod(int partitionBy);
 
-    TimestampUtils.TimestampUnitConverter getTimestampUnitConverter(int fromTimestampType);
+    TimestampUtils.TimestampUnitConverter getTimestampUnitConverter(int toTimestampType);
 
     default long implicitCast(CharSequence value, int typeFrom) {
         assert typeFrom == ColumnType.STRING || typeFrom == ColumnType.SYMBOL;
