@@ -53,10 +53,10 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
         this.subSeq = subSeq;
         this.level = level;
         if (LOG_PARANOIA_MODE == LOG_PARANOIA_MODE_BASIC) {
-            System.out.println("#$#$ BASIC LOG PARANOIA MODE ACTIVE");
+            System.out.println("BASIC LOG PARANOIA MODE ACTIVE");
             logHistory = null;
         } else if (LOG_PARANOIA_MODE == LOG_PARANOIA_MODE_AGGRESSIVE) {
-            System.out.println("#$#$ AGGRESSIVE LOG PARANOIA MODE ACTIVE");
+            System.out.println("AGGRESSIVE LOG PARANOIA MODE ACTIVE");
             logHistory = new LogHistory();
         } else {
             logHistory = null;

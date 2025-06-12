@@ -145,7 +145,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
                 sink().put(x.toString());
             } catch (Throwable t) {
                 // Complex toString() method could throw e.g. NullPointerException.
-                // If that happens, we've to release cursor to prevent blocking log queue.
+                // If that happens, release the cursor to prevent blocking log queue.
                 $();
                 throw t;
             }
@@ -162,7 +162,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
                 x.toSink(sink());
             } catch (Throwable t) {
                 // Complex toSink() method could throw e.g. NullPointerException.
-                // If that happens, we've to release cursor to prevent blocking log queue.
+                // If that happens, release the cursor to prevent blocking log queue.
                 $();
                 throw t;
             }
