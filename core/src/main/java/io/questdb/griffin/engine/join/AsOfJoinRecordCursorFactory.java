@@ -354,9 +354,15 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             danglingSlaveRecord = false;
             masterRecord = masterCursor.getRecord();
             slaveRecord = slaveCursor.getRecord();
-            MapRecord mapRecord = currentJoinKeyMap.getRecord();
-            mapRecord.setSymbolTableResolver(slaveCursor, columnIndex);
-            record.of(masterRecord, mapRecord);
+
+            MapRecord mapRecordA = joinKeyMapA.getRecord();
+            mapRecordA.setSymbolTableResolver(slaveCursor, columnIndex);
+            record.of(masterRecord, mapRecordA);
+
+            if (joinKeyMapB != null) {
+                MapRecord mapRecordB = joinKeyMapB.getRecord();
+                mapRecordB.setSymbolTableResolver(slaveCursor, columnIndex);
+            }
             isMasterHasNextPending = true;
         }
     }
