@@ -650,6 +650,35 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
+    // todo, this is used to benchmark, will remove in the release.
+    private static long copyOrderedBatched0UseFrom(
+            TableWriterAPI writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int fromTimestampType,
+            int cursorTimestampIndex,
+            long batchSize,
+            long o3MaxLag,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        long commitTarget = batchSize;
+        long rowCount = 0;
+        final Record record = cursor.getRecord();
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
+        while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            TableWriter.Row row = writer.newRow(timestampDriver.from(record.getTimestamp(cursorTimestampIndex), fromTimestampType));
+            copier.copy(record, row);
+            row.append();
+            if (++rowCount >= commitTarget) {
+                writer.ic(o3MaxLag);
+                commitTarget = rowCount + batchSize;
+            }
+        }
+
+        return rowCount;
+    }
+
     // returns number of copied rows
     private static long copyOrderedBatchedStrTimestamp(
             TableWriterAPI writer,

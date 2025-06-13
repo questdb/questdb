@@ -74,6 +74,8 @@ public interface TimestampDriver {
     // todo: explore static ref
     boolean convertToVar(long fixedAddr, CharSink<?> stringSink);
 
+    long from(long timestamp, int timestampType);
+
     long fromDays(int days);
 
     long fromHours(int hours);

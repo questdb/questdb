@@ -229,6 +229,14 @@ public class NanoTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long from(long timestamp, int timestampType) {
+        if (timestampType != ColumnType.TIMESTAMP_MICRO) {
+            return timestamp;
+        }
+        return TimestampUtils.nanosToMicros(timestamp);
+    }
+
+    @Override
     public long fromDays(int days) {
         return days * Nanos.DAY_NANOS;
     }

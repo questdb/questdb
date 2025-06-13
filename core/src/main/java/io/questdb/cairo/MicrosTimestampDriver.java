@@ -230,6 +230,14 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long from(long timestamp, int timestampType) {
+        if (timestampType != ColumnType.TIMESTAMP_NANO) {
+            return timestamp;
+        }
+        return TimestampUtils.microsToNanos(timestamp);
+    }
+
+    @Override
     public long fromDays(int days) {
         return days * Timestamps.DAY_MICROS;
     }
