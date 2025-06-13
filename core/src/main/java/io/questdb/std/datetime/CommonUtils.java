@@ -36,7 +36,6 @@ public class CommonUtils {
     };
     public static final int DAY_HOURS = 24;
     public static final String DAY_PATTERN = "yyyy-MM-dd";
-    public static final DateLocale EN_LOCALE = DateLocaleFactory.INSTANCE.getLocale("en");
     public static final String GREEDY_MILLIS1_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.Sz";
     public static final String GREEDY_MILLIS2_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSz";
     public static final int HOUR_24 = 2;

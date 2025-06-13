@@ -88,7 +88,7 @@ public class DateFormatUtils {
         if (millis == Long.MIN_VALUE) {
             return;
         }
-        UTC_FORMAT.format(millis, EN_LOCALE, "Z", sink);
+        UTC_FORMAT.format(millis, DateLocale.EN_LOCALE, "Z", sink);
     }
 
     public static void appendEra(@NotNull CharSink<?> sink, int year, @NotNull DateLocale locale) {
@@ -246,7 +246,7 @@ public class DateFormatUtils {
     }
 
     public static void formatHTTP(@NotNull CharSink<?> sink, long millis) {
-        HTTP_FORMAT.format(millis, EN_LOCALE, "GMT", sink);
+        HTTP_FORMAT.format(millis, DateLocale.EN_LOCALE, "GMT", sink);
     }
 
     // YYYY-MM
@@ -279,7 +279,7 @@ public class DateFormatUtils {
         final int hi = value.length();
         for (int i = 0; i < DATE_FORMATS_SIZE; i++) {
             try {
-                return DATE_FORMATS[i].parse(value, 0, hi, EN_LOCALE);
+                return DATE_FORMATS[i].parse(value, 0, hi, DateLocale.EN_LOCALE);
             } catch (NumericException ignore) {
             }
         }
@@ -288,7 +288,7 @@ public class DateFormatUtils {
 
     // YYYY-MM-DDThh:mm:ss.mmm
     public static long parseUTCDate(@NotNull CharSequence value) throws NumericException {
-        return UTC_FORMAT.parse(value, 0, value.length(), EN_LOCALE);
+        return UTC_FORMAT.parse(value, 0, value.length(), DateLocale.EN_LOCALE);
     }
 
     public static long parseYearGreedy(@NotNull CharSequence in, int pos, int hi) throws NumericException {

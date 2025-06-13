@@ -38,7 +38,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Utf8Sequence;
 
-import static io.questdb.std.datetime.CommonUtils.EN_LOCALE;
+import static io.questdb.std.datetime.DateLocale.EN_LOCALE;
 
 public class VarcharToPgDateFunctionFactory implements FunctionFactory {
     @Override

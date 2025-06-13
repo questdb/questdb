@@ -33,7 +33,7 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.TimestampFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 
-import static io.questdb.std.datetime.CommonUtils.EN_LOCALE;
+import static io.questdb.std.datetime.DateLocale.EN_LOCALE;
 
 public class DefaultTextConfiguration implements TextConfiguration {
     private final InputFormatConfiguration inputFormatConfiguration;

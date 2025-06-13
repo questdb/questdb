@@ -42,7 +42,7 @@ import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
 
-import static io.questdb.std.datetime.CommonUtils.EN_LOCALE;
+import static io.questdb.std.datetime.DateLocale.EN_LOCALE;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_NANOS;
 import static io.questdb.std.datetime.nanotime.NanosFormatUtils.parseNSecUTC;
 

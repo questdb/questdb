@@ -34,6 +34,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
@@ -456,13 +457,13 @@ public class PartitionByTest {
 
                 // check formatting for day formatter
                 sink.clear();
-                dayFormat.format(timestamp, CommonUtils.EN_LOCALE, null, sink);
+                dayFormat.format(timestamp, DateLocale.EN_LOCALE, null, sink);
                 String dayFormatted = sink.toString();
                 Assert.assertEquals(expectedDayFormatted, dayFormatted);
 
                 // check formatting for week formatter
                 sink.clear();
-                weekFormat.format(timestamp, CommonUtils.EN_LOCALE, null, sink);
+                weekFormat.format(timestamp, DateLocale.EN_LOCALE, null, sink);
                 String weekFormatted = sink.toString();
                 Assert.assertEquals(expectedWeekFormatted, weekFormatted.substring(0, 8));
 
@@ -617,7 +618,7 @@ public class PartitionByTest {
         long expected = TimestampFormatUtils.parseTimestamp(timestampString);
         DateFormat dirFormatMethod = PartitionBy.getPartitionDirFormatMethod(ColumnType.TIMESTAMP, partitionBy);
         sink.clear();
-        dirFormatMethod.format(expected, CommonUtils.EN_LOCALE, null, sink);
+        dirFormatMethod.format(expected, DateLocale.EN_LOCALE, null, sink);
         TestUtils.assertEquals(expectedDirName, sink);
         if (partitionBy == PartitionBy.WEEK) {
             int year = Timestamps.getYear(expected);
@@ -774,7 +775,7 @@ public class PartitionByTest {
         for (int i = 0; i < 10; i++) {
             long timestamp = rnd.nextLong(3000 * Timestamps.DAY_MICROS * 365L / multiplier);
             tsSink.clear();
-            formatter.format(timestamp, CommonUtils.EN_LOCALE, null, tsSink);
+            formatter.format(timestamp, DateLocale.EN_LOCALE, null, tsSink);
             long actual = PartitionBy.parsePartitionDirName(tsSink, ColumnType.TIMESTAMP, partitionBy);
 
             Assert.assertEquals(tsSink.toString(), timestamp, actual);

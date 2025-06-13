@@ -32,7 +32,7 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.line.tcp.ColumnNameType;
@@ -125,7 +125,7 @@ public class LineData {
 
     private String TimestampsToString(long uSecs) {
         StringSink sink = Misc.getThreadLocalSink();
-        TimestampFormatUtils.USEC_UTC_FORMAT.format(uSecs, CommonUtils.EN_LOCALE, null, sink);
+        TimestampFormatUtils.USEC_UTC_FORMAT.format(uSecs, DateLocale.EN_LOCALE, null, sink);
         return sink.toString();
     }
 

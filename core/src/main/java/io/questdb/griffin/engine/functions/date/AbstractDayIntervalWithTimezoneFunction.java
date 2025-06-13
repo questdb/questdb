@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.Dates;
@@ -91,8 +91,8 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
             }
 
             // the timezone is a timezone name string
-            final TimeZoneRules tzRules = CommonUtils.EN_LOCALE.getZoneRules(
-                    Numbers.decodeLowInt(CommonUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
+            final TimeZoneRules tzRules = DateLocale.EN_LOCALE.getZoneRules(
+                    Numbers.decodeLowInt(DateLocale.EN_LOCALE.matchZone(tz, 0, tz.length())),
                     RESOLUTION_MICROS
             );
             final long offset = tzRules.getOffset(now);

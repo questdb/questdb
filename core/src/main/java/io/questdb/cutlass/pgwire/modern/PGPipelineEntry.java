@@ -105,7 +105,7 @@ import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.cutlass.pgwire.modern.PGConnectionContextModern.*;
 import static io.questdb.cutlass.pgwire.modern.PGUtils.calculateColumnBinSize;
 import static io.questdb.cutlass.pgwire.modern.PGUtils.estimateColumnTxtSize;
-import static io.questdb.std.datetime.CommonUtils.EN_LOCALE;
+import static io.questdb.std.datetime.DateLocale.EN_LOCALE;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 public class PGPipelineEntry implements QuietCloseable, Mutable {

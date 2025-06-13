@@ -34,6 +34,7 @@ import io.questdb.std.ObjList;
 import java.text.DateFormatSymbols;
 
 public class DateLocale {
+    public static final DateLocale EN_LOCALE = DateLocaleFactory.INSTANCE.getLocale("en");
     private final String[] ampmArray;
     private final IntObjHashMap<ObjList<CharSequence>> amspms = new IntObjHashMap<>();
     private final String[] eraArray;
