@@ -26,29 +26,28 @@ package io.questdb.std.datetime.microtime;
 
 import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.FixedTimeZoneRule;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 
+import static io.questdb.std.datetime.CommonUtils.DAYS_PER_MONTH;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public final class Timestamps {
 
-    public static final long DAY_MICROS = 86400000000L; // 24 * 60 * 60 * 1000 * 1000L
+    public static final long DAY_MICROS = 86_400_000_000L; // 24 * 60 * 60 * 1000 * 1000L
     public static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
-    private static final long HALF_YEAR_MICROS = AVG_YEAR_MICROS / 2;
-    private static final long EPOCH_MICROS = 1970L * AVG_YEAR_MICROS;
-    private static final long HALF_EPOCH_MICROS = EPOCH_MICROS / 2;
     public static final long DAY_SECONDS = 86400;
     public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
     public static final long HOUR_MICROS = 3600000000L;
@@ -58,35 +57,18 @@ public final class Timestamps {
     public static final long MINUTE_MICROS = 60000000;
     public static final long MINUTE_SECONDS = 60;
     public static final long MONTH_MICROS_APPROX = 30 * DAY_MICROS;
-    public static final long O3_MIN_TS = 0L;
     public static final long SECOND_MICROS = 1000000;
     public static final int SECOND_MILLIS = 1000;
     public static final long SECOND_NANOS = 1000000000;
     public static final long STARTUP_TIMESTAMP;
-    public static final int STATE_DELIM = 4;
-    public static final int STATE_END = 6;
-    public static final int STATE_GMT = 2;
-    public static final int STATE_HOUR = 3;
-    public static final int STATE_INIT = 0;
-    public static final int STATE_MINUTE = 5;
-    public static final int STATE_SIGN = 7;
-    public static final int STATE_UTC = 1;
     public static final int WEEK_DAYS = 7;
     public static final long WEEK_MICROS = 604800000000L; // DAY_MICROS * 7
     public static final long YEAR_10000 = 253_402_300_800_000_000L;
     public static final long YEAR_MICROS_NONLEAP = 365 * DAY_MICROS;
-    private static final char AFTER_NINE = '9' + 1;
-    private static final char BEFORE_ZERO = '0' - 1;
     private static final int DAYS_0000_TO_1970 = 719527;
-    private static final int[] DAYS_PER_MONTH = {
-            31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
-    };
-    private static final int DAY_HOURS = 24;
-    private static final int HOUR_MINUTES = 60;
     private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long YEAR_MICROS_LEAP = 366 * DAY_MICROS;
-    private static final int YEAR_MONTHS = 12;
 
     private Timestamps() {
     }
@@ -116,7 +98,7 @@ public final class Timestamps {
             return micros;
         }
         int y = Timestamps.getYear(micros);
-        boolean l = Timestamps.isLeapYear(y);
+        boolean l = CommonUtils.isLeapYear(y);
         int m = getMonthOfYear(micros, y, l);
         int _y;
         int _m = m - 1 + months;
@@ -135,7 +117,7 @@ public final class Timestamps {
             }
         }
         int _d = getDayOfMonth(micros, y, m, l);
-        int maxDay = getDaysPerMonth(_m, isLeapYear(_y));
+        int maxDay = CommonUtils.getDaysPerMonth(_m, CommonUtils.isLeapYear(_y));
         if (_d > maxDay) {
             _d = maxDay;
         }
@@ -182,8 +164,8 @@ public final class Timestamps {
 
         int y = getYear(micros);
         int m;
-        boolean leap1 = isLeapYear(y);
-        boolean leap2 = isLeapYear(y + years);
+        boolean leap1 = CommonUtils.isLeapYear(y);
+        boolean leap2 = CommonUtils.isLeapYear(y + years);
 
         return yearMicros(y + years, leap2)
                 + monthOfYearMicros(m = getMonthOfYear(micros, y, leap1), leap2)
@@ -195,7 +177,7 @@ public final class Timestamps {
 
     public static long ceilDD(long micros) {
         int y = getYear(micros);
-        boolean l = isLeapYear(y);
+        boolean l = CommonUtils.isLeapYear(y);
         int m = getMonthOfYear(micros, y, l);
         return yearMicros(y, l)
                 + monthOfYearMicros(m, l)
@@ -212,11 +194,11 @@ public final class Timestamps {
 
     public static long ceilMM(long micros) {
         int y = getYear(micros);
-        boolean l = isLeapYear(y);
+        boolean l = CommonUtils.isLeapYear(y);
         int m = getMonthOfYear(micros, y, l);
         return yearMicros(y, l)
                 + monthOfYearMicros(m, l)
-                + (getDaysPerMonth(m, l)) * DAY_MICROS;
+                + (CommonUtils.getDaysPerMonth(m, l)) * DAY_MICROS;
     }
 
     public static long ceilMS(long micros) {
@@ -233,7 +215,7 @@ public final class Timestamps {
 
     public static long ceilYYYY(long micros) {
         int y = getYear(micros);
-        boolean l = isLeapYear(y);
+        boolean l = CommonUtils.isLeapYear(y);
         return yearMicros(y, l)
                 + monthOfYearMicros(12, l)
                 + (DAYS_PER_MONTH[11]) * DAY_MICROS;
@@ -255,7 +237,7 @@ public final class Timestamps {
     public static long floorCentury(long micros) {
         int year = getYear(micros);
         int centuryFirstYear = (((year + 99) / 100) * 100) - 99;
-        boolean leapYear = isLeapYear(centuryFirstYear);
+        boolean leapYear = CommonUtils.isLeapYear(centuryFirstYear);
         return yearMicros(centuryFirstYear, leapYear);
     }
 
@@ -302,7 +284,7 @@ public final class Timestamps {
     public static long floorDecade(long micros) {
         int year = getYear(micros);
         int decadeFirstYear = (year / 10) * 10;
-        boolean leapYear = isLeapYear(decadeFirstYear);
+        boolean leapYear = CommonUtils.isLeapYear(decadeFirstYear);
         return yearMicros(decadeFirstYear, leapYear);
     }
 
@@ -351,7 +333,7 @@ public final class Timestamps {
     public static long floorMM(long micros) {
         int y;
         boolean l;
-        return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
+        return yearMicros(y = getYear(micros), l = CommonUtils.isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
     }
 
     @SuppressWarnings("unused")
@@ -370,7 +352,7 @@ public final class Timestamps {
         long m = (getMonthsBetween(0, micros) / stride) * stride;
         int y = (int) (origin + m / 12);
         int mm = (int) (m % 12);
-        boolean l = isLeapYear(y);
+        boolean l = CommonUtils.isLeapYear(y);
         return yearMicros(y, l) + (mm > 0 ? monthOfYearMicros(mm, l) : 0);
     }
 
@@ -399,7 +381,7 @@ public final class Timestamps {
     public static long floorMillennium(long micros) {
         int year = getYear(micros);
         int millenniumFirstYear = (((year + 999) / 1000) * 1000) - 999;
-        boolean leapYear = isLeapYear(millenniumFirstYear);
+        boolean leapYear = CommonUtils.isLeapYear(millenniumFirstYear);
         return yearMicros(millenniumFirstYear, leapYear);
     }
 
@@ -414,7 +396,7 @@ public final class Timestamps {
      */
     public static long floorQuarter(long micros) {
         int year = getYear(micros);
-        boolean leapYear = isLeapYear(year);
+        boolean leapYear = CommonUtils.isLeapYear(year);
         int monthOfYear = getMonthOfYear(micros, year, leapYear);
         int q = (monthOfYear - 1) / 3;
         int month = (3 * q) + 1;
@@ -465,13 +447,13 @@ public final class Timestamps {
 
     public static long floorYYYY(long micros) {
         final int y = getYear(micros);
-        return yearMicros(y, isLeapYear(y));
+        return yearMicros(y, CommonUtils.isLeapYear(y));
     }
 
     public static long floorYYYY(long micros, int stride) {
         final int origin = getYear(0);
         final int y = origin + ((getYear(micros) - origin) / stride) * stride;
-        return yearMicros(y, isLeapYear(y));
+        return yearMicros(y, CommonUtils.isLeapYear(y));
     }
 
     @SuppressWarnings("unused")
@@ -542,24 +524,13 @@ public final class Timestamps {
 
     public static int getDayOfYear(long micros) {
         int year = getYear(micros);
-        boolean leap = isLeapYear(year);
+        boolean leap = CommonUtils.isLeapYear(year);
         long yearStart = yearMicros(year, leap);
         return (int) ((micros - yearStart) / DAY_MICROS) + 1;
     }
 
     public static long getDaysBetween(long a, long b) {
         return Math.abs(a - b) / DAY_MICROS;
-    }
-
-    /**
-     * Days in a given month. This method expects you to know if month is in leap year.
-     *
-     * @param m    month from 1 to 12
-     * @param leap true if this is for leap year
-     * @return number of days in month.
-     */
-    public static int getDaysPerMonth(int m, boolean leap) {
-        return leap & m == 2 ? 29 : DAYS_PER_MONTH[m - 1];
     }
 
     public static int getDecade(long micros) {
@@ -572,16 +543,16 @@ public final class Timestamps {
 
     public static int getDoy(long micros) {
         final int year = getYear(micros);
-        final boolean leap = isLeapYear(year);
+        final boolean leap = CommonUtils.isLeapYear(year);
         final long yearStart = yearMicros(year, leap);
         return (int) ((micros - yearStart) / DAY_MICROS) + 1;
     }
 
     public static int getHourOfDay(long micros) {
         if (micros > -1) {
-            return (int) ((micros / HOUR_MICROS) % DAY_HOURS);
+            return (int) ((micros / HOUR_MICROS) % CommonUtils.DAY_HOURS);
         } else {
-            return DAY_HOURS - 1 + (int) (((micros + 1) / HOUR_MICROS) % DAY_HOURS);
+            return CommonUtils.DAY_HOURS - 1 + (int) (((micros + 1) / HOUR_MICROS) % CommonUtils.DAY_HOURS);
         }
     }
 
@@ -670,9 +641,9 @@ public final class Timestamps {
 
     public static int getMinuteOfHour(long micros) {
         if (micros > -1) {
-            return (int) ((micros / MINUTE_MICROS) % HOUR_MINUTES);
+            return (int) ((micros / MINUTE_MICROS) % CommonUtils.HOUR_MINUTES);
         } else {
-            return HOUR_MINUTES - 1 + (int) (((micros + 1) / MINUTE_MICROS) % HOUR_MINUTES);
+            return CommonUtils.HOUR_MINUTES - 1 + (int) (((micros + 1) / MINUTE_MICROS) % CommonUtils.HOUR_MINUTES);
         }
     }
 
@@ -682,7 +653,7 @@ public final class Timestamps {
 
     public static int getMonthOfYear(long micros) {
         final int y = Timestamps.getYear(micros);
-        final boolean leap = Timestamps.isLeapYear(y);
+        final boolean leap = CommonUtils.isLeapYear(y);
         return getMonthOfYear(micros, y, leap);
     }
 
@@ -720,8 +691,8 @@ public final class Timestamps {
 
         int aYear = getYear(a);
         int bYear = getYear(b);
-        boolean aLeap = isLeapYear(aYear);
-        boolean bLeap = isLeapYear(bYear);
+        boolean aLeap = CommonUtils.isLeapYear(aYear);
+        boolean bLeap = CommonUtils.isLeapYear(bYear);
         int aMonth = getMonthOfYear(a, aYear, aLeap);
         int bMonth = getMonthOfYear(b, bYear, bLeap);
 
@@ -779,17 +750,6 @@ public final class Timestamps {
         return Math.abs(a - b) / SECOND_MICROS;
     }
 
-    public static int getStrideMultiple(CharSequence str) {
-        if (str != null && str.length() > 1) {
-            try {
-                final int multiple = Numbers.parseInt(str, 0, str.length() - 1);
-                return multiple <= 0 ? 1 : multiple;
-            } catch (NumericException ignored) {
-            }
-        }
-        return 1;
-    }
-
     public static char getStrideUnit(CharSequence str, int position) throws SqlException {
         assert str.length() > 0;
         final char unit = str.charAt(str.length() - 1);
@@ -819,7 +779,7 @@ public final class Timestamps {
             int lo,
             int hi
     ) throws NumericException {
-        long l = parseOffset(timezone, lo, hi);
+        long l = Dates.parseOffset(timezone, lo, hi);
         if (l == Long.MIN_VALUE) {
             return locale.getZoneRules(
                     Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
@@ -846,7 +806,7 @@ public final class Timestamps {
 
     public static int getWeekOfMonth(long micros) {
         int year = getYear(micros);
-        boolean leap = isLeapYear(year);
+        boolean leap = CommonUtils.isLeapYear(year);
         return getDayOfMonth(micros, year, getMonthOfYear(micros, year, leap), leap) / 7 + 1;
     }
 
@@ -865,49 +825,41 @@ public final class Timestamps {
         return Math.abs(a - b) / WEEK_MICROS;
     }
 
-    /**
-     * Calculates year number from micros.
-     *
-     * @param micros time micros.
-     * @return year
-     */
     public static int getYear(long micros) {
-        long mid = (micros >> 1) + HALF_EPOCH_MICROS;
-        if (mid < 0) {
-            mid = mid - HALF_YEAR_MICROS + 1;
-        }
-        int year = (int) (mid / HALF_YEAR_MICROS);
+        // Initial year estimate relative to 1970
+        // Use a reasonable approximation of days per year to avoid overflow
+        // 365.25 days per year approximation
+        int yearsSinceEpoch = (int) (micros / AVG_YEAR_MICROS);
+        int yearEstimate = 1970 + yearsSinceEpoch;
 
-        boolean leap = isLeapYear(year);
-        long yearStart = yearMicros(year, leap);
+        // Handle negative years appropriately
+        if (micros < 0 && yearEstimate >= 1970) {
+            yearEstimate = 1969;
+        }
+
+        // Calculate year start
+        boolean leap = CommonUtils.isLeapYear(yearEstimate);
+        long yearStart = yearMicros(yearEstimate, leap);
+
+        // Check if we need to adjust
         long diff = micros - yearStart;
 
         if (diff < 0) {
-            year--;
-        } else if (diff >= YEAR_MICROS_NONLEAP) {
-            yearStart += leap ? YEAR_MICROS_LEAP : YEAR_MICROS_NONLEAP;
-            if (yearStart <= micros) {
-                year++;
+            // We're in the previous year
+            yearEstimate--;
+        } else {
+            // Check if we're in the next year
+            long yearLength = leap ? YEAR_MICROS_LEAP : YEAR_MICROS_NONLEAP;
+            if (diff >= yearLength) {
+                yearEstimate++;
             }
         }
 
-        return year;
+        return yearEstimate;
     }
 
     public static long getYearsBetween(long a, long b) {
         return getMonthsBetween(a, b) / 12;
-    }
-
-    /**
-     * Calculates if year is leap year using following algorithm:
-     * <p>
-     * <a href="http://en.wikipedia.org/wiki/Leap_year">...</a>
-     *
-     * @param year the year
-     * @return true if year is leap
-     */
-    public static boolean isLeapYear(int year) {
-        return ((year & 3) == 0) && ((year % 100) != 0 || (year % 400) == 0);
     }
 
     public static long monthOfYearMicros(int month, boolean leap) {
@@ -974,131 +926,6 @@ public final class Timestamps {
         return Numbers.encodeLowHighInts(negative ? val : -val, len);
     }
 
-    public static long parseOffset(CharSequence in) {
-        return parseOffset(in, 0, in.length());
-    }
-
-    public static long parseOffset(CharSequence in, int lo, int hi) {
-        int p = lo;
-        int state = STATE_INIT;
-        boolean negative = false;
-        int hour = 0;
-        int minute = 0;
-
-        try {
-            OUT:
-            while (p < hi) {
-                char c = in.charAt(p);
-
-                switch (state) {
-                    case STATE_INIT:
-                        switch (c) {
-                            case 'U':
-                            case 'u':
-                                state = STATE_UTC;
-                                break;
-                            case 'G':
-                            case 'g':
-                                state = STATE_GMT;
-                                break;
-                            case 'Z':
-                            case 'z':
-                                state = STATE_END;
-                                break;
-                            case '+':
-                                state = STATE_HOUR;
-                                break;
-                            case '-':
-                                negative = true;
-                                state = STATE_HOUR;
-                                break;
-                            default:
-                                if (isDigit(c)) {
-                                    state = STATE_HOUR;
-                                    p--;
-                                } else {
-                                    return Long.MIN_VALUE;
-                                }
-                                break;
-                        }
-                        p++;
-                        break;
-                    case STATE_UTC:
-                        if (p > hi - 2 || Chars.noMatch(in, p, p + 2, "tc", 0, 2)) {
-                            return Long.MIN_VALUE;
-                        }
-                        state = STATE_SIGN;
-                        p += 2;
-                        break;
-                    case STATE_GMT:
-                        if (p > hi - 2 || Chars.noMatch(in, p, p + 2, "mt", 0, 2)) {
-                            return Long.MIN_VALUE;
-                        }
-                        state = STATE_SIGN;
-                        p += 2;
-                        break;
-                    case STATE_SIGN:
-                        switch (c) {
-                            case '+':
-                                break;
-                            case '-':
-                                negative = true;
-                                break;
-                            default:
-                                return Long.MIN_VALUE;
-                        }
-                        p++;
-                        state = STATE_HOUR;
-                        break;
-                    case STATE_HOUR:
-                        if (isDigit(c) && p < hi - 1) {
-                            hour = Numbers.parseInt(in, p, p + 2);
-                        } else {
-                            return Long.MIN_VALUE;
-                        }
-                        state = STATE_DELIM;
-                        p += 2;
-                        break;
-                    case STATE_DELIM:
-                        if (c == ':') {
-                            state = STATE_MINUTE;
-                            p++;
-                        } else if (isDigit(c)) {
-                            state = STATE_MINUTE;
-                        } else {
-                            return Long.MIN_VALUE;
-                        }
-                        break;
-                    case STATE_MINUTE:
-                        if (isDigit(c) && p < hi - 1) {
-                            minute = Numbers.parseInt(in, p, p + 2);
-                        } else {
-                            return Long.MIN_VALUE;
-                        }
-                        p += 2;
-                        state = STATE_END;
-                        break OUT;
-                    default:
-                        return Long.MIN_VALUE;
-                }
-            }
-        } catch (NumericException e) {
-            return Long.MIN_VALUE;
-        }
-
-        switch (state) {
-            case STATE_DELIM:
-            case STATE_END:
-                if (hour > 23 || minute > 59) {
-                    return Long.MIN_VALUE;
-                }
-                final int min = hour * 60 + minute;
-                return Numbers.encodeLowHighInts(negative ? -min : min, p - lo);
-            default:
-                return Long.MIN_VALUE;
-        }
-    }
-
     public static long previousOrSameDayOfWeek(long micros, int dow) {
         int thisDow = getDayOfWeek(micros);
         if (thisDow == dow) {
@@ -1133,28 +960,28 @@ public final class Timestamps {
             case PartitionBy.HOUR:
                 return value;
             case PartitionBy.DAY:
-                int maxDays = Integer.MAX_VALUE / DAY_HOURS;
+                int maxDays = Integer.MAX_VALUE / CommonUtils.DAY_HOURS;
                 if (value > maxDays) {
                     throw SqlException.$(tokenPos, "value out of range: ")
                             .put(value).put(" days. Max value: ").put(maxDays).put(" days");
                 }
-                return DAY_HOURS * value;
+                return CommonUtils.DAY_HOURS * value;
             case PartitionBy.WEEK:
-                int maxWeeks = Integer.MAX_VALUE / WEEK_DAYS / DAY_HOURS;
+                int maxWeeks = Integer.MAX_VALUE / WEEK_DAYS / CommonUtils.DAY_HOURS;
                 if (value > maxWeeks) {
                     throw SqlException.$(tokenPos, "value out of range: ")
                             .put(value).put(" weeks. Max value: ").put(maxWeeks).put(" weeks");
                 }
-                return WEEK_DAYS * DAY_HOURS * value;
+                return WEEK_DAYS * CommonUtils.DAY_HOURS * value;
             case PartitionBy.MONTH:
                 return -value;
             case PartitionBy.YEAR:
-                int maxYears = Integer.MAX_VALUE / YEAR_MONTHS;
+                int maxYears = Integer.MAX_VALUE / CommonUtils.YEAR_MONTHS;
                 if (value > maxYears) {
                     throw SqlException.$(tokenPos, "value out of range: ")
                             .put(value).put(" years. Max value: ").put(maxYears).put(" years");
                 }
-                return -(YEAR_MONTHS * value);
+                return -(CommonUtils.YEAR_MONTHS * value);
             default:
                 throw new AssertionError("invalid value for partitionByUnit: " + partitionByUnit);
         }
@@ -1186,7 +1013,7 @@ public final class Timestamps {
     }
 
     public static long toMicros(int y, int m, int d, int h, int mi) {
-        return toMicros(y, isLeapYear(y), m, d, h, mi);
+        return toMicros(y, CommonUtils.isLeapYear(y), m, d, h, mi);
     }
 
     public static long toMicros(int y, boolean leap, int m, int d, int h, int mi) {
@@ -1204,7 +1031,7 @@ public final class Timestamps {
             int millis,
             int micros
     ) {
-        int maxDay = Math.min(day, getDaysPerMonth(month, leap)) - 1;
+        int maxDay = Math.min(day, CommonUtils.getDaysPerMonth(month, leap)) - 1;
         return yearMicros(y, leap)
                 + monthOfYearMicros(month, leap)
                 + maxDay * DAY_MICROS
@@ -1216,7 +1043,7 @@ public final class Timestamps {
     }
 
     public static long toMicros(int y, int m, int d) {
-        boolean l = isLeapYear(y);
+        boolean l = CommonUtils.isLeapYear(y);
         return yearMicros(y, l) + monthOfYearMicros(m, l) + (d - 1) * DAY_MICROS;
     }
 
@@ -1238,7 +1065,7 @@ public final class Timestamps {
             int hi
     ) throws NumericException {
         final long offset;
-        long l = parseOffset(timezone, lo, hi);
+        long l = Dates.parseOffset(timezone, lo, hi);
         if (l == Long.MIN_VALUE) {
             return utc + locale.getZoneRules(
                     Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
@@ -1267,7 +1094,7 @@ public final class Timestamps {
             int hi
     ) throws NumericException {
         long offset;
-        long l = parseOffset(timezone, lo, hi);
+        long l = Dates.parseOffset(timezone, lo, hi);
         if (l == Long.MIN_VALUE) {
             TimeZoneRules zoneRules = locale.getZoneRules(
                     Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
@@ -1285,12 +1112,12 @@ public final class Timestamps {
     }
 
     /**
-     * Calculated start of year in millis. For example of year 2008 this is
+     * Calculated epoch offset in microseconds of the beginning of the year. For example of year 2008 this is
      * equivalent to parsing "2008-01-01T00:00:00.000Z", except this method is faster.
      *
      * @param year the year
      * @param leap true if give year is leap year
-     * @return millis for start of year.
+     * @return epoch offset in micros.
      */
     public static long yearMicros(int year, boolean leap) {
         int leapYears = year / 100;
@@ -1325,10 +1152,6 @@ public final class Timestamps {
         return micros < 0 ? us - 1 + ((micros - offset) % us) : (micros - offset) % us;
     }
 
-    private static boolean isDigit(char c) {
-        return c > BEFORE_ZERO && c < AFTER_NINE;
-    }
-
     static {
         STARTUP_TIMESTAMP = Os.currentTimeMicros();
         long minSum = 0;
@@ -1336,7 +1159,7 @@ public final class Timestamps {
         for (int i = 0; i < 11; i++) {
             minSum += DAYS_PER_MONTH[i] * DAY_MICROS;
             MIN_MONTH_OF_YEAR_MICROS[i + 1] = minSum;
-            maxSum += getDaysPerMonth(i + 1, true) * DAY_MICROS;
+            maxSum += CommonUtils.getDaysPerMonth(i + 1, true) * DAY_MICROS;
             MAX_MONTH_OF_YEAR_MICROS[i + 1] = maxSum;
         }
     }

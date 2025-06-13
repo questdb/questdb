@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.pool.PoolListener;
@@ -39,12 +40,12 @@ import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -139,7 +140,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             ) {
                 String table = "array_test";
                 CountDownLatch released = createTableCommitNotifier(table);
-                long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
+                long ts = TimestampFormatUtils.parseTimestamp("2025-02-22T00:00:00.000000Z");
                 double[] arr1d = createDoubleArray(5);
                 double[][] arr2d = createDoubleArray(2, 3);
                 double[][][] arr3d = createDoubleArray(1, 2, 3);
@@ -157,7 +158,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 sender.flush();
                 waitTableWriterFinish(released);
                 assertTableSizeEventually(engine, table, 1);
-                // @todo assert table contents, needs getArray support in TestTableReadCursor
             }
         });
     }
@@ -325,7 +325,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             String confString = "tcp::addr=127.0.0.1:" + bindPort + ";user=" + AUTH_KEY_ID1 + ";token=" + TOKEN + ";protocol_version=2;";
             try (Sender sender = Sender.fromConfig(confString)) {
 
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                long tsMicros = MicrosTimestampDriver.floor("2022-02-25");
                 CountDownLatch released = createTableCommitNotifier("mytable");
                 sender.table("mytable")
                         .longColumn("int_field", 42)
@@ -383,7 +383,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .build()) {
 
                 CountDownLatch released = createTableCommitNotifier("mytable");
-                long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                long ts = MicrosTimestampDriver.floor("2022-02-25");
                 sender.table("mytable")
                         .doubleColumn("negative_inf", Double.NEGATIVE_INFINITY)
                         .doubleColumn("positive_inf", Double.POSITIVE_INFINITY)
@@ -412,7 +412,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .build()) {
 
                 CountDownLatch released = createTableCommitNotifier("poison");
-                long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                long ts = MicrosTimestampDriver.floor("2022-02-25");
                 // the poison table sets the timestamp column index explicitly
                 sender.table("poison")
                         .stringColumn("str_col1", "str_col1")
@@ -484,7 +484,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
 
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                long tsMicros = MicrosTimestampDriver.floor("2022-02-25");
                 sender.table("mytable")
                         .stringColumn("s", "non-ascii äöü")
                         .stringColumn("u", "11111111-2222-3333-4444-555555555555")
@@ -525,7 +525,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
 
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                long tsMicros = MicrosTimestampDriver.floor("2022-02-25");
                 sender.table("mytable")
                         .stringColumn("u1", "11111111-1111-1111-1111-111111111111")
                         // u2 empty -> insert as null
@@ -587,7 +587,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
 
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2023-09-18T12:01:01.01Z");
+                long tsMicros = MicrosTimestampDriver.floor("2023-09-18T12:01:01.01Z");
                 sender.table("mytable")
                         .stringColumn("unit", "ns")
                         .timestampColumn("ts", tsMicros * 1000, ChronoUnit.NANOS)
@@ -676,7 +676,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()
             ) {
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2024-02-27");
+                long tsMicros = MicrosTimestampDriver.floor("2024-02-27");
                 sender.table(table)
                         .stringColumn("string1", "some string")
                         .stringColumn("string2", "another string")
@@ -832,7 +832,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             ) {
                 String table = "string_table";
                 CountDownLatch released = createTableCommitNotifier(table);
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2024-02-27");
+                long tsMicros = MicrosTimestampDriver.floor("2024-02-27");
                 String expectedValue = "čćžšđçğéíáýůř";
                 sender.table(table)
                         .stringColumn("string1", expectedValue)
@@ -860,7 +860,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
                 CountDownLatch released = createTableCommitNotifier("mytable");
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                long tsMicros = MicrosTimestampDriver.floor("2022-02-25");
                 sender.table("mytable")
                         .longColumn("int_field", 42)
                         .boolColumn("bool_field", true)
@@ -891,7 +891,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
 
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2023-02-22");
+                long tsMicros = MicrosTimestampDriver.floor("2023-02-22");
                 sender.table(table)
                         .longColumn("max", Long.MAX_VALUE)
                         .longColumn("min", Long.MIN_VALUE)
@@ -997,7 +997,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
 
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                long tsMicros = MicrosTimestampDriver.floor("2022-02-25");
                 sender.table("mytable")
                         .stringColumn("u1", value)
                         .at(tsMicros, ChronoUnit.MICROS);
@@ -1011,7 +1011,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
 
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                long tsMicros = MicrosTimestampDriver.floor("2022-02-25");
                 sender.table("mytable")
                         .stringColumn("u1", "11111111-1111-1111-1111-111111111111")
                         .at(tsMicros, ChronoUnit.MICROS);

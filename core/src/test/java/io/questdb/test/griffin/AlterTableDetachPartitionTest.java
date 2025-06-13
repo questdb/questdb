@@ -29,6 +29,7 @@ import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -40,7 +41,6 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -388,12 +388,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 // structural change
                 writer.addColumn("new_column", ColumnType.INT);
 
-                TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-06-03T12:00:00.000000Z"));
+                TableWriter.Row row = writer.newRow(MicrosTimestampDriver.floor("2022-06-03T12:00:00.000000Z"));
                 row.putLong(0, 33L);
                 row.putInt(1, 33);
                 row.append();
 
-                Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(IntervalUtils.parseFloorPartialTimestamp(timestampDay)));
+                Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(MicrosTimestampDriver.floor(timestampDay)));
             }
 
             assertContent(
@@ -440,7 +440,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 row.putInt(1, 33);
                 row.append();
 
-                Assert.assertEquals(AttachDetachStatus.ATTACH_ERR_PARTITION_EXISTS, writer.attachPartition(IntervalUtils.parseFloorPartialTimestamp(timestampDay)));
+                Assert.assertEquals(AttachDetachStatus.ATTACH_ERR_PARTITION_EXISTS, writer.attachPartition(MicrosTimestampDriver.floor(timestampDay)));
             }
 
             assertContent(
@@ -1171,7 +1171,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 if (timestamps.hasNext()) {
                                     long partitionTimestamp = timestamps.next();
                                     try (TableWriter writer = getWriter(tableName)) {
-                                        renameDetachedToAttachable(tableName, partitionTimestamp);
+                                        renameDetachedToAttachable(tableName, TableUtils.getTimestampType(tab), partitionTimestamp);
                                         writer.attachPartition(partitionTimestamp);
                                         timestamps.remove();
                                         attachedCount.incrementAndGet();
@@ -1335,12 +1335,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 // structural change
                 writer.addColumn("new_column", ColumnType.INT);
 
-                TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-05-03T12:00:00.000000Z"));
+                TableWriter.Row row = writer.newRow(MicrosTimestampDriver.floor("2022-05-03T12:00:00.000000Z"));
                 row.putLong(0, 33L);
                 row.putInt(1, 33);
                 row.append();
 
-                Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition((IntervalUtils.parseFloorPartialTimestamp(timestampDay))));
+                Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition((MicrosTimestampDriver.floor(timestampDay))));
             }
 
             renameDetachedToAttachable(tableName, timestampDay);
@@ -1620,7 +1620,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             String timestampDay = "2022-06-02";
             try (TableWriter writer = getWriter(tableName)) {
-                Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition((IntervalUtils.parseFloorPartialTimestamp(timestampDay))));
+                Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition((MicrosTimestampDriver.floor(timestampDay))));
             }
             renameDetachedToAttachable(tableName, timestampDay);
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "T23:59:59.000000Z'", sqlExecutionContext);
@@ -2467,11 +2467,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other.$(), path.$()));
     }
 
-    private void renameDetachedToAttachable(String tableName, long... partitions) {
+    private void renameDetachedToAttachable(String tableName, int timestampType, long... partitions) {
         TableToken tableToken = engine.verifyTableName(tableName);
         for (long partition : partitions) {
             TableUtils.setSinkForNativePartition(
                     path.of(configuration.getDbRoot()).concat(tableToken),
+                    timestampType,
                     PartitionBy.DAY,
                     partition,
                     -1
@@ -2479,6 +2480,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             path.put(DETACHED_DIR_MARKER).$();
             TableUtils.setSinkForNativePartition(
                     other.of(configuration.getDbRoot()).concat(tableToken),
+                    timestampType,
                     PartitionBy.DAY,
                     partition,
                     -1

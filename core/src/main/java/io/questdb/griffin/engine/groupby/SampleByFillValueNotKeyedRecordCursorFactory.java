@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -64,6 +65,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
         super(base, groupByMetadata, recordFunctions);
         try {
             final ObjList<Function> placeholderFunctions = SampleByFillValueRecordCursorFactory.createPlaceholderFunctions(
+                    ColumnType.getTimestampDriver(base.getMetadata().getTimestampType()),
                     groupByFunctions,
                     recordFunctions,
                     recordFunctionPositions,

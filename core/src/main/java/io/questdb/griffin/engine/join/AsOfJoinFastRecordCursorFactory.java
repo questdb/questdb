@@ -66,8 +66,10 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                masterFactory.getMetadata().getTimestampType(),
                 slaveFactory.getMetadata().getTimestampIndex(),
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                slaveFactory.getMetadata().getTimestampType(),
                 configuration.getSqlAsOfJoinLookAhead()
         );
     }
@@ -130,11 +132,13 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 Record nullRecord,
                 int masterTimestampIndex,
                 SingleRecordSink masterSinkTarget,
+                int masterTimestampType,
                 int slaveTimestampIndex,
                 SingleRecordSink slaveSinkTarget,
+                int slaveTimestampType,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, masterTimestampType, slaveTimestampType, lookahead);
             this.masterSinkTarget = masterSinkTarget;
             this.slaveSinkTarget = slaveSinkTarget;
         }
@@ -160,7 +164,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 slaveCursor.recordAt(slaveRecB, Rows.toRowID(origSlaveFrameIndex, origSlaveRowId));
             }
             record.hasSlave(origHasSlave);
-            final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+            final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
             if (masterTimestamp >= lookaheadTimestamp) {
                 nextSlave(masterTimestamp);
             }

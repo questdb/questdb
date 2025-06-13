@@ -26,6 +26,8 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -33,7 +35,6 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -470,12 +471,11 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             boolean commitWithRangeReplace
     ) throws NumericException {
         try (WalWriter ww = engine.getWalWriter(tableToken)) {
-
             if (tsStr != null) {
                 int i = 0;
                 String[] sybmols = new String[]{"w", "d", "a", "b", "c"};
                 for (String tsStrPart : tsStr.split(",")) {
-                    long ts = IntervalUtils.parseFloorPartialTimestamp(tsStrPart);
+                    long ts = MicrosTimestampDriver.floor(tsStrPart);
                     TableWriter.Row row = ww.newRow(ts);
                     row.putInt(0, 100);
                     row.putLong(2, 1000);
@@ -489,8 +489,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             }
 
             if (commitWithRangeReplace) {
-                long rangeStart = IntervalUtils.parseFloorPartialTimestamp(rangeStartStr);
-                long rangeEnd = IntervalUtils.parseFloorPartialTimestamp(rangeEndStr) + 1;
+                long rangeStart = MicrosTimestampDriver.floor(rangeStartStr);
+                long rangeEnd = MicrosTimestampDriver.floor(rangeEndStr) + 1;
                 ww.commitWithParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
             } else {
                 ww.commit();
@@ -501,7 +501,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     private static String readTxnToSTring(TableToken tt, boolean compareTxns, boolean compareTruncateVersion) {
         try (TxReader rdr = new TxReader(engine.getConfiguration().getFilesFacade())) {
             Path tempPath = Path.getThreadLocal(root);
-            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
             rdr.unsafeLoadAll();
 
             return txnToString(rdr, compareTxns, compareTruncateVersion);
