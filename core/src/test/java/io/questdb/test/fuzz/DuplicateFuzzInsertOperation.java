@@ -75,7 +75,7 @@ public class DuplicateFuzzInsertOperation extends FuzzInsertOperation {
         }
 
         rnd.nextBoolean();
-        // Generate different value for non-key column
+        // Generate 1 different value for non-key column
         super.appendColumnValue(
                 rnd,
                 type,

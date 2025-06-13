@@ -1158,28 +1158,30 @@ Java_io_questdb_cairo_frm_FrameAlgebra_isColumnReplaceIdentical(
         }
         case -1: {
             return true;
-//            switch ((ColumnType) (column_type)) {
-//                case ColumnType::VARCHAR: {
-//                    const auto &comparer = *reinterpret_cast<const SortVarcharColumnComparer *>(col_key);
-//                    diff = comparer(l, r);
-//                    break;
-//                }
-//                case ColumnType::STRING: {
-//                    const auto &comparer = *reinterpret_cast<const SortStrBinColumnComparer<int32_t, 2> *>(col_key);
-//                    diff = comparer(l, r);
-//                    break;
-//                }
-//                case ColumnType::BINARY: {
-//                    const auto &comparer = *reinterpret_cast<const SortStrBinColumnComparer<int64_t, 1> *>(col_key);
-//                    diff = comparer(l, r);
-//                    break;
-//                }
-//                default: {
-//                    assertm(false, "unsupported column type");
-//                    return -1;
-//                }
-//            }
-//            break;
+            switch ((ColumnType) (column_type)) {
+                case ColumnType::VARCHAR: {
+                    return is_varchar_column_replace(
+                            column_top1, lo1_pos, hi1_pos, (uint8_t *) auxAddr1, (uint8_t *) data1,
+                            column_top2, lo2_pos, hi2_pos, (uint8_t *) auxAddr2, (uint8_t*) data2,
+                            merge_index, merge_index_rows
+                    );
+                }
+                case ColumnType::STRING: {
+                    const auto &comparer = *reinterpret_cast<const SortStrBinColumnComparer<int32_t, 2> *>(col_key);
+                    diff = comparer(l, r);
+                    break;
+                }
+                case ColumnType::BINARY: {
+                    const auto &comparer = *reinterpret_cast<const SortStrBinColumnComparer<int64_t, 1> *>(col_key);
+                    diff = comparer(l, r);
+                    break;
+                }
+                default: {
+                    assertm(false, "unsupported column type");
+                    return -1;
+                }
+            }
+            break;
         }
         default:
             assertm(false, "unsupported column type");

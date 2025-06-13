@@ -328,7 +328,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupMultipleKeyCol() throws Exception {
-        Rnd rnd = generateRandomAndProps(1462473923236875L, 1749749627078L);
+        Rnd rnd = generateRandomAndProps(1472759931876541L, 1749810333164L);
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
@@ -411,7 +411,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0.1 * rnd.nextDouble(),
 
                 // TODO(eugene): table column manipulation is not yet supported for Parquet
-                convertToParquet ? 0 : 0.1 * rnd.nextDouble(),
+                convertToParquet ? 0 : 0.2 * rnd.nextDouble(),
                 0,
                 convertToParquet ? 0 : rnd.nextDouble(),
                 0.0,
@@ -478,7 +478,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     private void addDuplicates(ObjList<FuzzTransaction> transactions, Rnd rnd, IntList upsertKeyIndexes) {
-        int duplicateCommits = rnd.nextInt(transactions.size() / 2);
+        int duplicateCommits = rnd.nextInt(transactions.size());
 
         IntHashSet upsertKeyIndexesMap = new IntHashSet();
         upsertKeyIndexesMap.addAll(upsertKeyIndexes);
@@ -502,17 +502,25 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 duplicateTrans.waitBarrierVersion = transaction.waitBarrierVersion;
 
                 ObjList<FuzzTransactionOperation> txnList = transaction.operationList;
-                int dupCount = rnd.nextInt(1) + 1;
+                int dupCount = rnd.nextInt(txnList.size() - 1) + 1;
 
                 ObjList<FuzzTransactionOperation> newTxnList = duplicateTrans.operationList;
-                boolean identical = rnd.nextBoolean();
+                int generateNonIdenticalCount = rnd.nextInt(2);
 
-                for (int t = 0, n = txnList.size(); t < n; t++) {
-                    if (dupCount > 0 && rnd.nextInt(dupCount) > (n - t - dupCount)) {
+                for (int t = 0, n = txnList.size(); t < n && dupCount > 0; t++) {
+                    if (dupCount + rnd.nextInt(n - t) > (n - t - dupCount)) {
                         // Add a duplicate operation
                         FuzzInsertOperation operation = (FuzzInsertOperation) txnList.getQuick(t);
-                        FuzzInsertOperation dup = new DuplicateFuzzInsertOperation(operation, upsertKeyIndexesMap, identical);
+
+                        // Generate only 1 non-identical record, compares will have work harder to find 1 record only
+                        boolean generatedNonIdentical = generateNonIdenticalCount > 0 && rnd.nextBoolean();
+                        FuzzInsertOperation dup = new DuplicateFuzzInsertOperation(operation, upsertKeyIndexesMap, !generatedNonIdentical);
+                        if (generatedNonIdentical) {
+                            generateNonIdenticalCount--;
+                        }
+
                         newTxnList.add(dup);
+                        dupCount--;
                     }
                 }
 
