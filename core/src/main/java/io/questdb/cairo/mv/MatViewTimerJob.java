@@ -96,6 +96,7 @@ public class MatViewTimerJob extends SynchronizedJob {
             return;
         }
         try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
+            final long startEpsilon = configuration.getMatViewTimerStartEpsilon();
             if (viewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
                 final long start = matViewMeta.getMatViewTimerStart();
                 final int interval = matViewMeta.getMatViewTimerInterval();
@@ -114,7 +115,7 @@ public class MatViewTimerJob extends SynchronizedJob {
                         viewDefinition.getTimerTzRules(),
                         0,
                         start,
-                        configuration.getMatViewTimerStartEpsilon(),
+                        startEpsilon,
                         now
                 );
                 timerQueue.add(timer);
@@ -146,7 +147,7 @@ public class MatViewTimerJob extends SynchronizedJob {
                         viewDefinition.getTimerTzRules(),
                         delay,
                         start,
-                        0,
+                        startEpsilon,
                         now
                 );
                 timerQueue.add(timer);
@@ -301,8 +302,9 @@ public class MatViewTimerJob extends SynchronizedJob {
                     deadlineLocal = tzRules != null ? deadlineUtc + tzRules.getOffset(deadlineUtc) : deadlineUtc;
                     break;
                 case PERIOD_REFRESH_TYPE:
-                    // TODO(puzpuzpuz): trigger period mat views immediately after restart
-                    deadlineUtc = now > start + startEpsilon ? sampler.nextTimestamp(sampler.round(now - 1)) : start;
+                    // Unlike with incremental timer views, we want to trigger the timer
+                    // for all complete periods, if they exist.
+                    deadlineUtc = now > start + startEpsilon ? sampler.round(now) : start;
                     deadlineLocal = tzRules != null ? deadlineUtc + tzRules.getOffset(deadlineUtc) : deadlineUtc;
                     break;
                 default:
