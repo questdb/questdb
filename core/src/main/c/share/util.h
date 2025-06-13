@@ -101,7 +101,7 @@ inline int64_t scroll_up(T data, int64_t low, int64_t high, V value) {
         if (high > low) {
             high--;
         } else {
-            return low;
+            return high;
         }
     } while (data[high] == value);
     return high + 1;
@@ -113,7 +113,7 @@ inline int64_t scroll_down(T data, int64_t low, int64_t high, V value) {
         if (low < high) {
             low++;
         } else {
-            return high;
+            return low;
         }
     } while (data[low] == value);
     return low - 1;
