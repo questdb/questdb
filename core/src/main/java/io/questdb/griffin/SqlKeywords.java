@@ -29,6 +29,7 @@ import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
+@SuppressWarnings("BooleanMethodIsAlwaysInverted")
 public class SqlKeywords {
     public static final int CAST_KEYWORD_LENGTH = 4;
     public static final String CONCAT_FUNC_NAME = "concat";
@@ -499,6 +500,14 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'p';
     }
 
+    public static boolean isElseKeyword(CharSequence tok) {
+        return tok.length() == 4
+                && (tok.charAt(0) | 32) == 'e'
+                && (tok.charAt(1) | 32) == 'l'
+                && (tok.charAt(2) | 32) == 's'
+                && (tok.charAt(3) | 32) == 'e';
+    }
+
     public static boolean isEmptyAlias(CharSequence tok) {
         return tok.length() == 2
                 && ((tok.charAt(0) == '\'' && tok.charAt(1) == '\'') || (tok.charAt(0) == '"' && tok.charAt(1) == '"'));
@@ -684,6 +693,13 @@ public class SqlKeywords {
                 && (tok.charAt(8) | 32) == 'g';
     }
 
+    public static boolean isForKeyword(CharSequence tok) {
+        return tok.length() == 3
+                && (tok.charAt(0) | 32) == 'f'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'r';
+    }
+
     public static boolean isForceKeyword(CharSequence tok) {
         return tok.length() == 5
                 && (tok.charAt(0) | 32) == 'f'
@@ -776,7 +792,7 @@ public class SqlKeywords {
                 && (tok.charAt(1) | 32) == 'f';
     }
 
-    public static boolean isIgnoreWord(CharSequence tok) {
+    public static boolean isIgnoreKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'i'
                 && (tok.charAt(1) | 32) == 'g'
@@ -790,6 +806,17 @@ public class SqlKeywords {
         return tok.length() == 2
                 && (tok.charAt(0) | 32) == 'i'
                 && (tok.charAt(1) | 32) == 'n';
+    }
+
+    public static boolean isIncludeKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'i'
+                && (tok.charAt(1) | 32) == 'n'
+                && (tok.charAt(2) | 32) == 'c'
+                && (tok.charAt(3) | 32) == 'l'
+                && (tok.charAt(4) | 32) == 'u'
+                && (tok.charAt(5) | 32) == 'd'
+                && (tok.charAt(6) | 32) == 'e';
     }
 
     public static boolean isIncrementalKeyword(CharSequence tok) {
@@ -1308,7 +1335,7 @@ public class SqlKeywords {
                 && (tok.byteAt(3) | 32) == 'l';
     }
 
-    public static boolean isNullsWord(CharSequence tok) {
+    public static boolean isNullsKeyword(CharSequence tok) {
         return tok.length() == 5
                 && (tok.charAt(0) | 32) == 'n'
                 && (tok.charAt(1) | 32) == 'u'
@@ -1475,6 +1502,15 @@ public class SqlKeywords {
                 && (tok.charAt(9) | 32) == 's';
     }
 
+    public static boolean isPivotKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'p'
+                && (tok.charAt(1) | 32) == 'i'
+                && (tok.charAt(2) | 32) == 'v'
+                && (tok.charAt(3) | 32) == 'o'
+                && (tok.charAt(4) | 32) == 't';
+    }
+
     public static boolean isPrecedingKeyword(CharSequence tok) {
         return tok.length() == 9
                 && (tok.charAt(0) | 32) == 'p'
@@ -1584,7 +1620,7 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 'e';
     }
 
-    public static boolean isRespectWord(CharSequence tok) {
+    public static boolean isRespectKeyword(CharSequence tok) {
         return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'r'
                 && (tok.charAt(1) | 32) == 'e'
@@ -1998,6 +2034,17 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'n';
     }
 
+    public static boolean isUnpivotKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'u'
+                && (tok.charAt(1) | 32) == 'n'
+                && (tok.charAt(2) | 32) == 'p'
+                && (tok.charAt(3) | 32) == 'i'
+                && (tok.charAt(4) | 32) == 'v'
+                && (tok.charAt(5) | 32) == 'o'
+                && (tok.charAt(6) | 32) == 't';
+    }
+
     public static boolean isUpdateKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'u'
@@ -2239,4 +2286,18 @@ public class SqlKeywords {
         KEYWORDS.add("within");
         KEYWORDS.add("with");
     }
+
+
+    public static boolean isRightParen(CharSequence tok) {
+        return tok.length() == 1 && tok.charAt(0) == ')';
+    }
+
+    public static boolean isLeftParen(CharSequence tok) {
+        return tok.length() == 1 && tok.charAt(0) == '(';
+    }
+
+    public static boolean isComma(CharSequence tok) {
+        return tok.length() == 1 && tok.charAt(0) == ',';
+    }
+
 }
