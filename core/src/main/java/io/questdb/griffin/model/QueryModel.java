@@ -93,6 +93,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SHOW_COLUMNS = 2;
     public static final int SHOW_CREATE_MAT_VIEW = 15;
     public static final int SHOW_CREATE_TABLE = 14;
+    public static final int SHOW_CREATE_VIEW = 16;
     public static final int SHOW_DATE_STYLE = 9;
     public static final int SHOW_MAX_IDENTIFIER_LENGTH = 6;
     public static final int SHOW_PARAMETERS = 11;

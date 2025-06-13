@@ -1885,7 +1885,8 @@ public class SqlParser {
                 // show datestyle
                 // show time zone
                 // show create table tab
-                // show create materialized view tab
+                // show create materialized view mv
+                // show create view v
                 if (isTablesKeyword(tok)) {
                     showKind = QueryModel.SHOW_TABLES;
                 } else if (isColumnsKeyword(tok)) {
@@ -1927,8 +1928,11 @@ public class SqlParser {
                         expectTok(lexer, "view");
                         parseTableName(lexer, model);
                         showKind = QueryModel.SHOW_CREATE_MAT_VIEW;
+                    } else if (tok != null && isViewKeyword(tok)) {
+                        parseTableName(lexer, model);
+                        showKind = QueryModel.SHOW_CREATE_VIEW;
                     } else {
-                        throw SqlException.position(lexer.getPosition()).put("expected 'TABLE' or 'MATERIALIZED VIEW'");
+                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW'");
                     }
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);

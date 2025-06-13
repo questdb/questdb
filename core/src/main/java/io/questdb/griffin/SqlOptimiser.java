@@ -3351,6 +3351,9 @@ public class SqlOptimiser implements Mutable {
                 case QueryModel.SHOW_CREATE_MAT_VIEW:
                     tableFactory = sqlParserCallback.generateShowCreateMatViewFactory(model, executionContext, path);
                     break;
+                case QueryModel.SHOW_CREATE_VIEW:
+                    tableFactory = sqlParserCallback.generateShowCreateViewFactory(model, executionContext, path);
+                    break;
                 default:
                     tableFactory = sqlParserCallback.generateShowSqlFactory(model);
                     break;
