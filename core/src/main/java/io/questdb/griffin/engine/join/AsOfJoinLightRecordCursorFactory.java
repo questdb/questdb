@@ -203,6 +203,13 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                         }
                     }
 
+                    // NOTE: unlike full fat ASOF JOIN, we don't evacuate joinKeyMap here.
+                    // Reasoning: The joinKeyMap here contains only rowNo, so evacuation
+                    // would require to dereference rowNo to record to get a timestamp
+                    // to decide whether to keep the record or not. This could be expensive.
+                    // Given map values are just row IDs, I decided not to evacuate
+                    // maps in Light ASOF JOINs
+
                     final Record rec = slaveCursor.getRecord();
                     while (slaveCursor.hasNext()) {
                         slaveTimestamp = rec.getTimestamp(slaveTimestampIndex);
