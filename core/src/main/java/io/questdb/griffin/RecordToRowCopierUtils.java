@@ -706,7 +706,7 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            asm.iconst(toColumnType);
+                            asm.ldc(toColumnType_0 + i * 2);
                             asm.invokeStatic(implicitCastCharAsByte);
                             asm.i2l();
                             asm.invokeInterface(wPutTimestamp, 3);
