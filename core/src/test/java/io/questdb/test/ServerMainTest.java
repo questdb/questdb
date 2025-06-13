@@ -179,7 +179,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                             "(show parameters) where property_path not in (" +
                                     "'cairo.root', 'cairo.sql.backup.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', " +
                                     "'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', " +
-                                    "'wal.apply.worker.count', 'mat.view.refresh.worker.count'" +
+                                    "'wal.apply.worker.count', 'mat.view.refresh.worker.count', 'view.refresh.worker.count'" +
                                     ") order by 1",
                             actualSink
                     );
@@ -557,7 +557,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "mat.view.refresh.worker.yield.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.sleep.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "view.refresh.worker.yield.threshold\tQDB_VIEW_REFRESH_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
-                                    "view.refresh.worker.count\tQDB_VIEW_REFRESH_WORKER_COUNT\t3\tdefault\tfalse\tfalse\n" +
                                     "view.refresh.worker.haltOnError\tQDB_VIEW_REFRESH_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "view.refresh.worker.sleep.threshold\tQDB_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "view.refresh.worker.sleep.timeout\tQDB_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
