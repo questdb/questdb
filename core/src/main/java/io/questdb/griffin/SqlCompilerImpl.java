@@ -1651,7 +1651,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else if (isRefreshKeyword(tok)) {
                     tok = expectToken(lexer, "'start' or 'every' or 'limit'");
                     if (isStartKeyword(tok) || isEveryKeyword(tok)) {
-                        if (viewDefinition.getRefreshType() != MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
+                        if (viewDefinition.getRefreshType() != MatViewDefinition.TIMER_REFRESH_TYPE) {
                             throw SqlException.$(lexer.lastTokenPosition(), "materialized view must be of timer refresh type");
                         }
 
@@ -3133,8 +3133,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
-        if (createMatViewOp.getRefreshType() != MatViewDefinition.INCREMENTAL_REFRESH_TYPE
-                && createMatViewOp.getRefreshType() != MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
+        if (createMatViewOp.getRefreshType() != MatViewDefinition.IMMEDIATE_REFRESH_TYPE
+                && createMatViewOp.getRefreshType() != MatViewDefinition.TIMER_REFRESH_TYPE
+                && createMatViewOp.getRefreshType() != MatViewDefinition.MANUAL_REFRESH_TYPE) {
             throw SqlException.$(createMatViewOp.getTableNamePosition(), "unexpected refresh type: ").put(createMatViewOp.getRefreshType());
         }
 
