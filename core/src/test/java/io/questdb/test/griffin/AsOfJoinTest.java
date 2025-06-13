@@ -382,6 +382,44 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinHighCardinalityKeysAndTolerance() throws Exception {
+        // this tests set low threshold for evacuation of full fat ASOF join map
+        // and compares that Fast and FullFat results are the same
+
+        setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, "10");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (vch VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (vch VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute(
+                    "INSERT INTO master SELECT " +
+                            "rnd_int()::varchar as vch, " +
+                            "timestamp_sequence(0, 1000000) + x * 1000000 as ts " +
+                            "FROM long_sequence(1_000)"
+            );
+
+            execute(
+                    "INSERT INTO slave SELECT " +
+                            "rnd_int()::varchar as vch, " +
+                            "timestamp_sequence(0, 1000000) + x * 1000000 as ts " +
+                            "FROM long_sequence(1_000)"
+            );
+
+            String query = "SELECT * FROM master ASOF JOIN slave y ON(vch) TOLERANCE 1s";
+            printSql("EXPLAIN " + query, true);
+            TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
+            printSql(query, true);
+            String fullFatResult = sink.toString();
+
+            printSql("EXPLAIN " + query, false);
+            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+            printSql(query, false);
+            String lightResult = sink.toString();
+            TestUtils.assertEquals(fullFatResult, lightResult);
+        });
+    }
+
+    @Test
     public void testAsOfJoinNoAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
             // ASKS
@@ -863,44 +901,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinHighCardinalityKeysAndTolerance() throws Exception {
-        // this tests set low threshold for evacuation of full fat ASOF join map
-        // and compares that Fast and FullFat results are the same
-
-        setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, "10");
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (vch VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (vch VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-
-            execute(
-                    "INSERT INTO master SELECT " +
-                            "rnd_int()::varchar as vch, " +
-                            "timestamp_sequence(0, 1000000) + x * 1000000 as ts " +
-                            "FROM long_sequence(1_000)"
-            );
-
-            execute(
-                    "INSERT INTO slave SELECT " +
-                            "rnd_int()::varchar as vch, " +
-                            "timestamp_sequence(0, 1000000) + x * 1000000 as ts " +
-                            "FROM long_sequence(1_000)"
-            );
-
-            String query = "SELECT * FROM master ASOF JOIN slave y ON(vch) TOLERANCE 1s";
-            printSql("EXPLAIN " + query, true);
-            TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
-            printSql(query, true);
-            String fullFatResult = sink.toString();
-
-            printSql("EXPLAIN " + query, false);
-            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
-            printSql(query, false);
-            String lightResult = sink.toString();
-            TestUtils.assertEquals(fullFatResult, lightResult);
-        });
-    }
-
-    @Test
     public void testJoinOnSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1248,6 +1248,44 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     true,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testLtJoinHighCardinalityKeysAndTolerance() throws Exception {
+        // this tests set low threshold for evacuation of full fat ASOF join map
+        // and compares that Fast and FullFat results are the same
+
+        setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, "10");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (vch VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (vch VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute(
+                    "INSERT INTO master SELECT " +
+                            "rnd_int()::varchar as vch, " +
+                            "timestamp_sequence(0, 1000000) + x * 1500000 as ts " +
+                            "FROM long_sequence(1_000)"
+            );
+
+            execute(
+                    "INSERT INTO slave SELECT " +
+                            "rnd_int()::varchar as vch, " +
+                            "timestamp_sequence(0, 1000000) + x * 1000000 as ts " +
+                            "FROM long_sequence(1_000)"
+            );
+
+            String query = "SELECT * FROM master LT JOIN slave y ON(vch) TOLERANCE 1s";
+            printSql("EXPLAIN " + query, true);
+            TestUtils.assertNotContains(sink, "Lt Join Light");
+            printSql(query, true);
+            String fullFatResult = sink.toString();
+
+            printSql("EXPLAIN " + query, false);
+            TestUtils.assertContains(sink, "Lt Join Light");
+            printSql(query, false);
+            String lightResult = sink.toString();
+            TestUtils.assertEquals(fullFatResult, lightResult);
         });
     }
 
