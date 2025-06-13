@@ -131,6 +131,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void close() {
+            Misc.free(cursor);
+        }
+
+        @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             cursor.toTop();
             return cursor;
