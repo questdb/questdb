@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.std.CompactIntHashSet;
 
-public final class SingleSymbolShortCircuit implements SymbolShortCircuit {
+public final class SingleSymbolSymbolShortCircuit implements SymbolShortCircuit {
     private final CairoConfiguration config;
     private final CompactIntHashSet masterKeysExistingInSlaveCache = new CompactIntHashSet(16, 0.4);
     private final int masterSymbolIndex;
@@ -39,7 +39,7 @@ public final class SingleSymbolShortCircuit implements SymbolShortCircuit {
     private int maxCacheSize = 0;
     private StaticSymbolTable slaveSymbolTable;
 
-    public SingleSymbolShortCircuit(CairoConfiguration config, int masterSymbolIndex, int slaveSymbolIndex) {
+    public SingleSymbolSymbolShortCircuit(CairoConfiguration config, int masterSymbolIndex, int slaveSymbolIndex) {
         this.masterSymbolIndex = masterSymbolIndex;
         this.slaveSymbolIndex = slaveSymbolIndex;
         this.config = config;

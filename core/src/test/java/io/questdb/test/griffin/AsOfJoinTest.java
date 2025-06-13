@@ -484,6 +484,124 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnTripleSymbolKey() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                execute("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, market SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, market SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+
+                execute("INSERT INTO bids VALUES " +
+                        "('AAPL', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
+                        "('AAPL', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 2, 'GOOD')," +
+                        "('AAPL', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 3, 'SCAM')," +
+                        "('AAPL', 'NASDAQ', 'EU', '2000-01-01T00:00:00.000000Z', 4, 'SCAM')," +
+                        "('AAPL', 'NASDAQ', 'EU', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
+                        "('AAPL', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 6, 'SCAM')," +
+                        "('AAPL', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 7, 'GOOD')," +
+                        "('AAPL', 'LSE', 'UK', '2002-01-01T00:00:00.000000Z', 8, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 9, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 10, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 11, 'SCAM')," +
+                        "('MSFT', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 12, 'UNKNOWN')," +
+                        "('MSFT', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 13, 'GOOD')"
+                );
+
+                execute("INSERT INTO asks VALUES " +
+                        "('AAPL', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
+                        "('AAPL', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 2, 'EXCELLENT')," +
+                        "('AAPL', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 3, 'EXCELLENT')," +
+                        "('AAPL', 'NASDAQ', 'EU', '2000-01-01T00:00:00.000000Z', 4, 'EXCELLENT')," +
+                        "('AAPL', 'NASDAQ', 'EU', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
+                        "('AAPL', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 6, 'SCAM')," +
+                        "('AAPL', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 7, 'EXCELLENT')," +
+                        "('AAPL', 'LSE', 'UK', '2002-01-01T00:00:00.000000Z', 8, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 9, 'EXCELLENT')," +
+                        "('MSFT', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 10, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 11, 'EXCELLENT')," +
+                        "('MSFT', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 12, 'GOOD')," +
+                        "('MSFT', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 13, 'SCAM')"
+                );
+
+                String query = "SELECT * FROM bids ASOF JOIN asks ON (stock, exchange, market)";
+                String expected = "stock\texchange\tmarket\tts\ti\trating\tstock1\texchange1\tmarket1\tts1\ti1\trating1\n" +
+                        "AAPL\tNASDAQ\tUS\t2000-01-01T00:00:00.000000Z\t1\tGOOD\tAAPL\tNASDAQ\tUS\t2000-01-01T00:00:00.000000Z\t1\tGOOD\n" +
+                        "AAPL\tNASDAQ\tEU\t2000-01-01T00:00:00.000000Z\t4\tSCAM\tAAPL\tNASDAQ\tEU\t2000-01-01T00:00:00.000000Z\t4\tEXCELLENT\n" +
+                        "AAPL\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t6\tSCAM\tAAPL\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t6\tSCAM\n" +
+                        "MSFT\tNASDAQ\tUS\t2000-01-01T00:00:00.000000Z\t9\tGOOD\tMSFT\tNASDAQ\tUS\t2000-01-01T00:00:00.000000Z\t9\tEXCELLENT\n" +
+                        "MSFT\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t12\tUNKNOWN\tMSFT\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t12\tGOOD\n" +
+                        "AAPL\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t2\tGOOD\tAAPL\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t2\tEXCELLENT\n" +
+                        "AAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\tAAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\n" +
+                        "AAPL\tLSE\tUK\t2001-01-01T00:00:00.000000Z\t7\tGOOD\tAAPL\tLSE\tUK\t2001-01-01T00:00:00.000000Z\t7\tEXCELLENT\n" +
+                        "MSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t10\tGOOD\tMSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t10\tGOOD\n" +
+                        "MSFT\tLSE\tUK\t2001-01-01T00:00:00.000000Z\t13\tGOOD\tMSFT\tLSE\tUK\t2001-01-01T00:00:00.000000Z\t13\tSCAM\n" +
+                        "AAPL\tLSE\tUK\t2002-01-01T00:00:00.000000Z\t8\tGOOD\tAAPL\tLSE\tUK\t2002-01-01T00:00:00.000000Z\t8\tGOOD\n" +
+                        "MSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t11\tSCAM\tMSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t11\tEXCELLENT\n" +
+                        "AAPL\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t3\tSCAM\tAAPL\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t3\tEXCELLENT\n";
+                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnTripleSymbolKeyLastKeyMissing() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                execute("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, market SYMBOL, ts TIMESTAMP, i INT, rating STRING) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, market SYMBOL, ts TIMESTAMP, i INT, rating STRING) TIMESTAMP(ts) PARTITION BY DAY");
+
+                execute("INSERT INTO bids VALUES " +
+                        "('AAPL', 'NASDAQ', 'ASIA', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
+                        "('AAPL', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 2, 'GOOD')," +
+                        "(null, 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 3, 'SCAM')," +
+                        "('AAPL', 'NASDAQ', 'EU', '2000-01-01T00:00:00.000000Z', 4, 'SCAM')," +
+                        "('AAPL', 'NASDAQ', 'EU', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
+                        "('AAPL', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 6, 'SCAM')," +
+                        "('AAPL', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 7, 'GOOD')," +
+                        "('AAPL', 'LSE', 'UK', '2002-01-01T00:00:00.000000Z', 8, 'GOOD')," +
+                        "('MSFT', 'FRA', 'US', '2000-01-01T00:00:00.000000Z', 9, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 10, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 11, 'SCAM')," +
+                        "('QDB', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 12, 'UNKNOWN')," +
+                        "('MSFT', 'LSE', null, '2001-01-01T00:00:00.000000Z', 13, 'GOOD')"
+                );
+
+                execute("INSERT INTO asks VALUES " +
+                        "('AAPL', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
+                        "('AAPL', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 2, 'EXCELLENT')," +
+                        "('AAPL', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 3, 'EXCELLENT')," +
+                        "('AAPL', 'NASDAQ', 'EU', '2000-01-01T00:00:00.000000Z', 4, 'EXCELLENT')," +
+                        "('AAPL', 'NASDAQ', 'EU', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
+                        "('AAPL', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 6, 'SCAM')," +
+                        "('AAPL', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 7, 'EXCELLENT')," +
+                        "('AAPL', 'LSE', 'UK', '2002-01-01T00:00:00.000000Z', 8, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 9, 'EXCELLENT')," +
+                        "('MSFT', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 10, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 11, 'EXCELLENT')," +
+                        "('MSFT', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 12, 'GOOD')," +
+                        "('MSFT', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 13, 'SCAM')"
+                );
+
+                String query = "SELECT * FROM bids ASOF JOIN asks ON (stock, rating, exchange, market)";
+                String expected = "stock\texchange\tmarket\tts\ti\trating\tstock1\texchange1\tmarket1\tts1\ti1\trating1\n" +
+                        "AAPL\tNASDAQ\tASIA\t2000-01-01T00:00:00.000000Z\t1\tGOOD\t\t\t\t\tnull\t\n" +
+                        "AAPL\tNASDAQ\tEU\t2000-01-01T00:00:00.000000Z\t4\tSCAM\t\t\t\t\tnull\t\n" +
+                        "AAPL\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t6\tSCAM\tAAPL\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t6\tSCAM\n" +
+                        "MSFT\tFRA\tUS\t2000-01-01T00:00:00.000000Z\t9\tGOOD\t\t\t\t\tnull\t\n" +
+                        "QDB\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t12\tUNKNOWN\t\t\t\t\tnull\t\n" +
+                        "AAPL\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t2\tGOOD\tAAPL\tNASDAQ\tUS\t2000-01-01T00:00:00.000000Z\t1\tGOOD\n" +
+                        "AAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\tAAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\n" +
+                        "AAPL\tLSE\tUK\t2001-01-01T00:00:00.000000Z\t7\tGOOD\t\t\t\t\tnull\t\n" +
+                        "MSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t10\tGOOD\tMSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t10\tGOOD\n" +
+                        "MSFT\tLSE\t\t2001-01-01T00:00:00.000000Z\t13\tGOOD\t\t\t\t\tnull\t\n" +
+                        "AAPL\tLSE\tUK\t2002-01-01T00:00:00.000000Z\t8\tGOOD\tAAPL\tLSE\tUK\t2002-01-01T00:00:00.000000Z\t8\tGOOD\n" +
+                        "MSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t11\tSCAM\t\t\t\t\tnull\t\n" +
+                        "\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t3\tSCAM\t\t\t\t\tnull\t\n";
+                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinTolerance() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 as (select x as id, (x + x*1_000_000)::timestamp ts from long_sequence(10)) timestamp(ts) partition by day;");
@@ -557,6 +675,23 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinToleranceNegative() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 as (select x as id, (x + x*1_000_000)::timestamp ts from long_sequence(10)) timestamp(ts) partition by day;");
+            execute("create table t2 as (select x as id, (x)::timestamp ts from long_sequence(5)) timestamp(ts) partition by day;");
+
+            String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE -2s;";
+            assertExceptionNoLeakCheck(query, 49, "ASOF JOIN TOLERANCE must be positive");
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 0s;";
+            assertExceptionNoLeakCheck(query, 46, "zero is not a valid tolerance value");
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1Q;";
+            assertExceptionNoLeakCheck(query, 46, "unsupported TOLERANCE unit [unit=Q]");
+        });
+    }
+
+    @Test
     public void testAsOfJoinToleranceSupportedUnits() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 as (select x as id, (x + x*1_000_000)::timestamp ts from long_sequence(10)) timestamp(ts) partition by day;");
@@ -606,23 +741,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1w;";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
-        });
-    }
-
-    @Test
-    public void testAsOfJoinToleranceNegative() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table t1 as (select x as id, (x + x*1_000_000)::timestamp ts from long_sequence(10)) timestamp(ts) partition by day;");
-            execute("create table t2 as (select x as id, (x)::timestamp ts from long_sequence(5)) timestamp(ts) partition by day;");
-
-            String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE -2s;";
-            assertExceptionNoLeakCheck(query, 49, "ASOF JOIN TOLERANCE must be positive");
-
-            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 0s;";
-            assertExceptionNoLeakCheck(query, 46, "zero is not a valid tolerance value");
-
-            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1Q;";
-            assertExceptionNoLeakCheck(query, 46, "unsupported TOLERANCE unit [unit=Q]");
         });
     }
 
@@ -798,6 +916,108 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:03.000000Z\n" +
                     "4\t2000-01-01T00:00:04.000000Z\t\t\n";
             assertQueryNoLeakCheck(expected, query, null, false, false);
+        });
+    }
+
+    @Test
+    public void testJoinStringOnSymbolKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE y (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute(
+                    "INSERT INTO x VALUES " +
+                            "('1', '2000-01-01T00:00:00.000000Z')," +
+                            "('3', '2000-01-01T00:00:01.000000Z')," +
+                            "('1', '2000-01-01T00:00:02.000000Z')," +
+                            "('2', '2000-01-01T00:00:03.000000Z')," +
+                            "('4', '2000-01-01T00:00:04.000000Z')," +
+                            "(null, '2000-01-01T00:00:03.000000Z')," +
+                            "('не-ASCII', '2000-01-01T00:00:03.000000Z')"
+            );
+            execute(
+                    "INSERT INTO y VALUES " +
+                            "('2', '2000-01-01T00:00:00.000000Z')," +
+                            "('4', '2000-01-01T00:00:01.000000Z')," +
+                            "('1', '2000-01-01T00:00:02.000000Z')," +
+                            "('2', '2000-01-01T00:00:03.000000Z')," +
+                            "('3', '2000-01-01T00:00:04.000000Z')"
+            );
+
+            // ASOF JOIN
+            String query = "SELECT * FROM x ASOF JOIN y ON(sym)";
+            String expected = "sym\tts\tsym1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000Z\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000Z\t1\t2000-01-01T00:00:02.000000Z\n" +
+                    "\t2000-01-01T00:00:03.000000Z\t\t\n" +
+                    "не-ASCII\t2000-01-01T00:00:03.000000Z\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:03.000000Z\n" +
+                    "4\t2000-01-01T00:00:04.000000Z\t4\t2000-01-01T00:00:01.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // LT JOIN
+            query = "SELECT * FROM x LT JOIN y ON(sym)";
+            expected = "sym\tts\tsym1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000Z\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000Z\t\t\n" +
+                    "\t2000-01-01T00:00:03.000000Z\t\t\n" +
+                    "не-ASCII\t2000-01-01T00:00:03.000000Z\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:00.000000Z\n" +
+                    "4\t2000-01-01T00:00:04.000000Z\t4\t2000-01-01T00:00:01.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testJoinVarcharOnSymbolKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE y (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute(
+                    "INSERT INTO x VALUES " +
+                            "('1', '2000-01-01T00:00:00.000000Z')," +
+                            "('3', '2000-01-01T00:00:01.000000Z')," +
+                            "('1', '2000-01-01T00:00:02.000000Z')," +
+                            "('2', '2000-01-01T00:00:03.000000Z')," +
+                            "('4', '2000-01-01T00:00:04.000000Z')," +
+                            "(null, '2000-01-01T00:00:03.000000Z')," +
+                            "('не-ASCII', '2000-01-01T00:00:03.000000Z')"
+            );
+            execute(
+                    "INSERT INTO y VALUES " +
+                            "('2', '2000-01-01T00:00:00.000000Z')," +
+                            "('4', '2000-01-01T00:00:01.000000Z')," +
+                            "('1', '2000-01-01T00:00:02.000000Z')," +
+                            "('2', '2000-01-01T00:00:03.000000Z')," +
+                            "('3', '2000-01-01T00:00:04.000000Z')"
+            );
+
+            // ASOF JOIN
+            String query = "SELECT * FROM x ASOF JOIN y ON(sym)";
+            String expected = "sym\tts\tsym1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000Z\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000Z\t1\t2000-01-01T00:00:02.000000Z\n" +
+                    "\t2000-01-01T00:00:03.000000Z\t\t\n" +
+                    "не-ASCII\t2000-01-01T00:00:03.000000Z\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:03.000000Z\n" +
+                    "4\t2000-01-01T00:00:04.000000Z\t4\t2000-01-01T00:00:01.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // LT JOIN
+            query = "SELECT * FROM x LT JOIN y ON(sym)";
+            expected = "sym\tts\tsym1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000Z\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000Z\t\t\n" +
+                    "\t2000-01-01T00:00:03.000000Z\t\t\n" +
+                    "не-ASCII\t2000-01-01T00:00:03.000000Z\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:00.000000Z\n" +
+                    "4\t2000-01-01T00:00:04.000000Z\t4\t2000-01-01T00:00:01.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
         });
     }
 
@@ -1200,124 +1420,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "AAPL\tLSE\t2002-01-01T00:00:00.000000Z\t6\tSCAM\tAAPL\tLSE\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\n" +
                         "MSFT\tNASDAQ\t2002-01-01T00:00:00.000000Z\t9\tSCAM\tMSFT\tNASDAQ\t2001-01-01T00:00:00.000000Z\t8\tGOOD\n" +
                         "AAPL\tNASDAQ\t2002-01-01T00:00:00.000000Z\t3\tSCAM\tAAPL\tNASDAQ\t2001-01-01T00:00:00.000000Z\t2\tEXCELLENT\n";
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
-            }
-        });
-    }
-
-    @Test
-    public void testAsOfJoinOnTripleSymbolKey() throws Exception {
-        assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                execute("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, market SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
-                execute("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, market SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
-
-                execute("INSERT INTO bids VALUES " +
-                        "('AAPL', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
-                        "('AAPL', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 2, 'GOOD')," +
-                        "('AAPL', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 3, 'SCAM')," +
-                        "('AAPL', 'NASDAQ', 'EU', '2000-01-01T00:00:00.000000Z', 4, 'SCAM')," +
-                        "('AAPL', 'NASDAQ', 'EU', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
-                        "('AAPL', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 6, 'SCAM')," +
-                        "('AAPL', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 7, 'GOOD')," +
-                        "('AAPL', 'LSE', 'UK', '2002-01-01T00:00:00.000000Z', 8, 'GOOD')," +
-                        "('MSFT', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 9, 'GOOD')," +
-                        "('MSFT', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 10, 'GOOD')," +
-                        "('MSFT', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 11, 'SCAM')," +
-                        "('MSFT', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 12, 'UNKNOWN')," +
-                        "('MSFT', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 13, 'GOOD')"
-                );
-
-                execute("INSERT INTO asks VALUES " +
-                        "('AAPL', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
-                        "('AAPL', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 2, 'EXCELLENT')," +
-                        "('AAPL', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 3, 'EXCELLENT')," +
-                        "('AAPL', 'NASDAQ', 'EU', '2000-01-01T00:00:00.000000Z', 4, 'EXCELLENT')," +
-                        "('AAPL', 'NASDAQ', 'EU', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
-                        "('AAPL', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 6, 'SCAM')," +
-                        "('AAPL', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 7, 'EXCELLENT')," +
-                        "('AAPL', 'LSE', 'UK', '2002-01-01T00:00:00.000000Z', 8, 'GOOD')," +
-                        "('MSFT', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 9, 'EXCELLENT')," +
-                        "('MSFT', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 10, 'GOOD')," +
-                        "('MSFT', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 11, 'EXCELLENT')," +
-                        "('MSFT', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 12, 'GOOD')," +
-                        "('MSFT', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 13, 'SCAM')"
-                );
-
-                String query = "SELECT * FROM bids ASOF JOIN asks ON (stock, exchange, market)";
-                String expected = "stock\texchange\tmarket\tts\ti\trating\tstock1\texchange1\tmarket1\tts1\ti1\trating1\n" +
-                        "AAPL\tNASDAQ\tUS\t2000-01-01T00:00:00.000000Z\t1\tGOOD\tAAPL\tNASDAQ\tUS\t2000-01-01T00:00:00.000000Z\t1\tGOOD\n" +
-                        "AAPL\tNASDAQ\tEU\t2000-01-01T00:00:00.000000Z\t4\tSCAM\tAAPL\tNASDAQ\tEU\t2000-01-01T00:00:00.000000Z\t4\tEXCELLENT\n" +
-                        "AAPL\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t6\tSCAM\tAAPL\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t6\tSCAM\n" +
-                        "MSFT\tNASDAQ\tUS\t2000-01-01T00:00:00.000000Z\t9\tGOOD\tMSFT\tNASDAQ\tUS\t2000-01-01T00:00:00.000000Z\t9\tEXCELLENT\n" +
-                        "MSFT\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t12\tUNKNOWN\tMSFT\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t12\tGOOD\n" +
-                        "AAPL\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t2\tGOOD\tAAPL\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t2\tEXCELLENT\n" +
-                        "AAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\tAAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\n" +
-                        "AAPL\tLSE\tUK\t2001-01-01T00:00:00.000000Z\t7\tGOOD\tAAPL\tLSE\tUK\t2001-01-01T00:00:00.000000Z\t7\tEXCELLENT\n" +
-                        "MSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t10\tGOOD\tMSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t10\tGOOD\n" +
-                        "MSFT\tLSE\tUK\t2001-01-01T00:00:00.000000Z\t13\tGOOD\tMSFT\tLSE\tUK\t2001-01-01T00:00:00.000000Z\t13\tSCAM\n" +
-                        "AAPL\tLSE\tUK\t2002-01-01T00:00:00.000000Z\t8\tGOOD\tAAPL\tLSE\tUK\t2002-01-01T00:00:00.000000Z\t8\tGOOD\n" +
-                        "MSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t11\tSCAM\tMSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t11\tEXCELLENT\n" +
-                        "AAPL\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t3\tSCAM\tAAPL\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t3\tEXCELLENT\n";
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
-            }
-        });
-    }
-
-    @Test
-    public void testAsOfJoinOnTripleSymbolKeyLastKeyMissing() throws Exception {
-        assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                execute("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, market SYMBOL, ts TIMESTAMP, i INT, rating STRING) TIMESTAMP(ts) PARTITION BY DAY");
-                execute("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, market SYMBOL, ts TIMESTAMP, i INT, rating STRING) TIMESTAMP(ts) PARTITION BY DAY");
-
-                execute("INSERT INTO bids VALUES " +
-                        "('AAPL', 'NASDAQ', 'ASIA', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
-                        "('AAPL', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 2, 'GOOD')," +
-                        "(null, 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 3, 'SCAM')," +
-                        "('AAPL', 'NASDAQ', 'EU', '2000-01-01T00:00:00.000000Z', 4, 'SCAM')," +
-                        "('AAPL', 'NASDAQ', 'EU', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
-                        "('AAPL', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 6, 'SCAM')," +
-                        "('AAPL', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 7, 'GOOD')," +
-                        "('AAPL', 'LSE', 'UK', '2002-01-01T00:00:00.000000Z', 8, 'GOOD')," +
-                        "('MSFT', 'FRA', 'US', '2000-01-01T00:00:00.000000Z', 9, 'GOOD')," +
-                        "('MSFT', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 10, 'GOOD')," +
-                        "('MSFT', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 11, 'SCAM')," +
-                        "('QDB', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 12, 'UNKNOWN')," +
-                        "('MSFT', 'LSE', null, '2001-01-01T00:00:00.000000Z', 13, 'GOOD')"
-                );
-
-                execute("INSERT INTO asks VALUES " +
-                        "('AAPL', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
-                        "('AAPL', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 2, 'EXCELLENT')," +
-                        "('AAPL', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 3, 'EXCELLENT')," +
-                        "('AAPL', 'NASDAQ', 'EU', '2000-01-01T00:00:00.000000Z', 4, 'EXCELLENT')," +
-                        "('AAPL', 'NASDAQ', 'EU', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
-                        "('AAPL', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 6, 'SCAM')," +
-                        "('AAPL', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 7, 'EXCELLENT')," +
-                        "('AAPL', 'LSE', 'UK', '2002-01-01T00:00:00.000000Z', 8, 'GOOD')," +
-                        "('MSFT', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 9, 'EXCELLENT')," +
-                        "('MSFT', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 10, 'GOOD')," +
-                        "('MSFT', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 11, 'EXCELLENT')," +
-                        "('MSFT', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 12, 'GOOD')," +
-                        "('MSFT', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 13, 'SCAM')"
-                );
-
-                String query = "SELECT * FROM bids ASOF JOIN asks ON (stock, rating, exchange, market)";
-                String expected = "stock\texchange\tmarket\tts\ti\trating\tstock1\texchange1\tmarket1\tts1\ti1\trating1\n" +
-                        "AAPL\tNASDAQ\tASIA\t2000-01-01T00:00:00.000000Z\t1\tGOOD\t\t\t\t\tnull\t\n" +
-                        "AAPL\tNASDAQ\tEU\t2000-01-01T00:00:00.000000Z\t4\tSCAM\t\t\t\t\tnull\t\n" +
-                        "AAPL\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t6\tSCAM\tAAPL\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t6\tSCAM\n" +
-                        "MSFT\tFRA\tUS\t2000-01-01T00:00:00.000000Z\t9\tGOOD\t\t\t\t\tnull\t\n" +
-                        "QDB\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t12\tUNKNOWN\t\t\t\t\tnull\t\n" +
-                        "AAPL\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t2\tGOOD\tAAPL\tNASDAQ\tUS\t2000-01-01T00:00:00.000000Z\t1\tGOOD\n" +
-                        "AAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\tAAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\n" +
-                        "AAPL\tLSE\tUK\t2001-01-01T00:00:00.000000Z\t7\tGOOD\t\t\t\t\tnull\t\n" +
-                        "MSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t10\tGOOD\tMSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t10\tGOOD\n" +
-                        "MSFT\tLSE\t\t2001-01-01T00:00:00.000000Z\t13\tGOOD\t\t\t\t\tnull\t\n" +
-                        "AAPL\tLSE\tUK\t2002-01-01T00:00:00.000000Z\t8\tGOOD\tAAPL\tLSE\tUK\t2002-01-01T00:00:00.000000Z\t8\tGOOD\n" +
-                        "MSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t11\tSCAM\t\t\t\t\tnull\t\n" +
-                        "\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t3\tSCAM\t\t\t\t\tnull\t\n";
                 assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });

@@ -214,8 +214,10 @@ import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
+import io.questdb.griffin.engine.join.SingleStringSymbolShortCircuit;
+import io.questdb.griffin.engine.join.SingleVarcharSymbolShortCircuit;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
-import io.questdb.griffin.engine.join.SingleSymbolShortCircuit;
+import io.questdb.griffin.engine.join.SingleSymbolSymbolShortCircuit;
 import io.questdb.griffin.engine.join.SymbolShortCircuit;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
@@ -1456,28 +1458,43 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
             int masterIndex = listColumnFilterB.getColumnIndexFactored(i);
             int slaveIndex = listColumnFilterA.getColumnIndexFactored(i);
-            if (masterMetadata.getColumnType(masterIndex) == ColumnType.SYMBOL && slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
-                if (selfJoin && masterIndex == slaveIndex) {
-                    // self join on the same column -> there is no point in attempting short-circuiting
-                    continue;
+            if (slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
+                int masterColType = masterMetadata.getColumnType(masterIndex);
+                SymbolShortCircuit newSymbolShortCircuit;
+                switch (masterColType) {
+                    case SYMBOL:
+                        if (selfJoin && masterIndex == slaveIndex) {
+                            // self join on the same column -> there is no point in attempting short-circuiting
+                            continue;
+                        }
+                        newSymbolShortCircuit = new SingleSymbolSymbolShortCircuit(configuration, masterIndex, slaveIndex);
+                        break;
+                    case VARCHAR:
+                        newSymbolShortCircuit = new SingleVarcharSymbolShortCircuit(masterIndex, slaveIndex);
+                        break;
+                    case STRING:
+                        newSymbolShortCircuit = new SingleStringSymbolShortCircuit(masterIndex, slaveIndex);
+                        break;
+                    default:
+                        // unsupported type for short circuit
+                        continue;
                 }
                 if (symbolShortCircuit == DisabledSymbolShortCircuit.INSTANCE) {
                     // ok, a single symbol short circuit
-                    symbolShortCircuit = new SingleSymbolShortCircuit(configuration, masterIndex, slaveIndex);
-                } else if (symbolShortCircuit instanceof SingleSymbolShortCircuit) {
+                    symbolShortCircuit = newSymbolShortCircuit;
+                } else if (symbolShortCircuits == null) {
                     // 2 symbol short circuits, we need to chain them
                     symbolShortCircuits = new SymbolShortCircuit[2];
                     symbolShortCircuits[0] = symbolShortCircuit;
-                    symbolShortCircuits[1] = new SingleSymbolShortCircuit(configuration, masterIndex, slaveIndex);
+                    symbolShortCircuits[1] = newSymbolShortCircuit;
                     symbolShortCircuit = new ChainedSymbolShortCircuit(symbolShortCircuits);
                 } else {
                     // ok, this is pretty uncommon - a join key with more than 2 symbol short circuits
-                    // this allocated arrays, but it should be very rare
-                    // todo: test
+                    // this allocates arrays, but it should be very rare
                     int size = symbolShortCircuits.length;
                     SymbolShortCircuit[] newSymbolShortCircuits = new SymbolShortCircuit[size + 1];
                     System.arraycopy(symbolShortCircuits, 0, newSymbolShortCircuits, 0, size);
-                    newSymbolShortCircuits[size] = new SingleSymbolShortCircuit(configuration, masterIndex, slaveIndex);
+                    newSymbolShortCircuits[size] = newSymbolShortCircuit;
                     symbolShortCircuit = new ChainedSymbolShortCircuit(newSymbolShortCircuits);
                     symbolShortCircuits = newSymbolShortCircuits;
                 }
