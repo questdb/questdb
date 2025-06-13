@@ -28,12 +28,12 @@ package io.questdb;
 public class ParanoiaState {
     /**
      * <pre>
-     * BASIC -> validates UTF-8 in log records,
-     *          detects closed stdout in LogConsoleWriter,
-     *          detects log record leaks (missing .$() at the end of log statement).
+     * BASIC -> validates UTF-8 in log records (throws a LogError if invalid),
+     *          throws a LogError on abandoned log records (missing .$() at the end of log statement),
+     *          detects closed stdout in LogConsoleWriter.
      *          This introduces a low overhead to logging.
      * AGGRESSIVE -> BASIC + holds recent history of log lines to help diagnose closed stdout,
-     *               holds the stack trace of leaked log record.
+     *               holds the stack trace of abandoned log record.
      *               This introduces a significant overhead to logging.
      *
      * When running inside JUnit/Surefire, BASIC log paranoia mode gets activated automatically.
@@ -45,13 +45,15 @@ public class ParanoiaState {
      * In AGGRESSIVE mode, it will additionally remember the most recent log lines and print them.
      * This will help you find the offending log line with broken encoding.
      *
-     * Log paranoia also detects a common coding error where you forget to end a log statement
+     * The logging framework detects a common coding error where you forget to end a log statement
      * with .$(), causing the statement not to be logged. This problem can only be detected after
      * the fact, when you start a new log record and the previous one wasn't completed.
      *
-     * In BASIC mode, we only detect this problem and throw an exception without a stack trace.
-     * In AGGRESSIVE mode, we capture the stack trace at every start of a log statement, so we
-     * can throw it if later on if we detect the log record leak.
+     * With Log Paranoia off (LOG_PARANOIA_MODE_NONE), we only detect this problem and print an
+     * error message.
+     * In BASIC mode, we throw a LogError without a stack trace.
+     * In AGGRESSIVE mode, we capture the stack trace at every start of a log statement, so when
+     * we throw the LogError, it points to the code that created and then abandoned the log record.
      * </pre>
      */
     public static final int LOG_PARANOIA_MODE;
