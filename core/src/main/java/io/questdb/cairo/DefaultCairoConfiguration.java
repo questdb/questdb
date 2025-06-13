@@ -735,6 +735,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlAsOfJoinMapEvacuationThreshold() {
+        return 10_000_000;
+    }
+
+    @Override
     public int getSqlAsOfJoinShortCircuitCacheCapacity() {
         return 10_000_000;
     }

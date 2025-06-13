@@ -52,11 +52,11 @@ import io.questdb.std.Transient;
 public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final IntList columnIndex;
     private final AsOfJoinRecordCursor cursor;
+    private final int mapEvacuationThreshold;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
     private final int slaveValueTimestampIndex;
     private final long toleranceInterval;
-    private static final int MAP_EVACUATION_THRESHOLD = 10_000_000; // todo: configurable
 
     public AsOfJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -98,6 +98,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             this.columnIndex = columnIndex;
             this.toleranceInterval = toleranceInterval;
             this.slaveValueTimestampIndex = slaveValueTimestampIndex;
+            this.mapEvacuationThreshold = configuration.getSqlAsOfJoinMapEvacuationThreshold();
         } catch (Throwable th) {
             close();
             throw th;
@@ -156,11 +157,11 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
     private class AsOfJoinRecordCursor extends AbstractSymbolWrapOverCursor {
         private final Map joinKeyMapA;
         private final Map joinKeyMapB;
-        private Map currentJoinKeyMap;
         private final int masterTimestampIndex;
         private final SymbolWrapOverJoinRecord record;
         private final int slaveTimestampIndex;
         private final RecordValueSink valueSink;
+        private Map currentJoinKeyMap;
         private boolean danglingSlaveRecord = false;
         private boolean isMasterHasNextPending;
         private boolean isOpen;
@@ -277,8 +278,25 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             return false;
         }
 
+        @Override
+        public long size() {
+            return masterCursor.size();
+        }
+
+        @Override
+        public void toTop() {
+            currentJoinKeyMap.clear();
+            currentJoinKeyMap = joinKeyMapA;
+            assert currentJoinKeyMap.size() == 0;
+            slaveTimestamp = Long.MIN_VALUE;
+            danglingSlaveRecord = false;
+            masterCursor.toTop();
+            slaveCursor.toTop();
+            isMasterHasNextPending = true;
+        }
+
         private void evacuateJoinKeyMap(long masterTimestamp) {
-            if (currentJoinKeyMap.size() < MAP_EVACUATION_THRESHOLD || toleranceInterval == Numbers.LONG_NULL) {
+            if (currentJoinKeyMap.size() < mapEvacuationThreshold || toleranceInterval == Numbers.LONG_NULL) {
                 return; // no need to evacuate small maps
             }
             Map dstMap = currentJoinKeyMap == joinKeyMapA ? joinKeyMapB : joinKeyMapA;
@@ -307,23 +325,6 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             boolean hasSlave = record.hasSlave();
             record.of(masterRecord, currentJoinKeyMap.getRecord());
             record.hasSlave(hasSlave);
-        }
-
-        @Override
-        public long size() {
-            return masterCursor.size();
-        }
-
-        @Override
-        public void toTop() {
-            currentJoinKeyMap.clear();
-            currentJoinKeyMap = joinKeyMapA;
-            assert currentJoinKeyMap.size() == 0;
-            slaveTimestamp = Long.MIN_VALUE;
-            danglingSlaveRecord = false;
-            masterCursor.toTop();
-            slaveCursor.toTop();
-            isMasterHasNextPending = true;
         }
 
         private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
