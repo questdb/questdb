@@ -221,6 +221,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return 0;
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);

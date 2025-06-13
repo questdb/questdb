@@ -442,6 +442,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public long preComputedStateSize() {
+            return base.preComputedStateSize();
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             base.recordAt(record, atRowId);
         }

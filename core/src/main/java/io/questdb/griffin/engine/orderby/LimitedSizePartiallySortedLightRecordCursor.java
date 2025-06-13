@@ -129,6 +129,11 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     }
 
     @Override
+    public long preComputedStateSize() {
+        return isChainBuilt ? 1 : 0;
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         baseCursor.recordAt(record, atRowId);
     }

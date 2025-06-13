@@ -391,6 +391,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return isRostiBuilt ? 1 : 0;
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             ((RostiRecord) record).of(atRowId);
         }

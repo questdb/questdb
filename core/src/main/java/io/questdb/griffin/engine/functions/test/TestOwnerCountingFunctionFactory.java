@@ -24,7 +24,11 @@
 
 package io.questdb.griffin.engine.functions.test;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -126,6 +130,11 @@ public class TestOwnerCountingFunctionFactory implements FunctionFactory {
             remaining = 1;
             record.acquire();
             return this;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
         }
 
         @Override

@@ -25,8 +25,11 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.EmptySymbolMapReader;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.VirtualRecordNoRowid;
 import io.questdb.std.ObjList;
 
 public final class EmptyTableRandomRecordCursor implements RecordCursor {
@@ -63,6 +66,11 @@ public final class EmptyTableRandomRecordCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         return false;
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return 0;
     }
 
     @Override

@@ -201,6 +201,11 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         @Override
+        public long preComputedStateSize() {
+            return isMapBuilt ? 1 : 0;
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             baseCursor.recordAt(record, atRowId);
         }

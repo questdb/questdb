@@ -30,7 +30,7 @@ import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-public class VirtualFunctionSkewedSymbolRecordCursor extends AbstractVirtualFunctionRecordCursor {
+public abstract class VirtualFunctionSkewedSymbolRecordCursor extends AbstractVirtualFunctionRecordCursor {
     protected RecordCursor managedCursor;
 
     public VirtualFunctionSkewedSymbolRecordCursor(ObjList<Function> functions) {

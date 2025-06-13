@@ -289,6 +289,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             return -1;
         }

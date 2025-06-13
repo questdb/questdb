@@ -50,6 +50,10 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
         }
     }
 
+    static long fromBool(boolean b) {
+        return b ? 1L : 0L;
+    }
+
     static void skipRows(RecordCursor cursor, Counter rowCount) throws DataUnavailableException {
         while (rowCount.get() > 0 && cursor.hasNext()) {
             rowCount.dec();
@@ -145,6 +149,15 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     }
 
     /**
+     * Quantifies internal cursor state. This method is used to assert that toTop() does not suffer major
+     * and avoidable overhead when returning to the beginning of the cursor. The assertion entails that
+     * pre-computed state size, computed after fetching the cursor remains the same before and after calling toTop().
+     *
+     * @return quantifies not-null pointers, booleans and other types as long. We are only tracking state change here.
+     */
+    long preComputedStateSize();
+
+    /**
      * Positions record at given row id. The row id must have been previously obtained from Record instance.
      *
      * @param record  to position
@@ -177,8 +190,10 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     }
 
     /**
-     * Return the cursor to the beginning of the page frame.
-     * Sets location to first column.
+     * Returns the cursor to its top position without re-running the
+     * query or triggering heavy computations. This method is not meant to
+     * reload data from the tables, but rather for performing multiple
+     * passes over the same result set.
      */
     void toTop();
 

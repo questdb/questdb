@@ -27,8 +27,11 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 
@@ -82,6 +85,11 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
                 return false;
             }
         }
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return cursorA.preComputedStateSize() + cursorB.preComputedStateSize();
     }
 
     @Override

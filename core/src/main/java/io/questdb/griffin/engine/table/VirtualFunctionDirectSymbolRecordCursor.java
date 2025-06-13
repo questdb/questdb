@@ -54,4 +54,10 @@ public class VirtualFunctionDirectSymbolRecordCursor extends AbstractVirtualFunc
             RecordCursor.skipRows(this, rowCount);
         }
     }
+
+    @Override
+    public long preComputedStateSize() {
+        // state is unclear
+        return 0;
+    }
 }

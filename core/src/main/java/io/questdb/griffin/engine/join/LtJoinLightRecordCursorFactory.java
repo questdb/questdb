@@ -233,6 +233,11 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
         }
 
         @Override
+        public long preComputedStateSize() {
+            return masterCursor.preComputedStateSize() + slaveCursor.preComputedStateSize();
+        }
+
+        @Override
         public long size() {
             return masterCursor.size();
         }
