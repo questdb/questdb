@@ -1744,6 +1744,64 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtJoinTolerance() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 as (select x as id, (x + x*1_000_000)::timestamp ts from long_sequence(10)) timestamp(ts) partition by day;");
+            execute("create table t2 as (select x as id, (x)::timestamp ts from long_sequence(5)) timestamp(ts) partition by day;");
+
+
+            // keyed join and slave has no timeframe support -> should use Lt Join Light
+            String expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                    "2\t1970-01-01T00:00:02.000002Z\t2\t1970-01-01T00:00:00.000002Z\n" +
+                    "3\t1970-01-01T00:00:03.000003Z\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004Z\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005Z\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006Z\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007Z\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008Z\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009Z\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
+            String query = "SELECT * FROM t1 LT JOIN (select * from t2 where t2.id != 1000) ON id TOLERANCE 2s;";
+            // sanity check: uses Lt Join Light
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Lt Join Light");
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQueryFullFatNoLeakCheck(expected, query, "ts", false, true, true);
+
+
+            // non-keyed join and slave supports timeframe -> should use Lt Join Fast Scan
+            query = "SELECT * FROM t1 LT JOIN t2 TOLERANCE 2s;";
+            expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001Z\t5\t1970-01-01T00:00:00.000005Z\n" +
+                    "2\t1970-01-01T00:00:02.000002Z\t5\t1970-01-01T00:00:00.000005Z\n" +
+                    "3\t1970-01-01T00:00:03.000003Z\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004Z\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005Z\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006Z\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007Z\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008Z\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009Z\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Lt Join Fast Scan");
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            // non-keyed join, slave supports timeframe but avoid BINARY_SEARCH hint -> should use Lt Join (full fat)
+            query = "SELECT /*+ avoid_lt_binary_search(orders md) */ * FROM t1 LT JOIN t2 TOLERANCE 2s;";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Lt Join");
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            // non-keyed join, slave has a filter -> should also use Lt Join
+            query = "SELECT * FROM t1 LT JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Lt Join");
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+        });
+    }
+
+    @Test
     public void testNestedASOF_keySymbol() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {

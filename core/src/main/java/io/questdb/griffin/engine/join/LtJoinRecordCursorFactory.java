@@ -209,25 +209,30 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             }
             if (masterHasNext) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+                final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL ? 0 : masterTimestamp - toleranceInterval;
                 MapKey key;
                 MapValue value;
                 long slaveTimestamp = this.slaveTimestamp;
                 if (slaveTimestamp < masterTimestamp) {
                     if (danglingSlaveRecord) {
-                        key = joinKeyMap.withKey();
-                        key.put(slaveRecord, slaveKeySink);
-                        value = key.createValue();
-                        valueSink.copy(slaveRecord, value);
+                        if (slaveTimestamp >= minSlaveTimestamp) {
+                            key = joinKeyMap.withKey();
+                            key.put(slaveRecord, slaveKeySink);
+                            value = key.createValue();
+                            valueSink.copy(slaveRecord, value);
+                        }
                         danglingSlaveRecord = false;
                     }
 
                     while (slaveCursor.hasNext()) {
                         slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
                         if (slaveTimestamp < masterTimestamp) {
-                            key = joinKeyMap.withKey();
-                            key.put(slaveRecord, slaveKeySink);
-                            value = key.createValue();
-                            valueSink.copy(slaveRecord, value);
+                            if (slaveTimestamp >= minSlaveTimestamp) {
+                                key = joinKeyMap.withKey();
+                                key.put(slaveRecord, slaveKeySink);
+                                value = key.createValue();
+                                valueSink.copy(slaveRecord, value);
+                            }
                         } else {
                             danglingSlaveRecord = true;
                             break;
