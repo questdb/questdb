@@ -256,7 +256,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
         @Override
         public long preComputedStateSize() {
-            return areFunctionsBuilt ? 1 : 0;
+            return RecordCursor.fromBool(areFunctionsBuilt);
         }
 
         @Override

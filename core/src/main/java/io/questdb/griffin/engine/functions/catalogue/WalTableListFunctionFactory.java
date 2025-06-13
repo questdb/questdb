@@ -118,7 +118,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             engine = executionContext.getCairoEngine();
-            cursor.toTop();
+            cursor.init();
             return cursor;
         }
 
@@ -156,15 +156,11 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                if (tableBucket.isEmpty()) {
-                    engine.getTableTokens(tableBucket, false);
-                }
-
                 tableIndex++;
                 final int n = tableBucket.size();
                 for (; tableIndex < n; tableIndex++) {
                     final TableToken tableToken = tableBucket.get(tableIndex);
-                    if (engine.isWalTable(tableToken) && record.switchTo(tableToken)) {
+                    if (engine.isWalTable(tableToken) && !engine.isTableDropped(tableToken) && record.switchTo(tableToken)) {
                         break;
                     }
                 }
@@ -184,6 +180,12 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             @Override
             public void toTop() {
                 tableIndex = -1;
+            }
+
+            private void init() {
+                tableBucket.clear();
+                engine.getTableTokens(tableBucket, false);
+                toTop();
             }
 
             public class TableListRecord implements Record {

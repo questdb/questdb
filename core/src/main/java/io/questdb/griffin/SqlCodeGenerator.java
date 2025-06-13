@@ -29,7 +29,6 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
@@ -48,7 +47,6 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.map.RecordValueSink;
@@ -141,9 +139,7 @@ import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.DistinctIntKeyRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.DistinctSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.FillRangeRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
@@ -305,8 +301,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
@@ -382,7 +378,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final CairoConfiguration configuration;
     private final ObjList<TableColumnMetadata> deferredWindowMetadata = new ObjList<>();
     private final boolean enableJitDebug;
-    private final CairoEngine engine;
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final boolean fastAsOfJoins;
@@ -423,13 +418,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(
-            CairoEngine engine,
             CairoConfiguration configuration,
             FunctionParser functionParser,
             ObjectPool<ExpressionNode> expressionNodePool
     ) {
         try {
-            this.engine = engine;
             this.configuration = configuration;
             this.functionParser = functionParser;
             this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
@@ -4049,65 +4042,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateSelectDistinct(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        QueryModel nested;
-        QueryModel twoDeepNested;
-        ExpressionNode tableNameEn;
-
-        if (
-                model.getColumns().size() == 1
-                        && (nested = model.getNestedModel()) != null
-                        && model.getNestedModel().getSelectModelType() == SELECT_MODEL_CHOOSE
-                        && (twoDeepNested = model.getNestedModel().getNestedModel()) != null
-                        && twoDeepNested.getLatestBy().size() == 0
-                        && (tableNameEn = twoDeepNested.getTableNameExpr()) != null
-                        && tableNameEn.type == LITERAL
-                        && twoDeepNested.getWhereClause() == null
-                        && twoDeepNested.getJoinModels().size() == 1 // no joins
-        ) {
-            CharSequence tableName = tableNameEn.token;
-            TableToken tableToken = executionContext.getTableToken(tableName);
-            try (TableReader reader = executionContext.getReader(tableToken)) {
-                QueryColumn queryColumn = nested.getBottomUpColumns().get(0);
-                CharSequence physicalColumnName = queryColumn.getAst().token;
-                TableReaderMetadata readerMetadata = reader.getMetadata();
-                int columnIndex = readerMetadata.getColumnIndex(physicalColumnName);
-                int columnType = readerMetadata.getColumnType(columnIndex);
-
-                final GenericRecordMetadata distinctColumnMetadata = new GenericRecordMetadata();
-                distinctColumnMetadata.add(readerMetadata.getColumnMetadata(columnIndex));
-                if (ColumnType.isSymbol(columnType)) {
-                    final RecordCursorFactory factory = generateSubQuery(model.getNestedModel(), executionContext);
-                    try {
-                        return new DistinctSymbolRecordCursorFactory(engine.getConfiguration(), factory);
-                    } catch (Throwable t) {
-                        Misc.free(factory);
-                        throw t;
-                    }
-                } else if (columnType == ColumnType.INT) {
-                    final RecordCursorFactory factory = generateSubQuery(model.getNestedModel(), executionContext);
-                    if (factory.supportsPageFrameCursor()) {
-                        try {
-                            return new DistinctIntKeyRecordCursorFactory(
-                                    engine.getConfiguration(),
-                                    factory,
-                                    distinctColumnMetadata,
-                                    arrayColumnTypes,
-                                    tempVaf,
-                                    executionContext.getSharedWorkerCount()
-                            );
-                        } catch (Throwable t) {
-                            Misc.free(factory);
-                            throw t;
-                        }
-                    } else {
-                        // Shouldn't really happen, we cannot recompile below, QueryModel is changed during compilation
-                        Misc.free(factory);
-                        throw CairoException.critical(0).put("Optimization error, incorrect path chosen, please contact support.");
-                    }
-                }
-            }
-        }
-
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
         try {
             if (factory.recordCursorSupportsRandomAccess() && factory.getMetadata().getTimestampIndex() != -1) {
