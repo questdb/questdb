@@ -22,12 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.wal;
+package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
@@ -221,6 +222,62 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLastCommitToTimestampIncremental() {
+        // Force 1 by 1 commit application
+        setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 1);
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+
+        TableToken tableToken = createTable(testName.getMethodName());
+        commitWalRows(tableToken, 2, "2022-02-24T02:00", "2022-02-24T12");
+        drainWalQueue();
+
+        commitWalRows(tableToken, 200, "2022-02-24T08", "2022-02-24T13");
+        commitWalRows(tableToken, 200, "2022-02-24T09", "2022-02-24T13");
+        commitWalRows(tableToken, 200, "2022-02-24T10", "2022-02-24T15");
+        commitWalPartitionDrop(tableToken, "2022-01-01");
+        commitWalRows(tableToken, 200, "2022-02-24T12:05", "2022-02-24T16");
+        commitWalRows(tableToken, 200, "2022-02-24T13", "2022-02-24T18");
+        int startTxn;
+
+        try (TableWriter writer = getWriter(tableToken)) {
+            startTxn = (int) writer.getAppliedSeqTxn();
+
+            try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn())) {
+                writer.readWalTxnDetails(cursor);
+                WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
+
+                Assert.assertEquals(Long.MIN_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 1));
+                Assert.assertEquals(Long.MIN_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 2));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 3));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 4));
+                assertTimestampEquals("2022-02-24T13:00", walTnxDetails.getCommitToTimestamp(startTxn + 5));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 6));
+            }
+        }
+        // Add one more commit
+        commitWalRows(tableToken, 200, "2022-02-24T15", "2022-02-24T18");
+        try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
+            // Force 1 by 1 commit application
+            walApplyJob.run(0);
+        }
+
+        try (TableWriter writer = getWriter(tableToken)) {
+            try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn() + 5)) {
+                writer.readWalTxnDetails(cursor);
+
+                WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
+                Assert.assertEquals(Long.MIN_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 2));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 3));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 4));
+                assertTimestampEquals("2022-02-24T13:00", walTnxDetails.getCommitToTimestamp(startTxn + 5));
+                assertTimestampEquals("2022-02-24T15", walTnxDetails.getCommitToTimestamp(startTxn + 6));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 7));
+            }
+        }
+    }
+
+    @Test
     public void testLastCommitToTimestampIsUpdated() {
         TableToken tableToken = createTable(testName.getMethodName());
         commitWalRows(tableToken, 2, "2022-02-24T02:00", "2022-02-24T12");
@@ -255,6 +312,11 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
                 writer.readWalTxnDetails(cursor);
 
                 WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
+                Assert.assertEquals(Long.MIN_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 1));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 2));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 3));
+                assertTimestampEquals("2022-02-24T12:05", walTnxDetails.getCommitToTimestamp(startTxn + 4));
+                assertTimestampEquals("2022-02-24T13:00", walTnxDetails.getCommitToTimestamp(startTxn + 5));
                 assertTimestampEquals("2022-02-24T15", walTnxDetails.getCommitToTimestamp(startTxn + 6));
                 Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 7));
             }

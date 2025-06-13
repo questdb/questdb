@@ -172,6 +172,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getCommitLatency() {
+        return getDelegate().getCommitLatency();
+    }
+
+    @Override
     public int getCommitMode() {
         return getDelegate().getCommitMode();
     }
