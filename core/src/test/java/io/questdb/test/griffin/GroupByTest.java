@@ -33,31 +33,6 @@ import java.util.Arrays;
 public class GroupByTest extends AbstractCairoTest {
 
     @Test
-    public void testGroupByWithTimestampKey() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE foo (\n" +
-                    "  timestamp TIMESTAMP,\n" +
-                    "  bar INT\n" +
-                    ") TIMESTAMP (timestamp)\n" +
-                    "PARTITION BY DAY;");
-            execute("INSERT INTO foo VALUES ('2020', 0);");
-            String query = "SELECT\n" +
-                    "  timestamp AS time,\n" +
-                    "  TO_STR(timestamp, 'yyyy-MM-dd'),\n" +
-                    "  SUM(1) \n" +
-                    "FROM foo;";
-            assertQueryNoLeakCheck(
-                    "time\tTO_STR\tSUM\n" +
-                            "2020-01-01T00:00:00.000000Z\t2020-01-01\t1\n",
-                    query,
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
     public void test1GroupByWithoutAggregateFunctionsReturnsUniqueKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (" +
@@ -243,7 +218,7 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x long, y long);");
             String query = "select x, avg(y), case when x > 0 then 1 else row_number() over (partition by x) end as z from t group by x, z";
-            assertError(query, "[75] Invalid column: by");
+            assertError(query, "[59] Nested window functions are not currently supported.");
         });
     }
 
@@ -1665,6 +1640,31 @@ public class GroupByTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "l\ts\tcolumn\n" +
                             "1\ta\t0\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testGroupByWithTimestampKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (\n" +
+                    "  timestamp TIMESTAMP,\n" +
+                    "  bar INT\n" +
+                    ") TIMESTAMP (timestamp)\n" +
+                    "PARTITION BY DAY;");
+            execute("INSERT INTO foo VALUES ('2020', 0);");
+            String query = "SELECT\n" +
+                    "  timestamp AS time,\n" +
+                    "  TO_STR(timestamp, 'yyyy-MM-dd'),\n" +
+                    "  SUM(1) \n" +
+                    "FROM foo;";
+            assertQueryNoLeakCheck(
+                    "time\tTO_STR\tSUM\n" +
+                            "2020-01-01T00:00:00.000000Z\t2020-01-01\t1\n",
                     query,
                     null,
                     true,

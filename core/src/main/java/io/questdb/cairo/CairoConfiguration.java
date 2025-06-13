@@ -142,9 +142,7 @@ public interface CairoConfiguration {
 
     int getColumnPurgeTaskPoolCapacity();
 
-    default long getCommitLatency() {
-        return 30_000_000; // 30s
-    }
+    long getCommitLatency();
 
     int getCommitMode();
 

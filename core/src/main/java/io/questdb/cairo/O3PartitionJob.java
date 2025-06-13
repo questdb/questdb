@@ -941,6 +941,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Split partition if the prefix is large enough (relatively and absolutely)
                 if (
                         prefixType == O3_BLOCK_DATA
+                                && (mergeType == O3_BLOCK_MERGE || mergeType == O3_BLOCK_O3)
                                 && prefixHi >= tableWriter.getPartitionO3SplitThreshold()
                                 && prefixHi > 2 * (mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)
                 ) {
