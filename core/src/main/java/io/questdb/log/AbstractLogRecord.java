@@ -545,7 +545,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
             logError.fillInStackTrace();
             return null;
         }
-        $();
+        $(" #$#$ ABANDONED LOG RECORD #$#$").$();
         return logError;
     }
 
