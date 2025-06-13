@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.mv.DefaultMatViewRefreshWorkerPoolConfiguration;
+import io.questdb.cairo.view.DefaultViewRefreshWorkerPoolConfiguration;
 import io.questdb.cairo.wal.DefaultWalApplyWorkerPoolConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -46,11 +47,12 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultHttpServerConfiguration httpServerConfiguration;
     private final DefaultLineTcpReceiverConfiguration lineTcpReceiverConfiguration;
     private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
+    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new DefaultMatViewRefreshWorkerPoolConfiguration();
     private final DefaultMemoryConfiguration memoryConfiguration = new DefaultMemoryConfiguration();
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
     private final DefaultPGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration();
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new DefaultPublicPassthroughConfiguration();
-    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new DefaultMatViewRefreshWorkerPoolConfiguration();
+    private final WorkerPoolConfiguration viewRefreshPoolConfiguration = new DefaultViewRefreshWorkerPoolConfiguration();
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new DefaultWalApplyWorkerPoolConfiguration();
 
     public DefaultServerConfiguration(CharSequence dbRoot, CharSequence installRoot) {
@@ -94,6 +96,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
+        return matViewRefreshPoolConfiguration;
+    }
+
+    @Override
     public MemoryConfiguration getMemoryConfiguration() {
         return memoryConfiguration;
     }
@@ -119,8 +126,8 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
-        return matViewRefreshPoolConfiguration;
+    public WorkerPoolConfiguration getViewRefreshPoolConfiguration() {
+        return viewRefreshPoolConfiguration;
     }
 
     @Override

@@ -585,6 +585,8 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
+    int getViewLexerPoolCapacity();
+
     @NotNull
     VolumeDefinitions getVolumeDefinitions();
 
@@ -722,6 +724,8 @@ public interface CairoConfiguration {
     default boolean isValidateSampleByFillType() {
         return true;
     }
+
+    boolean isViewEnabled();
 
     boolean isWalApplyEnabled();
 

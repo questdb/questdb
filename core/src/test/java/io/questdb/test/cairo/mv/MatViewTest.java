@@ -1300,10 +1300,11 @@ public class MatViewTest extends AbstractCairoTest {
             assertCannotModifyMatView("reindex table price_1h");
             // truncate
             assertCannotModifyMatView("truncate table price_1h");
-            // drop
-            assertCannotModifyMatView("drop table price_1h");
             // vacuum
             assertCannotModifyMatView("vacuum table price_1h");
+
+            // drop
+            assertSqlError("drop table price_1h", "table name expected, got view or materialized view name");
         });
     }
 
@@ -1556,17 +1557,17 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testEnableDedupWithFewerKeysDoesNotInvalidateMatViews() throws Exception {
-        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts);", false);
+        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts);");
     }
 
     @Test
     public void testEnableDedupWithMoreKeysInvalidatesMatViews() throws Exception {
-        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, amount);", false);
+        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, amount);");
     }
 
     @Test
     public void testEnableDedupWithSameKeysDoesNotInvalidateMatViews() throws Exception {
-        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, sym);", false);
+        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, sym);");
     }
 
     @Test
@@ -3774,6 +3775,14 @@ public class MatViewTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertSqlError(String badSql, String expectedErrorMessage) {
+        try {
+            execute(badSql);
+        } catch (SqlException e) {
+            Assert.assertTrue(e.getMessage().contains(expectedErrorMessage));
+        }
+    }
+
     private static void assertViewMatchesSqlOverBaseTable(String viewSql) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             TestUtils.assertEquals(
@@ -3957,7 +3966,7 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
-    private void testEnableDedupWithSubsetKeys(String enableDedupSql, boolean expectInvalid) throws Exception {
+    private void testEnableDedupWithSubsetKeys(String enableDedupSql) throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE base_price (" +
@@ -3991,7 +4000,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "view_name\tbase_table_name\tview_status\n" +
-                            "price_1h\tbase_price\t" + (expectInvalid ? "invalid" : "valid") + "\n",
+                            "price_1h\tbase_price\tvalid\n",
                     "select view_name, base_table_name, view_status from materialized_views",
                     null,
                     false

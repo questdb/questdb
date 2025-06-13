@@ -93,6 +93,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SHOW_COLUMNS = 2;
     public static final int SHOW_CREATE_MAT_VIEW = 15;
     public static final int SHOW_CREATE_TABLE = 14;
+    public static final int SHOW_CREATE_VIEW = 16;
     public static final int SHOW_DATE_STYLE = 9;
     public static final int SHOW_MAX_IDENTIFIER_LENGTH = 6;
     public static final int SHOW_PARAMETERS = 11;
@@ -212,6 +213,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private QueryModel unionModel;
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
+    private ExpressionNode viewNameExpr;
     private ExpressionNode whereClause;
 
     private QueryModel() {
@@ -414,6 +416,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         constWhereClause = null;
         nestedModel = null;
         tableNameExpr = null;
+        viewNameExpr = null;
         alias = null;
         latestByType = LATEST_BY_NONE;
         latestBy.clear();
@@ -678,6 +681,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(constWhereClause, that.constWhereClause)
                 && Objects.equals(nestedModel, that.nestedModel)
                 && Objects.equals(tableNameExpr, that.tableNameExpr)
+                && Objects.equals(viewNameExpr, that.viewNameExpr)
                 && Objects.equals(tableNameFunction, that.tableNameFunction)
                 && Objects.equals(alias, that.alias)
                 && Objects.equals(timestamp, that.timestamp)
@@ -1016,6 +1020,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return updateTableToken;
     }
 
+    public ExpressionNode getViewNameExpr() {
+        return viewNameExpr;
+    }
+
     public ExpressionNode getWhereClause() {
         return whereClause;
     }
@@ -1057,7 +1065,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 updateTableColumnNames, sampleByTimezoneName, sampleByOffset,
                 latestByType, whereClause, backupWhereClause,
                 postJoinWhereClause, outerJoinExpressionClause, constWhereClause, nestedModel,
-                tableNameExpr, metadataVersion, tableNameFunction,
+                tableNameExpr, viewNameExpr, metadataVersion, tableNameFunction,
                 alias, timestamp, sampleBy,
                 sampleByUnit, sampleByTo, sampleByFrom, context, joinCriteria,
                 joinType, joinKeywordPosition, orderedJoinModels,
@@ -1469,6 +1477,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setUpdateTableToken(TableToken tableName) {
         this.updateTableToken = tableName;
+    }
+
+    public void setViewNameExpr(ExpressionNode viewNameExpr) {
+        this.viewNameExpr = viewNameExpr;
     }
 
     public void setWhereClause(ExpressionNode whereClause) {

@@ -342,6 +342,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
+    public WorkerPoolConfiguration getViewRefreshPoolConfiguration() {
+        // nested object is kept non-reloadable
+        return serverConfig.get().getViewRefreshPoolConfiguration();
+    }
+
+    @Override
     public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
         // nested object is kept non-reloadable
         return serverConfig.get().getWalApplyPoolConfiguration();

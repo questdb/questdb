@@ -446,6 +446,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlStrFunctionBufferMaxSize;
     private final int sqlTxnScoreboardEntryCount;
     private final int sqlUnorderedMapMaxEntrySize;
+    private final int sqlViewLexerPoolCapacity;
     private final int sqlWindowColumnPoolCapacity;
     private final int sqlWindowInitialRangeBufferSize;
     private final int sqlWindowMaxRecursion;
@@ -478,6 +479,15 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int utf8SinkSize;
     private final PropertyValidator validator;
     private final int vectorAggregateQueueCapacity;
+    private final boolean viewEnabled;
+    private final WorkerPoolConfiguration viewRefreshPoolConfiguration = new PropViewRefreshPoolConfiguration();
+    private final long viewRefreshSleepTimeout;
+    private final int[] viewRefreshWorkerAffinity;
+    private final int viewRefreshWorkerCount;
+    private final boolean viewRefreshWorkerHaltOnError;
+    private final long viewRefreshWorkerNapThreshold;
+    private final long viewRefreshWorkerSleepThreshold;
+    private final long viewRefreshWorkerYieldThreshold;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
@@ -1280,6 +1290,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplySleepTimeout = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
 
+            // TODO: change default to true
+            this.viewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_VIEW_ENABLED, false);
+
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
@@ -1293,6 +1306,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRefreshWorkerSleepThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD, 10_000);
             this.matViewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
             this.matViewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
+
+            this.viewRefreshWorkerCount = getInt(properties, env, PropertyKey.VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
+            this.viewRefreshWorkerNapThreshold = getLong(properties, env, PropertyKey.VIEW_REFRESH_WORKER_NAP_THRESHOLD, 7_000);
+            this.viewRefreshWorkerSleepThreshold = getLong(properties, env, PropertyKey.VIEW_REFRESH_WORKER_SLEEP_THRESHOLD, 10_000);
+            this.viewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
+            this.viewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.VIEW_REFRESH_WORKER_AFFINITY, viewRefreshWorkerCount);
+            this.viewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
+            this.viewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
@@ -1323,6 +1344,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlUnorderedMapMaxEntrySize = getInt(properties, env, PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 32);
             this.sqlMapMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlMapMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, Integer.MAX_VALUE);
+            this.sqlViewLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_VIEW_LEXER_POOL_CAPACITY, 8);
             this.sqlExplainModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY, 32);
             this.sqlModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_MODEL_POOL_CAPACITY, 1024);
             this.sqlMaxNegativeLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 10_000);
@@ -1784,6 +1806,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
         return publicPassthroughConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getViewRefreshPoolConfiguration() {
+        return viewRefreshPoolConfiguration;
     }
 
     @Override
@@ -3598,6 +3625,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getViewLexerPoolCapacity() {
+            return sqlViewLexerPoolCapacity;
+        }
+
+        @Override
         public @NotNull VolumeDefinitions getVolumeDefinitions() {
             return volumeDefinitions;
         }
@@ -3835,6 +3867,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isValidateSampleByFillType() {
             return sqlSampleByValidateFillType;
+        }
+
+        @Override
+        public boolean isViewEnabled() {
+            return viewEnabled;
         }
 
         @Override
@@ -5525,6 +5562,58 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isUseLegacyStringDefault() {
             return useLegacyStringDefault;
+        }
+    }
+
+    private class PropViewRefreshPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
+        public long getNapThreshold() {
+            return viewRefreshWorkerNapThreshold;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "view-refresh";
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return viewRefreshWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepTimeout() {
+            return viewRefreshSleepTimeout;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return viewRefreshWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return viewRefreshWorkerCount;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return viewRefreshWorkerYieldThreshold;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return viewRefreshWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return viewRefreshWorkerCount > 0;
         }
     }
 
