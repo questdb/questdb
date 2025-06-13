@@ -1181,34 +1181,50 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static boolean checkAllNonKeyColumnsIdentical(
             long partitionTimestamp,
             long partitionNameTxn,
+            long oldPartitionSize,
             TableWriter tableWriter,
             long mergeIndexAddr,
-            long mergeIndexSize,
+            long mergeIndexRows,
             long mergeDataLo,
             long mergeDataHi,
-            ReadOnlyObjList<? extends MemoryCR> oooColumns,
             long mergeOOOLo,
             long mergeOOOHi,
             Path tableRootPath
     ) {
         LOG.info().$("checking dedup insert results for noop [table=").$(tableWriter.getTableToken()).I$();
-        try (Frame partitionFrame = tableWriter.openPartitionFrameRO(partitionTimestamp)) {
+        int pathSize = tableRootPath.size();
+        setSinkForNativePartition(
+                tableRootPath.slash(),
+                tableWriter.getPartitionBy(),
+                partitionTimestamp,
+                partitionNameTxn
+        );
+
+        TableRecordMetadata metadata = tableWriter.getMetadata();
+        Path paritionPath = tableRootPath;
+        try (Frame partitionFrame = tableWriter.openPartitionFrameRO(paritionPath, partitionTimestamp, metadata, oldPartitionSize)) {
             try (Frame commitFrame = tableWriter.openCommitFrame()) {
-                TableRecordMetadata metadata = tableWriter.getMetadata();
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
                     int columnType = metadata.getColumnType(i);
                     if (columnType > 0 && !metadata.isDedupKey(i) && i != metadata.getTimestampIndex()) {
-                        if (!FrameAlgebra.isNewDataIdential(
+                        if (!FrameAlgebra.isColumnReplaceIdentical(
+                                i,
                                 partitionFrame,
+                                mergeDataLo,
+                                mergeDataHi + 1,
                                 commitFrame,
+                                mergeOOOLo,
+                                mergeOOOHi + 1,
                                 mergeIndexAddr,
-                                mergeIndexSize
+                                mergeIndexRows
                         )) {
                             return false;
                         }
                     }
                 }
             }
+        } finally {
+            tableRootPath.trimTo(pathSize);
         }
         return true;
 //        TableRecordMetadata metadata = tableWriter.getMetadata();
@@ -2209,8 +2225,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         : o3SplitPartitionSize == 0 ? srcDataNewPartitionSize : o3SplitPartitionSize
         );
 
-        final long timestampMergeIndexAddr;
-        final long timestampMergeIndexSize;
+        long timestampMergeIndexAddr = 0;
+        long timestampMergeIndexSize = 0;
         final TableRecordMetadata metadata = tableWriter.getMetadata();
         if (mergeType == O3_BLOCK_MERGE) {
             long mergeRowCount = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
@@ -2259,22 +2275,25 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // All the rows are duplicates
                             // check if all non-key rows are dups
                             if (checkAllNonKeyColumnsIdentical(
+                                    oldPartitionTimestamp,
+                                    srcNameTxn,
+                                    srcDataOldPartitionSize,
                                     tableWriter,
-                                    srcTimestampAddr,
+                                    timestampMergeIndexAddr,
+                                    dedupRows,
                                     mergeDataLo,
                                     mergeDataHi,
-                                    oooColumns,
                                     mergeOOOLo,
                                     mergeOOOHi,
-                                    tempTablePath)
-                            ) {
+                                    Path.getThreadLocal(pathToTable)
+                            )) {
                                 LOG.info().$("deduplication resulted in noop [table=").$(tableWriter.getTableToken())
                                         .$(", partition=").$ts(partitionTimestamp)
                                         .I$();
                                 FilesFacade ff = tableWriter.getFilesFacade();
 
                                 // nothing to do, skip the partition
-                                updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, Long.MAX_VALUE, srcDataOldPartitionSize, srcDataOldPartitionSize, 0);
+                                updatePartitionSink(partitionUpdateSinkAddr, oldPartitionTimestamp, Long.MAX_VALUE, srcDataOldPartitionSize, srcDataOldPartitionSize, 0);
 
                                 O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
                                 O3Utils.close(ff, srcTimestampFd);
@@ -2284,7 +2303,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                                 Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
                                 return;
+                            } else {
+                                int abc = 0;
                             }
+                        } else {
+                            int abc = 0;
                         }
 
                         // we could be de-duping a split partition
@@ -2311,8 +2334,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // merge range is replaced by new data.
                     // Merge row count is the count of the new rows, compensated by 1 row that is start of the range
                     // and 1 row that is in the end of the range.
-                    timestampMergeIndexAddr = 0;
-                    timestampMergeIndexSize = 0;
                     mergeType = O3_BLOCK_O3;
                 } else {
                     throw new IllegalStateException("commit mode not supported");
@@ -2322,6 +2343,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 LOG.error().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
                         .I$();
+
+                if (timestampMergeIndexAddr != 0) {
+                    Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+                }
                 O3CopyJob.closeColumnIdleQuick(
                         0,
                         0,
@@ -2332,9 +2357,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 );
                 throw e;
             }
-        } else {
-            timestampMergeIndexAddr = 0;
-            timestampMergeIndexSize = 0;
         }
 
         final int columnCount = metadata.getColumnCount();

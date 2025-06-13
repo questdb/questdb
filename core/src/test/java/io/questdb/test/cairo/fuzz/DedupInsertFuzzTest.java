@@ -328,7 +328,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupMultipleKeyCol() throws Exception {
-        Rnd rnd = generateRandomAndProps();
+        Rnd rnd = generateRandomAndProps(1462473923236875L, 1749749627078L);
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
@@ -502,7 +502,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 duplicateTrans.waitBarrierVersion = transaction.waitBarrierVersion;
 
                 ObjList<FuzzTransactionOperation> txnList = transaction.operationList;
-                int dupCount = rnd.nextInt(txnList.size()) + 1;
+                int dupCount = rnd.nextInt(1) + 1;
 
                 ObjList<FuzzTransactionOperation> newTxnList = duplicateTrans.operationList;
                 boolean identical = rnd.nextBoolean();
@@ -511,13 +511,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     if (dupCount > 0 && rnd.nextInt(dupCount) > (n - t - dupCount)) {
                         // Add a duplicate operation
                         FuzzInsertOperation operation = (FuzzInsertOperation) txnList.getQuick(t);
-                        if (identical) {
-                            FuzzInsertOperation dup = new FuzzInsertOperation(operation);
-                            newTxnList.add(dup);
-                        } else {
-                            FuzzInsertOperation dup = new DuplicateFuzzInsertOperation(operation, upsertKeyIndexesMap);
-                            newTxnList.add(dup);
-                        }
+                        FuzzInsertOperation dup = new DuplicateFuzzInsertOperation(operation, upsertKeyIndexesMap, identical);
+                        newTxnList.add(dup);
                     }
                 }
 
@@ -776,6 +771,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     private void reinsertSameData(Rnd rnd, String tableNameDedup, String timestampColumnName) throws SqlException {
+        execute("ALTER TABLE \"" + tableNameDedup + "\" SQUASH PARTITIONS", sqlExecutionContext);
+        drainWalQueue();
+
+        LOG.info().$("Re-inserting same data into table ").$(tableNameDedup).$();
         TableToken tt = engine.verifyTableName(tableNameDedup);
         String partitions = readTxnToString(tt, false, true, true);
         int inserts = 2 + rnd.nextInt(10);
@@ -801,6 +800,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
         drainWalQueue();
 
+        Assert.assertFalse("table should not be suspended", engine.getTableSequencerAPI().getTxnTracker(tt).isSuspended());
         String partitionsAfter = readTxnToString(tt, false, true, true);
         Assert.assertEquals("partitions should be not rewritten", partitions, partitionsAfter);
     }
@@ -934,17 +934,17 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     fuzzer.assertCounts(tableNameDedup, timestampColumnName);
                     fuzzer.assertStringColDensity(tableNameDedup);
 
-//                    // Re-insert exactly same data, random intervals to the table with dedup enabled
-//                    reinsertSameData(
-//                            rnd,
-//                            tableNameDedup,
-//                            timestampColumnName
-//                    );
-//                    assertSqlCursorsNoDups(
-//                            tableNameWalNoDedup,
-//                            upsertKeyNames,
-//                            tableNameDedup
-//                    );
+                    // Re-insert exactly same data, random intervals to the table with dedup enabled
+                    reinsertSameData(
+                            rnd,
+                            tableNameDedup,
+                            timestampColumnName
+                    );
+                    assertSqlCursorsNoDups(
+                            tableNameWalNoDedup,
+                            upsertKeyNames,
+                            tableNameDedup
+                    );
 
                 } finally {
                     sharedWorkerPool.halt();

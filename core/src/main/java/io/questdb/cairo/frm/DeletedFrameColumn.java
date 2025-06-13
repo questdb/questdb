@@ -75,4 +75,14 @@ public class DeletedFrameColumn implements FrameColumn {
     public int getStorageType() {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public long getContiguousAuxAddr(long rowHi) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getContiguousDataAddr(long rowHi) {
+        throw new UnsupportedOperationException();
+    }
 }

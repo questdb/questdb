@@ -49,6 +49,8 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private final boolean mixedIOFlag;
     private long appendOffsetRowCount = -1;
     private long auxFd = -1;
+    private long auxMapAddr;
+    private long auxMapSize;
     private boolean closed = false;
     private int columnIndex;
     private long columnTop;
@@ -56,6 +58,9 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private ColumnTypeDriver columnTypeDriver;
     private long dataAppendOffsetBytes = -1;
     private long dataFd = -1;
+    private long dataMapAddr;
+    private long dataMapSize;
+    private boolean isReadOnly;
     private RecycleBin<ContiguousFileVarFrameColumn> recycleBin;
 
     public ContiguousFileVarFrameColumn(CairoConfiguration configuration) {
@@ -232,6 +237,18 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     @Override
     public void close() {
         if (!closed) {
+            if (auxMapAddr != 0) {
+                ff.munmap(auxMapAddr, auxMapSize, MEMORY_TAG);
+                auxMapAddr = 0;
+                auxMapSize = 0;
+            }
+
+            if (dataMapAddr != 0) {
+                ff.munmap(dataMapAddr, dataMapSize, MEMORY_TAG);
+                dataMapAddr = 0;
+                dataMapSize = 0;
+            }
+
             if (auxFd != -1) {
                 ff.close(auxFd);
                 auxFd = -1;
@@ -263,6 +280,26 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     @Override
     public int getColumnType() {
         return columnType;
+    }
+
+    @Override
+    public long getContiguousAuxAddr(long rowHi) {
+        if (rowHi <= columnTop) {
+            return 0;
+        }
+
+        mapAllRows(rowHi);
+        return auxMapAddr;
+    }
+
+    @Override
+    public long getContiguousDataAddr(long rowHi) {
+        if (rowHi <= columnTop) {
+            return 0;
+        }
+
+        mapAllRows(rowHi);
+        return dataMapAddr;
     }
 
     @Override
@@ -299,6 +336,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 iFile(partitionPath, columnName, columnTxn);
                 this.auxFd = TableUtils.openRO(ff, partitionPath.$(), LOG);
             }
+            this.isReadOnly = true;
         } catch (Exception e) {
             close();
             throw e;
@@ -326,6 +364,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             partitionPath.trimTo(plen);
             iFile(partitionPath, columnName, columnTxn);
             this.auxFd = TableUtils.openRW(ff, partitionPath.$(), LOG, fileOpts);
+            this.isReadOnly = false;
         } catch (Throwable e) {
             close();
             throw e;
@@ -346,5 +385,40 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             this.appendOffsetRowCount = appendOffsetRowCount;
         }
         return dataAppendOffsetBytes;
+    }
+
+    private void mapAllRows(long rowHi) {
+        if (!isReadOnly) {
+            // Writable columns are not used yet, can be easily implemented if needed
+            throw new UnsupportedOperationException("Cannot map writable column");
+        }
+
+        long newAuxMemSize = columnTypeDriver.getAuxVectorSize(rowHi);
+        if (auxMapSize > 0) {
+            if (auxMapSize <= newAuxMemSize) {
+                // Already mapped to same or bigger size
+                return;
+            }
+
+            // We can handle remaps, but so far we will not use it
+            throw new UnsupportedOperationException("Remap not supported for frame columns yet");
+//            int mode = isReadOnly ? Files.MAP_RO : Files.MAP_RW;
+//            auxMapAddr = TableUtils.mremap(ff, auxFd, auxMapAddr, auxMapSize, newAuxMemSize, mode, MEMORY_TAG);
+//            auxMapSize = newAuxMemSize;
+//
+//            long newDataSize = columnTypeDriver.getDataVectorSize(auxMapAddr, 0, rowHi - columnTop);
+//            dataMapAddr = TableUtils.mremap(ff, dataFd, dataMapAddr, dataMapSize, newDataSize, mode, MEMORY_TAG);
+//            dataMapSize = newDataSize;
+        }
+
+        auxMapSize = newAuxMemSize;
+        if (newAuxMemSize > 0) {
+            auxMapAddr = TableUtils.mapRO(ff, auxFd, auxMapSize, 0, MEMORY_TAG);
+        }
+
+        dataMapSize = columnTypeDriver.getDataVectorSize(auxMapAddr, 0, rowHi - columnTop - 1);
+        if (dataMapSize > 0) {
+            dataMapAddr = TableUtils.mapRO(ff, dataFd, dataMapSize, 0, MEMORY_TAG);
+        }
     }
 }

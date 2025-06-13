@@ -24,21 +24,32 @@
 
 package io.questdb.test.fuzz;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.cairo.TestRecord;
 
 public class DuplicateFuzzInsertOperation extends FuzzInsertOperation {
 
+    private final boolean identical;
     private final IntHashSet upsertKeyIndexes;
+    private boolean generatedNonIdentical;
 
-    public DuplicateFuzzInsertOperation(FuzzInsertOperation insertOperation, IntHashSet upsertKeyIndexes) {
+    public DuplicateFuzzInsertOperation(FuzzInsertOperation insertOperation, IntHashSet upsertKeyIndexes, boolean identical) {
         super(insertOperation);
         this.upsertKeyIndexes = upsertKeyIndexes;
+        this.identical = identical;
     }
 
+    @Override
+    public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex, LongList excludedTsIntervals) {
+        generatedNonIdentical = false;
+        return super.apply(rnd, engine, tableWriter, virtualTimestampIndex, excludedTsIntervals);
+    }
 
     @Override
     protected void appendColumnValue(
@@ -50,7 +61,7 @@ public class DuplicateFuzzInsertOperation extends FuzzInsertOperation {
             Utf8StringSink utf8StringSink,
             TestRecord.ArrayBinarySequence binarySequence
     ) {
-        if (upsertKeyIndexes.contains(columnIndex)) {
+        if (upsertKeyIndexes.contains(columnIndex) || identical || generatedNonIdentical) {
             super.appendColumnValue(
                     rnd,
                     type,
@@ -63,32 +74,17 @@ public class DuplicateFuzzInsertOperation extends FuzzInsertOperation {
             return;
         }
 
-        long seed0 = rnd.getSeed0();
-        long seed1 = rnd.getSeed1();
-        if (rnd.nextDouble() > 0.8) {
-            // Generate different value for non-key column
-            super.appendColumnValue(
-                    rnd,
-                    type,
-                    row,
-                    columnIndex,
-                    isNull,
-                    utf8StringSink,
-                    binarySequence
-            );
-        } else {
-            // Generate same value
-            rnd.reset(seed0, seed1);
-            super.appendColumnValue(
-                    rnd,
-                    type,
-                    row,
-                    columnIndex,
-                    isNull,
-                    utf8StringSink,
-                    binarySequence
-            );
-        }
+        rnd.nextBoolean();
+        // Generate different value for non-key column
+        super.appendColumnValue(
+                rnd,
+                type,
+                row,
+                columnIndex,
+                isNull,
+                utf8StringSink,
+                binarySequence
+        );
+        generatedNonIdentical = true;
     }
-
 }

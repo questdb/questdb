@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.frm;
 
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.str.Path;
 
 public interface FrameColumnTypePool {
@@ -37,5 +38,13 @@ public interface FrameColumnTypePool {
             int columnIndex,
             boolean init,
             boolean canWrite
+    );
+
+    FrameColumn createFromMemoryColumn(
+            int columnIndex,
+            int columnType,
+            long rowCount,
+            MemoryCR columnMemoryPrimary,
+            MemoryCR columnMemorySecondary
     );
 }

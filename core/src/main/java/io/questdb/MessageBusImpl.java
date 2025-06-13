@@ -120,22 +120,22 @@ public class MessageBusImpl implements MessageBus {
             this.vectorAggregateSubSeq = new MCSequence(vectorAggregateQueue.getCycle());
             vectorAggregatePubSeq.then(vectorAggregateSubSeq).then(vectorAggregatePubSeq);
 
-            this.columnTaskQueue = new RingQueue<>(ColumnTask::new, configuration.getO3CallbackQueueCapacity());
+            this.columnTaskQueue = new RingQueue<>(ColumnTask::new, 0);
             this.columnTaskPubSeq = new MPSequence(this.columnTaskQueue.getCycle());
             this.columnTaskSubSeq = new MCSequence(this.columnTaskQueue.getCycle());
             columnTaskPubSeq.then(columnTaskSubSeq).then(columnTaskPubSeq);
 
-            this.o3PartitionQueue = new RingQueue<>(O3PartitionTask::new, configuration.getO3PartitionQueueCapacity());
+            this.o3PartitionQueue = new RingQueue<>(O3PartitionTask::new, 0);
             this.o3PartitionPubSeq = new MPSequence(this.o3PartitionQueue.getCycle());
             this.o3PartitionSubSeq = new MCSequence(this.o3PartitionQueue.getCycle());
             o3PartitionPubSeq.then(o3PartitionSubSeq).then(o3PartitionPubSeq);
 
-            this.o3OpenColumnQueue = new RingQueue<>(O3OpenColumnTask::new, configuration.getO3OpenColumnQueueCapacity());
+            this.o3OpenColumnQueue = new RingQueue<>(O3OpenColumnTask::new, 0);
             this.o3OpenColumnPubSeq = new MPSequence(this.o3OpenColumnQueue.getCycle());
             this.o3OpenColumnSubSeq = new MCSequence(this.o3OpenColumnQueue.getCycle());
             o3OpenColumnPubSeq.then(o3OpenColumnSubSeq).then(o3OpenColumnPubSeq);
 
-            this.o3CopyQueue = new RingQueue<>(O3CopyTask::new, configuration.getO3CopyQueueCapacity());
+            this.o3CopyQueue = new RingQueue<>(O3CopyTask::new, 0);
             this.o3CopyPubSeq = new MPSequence(this.o3CopyQueue.getCycle());
             this.o3CopySubSeq = new MCSequence(this.o3CopyQueue.getCycle());
             o3CopyPubSeq.then(o3CopySubSeq).then(o3CopyPubSeq);

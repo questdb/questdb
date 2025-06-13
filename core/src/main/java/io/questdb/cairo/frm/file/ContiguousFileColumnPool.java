@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.cairo.frm.FrameColumnPool;
 import io.questdb.cairo.frm.FrameColumnTypePool;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
@@ -37,6 +38,8 @@ import java.io.Closeable;
 public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
     private final ColumnTypePool columnTypePool = new ColumnTypePool();
     private final CairoConfiguration configuration;
+    private final ListPool<MemoryFixFrameColumn> fixMemColumnPool = new ListPool<>();
+    private final ListPool<MemoryVarFrameColumn> varMemColumnPool = new ListPool<>();
     private final ListPool<ContiguousFileFixFrameColumn> fixColumnPool = new ListPool<>();
     private final ListPool<ContiguousFileFixFrameColumn> indexedColumnPool = new ListPool<>();
     private final ListPool<ContiguousFileVarFrameColumn> varColumnPool = new ListPool<>();
@@ -99,6 +102,38 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
             return column;
         }
 
+        @Override
+        public FrameColumn createFromMemoryColumn(
+                int columnIndex,
+                int columnType,
+                long rowCount,
+                MemoryCR columnMemoryPrimary,
+                MemoryCR columnMemorySecondary
+        ) {
+            if (!ColumnType.isVarSize(columnType)) {
+                // Fixed column
+                MemoryFixFrameColumn column = getMemFixColumn();
+                column.of(
+                        columnIndex,
+                        columnType,
+                        rowCount,
+                        columnMemoryPrimary
+                );
+                return column;
+            } else {
+                // Variable column
+                MemoryVarFrameColumn column = getMemVarColumn();
+                column.of(
+                        columnIndex,
+                        columnType,
+                        rowCount,
+                        columnMemoryPrimary,
+                        columnMemorySecondary
+                );
+                return column;
+            }
+        }
+
         private ContiguousFileFixFrameColumn getFixColumn() {
             if (fixColumnPool.size() > 0) {
                 return fixColumnPool.pop();
@@ -123,6 +158,24 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
             }
             ContiguousFileVarFrameColumn col = new ContiguousFileVarFrameColumn(configuration);
             col.setPool(varColumnPool);
+            return col;
+        }
+
+        private MemoryFixFrameColumn getMemFixColumn() {
+            if (fixMemColumnPool.size() > 0) {
+                return fixMemColumnPool.pop();
+            }
+            MemoryFixFrameColumn col = new MemoryFixFrameColumn();
+            col.setPool(fixMemColumnPool);
+            return col;
+        }
+
+        private MemoryVarFrameColumn getMemVarColumn() {
+            if (varMemColumnPool.size() > 0) {
+                return varMemColumnPool.pop();
+            }
+            MemoryVarFrameColumn col = new MemoryVarFrameColumn();
+            col.setPool(varMemColumnPool);
             return col;
         }
     }

@@ -27,11 +27,14 @@ package io.questdb.cairo.frm.file;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
+import io.questdb.cairo.TableWriterMetadata;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameColumnPool;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -65,11 +68,11 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     }
 
     @Override
-    public synchronized boolean isClosed() {
+    public boolean isClosed() {
         return closed;
     }
 
-    public synchronized Frame open(boolean rw, Path path, long targetPartition, RecordMetadata metadata, ColumnVersionWriter cvr, long size) {
+    public Frame open(boolean rw, Path path, long targetPartition, RecordMetadata metadata, ColumnVersionWriter cvr, long size) {
         if (rw) {
             return openRW(path, targetPartition, metadata, cvr, size);
         } else {
@@ -77,7 +80,13 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
         }
     }
 
-    public synchronized Frame openRO(
+    public Frame openFromMemoryColumns(ReadOnlyObjList<? extends MemoryCR> columns, TableWriterMetadata metadata, long rowCount) {
+        FrameImpl frame = getOrCreate();
+        frame.createFromMemoryColumns(columns, metadata, rowCount);
+        return frame;
+    }
+
+    public Frame openRO(
             Path partitionPath,
             long partitionTimestamp,
             RecordMetadata metadata,
@@ -89,7 +98,7 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
         return frame;
     }
 
-    public synchronized Frame openRW(
+    public Frame openRW(
             Path partitionPath,
             long partitionTimestamp,
             RecordMetadata metadata,
@@ -102,7 +111,7 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     }
 
     @Override
-    public synchronized void put(FrameImpl frame) {
+    public void put(FrameImpl frame) {
         assert !isClosed();
         framePool.add(frame);
     }

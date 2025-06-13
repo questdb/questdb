@@ -28,6 +28,7 @@ import java.io.Closeable;
 
 public interface FrameColumn extends Closeable {
     int COLUMN_CONTIGUOUS_FILE = 0;
+    int COLUMN_MEMORY = 1;
 
     void addTop(long value);
 
@@ -51,6 +52,10 @@ public interface FrameColumn extends Closeable {
     long getColumnTop();
 
     int getColumnType();
+
+    long getContiguousAuxAddr(long rowHi);
+
+    long getContiguousDataAddr(long rowHi);
 
     long getPrimaryFd();
 
