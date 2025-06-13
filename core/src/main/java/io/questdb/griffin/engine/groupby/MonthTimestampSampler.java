@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.TimestampUtils;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -67,7 +67,7 @@ public class MonthTimestampSampler implements TimestampSampler {
     @Override
     public long round(long value) {
         int y = Timestamps.getYear(value);
-        final boolean leap = TimestampUtils.isLeapYear(y);
+        final boolean leap = CommonUtils.isLeapYear(y);
         int m = Timestamps.getMonthOfYear(value, y, leap);
         // target month
         int nextMonth = ((m - 1) / stepMonths) * stepMonths + 1;
@@ -78,7 +78,7 @@ public class MonthTimestampSampler implements TimestampSampler {
     @Override
     public void setStart(long timestamp) {
         final int y = Timestamps.getYear(timestamp);
-        final boolean leap = TimestampUtils.isLeapYear(y);
+        final boolean leap = CommonUtils.isLeapYear(y);
         this.startDay = Timestamps.getDayOfMonth(timestamp, y, Timestamps.getMonthOfYear(timestamp, y, leap), leap);
         this.startHour = Timestamps.getHourOfDay(timestamp);
         this.startMin = Timestamps.getMinuteOfHour(timestamp);
@@ -94,7 +94,7 @@ public class MonthTimestampSampler implements TimestampSampler {
 
     private long addMonth(long timestamp, int monthCount) {
         int y = Timestamps.getYear(timestamp);
-        final boolean leap = TimestampUtils.isLeapYear(y);
+        final boolean leap = CommonUtils.isLeapYear(y);
         int m = Timestamps.getMonthOfYear(timestamp, y, leap);
 
         int _y;
@@ -117,7 +117,7 @@ public class MonthTimestampSampler implements TimestampSampler {
         if (startDay == 0) {
             _d = 1;
         } else {
-            int maxDay = TimestampUtils.getDaysPerMonth(_m, TimestampUtils.isLeapYear(_y));
+            int maxDay = CommonUtils.getDaysPerMonth(_m, CommonUtils.isLeapYear(_y));
             if (_d > maxDay) {
                 _d = maxDay;
             }

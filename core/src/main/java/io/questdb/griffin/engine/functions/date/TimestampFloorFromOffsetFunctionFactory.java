@@ -42,7 +42,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.CommonFormatUtils;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.Dates;
@@ -91,7 +91,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final CharSequence unitStr = args.getQuick(0).getStrA(null);
-        final int stride = CommonFormatUtils.getStrideMultiple(unitStr);
+        final int stride = CommonUtils.getStrideMultiple(unitStr);
         final char unit = Timestamps.getStrideUnit(unitStr, argPositions.getQuick(0));
         final int unitPos = argPositions.getQuick(0);
         final Function timestampFunc = args.getQuick(1);
@@ -130,8 +130,8 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
                 final long l = Dates.parseOffset(tz, 0, hi);
                 if (l == Long.MIN_VALUE) {
                     try {
-                        tzRules = CommonFormatUtils.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(CommonFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                        tzRules = CommonUtils.EN_LOCALE.getZoneRules(
+                                Numbers.decodeLowInt(CommonUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
                         );
                     } catch (NumericException e) {
                         Misc.free(timestampFunc);
@@ -622,8 +622,8 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
                 final long l = Dates.parseOffset(tz, 0, hi);
                 if (l == Long.MIN_VALUE) {
                     try {
-                        tzRules = CommonFormatUtils.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(CommonFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                        tzRules = CommonUtils.EN_LOCALE.getZoneRules(
+                                Numbers.decodeLowInt(CommonUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
                         );
                         tzOffset = 0;
                     } catch (NumericException e) {
@@ -725,8 +725,8 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
                 final long l = Dates.parseOffset(tz, 0, hi);
                 if (l == Long.MIN_VALUE) {
                     try {
-                        tzRules = CommonFormatUtils.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(CommonFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                        tzRules = CommonUtils.EN_LOCALE.getZoneRules(
+                                Numbers.decodeLowInt(CommonUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
                         );
                         tzOffset = 0;
                     } catch (NumericException e) {
@@ -1015,8 +1015,8 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
                 final long l = Dates.parseOffset(tz, 0, hi);
                 if (l == Long.MIN_VALUE) {
                     try {
-                        tzRules = CommonFormatUtils.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(CommonFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                        tzRules = CommonUtils.EN_LOCALE.getZoneRules(
+                                Numbers.decodeLowInt(CommonUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
                         );
                         tzOffset = 0;
                     } catch (NumericException e) {

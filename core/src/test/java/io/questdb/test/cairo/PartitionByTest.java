@@ -32,7 +32,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.CommonFormatUtils;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -456,13 +456,13 @@ public class PartitionByTest {
 
                 // check formatting for day formatter
                 sink.clear();
-                dayFormat.format(timestamp, CommonFormatUtils.EN_LOCALE, null, sink);
+                dayFormat.format(timestamp, CommonUtils.EN_LOCALE, null, sink);
                 String dayFormatted = sink.toString();
                 Assert.assertEquals(expectedDayFormatted, dayFormatted);
 
                 // check formatting for week formatter
                 sink.clear();
-                weekFormat.format(timestamp, CommonFormatUtils.EN_LOCALE, null, sink);
+                weekFormat.format(timestamp, CommonUtils.EN_LOCALE, null, sink);
                 String weekFormatted = sink.toString();
                 Assert.assertEquals(expectedWeekFormatted, weekFormatted.substring(0, 8));
 
@@ -617,7 +617,7 @@ public class PartitionByTest {
         long expected = TimestampFormatUtils.parseTimestamp(timestampString);
         DateFormat dirFormatMethod = PartitionBy.getPartitionDirFormatMethod(ColumnType.TIMESTAMP, partitionBy);
         sink.clear();
-        dirFormatMethod.format(expected, CommonFormatUtils.EN_LOCALE, null, sink);
+        dirFormatMethod.format(expected, CommonUtils.EN_LOCALE, null, sink);
         TestUtils.assertEquals(expectedDirName, sink);
         if (partitionBy == PartitionBy.WEEK) {
             int year = Timestamps.getYear(expected);
@@ -628,7 +628,7 @@ public class PartitionByTest {
             sink.clear();
             sink.put(year).put("-W");
             putWithLeadingZeroIfNeeded(sink, sink.length(), week);
-            expected = TimestampFormatUtils.parseTimestamp(sink, 0, CommonFormatUtils.WEEK_PATTERN.length());
+            expected = TimestampFormatUtils.parseTimestamp(sink, 0, CommonUtils.WEEK_PATTERN.length());
         }
         Assert.assertEquals(expected, PartitionBy.parsePartitionDirName(sink, ColumnType.TIMESTAMP, partitionBy));
     }
@@ -774,7 +774,7 @@ public class PartitionByTest {
         for (int i = 0; i < 10; i++) {
             long timestamp = rnd.nextLong(3000 * Timestamps.DAY_MICROS * 365L / multiplier);
             tsSink.clear();
-            formatter.format(timestamp, CommonFormatUtils.EN_LOCALE, null, tsSink);
+            formatter.format(timestamp, CommonUtils.EN_LOCALE, null, tsSink);
             long actual = PartitionBy.parsePartitionDirName(tsSink, ColumnType.TIMESTAMP, partitionBy);
 
             Assert.assertEquals(tsSink.toString(), timestamp, actual);

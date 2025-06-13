@@ -35,8 +35,8 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.std.datetime.CommonFormatUtils.HOUR_24;
-import static io.questdb.std.datetime.CommonFormatUtils.HOUR_AM;
+import static io.questdb.std.datetime.CommonUtils.HOUR_24;
+import static io.questdb.std.datetime.CommonUtils.HOUR_AM;
 
 public class GenericNanosFormat extends AbstractDateFormat {
     private final IntList compiledOps;

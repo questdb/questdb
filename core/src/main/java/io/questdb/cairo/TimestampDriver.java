@@ -28,6 +28,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -94,7 +95,7 @@ public interface TimestampDriver {
 
     PartitionFloorMethod getPartitionFloorMethod(int partitionBy);
 
-    TimestampUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType);
+    CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType);
 
     default long implicitCast(CharSequence value, int typeFrom) {
         assert typeFrom == ColumnType.STRING || typeFrom == ColumnType.SYMBOL;

@@ -24,8 +24,8 @@
 
 package io.questdb.std.datetime.nanotime;
 
-import io.questdb.cairo.TimestampUtils;
 import io.questdb.std.datetime.AbstractTimeZoneRules;
+import io.questdb.std.datetime.CommonUtils;
 
 import java.time.zone.ZoneRules;
 
@@ -42,7 +42,7 @@ public class TimeZoneRulesNanos extends AbstractTimeZoneRules {
 
     @Override
     protected int getDaysPerMonth(int month, boolean leapYear) {
-        return TimestampUtils.getDaysPerMonth(month, leapYear);
+        return CommonUtils.getDaysPerMonth(month, leapYear);
     }
 
     @Override

@@ -29,13 +29,13 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.cairo.TimestampUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
@@ -160,8 +160,8 @@ public class RecordToRowCopierUtils {
 
         int implicitCastDateAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "castDateAs", "(J)J");
         int implicitCastTimestampAsDate = asm.poolInterfaceMethod(TimestampDriver.class, "castAsDate", "(J)J");
-        int implicitCastTimestampMicroAsNanos = asm.poolMethod(TimestampUtils.class, "microsToNanos", "(J)J");
-        int implicitCastTimestampNanosAsMicros = asm.poolMethod(TimestampUtils.class, "nanosToMicros", "(J)J");
+        int implicitCastTimestampMicroAsNanos = asm.poolMethod(CommonUtils.class, "microsToNanos", "(J)J");
+        int implicitCastTimestampNanosAsMicros = asm.poolMethod(CommonUtils.class, "nanosToMicros", "(J)J");
 
         int implicitCastFloatAsLong = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsLong", "(F)J");
         int implicitCastDoubleAsLong = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsLong", "(D)J");

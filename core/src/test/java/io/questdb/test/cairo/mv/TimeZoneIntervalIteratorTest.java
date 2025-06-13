@@ -32,7 +32,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.CommonFormatUtils;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -50,7 +50,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
         iterator.of(
                 sampler,
-                Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "UTC"),
+                Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "UTC"),
                 0,
                 null,
                 TimestampFormatUtils.parseTimestamp("2024-03-03T01:01:00.000000Z"),
@@ -74,7 +74,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final long offset = Timestamps.HOUR_MICROS;
         iterator.of(
                 sampler,
-                Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "UTC"),
+                Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "UTC"),
                 offset,
                 null,
                 0,
@@ -98,7 +98,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         testFuzz(
                 rnd,
-                Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "Europe/Berlin"),
+                Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "Europe/Berlin"),
                 Long.MIN_VALUE,
                 TimestampFormatUtils.parseTimestamp("2021-03-26T10:03:00.000000Z"),
                 TimestampFormatUtils.parseTimestamp("2021-03-29T12:01:00.000000Z")
@@ -110,7 +110,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         testFuzz(
                 rnd,
-                Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "Europe/Berlin"),
+                Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "Europe/Berlin"),
                 Long.MIN_VALUE,
                 TimestampFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"),
                 TimestampFormatUtils.parseTimestamp("2030-01-01T00:00:00.000000Z")
@@ -122,7 +122,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         testFuzz(
                 rnd,
-                Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "GMT+2"),
+                Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "GMT+2"),
                 Long.MIN_VALUE,
                 TimestampFormatUtils.parseTimestamp("2000-01-01T23:10:00.000000Z"),
                 TimestampFormatUtils.parseTimestamp("2000-01-02T20:59:59.000000Z")
@@ -134,7 +134,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         testFuzz(
                 rnd,
-                Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "UTC"),
+                Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "UTC"),
                 Long.MIN_VALUE,
                 TimestampFormatUtils.parseTimestamp("2024-03-03T12:01:01.000000Z"),
                 TimestampFormatUtils.parseTimestamp("2024-03-07T12:01:01.000000Z")
@@ -147,7 +147,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
         iterator.of(
                 sampler,
-                Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "UTC"),
+                Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "UTC"),
                 0,
                 null,
                 0,
@@ -172,7 +172,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(2, 'h', 0);
         iterator.of(
                 sampler,
-                Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "Europe/Berlin"),
+                Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "Europe/Berlin"),
                 0,
                 null,
                 TimestampFormatUtils.parseTimestamp("2021-03-28T00:59:00.000000Z"),
@@ -205,7 +205,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(75, 'm', 0);
         iterator.of(
                 sampler,
-                Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "Europe/Berlin"),
+                Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "Europe/Berlin"),
                 0,
                 null,
                 TimestampFormatUtils.parseTimestamp("2021-03-28T00:01:00.000000Z"), // 01:01 local time (GMT+1)
@@ -238,7 +238,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(15, 'm', 0);
         iterator.of(
                 sampler,
-                Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "Europe/Berlin"),
+                Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "Europe/Berlin"),
                 0,
                 null,
                 TimestampFormatUtils.parseTimestamp("2021-10-31T00:51:00.000000Z"),
@@ -263,7 +263,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(15, 'm', 0);
         iterator.of(
                 sampler,
-                Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "Europe/Berlin"),
+                Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "Europe/Berlin"),
                 0,
                 null,
                 TimestampFormatUtils.parseTimestamp("2021-10-30T23:30:00.000000Z"),
@@ -307,7 +307,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(30, 'm', 0);
         iterator.of(
                 sampler,
-                Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "Europe/Berlin"),
+                Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "Europe/Berlin"),
                 0,
                 null,
                 TimestampFormatUtils.parseTimestamp("2021-03-28T00:01:00.000000Z"),
@@ -352,7 +352,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(30, 'm', 0);
         iterator.of(
                 sampler,
-                Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "Europe/London"),
+                Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "Europe/London"),
                 0,
                 null,
                 TimestampFormatUtils.parseTimestamp("2024-10-27T01:00:00.600000Z"),
@@ -376,7 +376,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(30, 'm', 0);
         iterator.of(
                 sampler,
-                Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "Europe/London"),
+                Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "Europe/London"),
                 0,
                 null,
                 TimestampFormatUtils.parseTimestamp("2024-03-31T00:30:06.000000Z"),
@@ -400,7 +400,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
         iterator.of(
                 sampler,
-                Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "GMT+00:30"),
+                Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "GMT+00:30"),
                 0,
                 null,
                 TimestampFormatUtils.parseTimestamp("2024-01-01T01:01:00.000000Z"),
@@ -428,7 +428,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     public void testTxnIntervalSingle() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
-        final TimeZoneRules tzRules = Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "UTC");
+        final TimeZoneRules tzRules = Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "UTC");
         final LongList txnIntervals = new LongList();
 
         final long minTs = 0;
@@ -488,7 +488,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     public void testTxnIntervalToTop() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
-        final TimeZoneRules tzRules = Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "UTC");
+        final TimeZoneRules tzRules = Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "UTC");
         final LongList txnIntervals = new LongList();
 
         txnIntervals.add(0, Timestamps.DAY_MICROS - 1);
@@ -513,7 +513,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
         iterator.of(
                 sampler,
-                Timestamps.getTimezoneRules(CommonFormatUtils.EN_LOCALE, "UTC"),
+                Timestamps.getTimezoneRules(CommonUtils.EN_LOCALE, "UTC"),
                 0,
                 new LongList(),
                 0,

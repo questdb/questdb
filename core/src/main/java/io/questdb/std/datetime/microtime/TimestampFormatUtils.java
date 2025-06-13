@@ -24,12 +24,11 @@
 
 package io.questdb.std.datetime.microtime;
 
-import io.questdb.cairo.TimestampUtils;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.CommonFormatUtils;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
@@ -37,7 +36,7 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
+import static io.questdb.std.datetime.CommonUtils.EN_LOCALE;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public class TimestampFormatUtils {
@@ -246,14 +245,14 @@ public class TimestampFormatUtils {
             year = -(year - 1);
         }
 
-        boolean leap = TimestampUtils.isLeapYear(year);
+        boolean leap = CommonUtils.isLeapYear(year);
 
         // wrong month
         if (month < 1 || month > 12) {
             throw NumericException.INSTANCE;
         }
 
-        if (hourType == CommonFormatUtils.HOUR_24) {
+        if (hourType == CommonUtils.HOUR_24) {
             // wrong 24-hour clock hour
             if (hour < 0 || hour > 24) {
                 throw NumericException.INSTANCE;
@@ -265,13 +264,13 @@ public class TimestampFormatUtils {
                 throw NumericException.INSTANCE;
             }
             hour %= 12;
-            if (hourType == CommonFormatUtils.HOUR_PM) {
+            if (hourType == CommonUtils.HOUR_PM) {
                 hour += 12;
             }
         }
 
         // wrong day of month
-        if (day < 1 || day > TimestampUtils.getDaysPerMonth(month, leap)) {
+        if (day < 1 || day > CommonUtils.getDaysPerMonth(month, leap)) {
             throw NumericException.INSTANCE;
         }
 
@@ -289,12 +288,12 @@ public class TimestampFormatUtils {
 
         // calculate year, month, and day of ISO week
         if (week != -1) {
-            long firstDayOfIsoWeekMicros = Timestamps.yearMicros(year, TimestampUtils.isLeapYear(year)) +
+            long firstDayOfIsoWeekMicros = Timestamps.yearMicros(year, CommonUtils.isLeapYear(year)) +
                     (week - 1) * Timestamps.WEEK_MICROS +
                     Timestamps.getIsoYearDayOffset(year) * Timestamps.DAY_MICROS;
             month = Timestamps.getMonthOfYear(firstDayOfIsoWeekMicros);
             year += (week == 1 && Timestamps.getIsoYearDayOffset(year) < 0) ? -1 : 0;
-            day = Timestamps.getDayOfMonth(firstDayOfIsoWeekMicros, year, month, TimestampUtils.isLeapYear(year));
+            day = Timestamps.getDayOfMonth(firstDayOfIsoWeekMicros, year, month, CommonUtils.isLeapYear(year));
         }
 
         long outMicros = Timestamps.yearMicros(year, leap)
@@ -318,7 +317,7 @@ public class TimestampFormatUtils {
     // YYYY-MM-DD
     public static void formatDashYYYYMMDD(@NotNull CharSink<?> sink, long micros) {
         int y = Timestamps.getYear(micros);
-        boolean l = TimestampUtils.isLeapYear(y);
+        boolean l = CommonUtils.isLeapYear(y);
         int m = Timestamps.getMonthOfYear(micros, y, l);
         Numbers.append(sink, y);
         append0(sink.putAscii('-'), m);
@@ -328,7 +327,7 @@ public class TimestampFormatUtils {
     // YYYY-MM
     public static void formatYYYYMM(@NotNull CharSink<?> sink, long micros) {
         int y = Timestamps.getYear(micros);
-        int m = Timestamps.getMonthOfYear(micros, y, TimestampUtils.isLeapYear(y));
+        int m = Timestamps.getMonthOfYear(micros, y, CommonUtils.isLeapYear(y));
         Numbers.append(sink, y);
         append0(sink.putAscii('-'), m);
     }
@@ -336,7 +335,7 @@ public class TimestampFormatUtils {
     // YYYYMMDD
     public static void formatYYYYMMDD(@NotNull CharSink<?> sink, long micros) {
         int y = Timestamps.getYear(micros);
-        boolean l = TimestampUtils.isLeapYear(y);
+        boolean l = CommonUtils.isLeapYear(y);
         int m = Timestamps.getMonthOfYear(micros, y, l);
         Numbers.append(sink, y);
         append0(sink, m);
@@ -439,17 +438,17 @@ public class TimestampFormatUtils {
         }
 
         final String[] patterns = new String[]{ // priority sorted
-                CommonFormatUtils.PG_TIMESTAMP_MILLI_TIME_Z_PATTERN, // y-MM-dd HH:mm:ss.SSSz
-                CommonFormatUtils.GREEDY_MILLIS1_UTC_PATTERN,        // yyyy-MM-ddTHH:mm:ss.Sz
-                CommonFormatUtils.USEC_UTC_PATTERN,                  // yyyy-MM-ddTHH:mm:ss.SSSUUUz
-                CommonFormatUtils.SEC_UTC_PATTERN,                   // yyyy-MM-ddTHH:mm:ssz
-                CommonFormatUtils.GREEDY_MILLIS2_UTC_PATTERN,        // yyyy-MM-ddTHH:mm:ss.SSz
-                CommonFormatUtils.UTC_PATTERN,                       // yyyy-MM-ddTHH:mm:ss.SSSz
-                CommonFormatUtils.HOUR_PATTERN,                      // yyyy-MM-ddTHH
-                CommonFormatUtils.DAY_PATTERN,                       // yyyy-MM-dd
-                CommonFormatUtils.WEEK_PATTERN,                      // YYYY-Www
-                CommonFormatUtils.MONTH_PATTERN,                     // yyyy-MM
-                CommonFormatUtils.YEAR_PATTERN                       // yyyy
+                CommonUtils.PG_TIMESTAMP_MILLI_TIME_Z_PATTERN, // y-MM-dd HH:mm:ss.SSSz
+                CommonUtils.GREEDY_MILLIS1_UTC_PATTERN,        // yyyy-MM-ddTHH:mm:ss.Sz
+                CommonUtils.USEC_UTC_PATTERN,                  // yyyy-MM-ddTHH:mm:ss.SSSUUUz
+                CommonUtils.SEC_UTC_PATTERN,                   // yyyy-MM-ddTHH:mm:ssz
+                CommonUtils.GREEDY_MILLIS2_UTC_PATTERN,        // yyyy-MM-ddTHH:mm:ss.SSz
+                CommonUtils.UTC_PATTERN,                       // yyyy-MM-ddTHH:mm:ss.SSSz
+                CommonUtils.HOUR_PATTERN,                      // yyyy-MM-ddTHH
+                CommonUtils.DAY_PATTERN,                       // yyyy-MM-dd
+                CommonUtils.WEEK_PATTERN,                      // YYYY-Www
+                CommonUtils.MONTH_PATTERN,                     // yyyy-MM
+                CommonUtils.YEAR_PATTERN                       // yyyy
         };
         FORMATS = new DateFormat[patterns.length];
         CharSequenceObjHashMap<DateFormat> dateFormats = new CharSequenceObjHashMap<>();
@@ -459,16 +458,16 @@ public class TimestampFormatUtils {
             dateFormats.put(pattern, format);
             FORMATS[i] = format;
         }
-        PG_TIMESTAMP_MILLI_TIME_Z_FORMAT = dateFormats.get(CommonFormatUtils.PG_TIMESTAMP_MILLI_TIME_Z_PATTERN);
-        GREEDY_MILLIS1_UTC_FORMAT = dateFormats.get(CommonFormatUtils.GREEDY_MILLIS1_UTC_PATTERN);
-        USEC_UTC_FORMAT = dateFormats.get(CommonFormatUtils.USEC_UTC_PATTERN);
-        SEC_UTC_FORMAT = dateFormats.get(CommonFormatUtils.SEC_UTC_PATTERN);
-        GREEDY_MILLIS2_UTC_FORMAT = dateFormats.get(CommonFormatUtils.GREEDY_MILLIS2_UTC_PATTERN);
-        UTC_FORMAT = dateFormats.get(CommonFormatUtils.UTC_PATTERN);
-        HOUR_FORMAT = dateFormats.get(CommonFormatUtils.HOUR_PATTERN);
-        DAY_FORMAT = dateFormats.get(CommonFormatUtils.DAY_PATTERN);
-        WEEK_FORMAT = dateFormats.get(CommonFormatUtils.WEEK_PATTERN);
-        MONTH_FORMAT = dateFormats.get(CommonFormatUtils.MONTH_PATTERN);
-        YEAR_FORMAT = dateFormats.get(CommonFormatUtils.YEAR_PATTERN);
+        PG_TIMESTAMP_MILLI_TIME_Z_FORMAT = dateFormats.get(CommonUtils.PG_TIMESTAMP_MILLI_TIME_Z_PATTERN);
+        GREEDY_MILLIS1_UTC_FORMAT = dateFormats.get(CommonUtils.GREEDY_MILLIS1_UTC_PATTERN);
+        USEC_UTC_FORMAT = dateFormats.get(CommonUtils.USEC_UTC_PATTERN);
+        SEC_UTC_FORMAT = dateFormats.get(CommonUtils.SEC_UTC_PATTERN);
+        GREEDY_MILLIS2_UTC_FORMAT = dateFormats.get(CommonUtils.GREEDY_MILLIS2_UTC_PATTERN);
+        UTC_FORMAT = dateFormats.get(CommonUtils.UTC_PATTERN);
+        HOUR_FORMAT = dateFormats.get(CommonUtils.HOUR_PATTERN);
+        DAY_FORMAT = dateFormats.get(CommonUtils.DAY_PATTERN);
+        WEEK_FORMAT = dateFormats.get(CommonUtils.WEEK_PATTERN);
+        MONTH_FORMAT = dateFormats.get(CommonUtils.MONTH_PATTERN);
+        YEAR_FORMAT = dateFormats.get(CommonUtils.YEAR_PATTERN);
     }
 }

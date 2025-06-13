@@ -57,7 +57,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.CommonFormatUtils;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
@@ -739,8 +739,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     if (opt == Long.MIN_VALUE) {
                         // this is timezone name
                         // fixed rules means the timezone does not have historical or daylight time changes
-                        rules = CommonFormatUtils.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(CommonFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
+                        rules = CommonUtils.EN_LOCALE.getZoneRules(
+                                Numbers.decodeLowInt(CommonUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
                                 RESOLUTION_MICROS
                         );
                     } else {

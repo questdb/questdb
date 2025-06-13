@@ -40,8 +40,8 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
-import static io.questdb.std.datetime.CommonFormatUtils.HOUR_24;
-import static io.questdb.std.datetime.CommonFormatUtils.HOUR_AM;
+import static io.questdb.std.datetime.CommonUtils.HOUR_24;
+import static io.questdb.std.datetime.CommonUtils.HOUR_AM;
 
 public class DateFormatCompiler {
     static final int OP_AM_PM = 14;

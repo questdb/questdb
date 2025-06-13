@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TimestampUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -35,6 +34,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 
 public class DayOfMonthFunctionFactory implements FunctionFactory {
@@ -70,7 +70,7 @@ public class DayOfMonthFunctionFactory implements FunctionFactory {
                 return Numbers.INT_NULL;
             }
             final int year = Timestamps.getYear(value);
-            final boolean isLeap = TimestampUtils.isLeapYear(year);
+            final boolean isLeap = CommonUtils.isLeapYear(year);
             final int month = Timestamps.getMonthOfYear(value, year, isLeap);
             return Timestamps.getDayOfMonth(value, year, month, isLeap);
         }

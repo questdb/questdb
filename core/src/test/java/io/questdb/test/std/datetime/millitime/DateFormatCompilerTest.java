@@ -45,7 +45,7 @@ import java.util.Date;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
-import static io.questdb.std.datetime.CommonFormatUtils.UTC_PATTERN;
+import static io.questdb.std.datetime.CommonUtils.UTC_PATTERN;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MILLIS;
 
 public class DateFormatCompilerTest {

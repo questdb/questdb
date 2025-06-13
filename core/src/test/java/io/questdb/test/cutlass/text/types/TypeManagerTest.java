@@ -49,7 +49,7 @@ import org.junit.Test;
 import java.io.File;
 import java.io.IOException;
 
-import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
+import static io.questdb.std.datetime.CommonUtils.EN_LOCALE;
 
 public class TypeManagerTest extends AbstractTest {
     private static JsonLexer jsonLexer;

@@ -52,7 +52,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.PartitionBy.getPartitionDirFormatMethod;
 import static io.questdb.std.Files.DT_DIR;
-import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
+import static io.questdb.std.datetime.CommonUtils.EN_LOCALE;
 
 public class VacuumColumnVersions implements Closeable {
     private static final int COLUMN_VERSION_LIST_CAPACITY = 8;
@@ -63,7 +63,6 @@ public class VacuumColumnVersions implements Closeable {
     private final CharSequenceIntHashMap rogueColumns = new CharSequenceIntHashMap();
     private StringSink columnNameSink;
     private Utf8StringSink fileNameSink;
-    private int timestampType;
     private int partitionBy;
     private long partitionTimestamp;
     private Path path2;
@@ -72,6 +71,7 @@ public class VacuumColumnVersions implements Closeable {
     private int tablePathLen;
     private TableReader tableReader;
     private final FindVisitor visitTableFiles = this::visitTableFiles;
+    private int timestampType;
     private final FindVisitor visitTablePartition = this::visitTablePartition;
 
     public VacuumColumnVersions(CairoEngine engine) {

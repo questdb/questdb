@@ -26,7 +26,7 @@ package io.questdb.test.std.datetime.nanotime;
 
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.CommonFormatUtils;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -42,7 +42,7 @@ import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
 
-import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
+import static io.questdb.std.datetime.CommonUtils.EN_LOCALE;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_NANOS;
 import static io.questdb.std.datetime.nanotime.NanosFormatUtils.parseNSecUTC;
 
@@ -59,7 +59,7 @@ public class NanosTest {
     public void testAddDaysPrevEpoch() throws Exception {
 
         NanosFormatCompiler compiler = new NanosFormatCompiler();
-        DateFormat fmt = compiler.compile(CommonFormatUtils.NSEC_UTC_PATTERN, true);
+        DateFormat fmt = compiler.compile(CommonUtils.NSEC_UTC_PATTERN, true);
         long nanos = fmt.parse("2021-09-09T22:44:56.108872787Z", EN_LOCALE);
         System.out.println(nanos);
         nanos = Nanos.addDays(nanos, 24);

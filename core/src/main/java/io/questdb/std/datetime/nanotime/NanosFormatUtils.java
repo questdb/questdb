@@ -36,7 +36,7 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import static io.questdb.std.datetime.CommonFormatUtils.*;
+import static io.questdb.std.datetime.CommonUtils.*;
 
 public class NanosFormatUtils {
     public static final DateFormat NSEC_UTC_FORMAT;

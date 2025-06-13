@@ -140,7 +140,7 @@ import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
-import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
+import static io.questdb.std.datetime.CommonUtils.EN_LOCALE;
 import static io.questdb.tasks.TableWriterTask.*;
 
 public class TableWriter implements TableWriterAPI, MetadataService, Closeable {

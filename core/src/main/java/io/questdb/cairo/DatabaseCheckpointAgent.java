@@ -73,7 +73,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
-import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
+import static io.questdb.std.datetime.CommonUtils.EN_LOCALE;
 
 public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietCloseable {
 

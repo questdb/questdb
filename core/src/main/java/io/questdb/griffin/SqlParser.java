@@ -60,7 +60,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.CommonFormatUtils;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -913,7 +913,7 @@ public class SqlParser {
                     start = configuration.getMicrosecondClock().getTicks();
                 }
                 tok = tok(lexer, "interval");
-                final int interval = CommonFormatUtils.getStrideMultiple(tok);
+                final int interval = CommonUtils.getStrideMultiple(tok);
                 final char unit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
                 refreshType = MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE;

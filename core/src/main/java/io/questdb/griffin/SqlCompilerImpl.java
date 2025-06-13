@@ -58,7 +58,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.cairo.TimestampUtils;
 import io.questdb.cairo.VacuumColumnVersions;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
@@ -129,7 +128,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
 import io.questdb.std.Utf8SequenceObjHashMap;
-import io.questdb.std.datetime.CommonFormatUtils;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -586,7 +585,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
-        TimestampUtils.TimestampUnitConverter converter = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType()).getTimestampUnitConverter(fromTimestampType);
+        CommonUtils.TimestampUnitConverter converter = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType()).getTimestampUnitConverter(fromTimestampType);
         if (converter == null) {
             while (cursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -622,7 +621,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
-        TimestampUtils.TimestampUnitConverter converter = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType()).getTimestampUnitConverter(fromTimestampType);
+        CommonUtils.TimestampUnitConverter converter = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType()).getTimestampUnitConverter(fromTimestampType);
         if (converter == null) {
             while (cursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -1741,7 +1740,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 start = configuration.getMicrosecondClock().getTicks();
                             }
                             tok = expectToken(lexer, "interval");
-                            final int interval = CommonFormatUtils.getStrideMultiple(tok);
+                            final int interval = CommonUtils.getStrideMultiple(tok);
                             final char unit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
                             SqlParser.validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
                             final AlterOperationBuilder setTimer = alterOperationBuilder.ofSetMatViewRefreshTimer(

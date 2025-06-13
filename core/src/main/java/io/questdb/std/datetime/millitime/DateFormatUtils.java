@@ -32,7 +32,7 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.std.datetime.CommonFormatUtils.*;
+import static io.questdb.std.datetime.CommonUtils.*;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MILLIS;
 
 public class DateFormatUtils {

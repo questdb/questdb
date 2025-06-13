@@ -57,7 +57,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.function.LongSupplier;
 
-import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
+import static io.questdb.std.datetime.CommonUtils.EN_LOCALE;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
     private final BuildInformation buildInformation = new BuildInformationHolder();

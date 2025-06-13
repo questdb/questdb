@@ -24,12 +24,11 @@
 
 package io.questdb.std.datetime.nanotime;
 
-import io.questdb.cairo.TimestampUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.CommonFormatUtils;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.FixedTimeZoneRule;
 import io.questdb.std.datetime.TimeZoneRules;
@@ -103,7 +102,7 @@ public final class Nanos {
             }
         }
         int _d = getDayOfMonth(nanos, y, m, l);
-        int maxDay = TimestampUtils.getDaysPerMonth(_m, isLeapYear(_y));
+        int maxDay = CommonUtils.getDaysPerMonth(_m, isLeapYear(_y));
         if (_d > maxDay) {
             _d = maxDay;
         }
@@ -184,7 +183,7 @@ public final class Nanos {
         int m = getMonthOfYear(nanos, y, l);
         return yearNanos(y, l)
                 + monthOfYearNanos(m, l)
-                + (TimestampUtils.getDaysPerMonth(m, l)) * DAY_NANOS;
+                + (CommonUtils.getDaysPerMonth(m, l)) * DAY_NANOS;
     }
 
     public static long ceilMS(long nanos) {
@@ -204,7 +203,7 @@ public final class Nanos {
         boolean l = isLeapYear(y);
         return yearNanos(y, l)
                 + monthOfYearNanos(12, l)
-                + (TimestampUtils.getDaysPerMonth(11, false) + 1) * DAY_NANOS;
+                + (CommonUtils.getDaysPerMonth(11, false) + 1) * DAY_NANOS;
 
     }
 
@@ -718,9 +717,9 @@ public final class Nanos {
 
     public static int getWallHours(long nanos) {
         if (nanos > -1) {
-            return (int) ((nanos / HOUR_NANOS) % CommonFormatUtils.DAY_HOURS);
+            return (int) ((nanos / HOUR_NANOS) % CommonUtils.DAY_HOURS);
         } else {
-            return CommonFormatUtils.DAY_HOURS - 1 + (int) (((nanos + 1) / HOUR_NANOS) % CommonFormatUtils.DAY_HOURS);
+            return CommonUtils.DAY_HOURS - 1 + (int) (((nanos + 1) / HOUR_NANOS) % CommonUtils.DAY_HOURS);
         }
     }
 
@@ -742,9 +741,9 @@ public final class Nanos {
 
     public static int getWallMinutes(long nanos) {
         if (nanos > -1) {
-            return (int) ((nanos / MINUTE_NANOS) % CommonFormatUtils.HOUR_MINUTES);
+            return (int) ((nanos / MINUTE_NANOS) % CommonUtils.HOUR_MINUTES);
         } else {
-            return CommonFormatUtils.HOUR_MINUTES - 1 + (int) (((nanos + 1) / MINUTE_NANOS) % CommonFormatUtils.HOUR_MINUTES);
+            return CommonUtils.HOUR_MINUTES - 1 + (int) (((nanos + 1) / MINUTE_NANOS) % CommonUtils.HOUR_MINUTES);
         }
     }
 
@@ -758,9 +757,9 @@ public final class Nanos {
 
     public static int getWallSeconds(long nanos) {
         if (nanos > -1) {
-            return (int) ((nanos / SECOND_NANOS) % CommonFormatUtils.MINUTE_SECONDS);
+            return (int) ((nanos / SECOND_NANOS) % CommonUtils.MINUTE_SECONDS);
         } else {
-            return (int) (CommonFormatUtils.MINUTE_SECONDS - 1 + (int) (((nanos + 1) / SECOND_NANOS) % CommonFormatUtils.MINUTE_SECONDS));
+            return (int) (CommonUtils.MINUTE_SECONDS - 1 + (int) (((nanos + 1) / SECOND_NANOS) % CommonUtils.MINUTE_SECONDS));
         }
     }
 
@@ -968,7 +967,7 @@ public final class Nanos {
             int micros,
             int nanos
     ) {
-        int maxDay = Math.min(day, TimestampUtils.getDaysPerMonth(month, leap)) - 1;
+        int maxDay = Math.min(day, CommonUtils.getDaysPerMonth(month, leap)) - 1;
         return yearNanos(y, leap)
                 + monthOfYearNanos(month, leap)
                 + (long) maxDay * DAY_NANOS

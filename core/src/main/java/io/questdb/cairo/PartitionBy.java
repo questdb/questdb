@@ -34,7 +34,7 @@ import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
-import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
+import static io.questdb.std.datetime.CommonUtils.EN_LOCALE;
 
 /**
  * Collection of static assets to provide time partitioning API. It should be

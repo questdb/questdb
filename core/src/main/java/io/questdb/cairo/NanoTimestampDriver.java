@@ -29,7 +29,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.CommonFormatUtils;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.nanotime.Nanos;
@@ -41,7 +41,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.PartitionBy.*;
 import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
-import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
+import static io.questdb.std.datetime.CommonUtils.EN_LOCALE;
 import static io.questdb.std.datetime.microtime.TimestampFormatUtils.*;
 
 public class NanoTimestampDriver implements TimestampDriver {
@@ -88,19 +88,19 @@ public class NanoTimestampDriver implements TimestampDriver {
         final CairoException ee = CairoException.critical(0).put('\'');
         switch (partitionBy) {
             case DAY:
-                ee.put(CommonFormatUtils.DAY_PATTERN);
+                ee.put(CommonUtils.DAY_PATTERN);
                 break;
             case WEEK:
-                ee.put(CommonFormatUtils.WEEK_PATTERN).put("' or '").put(CommonFormatUtils.DAY_PATTERN);
+                ee.put(CommonUtils.WEEK_PATTERN).put("' or '").put(CommonUtils.DAY_PATTERN);
                 break;
             case MONTH:
-                ee.put(CommonFormatUtils.MONTH_PATTERN);
+                ee.put(CommonUtils.MONTH_PATTERN);
                 break;
             case YEAR:
-                ee.put(CommonFormatUtils.YEAR_PATTERN);
+                ee.put(CommonUtils.YEAR_PATTERN);
                 break;
             case HOUR:
-                ee.put(CommonFormatUtils.HOUR_PATTERN);
+                ee.put(CommonUtils.HOUR_PATTERN);
                 break;
         }
         ee.put("' expected, found [ts=").put(partitionName.subSequence(lo, hi)).put(']');
@@ -112,19 +112,19 @@ public class NanoTimestampDriver implements TimestampDriver {
     }
 
     public static long parseDayTime(CharSequence seq, int lim, int pos, long ts, int dayRange, int dayDigits) throws NumericException {
-        TimestampUtils.checkChar(seq, pos++, lim, '-');
+        CommonUtils.checkChar(seq, pos++, lim, '-');
         int day = Numbers.parseInt(seq, pos, pos += dayDigits);
-        TimestampUtils.checkRange(day, 1, dayRange);
-        if (TimestampUtils.checkLen3(pos, lim)) {
-            TimestampUtils.checkChar(seq, pos++, lim, 'T');
+        CommonUtils.checkRange(day, 1, dayRange);
+        if (CommonUtils.checkLen3(pos, lim)) {
+            CommonUtils.checkChar(seq, pos++, lim, 'T');
             int hour = Numbers.parseInt(seq, pos, pos += 2);
-            TimestampUtils.checkRange(hour, 0, 23);
-            if (TimestampUtils.checkLen2(pos, lim)) {
+            CommonUtils.checkRange(hour, 0, 23);
+            if (CommonUtils.checkLen2(pos, lim)) {
                 int min = Numbers.parseInt(seq, pos, pos += 2);
-                TimestampUtils.checkRange(min, 0, 59);
-                if (TimestampUtils.checkLen2(pos, lim)) {
+                CommonUtils.checkRange(min, 0, 59);
+                if (CommonUtils.checkLen2(pos, lim)) {
                     int sec = Numbers.parseInt(seq, pos, pos += 2);
-                    TimestampUtils.checkRange(sec, 0, 59);
+                    CommonUtils.checkRange(sec, 0, 59);
                     if (pos < lim && seq.charAt(pos) == '-') {
                         pos++;
                         // var len milli, micros and nanos
@@ -139,7 +139,7 @@ public class NanoTimestampDriver implements TimestampDriver {
                             nanos *= 10;
                             nanos += c - '0';
                         }
-                        nanos *= TimestampUtils.tenPow(nanoLim - pos);
+                        nanos *= CommonUtils.tenPow(nanoLim - pos);
 
                         ts += (day - 1) * Nanos.DAY_NANOS
                                 + hour * Nanos.HOUR_NANOS
@@ -233,7 +233,7 @@ public class NanoTimestampDriver implements TimestampDriver {
         if (timestampType != ColumnType.TIMESTAMP_MICRO) {
             return timestamp;
         }
-        return TimestampUtils.nanosToMicros(timestamp);
+        return CommonUtils.nanosToMicros(timestamp);
     }
 
     @Override
@@ -336,9 +336,9 @@ public class NanoTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimestampUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType) {
+    public CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType) {
         if (srcTimestampType == ColumnType.TIMESTAMP_MICRO) {
-            return TimestampUtils::microsToNanos;
+            return CommonUtils::microsToNanos;
         }
         return null;
     }
@@ -361,27 +361,27 @@ public class NanoTimestampDriver implements TimestampDriver {
         }
         int p = lo;
         int year = Numbers.parseInt(str, p, p += 4);
-        boolean l = TimestampUtils.isLeapYear(year);
-        if (TimestampUtils.checkLen3(p, hi)) {
-            TimestampUtils.checkChar(str, p++, hi, '-');
+        boolean l = CommonUtils.isLeapYear(year);
+        if (CommonUtils.checkLen3(p, hi)) {
+            CommonUtils.checkChar(str, p++, hi, '-');
             int month = Numbers.parseInt(str, p, p += 2);
-            TimestampUtils.checkRange(month, 1, 12);
-            if (TimestampUtils.checkLen3(p, hi)) {
-                TimestampUtils.checkChar(str, p++, hi, '-');
+            CommonUtils.checkRange(month, 1, 12);
+            if (CommonUtils.checkLen3(p, hi)) {
+                CommonUtils.checkChar(str, p++, hi, '-');
                 int day = Numbers.parseInt(str, p, p += 2);
-                TimestampUtils.checkRange(day, 1, TimestampUtils.getDaysPerMonth(month, l));
-                if (TimestampUtils.checkLen3(p, hi)) {
-                    TimestampUtils.checkSpecialChar(str, p++, hi);
+                CommonUtils.checkRange(day, 1, CommonUtils.getDaysPerMonth(month, l));
+                if (CommonUtils.checkLen3(p, hi)) {
+                    CommonUtils.checkSpecialChar(str, p++, hi);
                     int hour = Numbers.parseInt(str, p, p += 2);
-                    TimestampUtils.checkRange(hour, 0, 23);
-                    if (TimestampUtils.checkLen3(p, hi)) {
-                        TimestampUtils.checkChar(str, p++, hi, ':');
+                    CommonUtils.checkRange(hour, 0, 23);
+                    if (CommonUtils.checkLen3(p, hi)) {
+                        CommonUtils.checkChar(str, p++, hi, ':');
                         int min = Numbers.parseInt(str, p, p += 2);
-                        TimestampUtils.checkRange(min, 0, 59);
-                        if (TimestampUtils.checkLen3(p, hi)) {
-                            TimestampUtils.checkChar(str, p++, hi, ':');
+                        CommonUtils.checkRange(min, 0, 59);
+                        if (CommonUtils.checkLen3(p, hi)) {
+                            CommonUtils.checkChar(str, p++, hi, ':');
                             int sec = Numbers.parseInt(str, p, p += 2);
-                            TimestampUtils.checkRange(sec, 0, 59);
+                            CommonUtils.checkRange(sec, 0, 59);
                             if (p < hi && str.byteAt(p) == '.') {
 
                                 p++;
@@ -398,7 +398,7 @@ public class NanoTimestampDriver implements TimestampDriver {
                                     nano *= 10;
                                     nano += c - '0';
                                 }
-                                nano *= TimestampUtils.tenPow(nlim - p);
+                                nano *= CommonUtils.tenPow(nlim - p);
                                 // micros
                                 ts = Nanos.yearNanos(year, l)
                                         + Nanos.monthOfYearNanos(month, l)
@@ -460,27 +460,27 @@ public class NanoTimestampDriver implements TimestampDriver {
         }
         int p = lo;
         int year = Numbers.parseInt(str, p, p += 4);
-        boolean l = TimestampUtils.isLeapYear(year);
-        if (TimestampUtils.checkLen3(p, hi)) {
-            TimestampUtils.checkChar(str, p++, hi, '-');
+        boolean l = CommonUtils.isLeapYear(year);
+        if (CommonUtils.checkLen3(p, hi)) {
+            CommonUtils.checkChar(str, p++, hi, '-');
             int month = Numbers.parseInt(str, p, p += 2);
-            TimestampUtils.checkRange(month, 1, 12);
-            if (TimestampUtils.checkLen3(p, hi)) {
-                TimestampUtils.checkChar(str, p++, hi, '-');
+            CommonUtils.checkRange(month, 1, 12);
+            if (CommonUtils.checkLen3(p, hi)) {
+                CommonUtils.checkChar(str, p++, hi, '-');
                 int day = Numbers.parseInt(str, p, p += 2);
-                TimestampUtils.checkRange(day, 1, TimestampUtils.getDaysPerMonth(month, l));
-                if (TimestampUtils.checkLen3(p, hi)) {
-                    TimestampUtils.checkSpecialChar(str, p++, hi);
+                CommonUtils.checkRange(day, 1, CommonUtils.getDaysPerMonth(month, l));
+                if (CommonUtils.checkLen3(p, hi)) {
+                    CommonUtils.checkSpecialChar(str, p++, hi);
                     int hour = Numbers.parseInt(str, p, p += 2);
-                    TimestampUtils.checkRange(hour, 0, 23);
-                    if (TimestampUtils.checkLen3(p, hi)) {
-                        TimestampUtils.checkChar(str, p++, hi, ':');
+                    CommonUtils.checkRange(hour, 0, 23);
+                    if (CommonUtils.checkLen3(p, hi)) {
+                        CommonUtils.checkChar(str, p++, hi, ':');
                         int min = Numbers.parseInt(str, p, p += 2);
-                        TimestampUtils.checkRange(min, 0, 59);
-                        if (TimestampUtils.checkLen3(p, hi)) {
-                            TimestampUtils.checkChar(str, p++, hi, ':');
+                        CommonUtils.checkRange(min, 0, 59);
+                        if (CommonUtils.checkLen3(p, hi)) {
+                            CommonUtils.checkChar(str, p++, hi, ':');
                             int sec = Numbers.parseInt(str, p, p += 2);
-                            TimestampUtils.checkRange(sec, 0, 59);
+                            CommonUtils.checkRange(sec, 0, 59);
                             if (p < hi && str.charAt(p) == '.') {
                                 p++;
                                 // varlen milli, micros and nanos
@@ -496,7 +496,7 @@ public class NanoTimestampDriver implements TimestampDriver {
                                     nano *= 10;
                                     nano += c - '0';
                                 }
-                                nano *= TimestampUtils.tenPow(nanoLim - p);
+                                nano *= CommonUtils.tenPow(nanoLim - p);
 
                                 // nanos
                                 ts = Nanos.yearNanos(year, l)
@@ -560,27 +560,27 @@ public class NanoTimestampDriver implements TimestampDriver {
         }
         int p = pos;
         int year = Numbers.parseInt(input, p, p += 4);
-        boolean l = TimestampUtils.isLeapYear(year);
-        if (TimestampUtils.checkLen3(p, lim)) {
-            TimestampUtils.checkChar(input, p++, lim, '-');
+        boolean l = CommonUtils.isLeapYear(year);
+        if (CommonUtils.checkLen3(p, lim)) {
+            CommonUtils.checkChar(input, p++, lim, '-');
             int month = Numbers.parseInt(input, p, p += 2);
-            TimestampUtils.checkRange(month, 1, 12);
-            if (TimestampUtils.checkLen3(p, lim)) {
-                TimestampUtils.checkChar(input, p++, lim, '-');
+            CommonUtils.checkRange(month, 1, 12);
+            if (CommonUtils.checkLen3(p, lim)) {
+                CommonUtils.checkChar(input, p++, lim, '-');
                 int day = Numbers.parseInt(input, p, p += 2);
-                TimestampUtils.checkRange(day, 1, TimestampUtils.getDaysPerMonth(month, l));
-                if (TimestampUtils.checkLen3(p, lim)) {
-                    TimestampUtils.checkChar(input, p++, lim, 'T');
+                CommonUtils.checkRange(day, 1, CommonUtils.getDaysPerMonth(month, l));
+                if (CommonUtils.checkLen3(p, lim)) {
+                    CommonUtils.checkChar(input, p++, lim, 'T');
                     int hour = Numbers.parseInt(input, p, p += 2);
-                    TimestampUtils.checkRange(hour, 0, 23);
-                    if (TimestampUtils.checkLen3(p, lim)) {
-                        TimestampUtils.checkChar(input, p++, lim, ':');
+                    CommonUtils.checkRange(hour, 0, 23);
+                    if (CommonUtils.checkLen3(p, lim)) {
+                        CommonUtils.checkChar(input, p++, lim, ':');
                         int min = Numbers.parseInt(input, p, p += 2);
-                        TimestampUtils.checkRange(min, 0, 59);
-                        if (TimestampUtils.checkLen3(p, lim)) {
-                            TimestampUtils.checkChar(input, p++, lim, ':');
+                        CommonUtils.checkRange(min, 0, 59);
+                        if (CommonUtils.checkLen3(p, lim)) {
+                            CommonUtils.checkChar(input, p++, lim, ':');
                             int sec = Numbers.parseInt(input, p, p += 2);
-                            TimestampUtils.checkRange(sec, 0, 59);
+                            CommonUtils.checkRange(sec, 0, 59);
                             if (p < lim) {
                                 throw NumericException.INSTANCE;
                             } else {
@@ -661,7 +661,7 @@ public class NanoTimestampDriver implements TimestampDriver {
                         Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(month, l),
                         Nanos.yearNanos(year, l)
                                 + Nanos.monthOfYearNanos(month, l)
-                                + (TimestampUtils.getDaysPerMonth(month, l) - 1) * Nanos.DAY_NANOS
+                                + (CommonUtils.getDaysPerMonth(month, l) - 1) * Nanos.DAY_NANOS
                                 + 23 * Nanos.HOUR_NANOS
                                 + 59 * Nanos.MINUTE_NANOS
                                 + 59 * Nanos.SECOND_NANOS
@@ -676,7 +676,7 @@ public class NanoTimestampDriver implements TimestampDriver {
                     Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(1, l),
                     Nanos.yearNanos(year, l)
                             + Nanos.monthOfYearNanos(12, l)
-                            + (TimestampUtils.getDaysPerMonth(12, l) - 1) * Nanos.DAY_NANOS
+                            + (CommonUtils.getDaysPerMonth(12, l) - 1) * Nanos.DAY_NANOS
                             + 23 * Nanos.HOUR_NANOS
                             + 59 * Nanos.MINUTE_NANOS
                             + 59 * Nanos.SECOND_NANOS
@@ -695,23 +695,23 @@ public class NanoTimestampDriver implements TimestampDriver {
             switch (partitionBy) {
                 case DAY:
                     fmtMethod = PARTITION_DAY_FORMAT;
-                    fmtStr = CommonFormatUtils.DAY_PATTERN;
+                    fmtStr = CommonUtils.DAY_PATTERN;
                     break;
                 case MONTH:
                     fmtMethod = PARTITION_MONTH_FORMAT;
-                    fmtStr = CommonFormatUtils.MONTH_PATTERN;
+                    fmtStr = CommonUtils.MONTH_PATTERN;
                     break;
                 case YEAR:
                     fmtMethod = PARTITION_YEAR_FORMAT;
-                    fmtStr = CommonFormatUtils.YEAR_PATTERN;
+                    fmtStr = CommonUtils.YEAR_PATTERN;
                     break;
                 case HOUR:
                     fmtMethod = PARTITION_HOUR_FORMAT;
-                    fmtStr = CommonFormatUtils.HOUR_PATTERN;
+                    fmtStr = CommonUtils.HOUR_PATTERN;
                     break;
                 case WEEK:
                     fmtMethod = PARTITION_WEEK_FORMAT;
-                    fmtStr = CommonFormatUtils.WEEK_PATTERN;
+                    fmtStr = CommonUtils.WEEK_PATTERN;
                     break;
                 case NONE:
                     fmtMethod = DEFAULT_FORMAT;
@@ -732,7 +732,7 @@ public class NanoTimestampDriver implements TimestampDriver {
         } catch (NumericException e) {
             if (partitionBy == PartitionBy.WEEK) {
                 // maybe the user used a timestamp, or a date, string.
-                int localLimit = CommonFormatUtils.DAY_PATTERN.length();
+                int localLimit = CommonUtils.DAY_PATTERN.length();
                 try {
                     // trim to the lowest precision needed and get the timestamp
                     // convert timestamp to first day of the week
@@ -747,7 +747,7 @@ public class NanoTimestampDriver implements TimestampDriver {
 
     @Override
     public long toMicros(long nanos) {
-        return TimestampUtils.nanosToMicros(nanos);
+        return CommonUtils.nanosToMicros(nanos);
     }
 
     @Override
@@ -774,23 +774,23 @@ public class NanoTimestampDriver implements TimestampDriver {
         }
 
         if (lim - p < 2) {
-            TimestampUtils.checkChar(seq, p, lim, 'Z');
+            CommonUtils.checkChar(seq, p, lim, 'Z');
             return 0;
         }
 
         if (lim - p > 2) {
-            int tzSign = TimestampUtils.parseSign(seq.charAt(p++));
+            int tzSign = CommonUtils.parseSign(seq.charAt(p++));
             int hour = Numbers.parseInt(seq, p, p += 2);
-            TimestampUtils.checkRange(hour, 0, 23);
+            CommonUtils.checkRange(hour, 0, 23);
 
             if (lim - p == 3) {
                 // Optional : separator between hours and mins in timezone
-                TimestampUtils.checkChar(seq, p++, lim, ':');
+                CommonUtils.checkChar(seq, p++, lim, ':');
             }
 
-            if (TimestampUtils.checkLenStrict(p, lim)) {
+            if (CommonUtils.checkLenStrict(p, lim)) {
                 int min = Numbers.parseInt(seq, p, p + 2);
-                TimestampUtils.checkRange(min, 0, 59);
+                CommonUtils.checkRange(min, 0, 59);
                 return tzSign * (hour * Nanos.HOUR_NANOS + min * Nanos.MINUTE_NANOS);
             } else {
                 return tzSign * (hour * Nanos.HOUR_NANOS);
@@ -805,23 +805,23 @@ public class NanoTimestampDriver implements TimestampDriver {
         }
 
         if (lim - p < 2) {
-            TimestampUtils.checkChar(seq, p, lim, 'Z');
+            CommonUtils.checkChar(seq, p, lim, 'Z');
             return 0;
         }
 
         if (lim - p > 2) {
-            int tzSign = TimestampUtils.parseSign((char) seq.byteAt(p++));
+            int tzSign = CommonUtils.parseSign((char) seq.byteAt(p++));
             int hour = Numbers.parseInt(seq, p, p += 2);
-            TimestampUtils.checkRange(hour, 0, 23);
+            CommonUtils.checkRange(hour, 0, 23);
 
             if (lim - p == 3) {
                 // Optional : separator between hours and mins in timezone
-                TimestampUtils.checkChar(seq, p++, lim, ':');
+                CommonUtils.checkChar(seq, p++, lim, ':');
             }
 
-            if (TimestampUtils.checkLenStrict(p, lim)) {
+            if (CommonUtils.checkLenStrict(p, lim)) {
                 int min = Numbers.parseInt(seq, p, p + 2);
-                TimestampUtils.checkRange(min, 0, 59);
+                CommonUtils.checkRange(min, 0, 59);
                 return tzSign * (hour * Nanos.HOUR_NANOS + min * Nanos.MINUTE_NANOS);
             } else {
                 return tzSign * (hour * Nanos.HOUR_NANOS);
@@ -893,13 +893,13 @@ public class NanoTimestampDriver implements TimestampDriver {
             }
             int p = lo;
             int year = Numbers.parseInt(in, p, p += 4);
-            boolean l = TimestampUtils.isLeapYear(year);
-            if (TimestampUtils.checkLen2(p, hi)) {
-                TimestampUtils.checkChar(in, p++, hi, '-');
+            boolean l = CommonUtils.isLeapYear(year);
+            if (CommonUtils.checkLen2(p, hi)) {
+                CommonUtils.checkChar(in, p++, hi, '-');
                 int month = Numbers.parseInt(in, p, p += 2);
-                TimestampUtils.checkRange(month, 1, 12);
-                if (TimestampUtils.checkLen2(p, hi)) {
-                    int dayRange = TimestampUtils.getDaysPerMonth(month, l);
+                CommonUtils.checkRange(month, 1, 12);
+                if (CommonUtils.checkLen2(p, hi)) {
+                    int dayRange = CommonUtils.getDaysPerMonth(month, l);
                     ts = Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(month, l);
                     ts = parseDayTime(in, hi, p, ts, dayRange, 2);
                 } else {

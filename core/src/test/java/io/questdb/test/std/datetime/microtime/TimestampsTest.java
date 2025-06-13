@@ -43,7 +43,7 @@ import org.junit.Test;
 import java.time.temporal.ChronoUnit;
 
 import static io.questdb.cairo.PartitionBy.getPartitionDirFormatMethod;
-import static io.questdb.std.datetime.CommonFormatUtils.EN_LOCALE;
+import static io.questdb.std.datetime.CommonUtils.EN_LOCALE;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 import static io.questdb.std.datetime.microtime.TimestampFormatUtils.parseHTTP;
 

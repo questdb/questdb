@@ -27,7 +27,7 @@ package io.questdb.test.std.datetime.microtime;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.CommonFormatUtils;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -51,7 +51,7 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 public class TimestampFormatCompilerTest {
 
     private static final TimestampFormatCompiler compiler = new TimestampFormatCompiler();
-    private final static DateFormat REFERENCE = compiler.compile(CommonFormatUtils.USEC_UTC_PATTERN);
+    private final static DateFormat REFERENCE = compiler.compile(CommonUtils.USEC_UTC_PATTERN);
     private static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getLocale("en-GB");
     private final static StringSink sink = new StringSink();
 
@@ -913,7 +913,7 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testParseUtc() throws Exception {
-        assertThat(CommonFormatUtils.UTC_PATTERN, "2011-10-03T00:00:00.000Z", "2011-10-03T00:00:00.000Z");
+        assertThat(CommonUtils.UTC_PATTERN, "2011-10-03T00:00:00.000Z", "2011-10-03T00:00:00.000Z");
     }
 
     @Test

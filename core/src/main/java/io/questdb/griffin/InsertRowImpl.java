@@ -30,19 +30,19 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.cairo.TimestampUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.CommonUtils;
 
 public final class InsertRowImpl implements QuietCloseable {
     private final RecordToRowCopier copier;
     private final RowFactory rowFactory;
     private final TimestampDriver timestampDriver;
     private final Function timestampFunction;
-    private final TimestampUtils.TimestampUnitConverter timestampFunctionConverter;
+    private final CommonUtils.TimestampUnitConverter timestampFunctionConverter;
     private final int timestampFunctionPosition;
     private final int timestampType;
     private final int tupleIndex;

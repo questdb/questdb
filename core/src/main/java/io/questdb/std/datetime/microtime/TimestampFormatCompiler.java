@@ -25,7 +25,6 @@
 package io.questdb.std.datetime.microtime;
 
 
-import io.questdb.cairo.TimestampUtils;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.GenericLexer;
@@ -35,7 +34,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.AbstractDateFormat;
-import io.questdb.std.datetime.CommonFormatUtils;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.Dates;
@@ -796,7 +795,7 @@ public class TimestampFormatCompiler {
         asm.ldc2_w(minLongIndex);
         asm.lstore(LOCAL_OFFSET);
 
-        asm.iconst(CommonFormatUtils.HOUR_24);
+        asm.iconst(CommonUtils.HOUR_24);
         asm.istore(LOCAL_HOUR_TYPE);
 
         if ((stackState & (1 << LOCAL_ERA)) == 0) {
@@ -1407,7 +1406,7 @@ public class TimestampFormatCompiler {
         int parseOffsetIndex = asm.poolMethod(Dates.class, "parseOffset", "(Ljava/lang/CharSequence;II)J");
         int getYearIndex = asm.poolMethod(Timestamps.class, "getYear", "(J)I");
         int getIsoYearIndex = asm.poolMethod(Timestamps.class, "getIsoYear", "(J)I");
-        int isLeapYearIndex = asm.poolMethod(TimestampUtils.class, "isLeapYear", "(I)Z");
+        int isLeapYearIndex = asm.poolMethod(CommonUtils.class, "isLeapYear", "(I)Z");
         int getMonthOfYearIndex = asm.poolMethod(Timestamps.class, "getMonthOfYear", "(JIZ)I");
         int getDayOfMonthIndex = asm.poolMethod(Timestamps.class, "getDayOfMonth", "(JIIZ)I");
         int getHourOfDayIndex = asm.poolMethod(Timestamps.class, "getHourOfDay", "(J)I");
@@ -1864,9 +1863,9 @@ public class TimestampFormatCompiler {
 
     private void setHourType(int stackState) {
         asm.iload(LOCAL_HOUR_TYPE);
-        asm.iconst(CommonFormatUtils.HOUR_24);
+        asm.iconst(CommonUtils.HOUR_24);
         int branch = asm.if_icmpne();
-        asm.iconst(CommonFormatUtils.HOUR_AM);
+        asm.iconst(CommonUtils.HOUR_AM);
         asm.istore(LOCAL_HOUR_TYPE);
         int p = asm.position();
         frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));
