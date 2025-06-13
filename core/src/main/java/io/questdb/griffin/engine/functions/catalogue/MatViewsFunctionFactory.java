@@ -293,6 +293,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             @Override
             public void close() {
                 viewTokens.clear();
+                path.resetCapacity();
             }
 
             @Override
