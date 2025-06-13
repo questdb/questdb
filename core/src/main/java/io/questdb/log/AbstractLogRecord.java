@@ -570,8 +570,11 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         LogRecordUtf8Sink sink = ring.get(cursor);
         sink.setLevel(level);
         sink.clear();
-        if (logError != null) {
-            logError.printStackTrace(System.out);
+        if (logError == null) {
+            return this;
+        }
+        logError.printStackTrace(System.out);
+        if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
             seq.done(cursor);
             throw logError;
         }
