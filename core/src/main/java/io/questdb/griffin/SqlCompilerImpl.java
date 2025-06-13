@@ -1651,7 +1651,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else if (isRefreshKeyword(tok)) {
                     tok = expectToken(lexer, "'start' or 'every' or 'limit'");
                     if (isStartKeyword(tok) || isEveryKeyword(tok)) {
-                        if (viewDefinition.getRefreshType() != MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
+                        if (viewDefinition.getRefreshType() != MatViewDefinition.TIMER_REFRESH_TYPE) {
                             throw SqlException.$(lexer.lastTokenPosition(), "materialized view must be of timer refresh type");
                         }
 
@@ -1674,7 +1674,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             tok = expectToken(lexer, "interval");
                             final int interval = Timestamps.getStrideMultiple(tok);
                             final char unit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
-                            SqlParser.validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
+                            SqlParser.validateMatViewEveryUnit(unit, lexer.lastTokenPosition());
                             final AlterOperationBuilder setTimer = alterOperationBuilder.ofSetMatViewRefreshTimer(
                                     matViewNamePosition,
                                     matViewToken,
@@ -2656,7 +2656,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         tok = expectToken(lexer, "'full' or 'incremental' or 'range'");
-        final boolean full = isFullKeyword(tok);
+        final boolean fullRefresh = isFullKeyword(tok);
         long from = Numbers.LONG_NULL;
         long to = Numbers.LONG_NULL;
         if (isRangeKeyword(tok)) {
@@ -2677,7 +2677,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (from > to) {
                 throw SqlException.$(lexer.lastTokenPosition(), "TO timestamp must not be earlier than FROM timestamp");
             }
-        } else if (!full && !isIncrementalKeyword(tok)) {
+        } else if (!fullRefresh && !isIncrementalKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "'full' or 'incremental' or 'range' expected");
         }
 
@@ -2688,7 +2688,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
         executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
-        if (full) {
+        if (fullRefresh) {
             matViewStateStore.enqueueFullRefresh(matViewToken);
         } else if (from != Numbers.LONG_NULL) {
             matViewStateStore.enqueueRangeRefresh(matViewToken, from, to);
@@ -3133,8 +3133,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
-        if (createMatViewOp.getRefreshType() != MatViewDefinition.INCREMENTAL_REFRESH_TYPE
-                && createMatViewOp.getRefreshType() != MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
+        if (createMatViewOp.getRefreshType() != MatViewDefinition.IMMEDIATE_REFRESH_TYPE
+                && createMatViewOp.getRefreshType() != MatViewDefinition.TIMER_REFRESH_TYPE
+                && createMatViewOp.getRefreshType() != MatViewDefinition.MANUAL_REFRESH_TYPE) {
             throw SqlException.$(createMatViewOp.getTableNamePosition(), "unexpected refresh type: ").put(createMatViewOp.getRefreshType());
         }
 
