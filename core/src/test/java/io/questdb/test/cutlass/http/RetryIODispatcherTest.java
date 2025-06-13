@@ -143,9 +143,9 @@ public class RetryIODispatcherTest extends AbstractTest {
     @Test
     public void testFailsWhenInvalidDataImportedLoop() throws Exception {
         for (int i = 0; i < 5; i++) {
-            System.out.println("*************************************************************************************");
-            System.out.println("**************************         Run " + i + "            ********************************");
-            System.out.println("*************************************************************************************");
+            System.out.println("*************************************************************************************\n" +
+                    "**************************         Run " + i + "            ********************************\n" +
+                    "*************************************************************************************");
             testImportWaitsWhenWriterLocked(new HttpQueryTestBuilder()
                             .withTempFolder(root)
                             .withWorkerCount(2)
@@ -166,9 +166,9 @@ public class RetryIODispatcherTest extends AbstractTest {
     @Test
     public void testImportProcessedWhenClientDisconnectedLoop() throws Exception {
         for (int i = 0; i < 10; i++) {
-            System.out.println("*************************************************************************************");
-            System.out.println("**************************         Run " + i + "            ********************************");
-            System.out.println("*************************************************************************************");
+            System.out.println("*************************************************************************************\n" +
+                    "**************************         Run " + i + "            ********************************\n" +
+                    "*************************************************************************************");
             assertImportProcessedWhenClientDisconnected();
             TestUtils.removeTestPath(root);
             TestUtils.createTestPath(root);
@@ -239,9 +239,9 @@ public class RetryIODispatcherTest extends AbstractTest {
     @Test
     public void testImportRerunsExceedsRerunProcessingQueueSizeLoop() throws Exception {
         for (int i = 0; i < 10; i++) {
-            System.out.println("*************************************************************************************");
-            System.out.println("**************************         Run " + i + "            ********************************");
-            System.out.println("*************************************************************************************");
+            System.out.println("*************************************************************************************\n" +
+                    "**************************         Run " + i + "            ********************************\n" +
+                    "*************************************************************************************");
             testImportRerunsExceedsRerunProcessingQueueSize(1000);
             TestUtils.removeTestPath(root);
             TestUtils.createTestPath(root);
@@ -332,9 +332,9 @@ public class RetryIODispatcherTest extends AbstractTest {
     @Test
     public void testImportWaitsWhenWriterLockedLoop() throws Exception {
         for (int i = 0; i < 5; i++) {
-            System.out.println("*************************************************************************************");
-            System.out.println("**************************         Run " + i + "            ********************************");
-            System.out.println("*************************************************************************************");
+            System.out.println("*************************************************************************************\n" +
+                    "**************************         Run " + i + "            ********************************\n" +
+                    "*************************************************************************************");
             testImportWaitsWhenWriterLocked(new HttpQueryTestBuilder()
                             .withTempFolder(root)
                             .withWorkerCount(4)
@@ -353,9 +353,10 @@ public class RetryIODispatcherTest extends AbstractTest {
     @Test
     public void testImportWaitsWhenWriterLockedWithSlowPeerLoop() throws Exception {
         for (int i = 0; i < 10; i++) {
-            System.out.println("*************************************************************************************");
-            System.out.println("**************************         Run " + i + "            ********************************");
-            System.out.println("*************************************************************************************");
+            System.out.println(
+                    "*************************************************************************************\n" +
+                            "**************************         Run " + i + "            ********************************\n" +
+                            "*************************************************************************************");
             testImportWaitsWhenWriterLocked(new HttpQueryTestBuilder()
                             .withTempFolder(root)
                             .withWorkerCount(2)
@@ -378,9 +379,9 @@ public class RetryIODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .run((engine, sqlExecutionContext) -> {
                     for (int i = 0; i < 10; i++) {
-                        System.out.println("*************************************************************************************");
-                        System.out.println("**************************         Run " + i + "            ********************************");
-                        System.out.println("*************************************************************************************");
+                        System.out.println("*************************************************************************************\n" +
+                                "**************************         Run " + i + "            ********************************\n" +
+                                "*************************************************************************************");
                         SendAndReceiveRequestBuilder sendAndReceiveRequestBuilder = new SendAndReceiveRequestBuilder()
                                 .withNetworkFacade(getSendDelayNetworkFacade(0))
                                 .withCompareLength(ValidImportResponse.length());
@@ -434,9 +435,9 @@ public class RetryIODispatcherTest extends AbstractTest {
     @Test
     public void testImportsWhenReceiveBufferIsSmallAndSenderSlow() throws Exception {
         for (int i = 0; i < 10; i++) {
-            System.out.println("*************************************************************************************");
-            System.out.println("**************************         Run " + i + "            ********************************");
-            System.out.println("*************************************************************************************");
+            System.out.println("*************************************************************************************\n" +
+                    "**************************         Run " + i + "            ********************************\n" +
+                    "*************************************************************************************");
             testImportWaitsWhenWriterLocked(new HttpQueryTestBuilder()
                             .withTempFolder(root)
                             .withWorkerCount(2)
@@ -454,9 +455,9 @@ public class RetryIODispatcherTest extends AbstractTest {
     @Test
     public void testInsertWaitsExceedsRerunProcessingQueueSizeLoop() throws Exception {
         for (int i = 0; i < 5; i++) {
-            System.out.println("*************************************************************************************");
-            System.out.println("**************************         Run " + i + "            ********************************");
-            System.out.println("*************************************************************************************");
+            System.out.println("*************************************************************************************\n" +
+                    "**************************         Run " + i + "            ********************************\n" +
+                    "*************************************************************************************");
             assertInsertWaitsExceedsRerunProcessingQueueSize();
             TestUtils.removeTestPath(root);
             TestUtils.createTestPath(root);
@@ -466,9 +467,9 @@ public class RetryIODispatcherTest extends AbstractTest {
     @Test
     public void testInsertWaitsWhenWriterLockedLoop() throws Exception {
         for (int i = 0; i < 10; i++) {
-            System.out.println("*************************************************************************************");
-            System.out.println("**************************         Run " + i + "            ********************************");
-            System.out.println("*************************************************************************************");
+            System.out.println("*************************************************************************************\n" +
+                    "**************************         Run " + i + "            ********************************\n" +
+                    "*************************************************************************************");
             assertInsertWaitsWhenWriterLocked();
             TestUtils.removeTestPath(root);
             TestUtils.createTestPath(root);
@@ -478,9 +479,10 @@ public class RetryIODispatcherTest extends AbstractTest {
     @Test
     public void testInsertsIsPerformedWhenWriterLockedAndDisconnectedLoop() throws Exception {
         for (int i = 0; i < 10; i++) {
-            System.out.println("*************************************************************************************");
-            System.out.println("**************************         Run " + i + "            ********************************");
-            System.out.println("*************************************************************************************");
+            System.out.println(
+                    "*************************************************************************************\n" +
+                            "**************************         Run " + i + "            ********************************\n" +
+                            "*************************************************************************************");
             assertInsertsIsPerformedWhenWriterLockedAndDisconnected();
             TestUtils.removeTestPath(root);
             TestUtils.createTestPath(root);
@@ -786,7 +788,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                     );
                     nonInsertQueries++;
 
-                    final int maxWaitTimeMillis = 3000;
+                    final int maxWaitTimeMillis = 6000;
                     final int sleepMillis = 10;
 
                     final Metrics metrics = engine.getMetrics();

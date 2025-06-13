@@ -1221,7 +1221,7 @@ public final class Chars {
             case 1:
                 // invalid encoding, we can't have 1 byte remainder as
                 // even 1 byte encodes to 2 chars
-                throw CairoException.nonCritical().put("invalid base64 encoding [string=").put(encoded).put(']');
+                throw CairoException.nonCritical().put("invalid base64 encoding [string=").putAsPrintable(encoded).put(']');
             case 2:
                 wrk = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
                 wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 1)) << 12;
@@ -1278,7 +1278,7 @@ public final class Chars {
             case 1:
                 // invalid encoding, we can't have 1 byte remainder as
                 // even 1 byte encodes to 2 chars
-                throw CairoException.nonCritical().put("invalid base64 encoding [string=").put(encoded).put(']');
+                throw CairoException.nonCritical().put("invalid base64 encoding [string=").putAsPrintable(encoded).put(']');
             case 2:
                 wrk = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
                 wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 1)) << 12;

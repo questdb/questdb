@@ -340,7 +340,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     private void logTypeError(int i) {
         LOG.info()
-                .$("mis-detected [table=").$(tableName)
+                .$("mis-detected [table=").utf8(tableName)
                 .$(", column=").$(i)
                 .$(", type=").$(ColumnType.nameOf(types.getQuick(i).getType()))
                 .$(']').$();

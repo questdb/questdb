@@ -83,7 +83,7 @@ public class TableWriterSegmentFileCache {
     }
 
     public void closeWalFiles(boolean isLastSegmentUsage, long walSegmentId, int lo) {
-        LOG.debug().$("closing wal columns [table=").$(tableToken.getDirName())
+        LOG.debug().$("closing wal columns [table=").$(tableToken)
                 .$(", walSegmentId=").$(walSegmentId)
                 .$(", isLastSegmentUsage=").$(isLastSegmentUsage)
                 .I$();
@@ -195,7 +195,9 @@ public class TableWriterSegmentFileCache {
 
     public void mmapSegments(TableMetadata metadata, @Transient Path walPath, long walSegmentId, long rowLo, long rowHi) {
         int timestampIndex = metadata.getTimestampIndex();
-        LOG.debug().$("open columns [table=").$(tableToken.getDirName()).$(", walSegmentId=").$(walSegmentId).I$();
+        LOG.debug().$("open columns [table=").$(tableToken)
+                .$(", walSegmentId=").$(walSegmentId)
+                .I$();
         int walPathLen = walPath.size();
         final int columnCount = metadata.getColumnCount();
         int fdCacheKey = walFdCache.keyIndex(walSegmentId);
@@ -225,7 +227,10 @@ public class TableWriterSegmentFileCache {
 
                         LPSZ ifile = auxFd == -1 ? iFile(walPath, metadata.getColumnName(columnIndex), -1L) : null;
                         if (auxFd != -1) {
-                            LOG.debug().$("reusing file descriptor for WAL files [fd=").$(auxFd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
+                            LOG.debug().$("reusing file descriptor for WAL files [fd=").$(auxFd)
+                                    .$(", path=").$(walPath)
+                                    .$(", walSegment=").$(walSegmentId)
+                                    .I$();
                         }
                         columnTypeDriver.configureAuxMemOM(
                                 configuration.getFilesFacade(),
@@ -241,7 +246,10 @@ public class TableWriterSegmentFileCache {
 
                         LPSZ dfile = dataFd == -1 ? dFile(walPath, metadata.getColumnName(columnIndex), -1L) : null;
                         if (dataFd != -1) {
-                            LOG.debug().$("reusing file descriptor for WAL files [fd=").$(dataFd).$(", wal=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
+                            LOG.debug().$("reusing file descriptor for WAL files [fd=").$(dataFd)
+                                    .$(", wal=").$(walPath)
+                                    .$(", walSegment=").$(walSegmentId)
+                                    .I$();
                         }
                         columnTypeDriver.configureDataMemOM(
                                 configuration.getFilesFacade(),
@@ -262,7 +270,10 @@ public class TableWriterSegmentFileCache {
                         long fd = fds != null ? fds.get(file++) : -1;
                         LPSZ dfile = fd == -1 ? dFile(walPath, metadata.getColumnName(columnIndex), -1L) : null;
                         if (fd != -1) {
-                            LOG.debug().$("reusing file descriptor for WAL files [fd=").$(fd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
+                            LOG.debug().$("reusing file descriptor for WAL files [fd=").$(fd)
+                                    .$(", path=").$(walPath)
+                                    .$(", walSegment=").$(walSegmentId)
+                                    .I$();
                         }
                         primary.ofOffset(
                                 configuration.getFilesFacade(),
