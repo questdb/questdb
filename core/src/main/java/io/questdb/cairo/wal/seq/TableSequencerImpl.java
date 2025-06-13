@@ -126,21 +126,20 @@ public class TableSequencerImpl implements TableSequencer {
                 throw ex;
             }
             if (ex.errnoFileCannotRead() && engine.isTableDropped(tableToken)) {
-                LOG.info().$("could not open sequencer, table is dropped [name=")
-                        .$safe(tableToken.getDirNameUtf8())
+                LOG.info().$("could not open sequencer, table is dropped [table=").$(tableToken)
                         .$(", path=").$(path)
                         .$(", error=").utf8(ex.getMessage())
                         .I$();
                 throw CairoException.tableDropped(tableToken);
             }
-            LOG.critical().$("could not open sequencer [name=").$safe(tableToken.getDirNameUtf8())
+            LOG.critical().$("could not open sequencer [table=").$(tableToken)
                     .$(", path=").$(path)
                     .$(", errno=").$(ex.getErrno())
                     .$(", error=").utf8(ex.getMessage())
                     .I$();
             throw ex;
         } catch (Throwable th) {
-            LOG.critical().$("could not open sequencer [name=").$safe(tableToken.getDirNameUtf8())
+            LOG.critical().$("could not open sequencer [table=").$(tableToken)
                     .$(", path=").$(path)
                     .$(", error=").utf8(th.getMessage())
                     .I$();
@@ -324,7 +323,7 @@ public class TableSequencerImpl implements TableSequencer {
                 applyToMetadata(deserializedAlter);
                 if (metadata.getMetadataVersion() != expectedStructureVersion + 1) {
                     throw CairoException.critical(0)
-                            .put("applying structure change to WAL table failed [table=").put(tableToken.getDirNameUtf8())
+                            .put("applying structure change to WAL table failed [table=").put(tableToken)
                             .put(", oldVersion: ").put(expectedStructureVersion)
                             .put(", newVersion: ").put(metadata.getMetadataVersion())
                             .put(']');
@@ -417,7 +416,7 @@ public class TableSequencerImpl implements TableSequencer {
         }
         long lastTxn = tableTransactionLog.lastTxn();
         LOG.info()
-                .$("reloaded table sequencer [name=").$safe(tableToken.getDirNameUtf8())
+                .$("reloaded table sequencer [table=").$(tableToken)
                 .$(", lastTxn=").$(lastTxn)
                 .I$();
         seqTxnTracker.notifyOnCommit(lastTxn);

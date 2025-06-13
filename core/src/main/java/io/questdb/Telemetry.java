@@ -151,7 +151,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
             writer = engine.getWriter(tableToken, "telemetry");
         } catch (CairoException ex) {
             LOG.error()
-                    .$("could not open [table=`").utf8(tableToken.getTableName())
+                    .$("could not open [table=`").$(tableToken)
                     .$("`, msg=").utf8(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .$(']').$();

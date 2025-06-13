@@ -1870,11 +1870,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     private void sendWaitWalReleaseCount(String lineData, int walReleaseCount) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(walReleaseCount);
-        engine.setPoolListener((factoryType, thread, tableName1, event, segment, position) -> {
-            if (factoryType == PoolListener.SRC_WAL_WRITER && event == PoolListener.EV_RETURN && tableName1 != null) {
-                LOG.info().$("=== released WAL writer === ")
-                        .$safe(tableName1.getDirNameUtf8()).$(":").utf8(tableName1.getTableName())
-                        .$();
+        engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+            if (factoryType == PoolListener.SRC_WAL_WRITER && event == PoolListener.EV_RETURN && tableToken != null) {
+                LOG.info().$("=== released WAL writer === ").$(tableToken).$();
                 releaseLatch.countDown();
             }
         });

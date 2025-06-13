@@ -197,7 +197,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             TableToken conflictTableToken
     ) {
         LOG.critical().$("duplicate table dir to name mapping found [tableName=").utf8(errorTableName)
-                .$(", dirName1=").$safe(conflictTableToken.getDirNameUtf8())
+                .$(", dirName1=").$(conflictTableToken.getDirNameUtf8())
                 .$(", dirName2=").utf8(errorDirName)
                 .I$();
         dumpTableRegistry(lastFileVersion);
@@ -385,7 +385,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                                     LOG.critical().$("duplicate table name found, table will not be available [dirName=").$(dirNameSink)
                                             .$(", name=").utf8(tableName)
                                             .$(", existingTableDir=")
-                                            .$safe(tableNameToTableTokenMap.get(tableName).getDirNameUtf8())
+                                            .$(tableNameToTableTokenMap.get(tableName).getDirNameUtf8())
                                             .I$();
                                 }
                                 continue;

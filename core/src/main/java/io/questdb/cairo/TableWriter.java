@@ -1743,8 +1743,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void destroy() {
         // Closes all the files and makes this instance unusable e.g., it cannot return to the pool on close.
-        LOG.info().$("closing table files [table=").utf8(tableToken.getTableName())
-                .$(", dirName=").$safe(tableToken.getDirNameUtf8()).I$();
+        LOG.info().$("closing table files [table=").$(tableToken).I$();
         distressed = true;
         doClose(false);
     }
@@ -4917,7 +4916,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     DedupColumnCommitAddresses.getAddress(dedupCommitAddr)
             );
 
-            LOG.info().$("WAL dedup sorted commit index [table=").$safe(tableToken.getDirNameUtf8())
+            LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken)
                     .$(", totalRows=").$(longIndexLength)
                     .$(", lagRows=").$(lagRows)
                     .$(", dups=")
@@ -6731,7 +6730,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             publishTableWriterEvent(cmdType, tableId, correlationId, AsyncWriterCommand.Error.OK, null, 0L, TSK_BEGIN);
             LOG.info()
                     .$("received async cmd [type=").$(cmdType)
-                    .$(", tableName=").utf8(tableToken.getTableName())
+                    .$(", table=").$(tableToken)
                     .$(", tableId=").$(tableId)
                     .$(", correlationId=").$(correlationId)
                     .$(", cursor=").$(cursor)
@@ -6741,7 +6740,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (TableReferenceOutOfDateException ex) {
             LOG.info()
                     .$("cannot complete async cmd, reader is out of date [type=").$(cmdType)
-                    .$(", tableName=").utf8(tableToken.getTableName())
+                    .$(", table=").$(tableToken)
                     .$(", tableId=").$(tableId)
                     .$(", correlationId=").$(correlationId)
                     .I$();
@@ -6750,7 +6749,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (AlterTableContextException ex) {
             LOG.info()
                     .$("cannot complete async cmd, table structure change is not allowed [type=").$(cmdType)
-                    .$(", tableName=").utf8(tableToken.getTableName())
+                    .$(", tableName=").$(tableToken)
                     .$(", tableId=").$(tableId)
                     .$(", correlationId=").$(correlationId)
                     .I$();
@@ -7588,7 +7587,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        LOG.info().$("processing WAL transaction block [table=").$safe(tableToken.getDirNameUtf8())
+        LOG.info().$("processing WAL transaction block [table=").$(tableToken)
                 .$(", seqTxn=").$(startSeqTxn).$("..").$(startSeqTxn + blockTransactionCount - 1)
                 .$(", rows=").$(segmentCopyInfo.getTotalRows())
                 .$(", segments=").$(segmentCopyInfo.getSegmentCount())
@@ -7610,8 +7609,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3LoHi;
 
             if (!isCommitDedupMode() && segmentCopyInfo.getAllTxnDataInOrder() && segmentCopyInfo.getSegmentCount() == 1) {
-                LOG.info().$("all data in order, single segment, processing optimised [table=")
-                        .$safe(tableToken.getDirNameUtf8()).I$();
+                LOG.info().$("all data in order, single segment, processing optimised [table=").$(tableToken).I$();
                 // all data comes from a single segment and is already sorted
                 if (denseSymbolMapWriters.size() > 0) {
                     segmentFileCache.mmapWalColsEager();
@@ -7776,8 +7774,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             tsAddresses.set(0, 0L);
 
             if (!Vect.isIndexSuccess(indexFormat)) {
-                LOG.info().$("transaction sort error, will switch to 1 commit [table=")
-                        .$safe(tableToken.getDirNameUtf8())
+                LOG.info().$("transaction sort error, will switch to 1 commit [table=").$(tableToken)
                         .$(", totalRows=").$(totalRows)
                         .$(", indexFormat=").$(indexFormat)
                         .I$();
@@ -7812,8 +7809,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // to understand the difference
 
                 if (!Vect.isIndexSuccess(indexFormat)) {
-                    LOG.critical().$("WAL dedup sorted index failed will switch to 1 commit [table=")
-                            .$safe(tableToken.getDirNameUtf8())
+                    LOG.critical().$("WAL dedup sorted index failed will switch to 1 commit [table=").$(tableToken)
                             .$(", totalRows=").$(totalRows)
                             .$(", indexFormat=").$(indexFormat)
                             .I$();
@@ -7822,7 +7818,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 long dedupedRowCount = Vect.readIndexResultRowCount(indexFormat);
-                LOG.info().$("WAL dedup sorted commit index [table=").$safe(tableToken.getDirNameUtf8())
+                LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken)
                         .$(", totalRows=").$(totalRows)
                         .$(", dups=").$(totalRows - dedupedRowCount)
                         .I$();
@@ -7832,7 +7828,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 totalRows = dedupedRowCount;
             }
 
-            LOG.debug().$("shuffling [table=").$safe(tableToken.getDirNameUtf8()).$(", columCount=")
+            LOG.debug().$("shuffling [table=").$(tableToken).$(", columCount=")
                     .$(metadata.getColumnCount() - 1)
                     .$(", rows=").$(totalRows)
                     .$(", indexFormat=").$(indexFormat).I$();
@@ -8430,9 +8426,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (eventType == TSK_COMPLETE) {
                 LogRecord lg = LOG.info()
                         .$("published async command complete event [type=").$(cmdType)
-                        .$(",tableName=").utf8(tableToken.getTableName())
-                        .$(",tableId=").$(tableId)
-                        .$(",correlationId=").$(correlationId);
+                        .$(", table=").$(tableToken)
+                        .$(", tableId=").$(tableId)
+                        .$(", correlationId=").$(correlationId);
                 if (errorCode != AsyncWriterCommand.Error.OK) {
                     lg.$(",errorCode=").$(errorCode).$(",errorMsg=").$(errorMsg);
                 }
@@ -8442,9 +8438,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // The queue is full
             LOG.error()
                     .$("could not publish sync command complete event [type=").$(cmdType)
-                    .$(",tableName=").utf8(tableToken.getTableName())
-                    .$(",tableId=").$(tableId)
-                    .$(",correlationId=").$(correlationId)
+                    .$(", table=").$(tableToken)
+                    .$(", tableId=").$(tableId)
+                    .$(", correlationId=").$(correlationId)
                     .I$();
         }
     }

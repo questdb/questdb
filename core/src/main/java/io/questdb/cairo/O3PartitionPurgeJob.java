@@ -139,7 +139,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             TxReader txReader,
             int partitionBy
     ) {
-        LOG.info().$("processing [table=").$safe(tableToken.getDirNameUtf8()).I$();
+        LOG.info().$("processing [table=").$(tableToken).I$();
         Path path = Path.getThreadLocal(root).concat(tableToken);
         int plimit = path.size();
         partitionList.clear();
@@ -217,12 +217,12 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         } catch (TableReferenceOutOfDateException e) {
             // the table is dropped and recreated since we started processing it.
             // abort the table processing
-            LOG.info().$("table reference out of date, aborting [table=").$safe(tableToken.getDirNameUtf8()).I$();
+            LOG.info().$("table reference out of date, aborting [table=").$(tableToken).I$();
         } catch (CairoException ex) {
             // It is possible that the table is dropped while this async job was in the queue.
             // so it can be not too bad. Log error and continue work on the queue
             LOG.error()
-                    .$("could not purge partition open [table=`").$safe(tableToken.getDirNameUtf8())
+                    .$("could not purge partition open [table=`").$(tableToken)
                     .$("`, msg=").utf8(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();

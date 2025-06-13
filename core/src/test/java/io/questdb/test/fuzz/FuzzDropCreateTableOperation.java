@@ -63,7 +63,7 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
             engine.releaseInactive();
             while (true) {
                 try {
-                    LOG.info().$("dropping table ").$safe(tableToken.getDirNameUtf8()).$();
+                    LOG.info().$("dropping table ").$(tableToken).$();
                     engine.dropTableOrMatView(path, tableToken);
                     break;
                 } catch (CairoException ignore) {

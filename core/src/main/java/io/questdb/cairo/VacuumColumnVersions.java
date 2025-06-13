@@ -96,7 +96,7 @@ public class VacuumColumnVersions implements Closeable {
             throw CairoException.nonCritical().put("cannot vacuum while checkpoint is in progress");
         }
 
-        LOG.info().$("processing [dirName=").$safe(reader.getTableToken().getDirNameUtf8()).I$();
+        LOG.info().$("processing [table=").$(reader.getTableToken()).I$();
         fileNameSink = new Utf8StringSink();
         columnNameSink = new StringSink();
 

@@ -190,8 +190,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
             if (tableDropped || (lastTxn < 0 && engine.isTableDropped(tableToken))) {
                 if (logic.hasPendingTasks()) {
-                    LOG.info().$("table is dropped, but has WALs containing segments with pending tasks ")
-                            .$("[tableDir=").$safe(tableToken.getDirNameUtf8()).I$();
+                    LOG.info().$("table is dropped, but has WALs containing segments with pending tasks [table=")
+                            .$(tableToken).I$();
                 } else if (
                         TableUtils.exists(
                                 ff,
@@ -223,11 +223,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         TableUtils.lockName(pathToDelete);
                         ff.removeQuiet(pathToDelete.$());
                     } else {
-                        LOG.info().$("could not fully remove table, some files left on the disk [tableDir=").$(pathToDelete).I$();
+                        LOG.info().$("could not fully remove table, some files left on the disk [tableDir=")
+                                .$(pathToDelete).I$();
                     }
                 } else {
-                    LOG.info().$("table is not fully dropped, pinging WAL Apply job to delete table files [tableDir=")
-                            .$safe(tableToken.getDirNameUtf8()).I$();
+                    LOG.info().$("table is not fully dropped, pinging WAL Apply job to delete table files [table=")
+                            .$(tableToken).I$();
                     // Ping ApplyWal2TableJob to clean up the table files
                     engine.notifyWalTxnCommitted(tableToken);
                 }
@@ -661,8 +662,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             LogRecord log = LOG.info();
 
             try {
-                log.$("table=").$safe(tableToken.getDirNameUtf8())
-                        .$(", discovered=[");
+                log.$("table=").$(tableToken).$(", discovered=[");
 
                 for (int i = 0, n = getStateSize(); i < n; i++) {
                     final int walId = getWalId(i);
@@ -696,9 +696,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         log.$(',');
                     }
                 }
-                log.$(']');
             } finally {
-                log.$();
+                log.I$();
             }
         }
     }
@@ -707,7 +706,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         @Override
         public void deleteSegmentDirectory(int walId, int segmentId, long lockFd) {
-            LOG.debug().$("deleting WAL segment directory [table=").$safe(tableToken.getDirNameUtf8())
+            LOG.debug().$("deleting WAL segment directory [table=").$(tableToken)
                     .$(", walId=").$(walId)
                     .$(", segmentId=").$(segmentId)
                     .I$();
@@ -720,7 +719,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         @Override
         public void deleteSequencerPart(int seqPart) {
-            LOG.debug().$("deleting sequencer part [table=").$safe(tableToken.getDirNameUtf8())
+            LOG.debug().$("deleting sequencer part [table=").$(tableToken)
                     .$(", part=").$(seqPart)
                     .I$();
             Path path = setSeqPartPath(tableToken).put(Files.SEPARATOR).put(seqPart);
@@ -730,7 +729,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         @Override
         public void deleteWalDirectory(int walId, long lockFd) {
-            LOG.debug().$("deleting WAL directory [table=").$safe(tableToken.getDirNameUtf8())
+            LOG.debug().$("deleting WAL directory [table=").$(tableToken)
                     .$(", walId=").$(walId)
                     .I$();
             if (recursiveDelete(setWalPath(tableToken, walId))) {

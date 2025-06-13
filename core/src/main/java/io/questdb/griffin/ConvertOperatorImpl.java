@@ -292,7 +292,7 @@ public class ConvertOperatorImpl implements Closeable {
             }
             consumeConversionTasks(messageBus.getColumnTaskQueue(), queueCount, true);
             long elapsed = timer.getTicks() - start;
-            LOG.info().$("completed column conversion [at=").$safe(tableWriter.getTableToken().getDirNameUtf8())
+            LOG.info().$("completed column conversion [at=").$(tableWriter.getTableToken())
                     .$(", column=").utf8(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType))
                     .$(", partitions=").$(partitionUpdated)

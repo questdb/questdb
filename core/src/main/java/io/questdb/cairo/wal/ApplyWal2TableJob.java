@@ -232,8 +232,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 engine.unlockReadersAndMetadata(tableToken);
             }
         } else {
-            LOG.info().$("table '").$safe(tableToken.getDirNameUtf8())
-                    .$("' is dropped, waiting to acquire Table Readers lock to delete the table files").$();
+            LOG.info().$("table is dropped, waiting to acquire Table Readers lock to delete the table files [table=")
+                    .$(tableToken).I$();
         }
     }
 
@@ -433,7 +433,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (totalTransactionCount > 0) {
                     LOG.info().$("job ")
                             .$(finishedAll ? "finished" : "ejected")
-                            .$(" [table=").$safe(writer.getTableToken().getDirNameUtf8())
+                            .$(" [table=").$(writer.getTableToken())
                             .$(", seqTxn=").$(writer.getAppliedSeqTxn())
                             .$(", transactions=").$(totalTransactionCount)
                             .$(", rows=").$(rowsAdded)
@@ -489,7 +489,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         engine.notifyWalTxnRepublisher(tableToken);
                         return;
                     } else {
-                        LOG.info().$("high memory pressure, table is backed off from processing WAL transactions [table=").$(tableToken).I$();
+                        LOG.info().$("high memory pressure, table is backed off from processing WAL transactions [table=")
+                                .$(tableToken).I$();
                     }
                 }
                 errorTag = OUT_OF_MEMORY;
@@ -512,7 +513,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             logRecord.$(", error=").$(throwable).I$();
             engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
         } catch (CairoException e) {
-            LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName()).$(", error=").utf8(e.getFlyweightMessage()).I$();
+            LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName())
+                    .$(", error=").utf8(e.getFlyweightMessage())
+                    .I$();
         }
     }
 
@@ -695,7 +698,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     }
                     // No progress, same token or no token, and it's not dropped.
                     // Stop processing WAL transactions for this table, switch to the next table.
-                    LOG.info().$("failed to compile SQL, table rename not fully applied, will retry [table=").$(tableToken).I$();
+                    LOG.info().$("failed to compile SQL, table rename not fully applied, will retry [table=")
+                            .$(tableToken).I$();
                     throw EjectApplyWalException.INSTANCE;
                 }
                 tableWriter.updateTableToken(updatedToken);
@@ -710,8 +714,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 throw e;
             }
             LogRecord log = !e.isWALTolerable() ? LOG.error() : LOG.info();
-            log.$("error applying SQL to wal table [table=")
-                    .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql)
+            log.$("error applying SQL to wal table [table=").$(tableWriter.getTableToken())
+                    .$(", sql=").$(sql)
                     .$(", msg=").utf8(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
@@ -785,8 +789,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     }
                     applyOutstandingWalTransactions(tableToken, writer, engine, operationExecutor, tempPath, runStatus, pressureControl);
                     if (pressureControl.onEnoughMemory()) {
-                        LOG.info().$("table writing memory pressure is easing up [table").$(tableToken)
-                                .$(", parallelMemoryLimit=").$(pressureControl.getMemoryPressureRegulationValue()).I$();
+                        LOG.info().$("table writing memory pressure is easing up [table=").$(tableToken)
+                                .$(", parallelMemoryLimit=").$(pressureControl.getMemoryPressureRegulationValue())
+                                .I$();
                     }
                     writerTxn = writer.getSeqTxn();
                     dirtyWriterTxn = writer.getAppliedSeqTxn();
