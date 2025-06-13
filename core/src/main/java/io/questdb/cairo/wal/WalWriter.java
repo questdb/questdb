@@ -147,13 +147,14 @@ public class WalWriter implements TableWriterAPI {
     private boolean distressed;
     private boolean isCommittingData;
     private byte lastDedupMode = WAL_DEDUP_MODE_DEFAULT;
-    private long lastMatViewPeriodHi;
-    private long lastMatViewRefreshBaseTxn;
-    private long lastMatViewRefreshTimestamp;
+    private long lastMatViewPeriodHi = WAL_DEFAULT_LAST_PERIOD_HI;
+    private long lastMatViewRefreshBaseTxn = WAL_DEFAULT_BASE_TABLE_TXN;
+    private long lastMatViewRefreshTimestamp = WAL_DEFAULT_LAST_REFRESH_TIMESTAMP;
     private long lastReplaceRangeHiTs = 0;
     private long lastReplaceRangeLowTs = 0;
     private int lastSegmentTxn = -1;
     private long lastSeqTxn = NO_TXN;
+    private byte lastTxnType = WalTxnType.DATA;
     private boolean open;
     private boolean rollSegmentOnNextRow = false;
     private int segmentId = -1;
@@ -316,6 +317,7 @@ public class WalWriter implements TableWriterAPI {
     public void commit() {
         // plain old commit
         commit0(
+                WalTxnType.DATA,
                 WAL_DEFAULT_BASE_TABLE_TXN,
                 WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
                 WAL_DEFAULT_LAST_PERIOD_HI,
@@ -339,11 +341,20 @@ public class WalWriter implements TableWriterAPI {
         assert lastReplaceRangeLowTs < lastReplaceRangeHiTs;
         assert txnMinTimestamp >= lastReplaceRangeLowTs;
         assert txnMaxTimestamp <= lastReplaceRangeHiTs;
-        commit0(lastRefreshBaseTxn, lastRefreshTimestamp, lastPeriodHi, lastReplaceRangeLowTs, lastReplaceRangeHiTs, WAL_DEDUP_MODE_REPLACE_RANGE);
+        commit0(
+                WalTxnType.MAT_VIEW_DATA,
+                lastRefreshBaseTxn,
+                lastRefreshTimestamp,
+                lastPeriodHi,
+                lastReplaceRangeLowTs,
+                lastReplaceRangeHiTs,
+                WAL_DEDUP_MODE_REPLACE_RANGE
+        );
     }
 
     public void commitWithParams(long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
         commit0(
+                WalTxnType.DATA,
                 WAL_DEFAULT_BASE_TABLE_TXN,
                 WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
                 WAL_DEFAULT_LAST_PERIOD_HI,
@@ -984,20 +995,31 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private void commit0(long lastRefreshBaseTxn, long lastRefreshTimestamp, long lastPeriodHi, long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
+    private void commit0(
+            byte txnType,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long lastPeriodHi,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode
+    ) {
         checkDistressed();
         try {
             if (inTransaction() || dedupMode == WAL_DEDUP_MODE_REPLACE_RANGE) {
-                isCommittingData = true;
                 final long rowsToCommit = getUncommittedRowCount();
-                lastReplaceRangeLowTs = replaceRangeLowTs;
-                lastReplaceRangeHiTs = replaceRangeHiTs;
-                lastDedupMode = dedupMode;
+
+                this.isCommittingData = true;
+                this.lastTxnType = txnType;
+                this.lastReplaceRangeLowTs = replaceRangeLowTs;
+                this.lastReplaceRangeHiTs = replaceRangeHiTs;
+                this.lastDedupMode = dedupMode;
                 this.lastMatViewRefreshBaseTxn = lastRefreshBaseTxn;
                 this.lastMatViewRefreshTimestamp = lastRefreshTimestamp;
                 this.lastMatViewPeriodHi = lastPeriodHi;
 
                 lastSegmentTxn = events.appendData(
+                        txnType,
                         currentTxnStartRowNum,
                         segmentRowCount,
                         txnMinTimestamp,
@@ -1627,6 +1649,7 @@ public class WalWriter implements TableWriterAPI {
             // When current transaction is not a data transaction but a column add transaction
             // there is no need to add a record about it to the new segment event file.
             lastSegmentTxn = events.appendData(
+                    lastTxnType,
                     0,
                     uncommittedRows,
                     txnMinTimestamp,

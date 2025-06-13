@@ -68,7 +68,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import static io.questdb.cairo.wal.WalUtils.*;
+import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
+import static io.questdb.cairo.wal.WalUtils.WAL_DEFAULT_LAST_REFRESH_TIMESTAMP;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
@@ -550,7 +551,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final MatViewDefinition viewDefinition = viewState.getViewDefinition();
         final TableToken viewTableToken = viewDefinition.getMatViewToken();
         long refreshFinishTimestamp = 0;
-        final long commitBaseTableTxn = baseTableTxn == -1 ? WAL_DEFAULT_BASE_TABLE_TXN : baseTableTxn;
+        final long commitBaseTableTxn = baseTableTxn != -1 ? baseTableTxn : viewState.getLastRefreshBaseTxn();
         final long commitPeriodHi = periodHi != Numbers.LONG_NULL ? periodHi : viewState.getLastPeriodHi();
 
         try {
@@ -592,7 +593,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     long commitTarget = batchSize;
                     long rowCount = 0;
 
-
                     intervalIterator.toTop(intervalStep);
                     long replacementTimestampLo = Long.MIN_VALUE;
                     long replacementTimestampHi = Long.MIN_VALUE;
@@ -603,12 +603,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             if (replacementTimestampHi > replacementTimestampLo) {
                                 // Gap in the refresh intervals, commit the previous batch
                                 // so that the replacement interval does not span across the gap.
-                                walWriter.commitMatView(
-                                        WAL_DEFAULT_BASE_TABLE_TXN,
-                                        WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
-                                        WAL_DEFAULT_LAST_PERIOD_HI,
+                                walWriter.commitWithParams(
                                         replacementTimestampLo,
-                                        replacementTimestampHi
+                                        replacementTimestampHi,
+                                        WAL_DEDUP_MODE_REPLACE_RANGE
                                 );
                                 commitTarget = rowCount + batchSize;
                             }
@@ -634,10 +632,25 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                             if (rowCount >= commitTarget) {
                                 final boolean isLastInterval = intervalIterator.isLast();
-                                final long commitBaseTableTxnLocal = isLastInterval ? commitBaseTableTxn : WAL_DEFAULT_BASE_TABLE_TXN;
                                 refreshFinishTimestamp = isLastInterval ? microsecondClock.getTicks() : WAL_DEFAULT_LAST_REFRESH_TIMESTAMP;
 
-                                walWriter.commitMatView(commitBaseTableTxnLocal, refreshFinishTimestamp, commitPeriodHi, replacementTimestampLo, replacementTimestampHi);
+                                if (isLastInterval) {
+                                    refreshFinishTimestamp = microsecondClock.getTicks();
+                                    walWriter.commitMatView(
+                                            commitBaseTableTxn,
+                                            refreshFinishTimestamp,
+                                            commitPeriodHi,
+                                            replacementTimestampLo,
+                                            replacementTimestampHi
+                                    );
+                                } else {
+                                    walWriter.commitWithParams(
+                                            replacementTimestampLo,
+                                            replacementTimestampHi,
+                                            WAL_DEDUP_MODE_REPLACE_RANGE
+                                    );
+                                }
+
                                 replacementTimestampLo = replacementTimestampHi;
                                 commitTarget = rowCount + batchSize;
                             }
@@ -646,7 +659,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                     if (replacementTimestampHi > replacementTimestampLo) {
                         refreshFinishTimestamp = microsecondClock.getTicks();
-                        walWriter.commitMatView(commitBaseTableTxn, refreshFinishTimestamp, commitPeriodHi, replacementTimestampLo, replacementTimestampHi);
+                        walWriter.commitMatView(
+                                commitBaseTableTxn,
+                                refreshFinishTimestamp,
+                                commitPeriodHi,
+                                replacementTimestampLo,
+                                replacementTimestampHi
+                        );
                     }
                     break;
                 } catch (TableReferenceOutOfDateException e) {

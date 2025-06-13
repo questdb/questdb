@@ -118,71 +118,6 @@ class WalEventWriter implements Closeable {
         }
     }
 
-    private int appendData(
-            byte txnType,
-            long startRowID,
-            long endRowID,
-            long minTimestamp,
-            long maxTimestamp,
-            boolean outOfOrder,
-            long lastRefreshBaseTxn,
-            long lastRefreshTimestamp,
-            long lastPeriodHi,
-            long replaceRangeLowTs,
-            long replaceRangeHiTs,
-            byte dedupMode
-    ) {
-        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
-        eventMem.putLong(txn);
-        eventMem.putByte(txnType);
-        eventMem.putLong(startRowID);
-        eventMem.putLong(endRowID);
-        eventMem.putLong(minTimestamp);
-        eventMem.putLong(maxTimestamp);
-        eventMem.putBool(outOfOrder);
-        if (txnType == WalTxnType.MAT_VIEW_DATA) {
-            assert lastRefreshBaseTxn != Numbers.LONG_NULL;
-            eventMem.putLong(lastRefreshBaseTxn);
-            eventMem.putLong(lastRefreshTimestamp);
-        }
-
-        if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
-            if (replaceRangeLowTs >= replaceRangeHiTs) {
-                throw CairoException.nonCritical().put("Replace range low timestamp must be less than replace range high timestamp.");
-            }
-            if (replaceRangeLowTs > minTimestamp) {
-                throw CairoException.nonCritical().put("Replace range low timestamp must be less than or equal to the minimum timestamp.");
-            }
-            if (replaceRangeHiTs <= maxTimestamp) {
-                throw CairoException.nonCritical().put("Replace range high timestamp must be greater than the maximum timestamp.");
-            }
-        }
-
-        writeSymbolMapDiffs();
-
-        if (dedupMode != WAL_DEDUP_MODE_DEFAULT) {
-            // To test backwards compatibility and ensure that we still can read WALs
-            // written by the old QuestDB version, make the dedup mode
-            // and replace range value optional. It will then not be written for the most transactions,
-            // and it will test the reading WAL-E code to read the old format.
-            eventMem.putLong(replaceRangeLowTs);
-            eventMem.putLong(replaceRangeHiTs);
-            eventMem.putByte(dedupMode);
-        }
-        if (msgVersion == WALE_MESSAGE_V2 && txnType == WalTxnType.MAT_VIEW_DATA) {
-            eventMem.putLong(lastPeriodHi);
-        }
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
-        if (txnType == WalTxnType.MAT_VIEW_DATA) {
-            eventMem.putInt(WAL_FORMAT_OFFSET_32, Numbers.encodeLowHighShorts(WALE_MAT_VIEW_FORMAT_VERSION, msgVersion));
-        }
-        return txn++;
-    }
-
     private void appendFunctionValue(Function function) {
         final int type = function.getType();
         eventMem.putInt(type);
@@ -322,6 +257,7 @@ class WalEventWriter implements Closeable {
      * @param dedupMode            deduplication mode, can be DEFAULT, NO_DEDUP, UPSERT_NEW or REPLACE_RANGE.
      */
     int appendData(
+            byte txnType,
             long startRowID,
             long endRowID,
             long minTimestamp,
@@ -334,21 +270,56 @@ class WalEventWriter implements Closeable {
             long replaceRangeHiTs,
             byte dedupMode
     ) {
-        byte msgType = lastRefreshBaseTxn != WAL_DEFAULT_BASE_TABLE_TXN ? WalTxnType.MAT_VIEW_DATA : WalTxnType.DATA;
-        return appendData(
-                msgType,
-                startRowID,
-                endRowID,
-                minTimestamp,
-                maxTimestamp,
-                outOfOrder,
-                lastRefreshBaseTxn,
-                lastRefreshTimestamp,
-                lastPeriodHi,
-                replaceRangeLowTs,
-                replaceRangeHiTs,
-                dedupMode
-        );
+        assert txnType == WalTxnType.MAT_VIEW_DATA || txnType == WalTxnType.DATA : "unexpected txn type: " + txnType;
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(txnType);
+        eventMem.putLong(startRowID);
+        eventMem.putLong(endRowID);
+        eventMem.putLong(minTimestamp);
+        eventMem.putLong(maxTimestamp);
+        eventMem.putBool(outOfOrder);
+        if (txnType == WalTxnType.MAT_VIEW_DATA) {
+            assert lastRefreshBaseTxn != Numbers.LONG_NULL;
+            eventMem.putLong(lastRefreshBaseTxn);
+            eventMem.putLong(lastRefreshTimestamp);
+        }
+
+        if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            if (replaceRangeLowTs >= replaceRangeHiTs) {
+                throw CairoException.nonCritical().put("Replace range low timestamp must be less than replace range high timestamp.");
+            }
+            if (replaceRangeLowTs > minTimestamp) {
+                throw CairoException.nonCritical().put("Replace range low timestamp must be less than or equal to the minimum timestamp.");
+            }
+            if (replaceRangeHiTs <= maxTimestamp) {
+                throw CairoException.nonCritical().put("Replace range high timestamp must be greater than the maximum timestamp.");
+            }
+        }
+
+        writeSymbolMapDiffs();
+
+        if (dedupMode != WAL_DEDUP_MODE_DEFAULT) {
+            // To test backwards compatibility and ensure that we still can read WALs
+            // written by the old QuestDB version, make the dedup mode
+            // and replace range value optional. It will then not be written for the most transactions,
+            // and it will test the reading WAL-E code to read the old format.
+            eventMem.putLong(replaceRangeLowTs);
+            eventMem.putLong(replaceRangeHiTs);
+            eventMem.putByte(dedupMode);
+        }
+        if (msgVersion == WALE_MESSAGE_V2 && txnType == WalTxnType.MAT_VIEW_DATA) {
+            eventMem.putLong(lastPeriodHi);
+        }
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        if (txnType == WalTxnType.MAT_VIEW_DATA) {
+            eventMem.putInt(WAL_FORMAT_OFFSET_32, Numbers.encodeLowHighShorts(WALE_MAT_VIEW_FORMAT_VERSION, msgVersion));
+        }
+        return txn++;
     }
 
     int appendMatViewInvalidate(

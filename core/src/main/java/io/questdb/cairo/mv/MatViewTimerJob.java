@@ -294,10 +294,20 @@ public class MatViewTimerJob extends SynchronizedJob {
             this.tzRules = tzRules;
             this.delay = delay;
             sampler.setStart(start);
-            // TODO(puzpuzpuz): trigger period mat views immediately after restart
-            // It's fine if the timer triggers immediately.
-            deadlineUtc = now > start + startEpsilon ? sampler.nextTimestamp(sampler.round(now - 1)) : start;
-            deadlineLocal = tzRules != null ? deadlineUtc + tzRules.getOffset(deadlineUtc) : deadlineUtc;
+            switch (type) {
+                case INCREMENTAL_REFRESH_TYPE:
+                    // It's fine if the timer triggers immediately.
+                    deadlineUtc = now > start + startEpsilon ? sampler.nextTimestamp(sampler.round(now - 1)) : start;
+                    deadlineLocal = tzRules != null ? deadlineUtc + tzRules.getOffset(deadlineUtc) : deadlineUtc;
+                    break;
+                case PERIOD_REFRESH_TYPE:
+                    // TODO(puzpuzpuz): trigger period mat views immediately after restart
+                    deadlineUtc = now > start + startEpsilon ? sampler.nextTimestamp(sampler.round(now - 1)) : start;
+                    deadlineLocal = tzRules != null ? deadlineUtc + tzRules.getOffset(deadlineUtc) : deadlineUtc;
+                    break;
+                default:
+                    throw new IllegalStateException("unexpected timer type: " + type);
+            }
         }
 
         public long getDeadline() {
