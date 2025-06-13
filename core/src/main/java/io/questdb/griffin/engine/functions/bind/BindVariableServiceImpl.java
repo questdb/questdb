@@ -1204,13 +1204,13 @@ public class BindVariableServiceImpl implements BindVariableService {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.BYTE:
-                ((ByteBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsByte(value, ColumnType.TIMESTAMP) : 0;
+                ((ByteBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsByte(value, ColumnType.TIMESTAMP_MICRO) : 0;
                 break;
             case ColumnType.SHORT:
-                ((ShortBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsShort(value, ColumnType.TIMESTAMP) : 0;
+                ((ShortBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsShort(value, ColumnType.TIMESTAMP_MICRO) : 0;
                 break;
             case ColumnType.INT:
-                ((IntBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsInt(value, ColumnType.TIMESTAMP) : Numbers.INT_NULL;
+                ((IntBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsInt(value, ColumnType.TIMESTAMP_MICRO) : Numbers.INT_NULL;
                 break;
             case ColumnType.LONG:
                 ((LongBindVariable) function).value = value;
