@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -296,6 +297,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
 
     private void testFuzz(int tsDuplicatePercentage) throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, String.valueOf(rnd.nextInt(10) + 1));
+
         assertMemoryLeak(() -> {
             final int table1Size = rnd.nextPositiveInt() % 1000;
             final int table2Size = rnd.nextPositiveInt() % 1000;
