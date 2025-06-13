@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -55,6 +56,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
     private final FilteredAsOfJoinKeyedFastRecordCursor cursor;
     private final SelectedRecordCursorFactory.SelectedTimeFrameCursor selectedTimeFrameCursor;
     private final Function slaveRecordFilter;
+    private final long toleranceInterval;
 
     /**
      * Creates a new instance with filtered slave record support and optional crossindex projection.
@@ -78,7 +80,9 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             int columnSplit,
             @NotNull Record slaveNullRecord,
             @Nullable IntList slaveColumnCrossIndex,
-            int slaveTimestampIndex) {
+            int slaveTimestampIndex,
+            long toleranceInterval
+    ) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.slaveRecordFilter = slaveRecordFilter;
@@ -94,6 +98,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         } else {
             this.selectedTimeFrameCursor = null;
         }
+        this.toleranceInterval = toleranceInterval;
     }
 
     @Override
@@ -132,7 +137,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Filtered AsOf Join Fast Scan");
-        sink.attr("filter").val(slaveRecordFilter);
+        sink.attr("filter").val(slaveRecordFilter, slaveFactory);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -193,11 +198,17 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             // and in such case we do not want to call `masterCursor.hasNext()` during the next call to `this.hasNext()`.
             // if we are here then it's clear nextSlave() did not throw DataUnavailableException.
             isMasterHasNextPending = true;
-
             if (!record.hasSlave()) {
                 // the non-filtering algo did not find a matching record in the slave table.
                 // this means the slave table does not have a single record with a timestamp that is less than or equal
                 // to the master record's timestamp.
+                return true;
+            }
+
+            long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+            if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
+                // we are past the tolerance interval, no need to traverse the slave cursor any further
+                record.hasSlave(false);
                 return true;
             }
 
@@ -265,6 +276,13 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 }
 
                 slaveCursor.recordAtRowIndex(slaveRecB, filteredRowId);
+                slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
+                    // we are past the tolerance interval, no need to traverse the slave cursor any further
+                    record.hasSlave(false);
+                    highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);
+                    break;
+                }
                 if (slaveRecordFilter.getBool(filterRecord)) {
                     // we have a match, that's awesome, no need to traverse the slave cursor!
                     break;
