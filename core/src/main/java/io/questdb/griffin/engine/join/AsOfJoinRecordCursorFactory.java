@@ -81,7 +81,9 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
             Map joinKeyMapA = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes);
-            Map joinKeyMapB = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes);
+            // if toleranceInterval is not set, we do not need a second map for evacuation. since evacuations are only
+            // executed when TOLERANCE_INTERVAL is set
+            Map joinKeyMapB = toleranceInterval != Numbers.LONG_NULL ? MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes) : null;
             int slaveWrappedOverMaster = slaveColumnTypes.getColumnCount() - masterTableKeyColumns.getColumnCount();
             this.cursor = new AsOfJoinRecordCursor(
                     columnSplit,
@@ -156,7 +158,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
     private class AsOfJoinRecordCursor extends AbstractSymbolWrapOverCursor {
         private final Map joinKeyMapA;
-        private final Map joinKeyMapB;
+        private final Map joinKeyMapB; // may be null if map evacuation is disabled (=no TOLERANCE_INTERVAL)
         private final int masterTimestampIndex;
         private final SymbolWrapOverJoinRecord record;
         private final int slaveTimestampIndex;
@@ -202,7 +204,9 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         public void close() {
             if (isOpen) {
                 joinKeyMapA.close();
-                joinKeyMapB.close();
+                if (joinKeyMapB != null) {
+                    joinKeyMapB.close();
+                }
                 isOpen = false;
                 super.close();
             }
@@ -295,10 +299,17 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             isMasterHasNextPending = true;
         }
 
+        /**
+         * Evacuates the join key map by copying records that are not older than `masterTimestamp - toleranceInterval`
+         * This is useful when some of the join keys are unique and the map is ever-growing.
+         *
+         * @param masterTimestamp the timestamp of the current master record
+         */
         private void evacuateJoinKeyMap(long masterTimestamp) {
-            if (currentJoinKeyMap.size() < mapEvacuationThreshold || toleranceInterval == Numbers.LONG_NULL) {
+            if (toleranceInterval == Numbers.LONG_NULL || currentJoinKeyMap.size() < mapEvacuationThreshold) {
                 return; // no need to evacuate small maps
             }
+            assert joinKeyMapB != null : "Join key map B must not be null";
             Map dstMap = currentJoinKeyMap == joinKeyMapA ? joinKeyMapB : joinKeyMapA;
             assert dstMap.size() == 0 : "Evacuating non-empty map: " + dstMap.size();
 
@@ -331,7 +342,10 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             if (!isOpen) {
                 isOpen = true;
                 joinKeyMapA.reopen();
-                joinKeyMapB.reopen();
+                if (joinKeyMapB != null) {
+                    // reopen joinKeyMapB only if it was created
+                    joinKeyMapB.reopen();
+                }
             }
             currentJoinKeyMap = joinKeyMapA;
             this.masterCursor = masterCursor;
