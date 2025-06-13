@@ -559,6 +559,13 @@ public enum PropertyKey implements ConfigPropertyKey {
     MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD("mat.view.refresh.worker.sleep.threshold"),
     MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT("mat.view.refresh.worker.sleep.timeout"),
     MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD("mat.view.refresh.worker.yield.threshold"),
+    VIEW_REFRESH_WORKER_COUNT("view.refresh.worker.count"),
+    VIEW_REFRESH_WORKER_AFFINITY("view.refresh.worker.affinity"),
+    VIEW_REFRESH_WORKER_HALT_ON_ERROR("view.refresh.worker.haltOnError"),
+    VIEW_REFRESH_WORKER_NAP_THRESHOLD("view.refresh.worker.nap.threshold"),
+    VIEW_REFRESH_WORKER_SLEEP_THRESHOLD("view.refresh.worker.sleep.threshold"),
+    VIEW_REFRESH_WORKER_SLEEP_TIMEOUT("view.refresh.worker.sleep.timeout"),
+    VIEW_REFRESH_WORKER_YIELD_THRESHOLD("view.refresh.worker.yield.threshold"),
     CAIRO_TXN_SCOREBOARD_FORMAT("cairo.txn.scoreboard.format"),
     DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY("debug.wal.apply.block.failure.no.retry", false, true);
 

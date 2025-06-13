@@ -197,6 +197,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
+    private final ObjList<CharSequence> views = new ObjList<>();
     protected CharSequence sqlText;
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
@@ -533,12 +534,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         codeGenerator.setFullFatJoins(value);
     }
 
-    @TestOnly
     @Override
     public ExecutionModel testCompileModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
         clear();
         lexer.of(sqlText);
-        return compileExecutionModel(executionContext);
+        return compileExecutionModel(executionContext, false);
     }
 
     @TestOnly
@@ -2247,14 +2247,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext) throws SqlException {
+        return compileExecutionModel(executionContext, true);
+    }
+
+    private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext, boolean generateCompileViewEvents) throws SqlException {
         final ExecutionModel model = parser.parse(lexer, executionContext, this);
-        if (model.getModelType() != ExecutionModel.EXPLAIN) {
-            return compileExecutionModel0(executionContext, model);
-        } else {
-            final ExplainModel explainModel = (ExplainModel) model;
-            final ExecutionModel innerModel = compileExplainExecutionModel0(executionContext, explainModel.getInnerExecutionModel());
-            explainModel.setModel(innerModel);
-            return explainModel;
+        try {
+            if (model.getModelType() != ExecutionModel.EXPLAIN) {
+                return compileExecutionModel0(executionContext, model);
+            } else {
+                final ExplainModel explainModel = (ExplainModel) model;
+                final ExecutionModel innerModel = compileExplainExecutionModel0(executionContext, explainModel.getInnerExecutionModel());
+                explainModel.setModel(innerModel);
+                return explainModel;
+            }
+        } catch (Throwable e) {
+            if (generateCompileViewEvents) {
+                enqueueCompileViews(model);
+            }
+            throw e;
         }
     }
 
@@ -3225,6 +3236,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    private void enqueueCompileView(TableToken viewToken) {
+        engine.getViewStateStore().enqueueCompile(viewToken);
+    }
+
+    private void enqueueCompileViews(ExecutionModel model) {
+        final QueryModel queryModel = model.getQueryModel();
+        if (queryModel == null) {
+            return;
+        }
+
+        views.clear();
+        SqlUtil.collectAllTableNames(queryModel, views, true);
+        for (int i = 0, n = views.size(); i < n; i++) {
+            final ViewDefinition viewDefinition = getViewDefinition(views.getQuick(i));
+            if (viewDefinition != null) {
+                enqueueCompileView(viewDefinition.getViewToken());
+            }
+        }
+    }
+
     private void executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
         if (createMatViewOp.getRefreshType() != MatViewDefinition.INCREMENTAL_REFRESH_TYPE
                 && createMatViewOp.getRefreshType() != MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
@@ -3895,6 +3926,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         return -1;
+    }
+
+    private ViewDefinition getViewDefinition(CharSequence viewName) {
+        final TableToken viewToken = engine.getTableTokenIfExists(viewName);
+        if (viewToken == null) {
+            return null;
+        }
+        return engine.getViewGraph().getViewDefinition(viewToken);
     }
 
     private int goToQueryEnd() throws SqlException {

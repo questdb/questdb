@@ -22,15 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.view;
 
-public interface DdlListener {
+import io.questdb.mp.WorkerPoolConfiguration;
 
-    void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName);
-
-    void onColumnRenamed(SecurityContext securityContext, TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName);
-
-    void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken);
-
-    void onTableRenamed(SecurityContext securityContext, TableToken oldTableToken, TableToken newTableToken);
+public class DefaultViewRefreshWorkerPoolConfiguration implements WorkerPoolConfiguration {
+    @Override
+    public int getWorkerCount() {
+        return 2;
+    }
 }

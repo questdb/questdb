@@ -28,7 +28,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.ObjList;
 
 public interface CreateViewOperationBuilder extends ExecutionModel {
 
@@ -38,10 +38,10 @@ public interface CreateViewOperationBuilder extends ExecutionModel {
             CharSequence sqlText
     ) throws SqlException;
 
+    ObjList<CharSequence> getDependencies();
+
     @Override
     default int getModelType() {
         return CREATE_VIEW;
     }
-
-    void setSelectModel(QueryModel selectModel);
 }

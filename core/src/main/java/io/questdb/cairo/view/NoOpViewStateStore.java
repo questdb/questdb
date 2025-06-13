@@ -49,6 +49,10 @@ public class NoOpViewStateStore implements ViewStateStore {
     }
 
     @Override
+    public void enqueueCompile(TableToken viewToken) {
+    }
+
+    @Override
     public void enqueueInvalidate(TableToken viewToken, String invalidationReason) {
     }
 
@@ -59,5 +63,10 @@ public class NoOpViewStateStore implements ViewStateStore {
 
     @Override
     public void removeViewState(TableToken viewToken) {
+    }
+
+    @Override
+    public boolean tryDequeueCompilerTask(ViewCompilerTask task) {
+        return false;
     }
 }

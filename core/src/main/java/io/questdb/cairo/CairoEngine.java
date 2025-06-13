@@ -562,7 +562,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.authorizeMatViewCreate();
         final TableToken matViewToken = createTableOrViewOrMatViewUnsecure(mem, blockFileWriter, path, ifNotExists, struct, keepLock, inVolume);
-        getDdlListener(matViewToken).onTableOrMatViewCreated(securityContext, matViewToken);
+        getDdlListener(matViewToken).onTableOrViewOrMatViewCreated(securityContext, matViewToken);
         final MatViewDefinition matViewDefinition = struct.getMatViewDefinition();
         try {
             if (matViewGraph.addView(matViewDefinition)) {
@@ -597,7 +597,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.authorizeTableCreate();
         final TableToken tableToken = createTableOrViewOrMatViewUnsecure(mem, null, path, ifNotExists, struct, keepLock, inVolume);
-        getDdlListener(tableToken).onTableOrMatViewCreated(securityContext, tableToken);
+        getDdlListener(tableToken).onTableOrViewOrMatViewCreated(securityContext, tableToken);
         return tableToken;
     }
 
@@ -611,7 +611,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.authorizeViewCreate();
         final TableToken viewToken = createTableOrViewOrMatViewUnsecure(mem, blockFileWriter, path, ifNotExists, struct, false, false);
-        getDdlListener(viewToken).onTableOrMatViewCreated(securityContext, viewToken);
+        getDdlListener(viewToken).onTableOrViewOrMatViewCreated(securityContext, viewToken);
         final ViewDefinition viewDefinition = struct.getViewDefinition();
         try {
             if (viewGraph.addView(viewDefinition)) {
@@ -1743,6 +1743,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
 
                         if (tableToken.isView()) {
+                            // todo: enqueue this for the view refresh job instead?
                             try (WalWriter walWriter = walWriterPool.get(tableToken)) {
                                 walWriter.resetViewState(false, null);
                             }

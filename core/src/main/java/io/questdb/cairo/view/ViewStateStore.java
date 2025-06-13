@@ -28,9 +28,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
-
-// TODO: do we need this store ???
 
 /**
  * It holds per-view states.
@@ -42,12 +39,10 @@ public interface ViewStateStore extends QuietCloseable, Mutable {
     // Only creates the view state, no telemetry event logged.
     ViewState addViewState(ViewDefinition viewDefinition);
 
-    @TestOnly
-    @Override
-    void clear();
-
     // Creates the view state, logs telemetry event.
     void createViewState(ViewDefinition viewDefinition);
+
+    void enqueueCompile(TableToken viewToken);
 
     void enqueueInvalidate(TableToken viewToken, String invalidationReason);
 
@@ -55,4 +50,6 @@ public interface ViewStateStore extends QuietCloseable, Mutable {
     ViewState getViewState(TableToken viewToken);
 
     void removeViewState(TableToken viewToken);
+
+    boolean tryDequeueCompilerTask(ViewCompilerTask task);
 }

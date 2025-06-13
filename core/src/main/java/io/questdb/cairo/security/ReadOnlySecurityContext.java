@@ -222,6 +222,11 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeViewCompile() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizeViewCreate() {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }

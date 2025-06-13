@@ -22,15 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.view;
 
-public interface DdlListener {
+import io.questdb.cairo.TableToken;
+import io.questdb.mp.ValueHolder;
+import io.questdb.std.Numbers;
 
-    void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName);
+public class ViewCompilerTask implements ValueHolder<ViewCompilerTask> {
+    public static final int COMPILE = 0;
+    public static final int INVALIDATE = 1;
+    public static final int RESET = 2;
+    public static final int UNDEFINED = -1;
+    public String invalidationReason;
+    public int operation = UNDEFINED;
+    public TableToken tableToken;
+    public long updateTimestamp = Numbers.LONG_NULL;
 
-    void onColumnRenamed(SecurityContext securityContext, TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName);
+    @Override
+    public void clear() {
+        operation = UNDEFINED;
+        tableToken = null;
+        invalidationReason = null;
+        updateTimestamp = Numbers.LONG_NULL;
+    }
 
-    void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken);
-
-    void onTableRenamed(SecurityContext securityContext, TableToken oldTableToken, TableToken newTableToken);
+    @Override
+    public void copyTo(ViewCompilerTask target) {
+        target.operation = operation;
+        target.tableToken = tableToken;
+        target.invalidationReason = invalidationReason;
+        target.updateTimestamp = updateTimestamp;
+    }
 }

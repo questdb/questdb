@@ -68,15 +68,22 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     private final String sqlText;
     private final ViewDefinition viewDefinition = new ViewDefinition();
 
-    // TODO: remove createTableOperation and delegated methods, they should throw UnsupportedOperationException
+    // TODO: remove createTableOperation and delegated methods, they should throw UnsupportedOperationException?
     private CreateTableOperationImpl createTableOperation;
 
     public CreateViewOperationImpl(
             @NotNull String sqlText,
-            @NotNull CreateTableOperationImpl createTableOperation
+            @NotNull CreateTableOperationImpl createTableOperation,
+            @NotNull ObjList<CharSequence> dependencies
     ) {
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
+        final ObjList<CharSequence> deps = viewDefinition.getDependencies();
+        for (int i = 0, n = dependencies.size(); i < n; i++) {
+            final CharSequence tableName = dependencies.getQuick(i);
+            // todo: use an object pool instead of toString()?
+            deps.add(tableName.toString());
+        }
     }
 
     @Override

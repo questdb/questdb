@@ -27,14 +27,32 @@ package io.questdb.cairo.view;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.mp.ConcurrentQueue;
+import io.questdb.mp.Queue;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
+import io.questdb.std.ThreadLocal;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 public class ViewStateStoreImpl implements ViewStateStore {
+    private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<ViewState> stateByTableDirName = new ConcurrentHashMap<>();
+    private final ThreadLocal<ViewCompilerTask> taskHolder = new ThreadLocal<>(ViewCompilerTask::new);
+    private final Queue<ViewCompilerTask> taskQueue = new ConcurrentQueue<>(ViewCompilerTask::new);
+
+    // todo: add telemetry
+    //private final Telemetry<TelemetryViewTask> telemetry;
+    //private final ViewTelemetryFacade telemetryFacade;
 
     public ViewStateStoreImpl(CairoEngine engine) {
+//        this.telemetry = engine.getTelemetryMatView();
+//        this.telemetryFacade = telemetry.isEnabled()
+//                ? this::storeViewTelemetry
+//                : (event, tableToken, errorMessage, latencyUs) -> { /* no-op */ };
+
+        this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
     }
 
     @Override
@@ -70,7 +88,13 @@ public class ViewStateStoreImpl implements ViewStateStore {
     }
 
     @Override
-    public void enqueueInvalidate(TableToken viewToken, String invalidationReason) {
+    public void enqueueCompile(@NotNull TableToken viewToken) {
+        enqueueViewTask(viewToken, ViewCompilerTask.COMPILE, null);
+    }
+
+    @Override
+    public void enqueueInvalidate(@NotNull TableToken tableToken, String invalidationReason) {
+        enqueueViewTask(tableToken, ViewCompilerTask.INVALIDATE, invalidationReason);
     }
 
     @Override
@@ -94,4 +118,27 @@ public class ViewStateStoreImpl implements ViewStateStore {
             state.tryCloseIfDropped();
         }
     }
+
+    @Override
+    public boolean tryDequeueCompilerTask(ViewCompilerTask task) {
+        return taskQueue.tryDequeue(task);
+    }
+
+    private void enqueueViewTask(
+            @NotNull TableToken tableToken,
+            int operation,
+            String invalidationReason
+    ) {
+        final ViewCompilerTask task = taskHolder.get();
+        //task.clear();
+        task.tableToken = tableToken;
+        task.operation = operation;
+        task.invalidationReason = invalidationReason;
+        task.updateTimestamp = microsecondClock.getTicks();
+        taskQueue.enqueue(task);
+    }
+
+//    private void storeViewTelemetry(short event, TableToken tableToken, CharSequence errorMessage, long latencyUs) {
+//        TelemetryViewTask.store(telemetry, event, tableToken.getTableId(), errorMessage, latencyUs);
+//    }
 }

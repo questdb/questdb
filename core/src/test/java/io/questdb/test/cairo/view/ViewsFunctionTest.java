@@ -26,14 +26,13 @@ package io.questdb.test.cairo.view;
 
 import org.junit.Test;
 
-public class ViewsTest extends AbstractViewTest {
+public class ViewsFunctionTest extends AbstractViewTest {
 
     @Test
     public void testViews() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
             createTable(TABLE2);
-            drainWalQueue();
 
             assertQueryAndPlan(
                     "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\n",
@@ -46,32 +45,16 @@ public class ViewsTest extends AbstractViewTest {
             );
 
             final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4";
-            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ");");
-            drainWalQueue();
-            assertViewDefinition(VIEW1, query1);
-            assertViewDefinitionFile(VIEW1, query1);
-            assertViewStateFile(VIEW1);
+            createView(VIEW1, query1, TABLE1);
 
             final String query2 = VIEW1 + " where v_max > 6";
-            execute("CREATE VIEW " + VIEW2 + " AS (" + query2 + ");");
-            drainWalQueue();
-            assertViewDefinition(VIEW2, query2);
-            assertViewDefinitionFile(VIEW2, query2);
-            assertViewStateFile(VIEW2);
+            createView(VIEW2, query2, TABLE1, VIEW1);
 
             final String query3 = VIEW2 + " where v_max > 7";
-            execute("CREATE VIEW " + VIEW3 + " AS (" + query3 + ");");
-            drainWalQueue();
-            assertViewDefinition(VIEW3, query3);
-            assertViewDefinitionFile(VIEW3, query3);
-            assertViewStateFile(VIEW3);
+            createView(VIEW3, query3, TABLE1, VIEW1, VIEW2);
 
             final String query4 = "select date_trunc('hour', ts), avg(v) as v_avg from " + TABLE2;
-            execute("CREATE VIEW " + VIEW4 + " AS (" + query4 + ");");
-            drainWalQueue();
-            assertViewDefinition(VIEW4, query4);
-            assertViewDefinitionFile(VIEW4, query4);
-            assertViewStateFile(VIEW4);
+            createView(VIEW4, query4, TABLE2);
 
             assertQueryAndPlan(
                     "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\n" +

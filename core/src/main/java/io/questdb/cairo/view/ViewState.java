@@ -106,12 +106,12 @@ public class ViewState implements QuietCloseable {
         dropped = true;
     }
 
-    public void markAsInvalid(CharSequence invalidationReason) {
-        this.invalid = true;
+    public void markAsInvalid() {
+        invalid = true;
     }
 
     public void markAsValid() {
-        this.invalid = false;
+        invalid = false;
     }
 
     public void tryCloseIfDropped() {

@@ -26,13 +26,13 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.view.ViewDefinition;
-import io.questdb.cairo.view.ViewGraph;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
@@ -265,36 +265,6 @@ public class SqlParser {
         }
     }
 
-    private static void collectAllTableNames(
-            QueryModel model, LowerCaseCharSequenceHashSet outTableNames, IntList outTableNamePositions
-    ) {
-        QueryModel m = model;
-        do {
-            final ExpressionNode tableNameExpr = m.getTableNameExpr();
-            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
-                if (outTableNames.add(unquote(tableNameExpr.token))) {
-                    outTableNamePositions.add(tableNameExpr.position);
-                }
-            }
-
-            final ObjList<QueryModel> joinModels = m.getJoinModels();
-            for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final QueryModel joinModel = joinModels.getQuick(i);
-                if (joinModel == m) {
-                    continue;
-                }
-                collectAllTableNames(joinModel, outTableNames, outTableNamePositions);
-            }
-
-            final QueryModel unionModel = m.getUnionModel();
-            if (unionModel != null) {
-                collectAllTableNames(unionModel, outTableNames, outTableNamePositions);
-            }
-
-            m = m.getNestedModel();
-        } while (m != null);
-    }
-
     private static SqlException err(GenericLexer lexer, @Nullable CharSequence tok, @NotNull String msg) {
         return SqlException.parserErr(lexer.lastTokenPosition(), tok, msg);
     }
@@ -489,10 +459,31 @@ public class SqlParser {
         }
     }
 
-    private QueryModel compileViewQuery(ViewDefinition viewDefinition) throws SqlException {
+    private void compileViewQuery(QueryModel model, TableToken viewToken, int viewPosition) throws SqlException {
+        final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
+        if (viewDefinition == null) {
+            throw SqlException.viewDoesNotExist(viewPosition, viewToken.getTableName());
+        }
+
+        final QueryModel viewModel = compileViewQuery(viewDefinition, viewPosition);
+        model.setNestedModel(viewModel);
+        model.setNestedModelIsSubQuery(true);
+    }
+
+    private QueryModel compileViewQuery(ViewDefinition viewDefinition, int viewPosition) throws SqlException {
         final GenericLexer viewLexer = viewLexers.next();
         viewLexer.of(viewDefinition.getViewSql());
-        return parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, viewDecl);
+        try {
+            final QueryModel viewModel = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, viewDecl);
+            viewModel.setViewNameExpr(literal(viewDefinition.getViewToken().getTableName(), viewPosition));
+            return viewModel;
+        } catch (SqlException | CairoException e) {
+            enqueueInvalidateView(viewDefinition.getViewToken(), e.getFlyweightMessage());
+            throw e;
+        } catch (Throwable e) {
+            enqueueInvalidateView(viewDefinition.getViewToken(), e.getMessage());
+            throw e;
+        }
     }
 
     private CharSequence createColumnAlias(
@@ -528,6 +519,10 @@ public class SqlParser {
         final GenericLexer lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         SqlCompilerImpl.configureLexer(lexer);
         return lexer;
+    }
+
+    private void enqueueInvalidateView(TableToken viewToken, CharSequence invalidationReason) throws SqlException {
+        engine.getViewStateStore().enqueueInvalidate(viewToken, invalidationReason.toString());
     }
 
     private @NotNull CreateTableColumnModel ensureCreateTableColumnModel(CharSequence columnName, int columnNamePos) {
@@ -992,7 +987,7 @@ public class SqlParser {
             if (baseTableName == null) {
                 tableNames.clear();
                 tableNamePositions.clear();
-                collectAllTableNames(queryModel, tableNames, tableNamePositions);
+                SqlUtil.collectAllTableNames(queryModel, tableNames, tableNamePositions);
                 if (tableNames.size() < 1) {
                     throw SqlException.$(startOfQuery, "missing base table, materialized views have to be based on a table");
                 }
@@ -1662,6 +1657,8 @@ public class SqlParser {
             tableOpBuilder.setSelectText(viewSql, startOfQuery);
             tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only
 
+            SqlUtil.collectAllTableNames(queryModel, createViewOperationBuilder.getDependencies());
+
             if (enclosedInParentheses) {
                 expectTok(lexer, ')');
             } else {
@@ -2127,16 +2124,10 @@ public class SqlParser {
             proposedNested = variableExpr.rhs.queryModel;
         }
 
-        final ViewGraph viewGraph = engine.getViewGraph();
         final TableToken tt = engine.getTableTokenIfExists(tok);
         if (tt != null && tt.isView()) {
-            final ViewDefinition viewDefinition = viewGraph.getViewDefinition(tt);
-            if (viewDefinition != null) {
-                final QueryModel viewModel = compileViewQuery(viewDefinition);
-                model.setNestedModel(viewModel);
-                model.setNestedModelIsSubQuery(true);
-                tok = setModelAliasAndTimestamp(lexer, model);
-            }
+            compileViewQuery(model, tt, lexer.lastTokenPosition());
+            tok = setModelAliasAndTimestamp(lexer, model);
             // expect "(" in case of sub-query
         } else if (Chars.equals(tok, '(') || proposedNested != null) {
             if (proposedNested == null) {
@@ -2632,15 +2623,9 @@ public class SqlParser {
 
         tok = expectTableNameOrSubQuery(lexer);
 
-        final ViewGraph viewGraph = engine.getViewGraph();
         final TableToken tt = engine.getTableTokenIfExists(tok);
         if (tt != null && tt.isView()) {
-            final ViewDefinition viewDefinition = viewGraph.getViewDefinition(tt);
-            if (viewDefinition != null) {
-                final QueryModel viewModel = compileViewQuery(viewDefinition);
-                joinModel.setNestedModel(viewModel);
-                joinModel.setNestedModelIsSubQuery(true);
-            }
+            compileViewQuery(joinModel, tt, lexer.lastTokenPosition());
         } else if (Chars.equals(tok, '(')) {
             joinModel.setNestedModel(parseAsSubQueryAndExpectClosingBrace(lexer, parent, true, sqlParserCallback, decls));
         } else {

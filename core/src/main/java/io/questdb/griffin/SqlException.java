@@ -152,8 +152,8 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 .put(']');
     }
 
-    public static SqlException viewDoesNotExist(int position, CharSequence tableName) {
-        return position(position).errorCode(EXCEPTION_VIEW_DOES_NOT_EXIST).put("view does not exist [view=").put(tableName).put(']');
+    public static SqlException viewDoesNotExist(int position, CharSequence viewName) {
+        return position(position).errorCode(EXCEPTION_VIEW_DOES_NOT_EXIST).put("view does not exist [view=").put(viewName).put(']');
     }
 
     public static SqlException walRecoverable(int position) {

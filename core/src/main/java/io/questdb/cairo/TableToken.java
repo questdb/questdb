@@ -38,15 +38,14 @@ public class TableToken implements Sinkable {
     @NotNull
     private final GcUtf8String dirName;
     private final boolean dirNameSameAsTableName;
-    private final boolean isMatView;
     private final boolean isProtected;
     private final boolean isPublic;
     private final boolean isSystem;
-    private final boolean isView;
     private final boolean isWal;
     private final int tableId;
     @NotNull
     private final String tableName;
+    private final Type type;
 
     public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected) {
         this(tableName, new GcUtf8String(dirName), tableId, false, false, isWal, isSystem, isProtected, false);
@@ -60,8 +59,7 @@ public class TableToken implements Sinkable {
         this.tableName = tableName;
         this.dirName = dirName;
         this.tableId = tableId;
-        this.isView = isView;
-        this.isMatView = isMatView;
+        this.type = isMatView ? Type.MAT_VIEW : isView ? Type.VIEW : Type.TABLE;
         this.isWal = isWal;
         this.isSystem = isSystem;
         this.isProtected = isProtected;
@@ -86,10 +84,7 @@ public class TableToken implements Sinkable {
         if (tableId != that.tableId) {
             return false;
         }
-        if (isView != that.isView) {
-            return false;
-        }
-        if (isMatView != that.isMatView) {
+        if (type != that.type) {
             return false;
         }
         if (isWal != that.isWal) {
@@ -135,13 +130,17 @@ public class TableToken implements Sinkable {
         return tableName;
     }
 
+    public Type getType() {
+        return type;
+    }
+
     @Override
     public int hashCode() {
         return tableId;
     }
 
     public boolean isMatView() {
-        return isMatView;
+        return type == Type.MAT_VIEW;
     }
 
     public boolean isProtected() {
@@ -157,7 +156,7 @@ public class TableToken implements Sinkable {
     }
 
     public boolean isView() {
-        return isView;
+        return type == Type.VIEW;
     }
 
     public boolean isWal() {
@@ -165,7 +164,7 @@ public class TableToken implements Sinkable {
     }
 
     public TableToken renamed(String newName) {
-        return new TableToken(newName, dirName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
+        return new TableToken(newName, dirName, tableId, isView(), isMatView(), isWal, isSystem, isProtected, isPublic);
     }
 
     @Override
@@ -185,12 +184,16 @@ public class TableToken implements Sinkable {
                 "tableName=" + tableName +
                 ", dirName=" + dirName +
                 ", tableId=" + tableId +
-                ", isView=" + isView +
-                ", isMatView=" + isMatView +
+                ", isView=" + isView() +
+                ", isMatView=" + isMatView() +
                 ", isWal=" + isWal +
                 ", isSystem=" + isSystem +
                 ", isProtected=" + isProtected +
                 ", isPublic=" + isPublic +
                 '}';
+    }
+
+    public enum Type {
+        TABLE, VIEW, MAT_VIEW
     }
 }

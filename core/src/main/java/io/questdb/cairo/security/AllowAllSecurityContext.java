@@ -194,6 +194,18 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeViewCompile() {
+    }
+
+    @Override
+    public void authorizeViewCreate() {
+    }
+
+    @Override
+    public void authorizeViewDrop(TableToken tableToken) {
+    }
+
+    @Override
     public void checkEntityEnabled() {
     }
 

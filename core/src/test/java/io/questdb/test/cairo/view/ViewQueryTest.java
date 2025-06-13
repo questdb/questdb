@@ -32,14 +32,9 @@ public class ViewQueryTest extends AbstractViewTest {
     public void testSelectViewFields() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-            drainWalQueue();
 
             final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 5";
-            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ");");
-            drainWalQueue();
-            assertViewDefinition(VIEW1, query1);
-            assertViewDefinitionFile(VIEW1, query1);
-            assertViewStateFile(VIEW1);
+            createView(VIEW1, query1, TABLE1);
 
             String query = VIEW1;
             assertQueryAndPlan(
@@ -82,14 +77,9 @@ public class ViewQueryTest extends AbstractViewTest {
     public void testSpecifyTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-            drainWalQueue();
 
             final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 5";
-            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ");");
-            drainWalQueue();
-            assertViewDefinition(VIEW1, query1);
-            assertViewDefinitionFile(VIEW1, query1);
-            assertViewStateFile(VIEW1);
+            createView(VIEW1, query1, TABLE1);
 
             assertQueryAndPlan(
                     "ts\tv_max\n" +
@@ -119,21 +109,12 @@ public class ViewQueryTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
             createTable(TABLE2);
-            drainWalQueue();
 
             final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4";
-            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ");");
-            drainWalQueue();
-            assertViewDefinition(VIEW1, query1);
-            assertViewDefinitionFile(VIEW1, query1);
-            assertViewStateFile(VIEW1);
+            createView(VIEW1, query1, TABLE1);
 
             final String query2 = "select ts, k2, max(v) as v_max from " + TABLE2 + " where v > 6";
-            execute("CREATE VIEW " + VIEW2 + " AS (" + query2 + ");");
-            drainWalQueue();
-            assertViewDefinition(VIEW2, query2);
-            assertViewDefinitionFile(VIEW2, query2);
-            assertViewStateFile(VIEW2);
+            createView(VIEW2, query2, TABLE2);
 
             assertQueryAndPlan(
                     "ts\tv_max\n" +
@@ -289,21 +270,12 @@ public class ViewQueryTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
             createTable(TABLE2);
-            drainWalQueue();
 
             final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4";
-            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ");");
-            drainWalQueue();
-            assertViewDefinition(VIEW1, query1);
-            assertViewDefinitionFile(VIEW1, query1);
-            assertViewStateFile(VIEW1);
+            createView(VIEW1, query1, TABLE1);
 
             final String query2 = "select ts, k2, max(v) as v_max from " + TABLE2 + " where v > 6";
-            execute("CREATE VIEW " + VIEW2 + " AS (" + query2 + ");");
-            drainWalQueue();
-            assertViewDefinition(VIEW2, query2);
-            assertViewDefinitionFile(VIEW2, query2);
-            assertViewStateFile(VIEW2);
+            createView(VIEW2, query2, TABLE2);
 
             assertQueryAndPlan(
                     "ts\tk2\tv_max\n" +
@@ -402,14 +374,9 @@ public class ViewQueryTest extends AbstractViewTest {
     public void testViewWithAlias() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-            drainWalQueue();
 
             final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 5";
-            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ");");
-            drainWalQueue();
-            assertViewDefinition(VIEW1, query1);
-            assertViewDefinitionFile(VIEW1, query1);
-            assertViewStateFile(VIEW1);
+            createView(VIEW1, query1, TABLE1);
 
             assertQueryAndPlan(
                     "ts\tv_max\n" +

@@ -113,13 +113,11 @@ public interface SecurityContext extends Mutable {
 
     void authorizeTableVacuum(TableToken tableToken);
 
-    default void authorizeViewCreate() {
-        // TODO: implement this on security context implementations
-    }
+    void authorizeViewCompile();
 
-    default void authorizeViewDrop(TableToken tableToken) {
-        // TODO: implement this on security context implementations
-    }
+    void authorizeViewCreate();
+
+    void authorizeViewDrop(TableToken tableToken);
 
     /**
      * Should throw an exception if:

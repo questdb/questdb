@@ -32,12 +32,14 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 public class ViewDefinition implements Mutable {
     public static final String VIEW_DEFINITION_FILE_NAME = "_view";
     public static final int VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
+    private final ObjList<CharSequence> dependencies = new ObjList<>();
     private String viewSql;
     private TableToken viewToken;
 
@@ -78,6 +80,11 @@ public class ViewDefinition implements Mutable {
     public void clear() {
         viewToken = null;
         viewSql = null;
+        dependencies.clear();
+    }
+
+    public ObjList<CharSequence> getDependencies() {
+        return dependencies;
     }
 
     public String getViewSql() {

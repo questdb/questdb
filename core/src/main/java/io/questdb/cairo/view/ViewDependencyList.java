@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.mv;
+package io.questdb.cairo.view;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.std.ObjList;
@@ -32,28 +32,28 @@ import io.questdb.std.SimpleReadWriteLock;
 import java.util.concurrent.locks.ReadWriteLock;
 
 /**
- * Holds the list of mat view tokens for the given base table (or base mat view).
+ * Holds the list of mat view tokens for the given base table, or the list of view tokens for a table.
  * The list is protected with a R/W mutex, so it can be read concurrently.
  */
-public class MatViewDependencyList {
+public class ViewDependencyList {
     private final ReadWriteLock lock = new SimpleReadWriteLock();
-    private final ObjList<TableToken> matViews = new ObjList<>();
+    private final ObjList<TableToken> views = new ObjList<>();
 
-    ReadOnlyObjList<TableToken> lockForRead() {
+    public ReadOnlyObjList<TableToken> lockForRead() {
         lock.readLock().lock();
-        return matViews;
+        return views;
     }
 
-    ObjList<TableToken> lockForWrite() {
+    public ObjList<TableToken> lockForWrite() {
         lock.writeLock().lock();
-        return matViews;
+        return views;
     }
 
-    void unlockAfterRead() {
+    public void unlockAfterRead() {
         lock.readLock().unlock();
     }
 
-    void unlockAfterWrite() {
+    public void unlockAfterWrite() {
         lock.writeLock().unlock();
     }
 }

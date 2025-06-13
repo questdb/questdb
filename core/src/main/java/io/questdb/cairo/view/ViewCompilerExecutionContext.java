@@ -22,15 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.view;
 
-public interface DdlListener {
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.security.ReadOnlySecurityContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 
-    void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName);
-
-    void onColumnRenamed(SecurityContext securityContext, TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName);
-
-    void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken);
-
-    void onTableRenamed(SecurityContext securityContext, TableToken oldTableToken, TableToken newTableToken);
+class ViewCompilerExecutionContext extends SqlExecutionContextImpl {
+    public ViewCompilerExecutionContext(CairoEngine engine, int workerCount, int sharedWorkerCount) {
+        super(engine, workerCount, sharedWorkerCount);
+        this.securityContext = ReadOnlySecurityContext.INSTANCE;
+    }
 }

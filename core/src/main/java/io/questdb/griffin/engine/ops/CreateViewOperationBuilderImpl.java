@@ -31,6 +31,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
@@ -39,23 +40,31 @@ import org.jetbrains.annotations.NotNull;
 public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilder, Mutable, Sinkable {
     public static final ObjectFactory<CreateViewOperationBuilderImpl> FACTORY = CreateViewOperationBuilderImpl::new;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
+    private final ObjList<CharSequence> dependencies = new ObjList<>();
 
     @Override
     public CreateViewOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
         final CreateTableOperationImpl createTableOperation = createTableOperationBuilder.build(compiler, sqlExecutionContext, sqlText);
         return new CreateViewOperationImpl(
                 Chars.toString(sqlText),
-                createTableOperation
+                createTableOperation,
+                dependencies
         );
     }
 
     @Override
     public void clear() {
         createTableOperationBuilder.clear();
+        dependencies.clear();
     }
 
     public CreateTableOperationBuilderImpl getCreateTableOperationBuilder() {
         return createTableOperationBuilder;
+    }
+
+    @Override
+    public ObjList<CharSequence> getDependencies() {
+        return dependencies;
     }
 
     @Override
@@ -71,11 +80,6 @@ public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilde
     @Override
     public ExpressionNode getTableNameExpr() {
         return createTableOperationBuilder.getTableNameExpr();
-    }
-
-    @Override
-    public void setSelectModel(QueryModel selectModel) {
-        createTableOperationBuilder.setSelectModel(selectModel);
     }
 
     @Override

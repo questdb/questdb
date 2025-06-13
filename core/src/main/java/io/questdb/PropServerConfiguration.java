@@ -480,6 +480,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropertyValidator validator;
     private final int vectorAggregateQueueCapacity;
     private final boolean viewEnabled;
+    private final WorkerPoolConfiguration viewRefreshPoolConfiguration = new PropViewRefreshPoolConfiguration();
+    private final long viewRefreshSleepTimeout;
+    private final int[] viewRefreshWorkerAffinity;
+    private final int viewRefreshWorkerCount;
+    private final boolean viewRefreshWorkerHaltOnError;
+    private final long viewRefreshWorkerNapThreshold;
+    private final long viewRefreshWorkerSleepThreshold;
+    private final long viewRefreshWorkerYieldThreshold;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
@@ -1299,6 +1307,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
             this.matViewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
 
+            this.viewRefreshWorkerCount = getInt(properties, env, PropertyKey.VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
+            this.viewRefreshWorkerNapThreshold = getLong(properties, env, PropertyKey.VIEW_REFRESH_WORKER_NAP_THRESHOLD, 7_000);
+            this.viewRefreshWorkerSleepThreshold = getLong(properties, env, PropertyKey.VIEW_REFRESH_WORKER_SLEEP_THRESHOLD, 10_000);
+            this.viewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
+            this.viewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.VIEW_REFRESH_WORKER_AFFINITY, viewRefreshWorkerCount);
+            this.viewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
+            this.viewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
+
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
             this.defaultSymbolCacheFlag = getBoolean(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CACHE_FLAG, true);
@@ -1790,6 +1806,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
         return publicPassthroughConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getViewRefreshPoolConfiguration() {
+        return viewRefreshPoolConfiguration;
     }
 
     @Override
@@ -5541,6 +5562,58 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isUseLegacyStringDefault() {
             return useLegacyStringDefault;
+        }
+    }
+
+    private class PropViewRefreshPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
+        public long getNapThreshold() {
+            return viewRefreshWorkerNapThreshold;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "view-refresh";
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return viewRefreshWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepTimeout() {
+            return viewRefreshSleepTimeout;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return viewRefreshWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return viewRefreshWorkerCount;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return viewRefreshWorkerYieldThreshold;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return viewRefreshWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return viewRefreshWorkerCount > 0;
         }
     }
 

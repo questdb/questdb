@@ -28,18 +28,40 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
+
+import java.util.function.Function;
 
 /**
  * Holds view definitions.
  * This object is always in-use, even when views are disabled or the node is a read-only replica.
  */
 public class ViewGraph implements Mutable {
+    private final Function<CharSequence, ViewDependencyList> createDependencyList;
     private final ConcurrentHashMap<ViewDefinition> definitionsByTableDirName = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<ViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
+
+    public ViewGraph() {
+        createDependencyList = name -> new ViewDependencyList();
+    }
 
     public boolean addView(ViewDefinition viewDefinition) {
         final TableToken viewToken = viewDefinition.getViewToken();
         final ViewDefinition prevDefinition = definitionsByTableDirName.putIfAbsent(viewToken.getDirName(), viewDefinition);
+
+        final ObjList<CharSequence> dependencies = viewDefinition.getDependencies();
+        for (int i = 0, n = dependencies.size(); i < n; i++) {
+            final ViewDependencyList list = getOrCreateDependentViews(dependencies.getQuick(i));
+            final ObjList<TableToken> dependentViews = list.lockForWrite();
+            try {
+                dependentViews.add(viewToken);
+            } finally {
+                list.unlockAfterWrite();
+            }
+        }
+
         // WAL table directories are unique, so we don't expect previous value
         return prevDefinition == null;
     }
@@ -48,6 +70,17 @@ public class ViewGraph implements Mutable {
     @Override
     public void clear() {
         definitionsByTableDirName.clear();
+        dependentViewsByTableName.clear();
+    }
+
+    public void getDependentViews(TableToken tableToken, ObjList<TableToken> sink) {
+        final ViewDependencyList list = getOrCreateDependentViews(tableToken.getTableName());
+        final ReadOnlyObjList<TableToken> dependentViews = list.lockForRead();
+        try {
+            sink.addAll(dependentViews);
+        } finally {
+            list.unlockAfterRead();
+        }
     }
 
     public ViewDefinition getViewDefinition(TableToken viewToken) {
@@ -60,7 +93,26 @@ public class ViewGraph implements Mutable {
         }
     }
 
-    public ViewDefinition removeView(TableToken viewToken) {
-        return definitionsByTableDirName.remove(viewToken.getDirName());
+    public void removeView(TableToken viewToken) {
+        final ViewDefinition viewDefinition = definitionsByTableDirName.remove(viewToken.getDirName());
+        if (viewDefinition == null) {
+            return;
+        }
+
+        final ObjList<CharSequence> dependencies = viewDefinition.getDependencies();
+        for (int i = 0, n = dependencies.size(); i < n; i++) {
+            final ViewDependencyList list = getOrCreateDependentViews(dependencies.getQuick(i));
+            final ObjList<TableToken> dependentViews = list.lockForWrite();
+            try {
+                dependentViews.remove(viewToken);
+            } finally {
+                list.unlockAfterWrite();
+            }
+        }
+    }
+
+    @NotNull
+    private ViewDependencyList getOrCreateDependentViews(CharSequence tableName) {
+        return dependentViewsByTableName.computeIfAbsent(tableName, createDependencyList);
     }
 }

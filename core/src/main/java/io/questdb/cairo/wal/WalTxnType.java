@@ -31,6 +31,7 @@ public class WalTxnType {
     public static final byte NONE = -1;
     public static final byte SQL = 1;
     public static final byte TRUNCATE = 2;
+    // todo: rename to VIEW_STATUS_UPDATE
     public static final byte VIEW_INVALIDATE = 5;
 
     public static boolean isDataType(byte type) {

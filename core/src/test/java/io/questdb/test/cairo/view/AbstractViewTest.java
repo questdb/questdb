@@ -32,6 +32,7 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.view.ViewStateReader;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
@@ -43,6 +44,7 @@ import static org.junit.Assert.*;
 class AbstractViewTest extends AbstractCairoTest {
     static final String TABLE1 = "table1";
     static final String TABLE2 = "table2";
+    static final String TABLE3 = "table3";
     static final String VIEW1 = "view1";
     static final String VIEW2 = "view2";
     static final String VIEW3 = "view3";
@@ -52,6 +54,7 @@ class AbstractViewTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         // JIT does not support ARM, and we want query plans to be the same
         setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(JIT_MODE_DISABLED));
+        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
     }
 
@@ -62,11 +65,20 @@ class AbstractViewTest extends AbstractCairoTest {
         super.setUp();
     }
 
-    static void assertViewDefinition(String name, String query) {
+    static void assertViewDefinition(String name, String query, String... expectedDependencies) {
         final ViewDefinition viewDefinition = getViewDefinition(name);
         assertNotNull(viewDefinition);
         assertTrue(viewDefinition.getViewToken().isView());
         assertEquals(query, viewDefinition.getViewSql());
+
+        if (expectedDependencies != null && expectedDependencies.length > 0) {
+            final ObjList<CharSequence> dependencies = viewDefinition.getDependencies();
+            assertNotNull(dependencies);
+            assertEquals(expectedDependencies.length, dependencies.size());
+            for (int i = 0, n = expectedDependencies.length; i < n; i++) {
+                assertTrue(dependencies.contains(expectedDependencies[i]));
+            }
+        }
     }
 
     static void assertViewDefinitionFile(String name, String query) {
@@ -91,6 +103,10 @@ class AbstractViewTest extends AbstractCairoTest {
     }
 
     static void assertViewStateFile(String name) {
+        assertViewStateFile(name, null);
+    }
+
+    static void assertViewStateFile(String name, String invalidationReason) {
         final TableToken viewToken = engine.getTableTokenIfExists(name);
         try (
                 BlockFileReader reader = new BlockFileReader(configuration);
@@ -101,8 +117,14 @@ class AbstractViewTest extends AbstractCairoTest {
             final ViewStateReader viewStateReader = new ViewStateReader();
             viewStateReader.of(reader, viewToken);
 
-            assertFalse(viewStateReader.isInvalid());
-            assertNull(viewStateReader.getInvalidationReason());
+            if (invalidationReason != null) {
+                assertTrue(viewStateReader.isInvalid());
+                assertNotNull(viewStateReader.getInvalidationReason());
+                assertEquals(invalidationReason, viewStateReader.getInvalidationReason().toString());
+            } else {
+                assertFalse(viewStateReader.isInvalid());
+                assertNull(viewStateReader.getInvalidationReason());
+            }
         }
     }
 
@@ -132,5 +154,15 @@ class AbstractViewTest extends AbstractCairoTest {
         for (int i = 0; i < 9; i++) {
             execute("insert into " + tableName + " values (" + (i * 10000000) + ", 'k" + i + "', " + "'k2_" + i + "', " + i + ")");
         }
+        drainWalQueue();
+    }
+
+    void createView(String viewName, String viewQuery, String... expectedDependencies) throws SqlException {
+        execute("CREATE VIEW " + viewName + " AS (" + viewQuery + ")");
+        drainViewQueue();
+        drainWalQueue();
+        assertViewDefinition(viewName, viewQuery, expectedDependencies);
+        assertViewDefinitionFile(viewName, viewQuery);
+        assertViewStateFile(viewName);
     }
 }
