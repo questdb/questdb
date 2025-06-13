@@ -38,7 +38,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.Dates;
@@ -199,7 +199,7 @@ public class MatViewDefinition implements Mutable {
 
         if (timeZone != null) {
             try {
-                this.rules = Timestamps.getTimezoneRules(DateLocale.EN_LOCALE, timeZone);
+                this.rules = Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone);
             } catch (NumericException e) {
                 throw CairoException.critical(0).put("invalid timezone: ").put(timeZone);
             }

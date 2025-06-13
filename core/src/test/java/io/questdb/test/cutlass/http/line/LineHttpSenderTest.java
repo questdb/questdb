@@ -59,7 +59,7 @@ import java.time.temporal.ChronoUnit;
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
-import static io.questdb.std.datetime.DateLocale.EN_LOCALE;
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 public class LineHttpSenderTest extends AbstractBootstrapTest {
 

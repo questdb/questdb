@@ -258,6 +258,17 @@ public class InsertCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastCharTimestampNSFunc() throws Exception {
+        assertMemoryLeak(() -> assertCharFunc(
+                "timestamp_ns",
+                "a\n" +
+                        "1970-01-01T00:00:00.000000005Z\n" +
+                        "1970-01-01T00:00:00.000000003Z\n" +
+                        "1970-01-01T00:00:00.000000000Z\n"
+        ));
+    }
+
+    @Test
     public void testCastCharTimestampTab() throws Exception {
         assertMemoryLeak(() -> assertCharTab(
                 "timestamp",

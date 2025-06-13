@@ -71,7 +71,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.std.datetime.DateLocale.EN_LOCALE;
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 public class TableReaderTest extends AbstractCairoTest {
     public static final int DO_NOT_CARE = 0;

@@ -41,7 +41,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.PartitionBy.*;
 import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
-import static io.questdb.std.datetime.DateLocale.EN_LOCALE;
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.microtime.TimestampFormatUtils.*;
 
 public class MicrosTimestampDriver implements TimestampDriver {

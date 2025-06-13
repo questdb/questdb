@@ -39,7 +39,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.Dates;
@@ -88,8 +88,8 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
                 try {
                     return new ConstRulesFunc(
                             timestampFunc,
-                            DateLocale.EN_LOCALE.getZoneRules(
-                                    Numbers.decodeLowInt(DateLocale.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                            DateLocaleFactory.EN_LOCALE.getZoneRules(
+                                    Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
                             )
                     );
                 } catch (NumericException e) {
@@ -161,7 +161,7 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
             final long timestampValue = timestampFunc.getTimestamp(rec);
             try {
                 final CharSequence tz = timezoneFunc.getStrA(rec);
-                return tz != null ? Timestamps.toTimezone(timestampValue, DateLocale.EN_LOCALE, tz) : timestampValue;
+                return tz != null ? Timestamps.toTimezone(timestampValue, DateLocaleFactory.EN_LOCALE, tz) : timestampValue;
             } catch (NumericException e) {
                 return timestampValue;
             }
@@ -218,8 +218,8 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
             final long l = Dates.parseOffset(tz, 0, hi);
             if (l == Long.MIN_VALUE) {
                 try {
-                    tzRules = DateLocale.EN_LOCALE.getZoneRules(
-                            Numbers.decodeLowInt(DateLocale.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                    tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
+                            Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
                     );
                     tzOffset = 0;
                 } catch (NumericException e) {

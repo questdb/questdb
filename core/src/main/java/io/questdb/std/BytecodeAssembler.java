@@ -291,10 +291,11 @@ public class BytecodeAssembler {
         } else if (v < 128 && v >= Short.MIN_VALUE) {
             putByte(bipush);
             putByte(v);
-        } else {
+        } else if (v <= Short.MAX_VALUE && v >= Short.MIN_VALUE) {
             putByte(sipush);
-            assert v >= Short.MIN_VALUE && v <= Short.MAX_VALUE;
             putShort(v);
+        } else {
+            poolIntConst(v);
         }
     }
 

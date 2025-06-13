@@ -37,7 +37,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 
-import static io.questdb.std.datetime.DateLocale.EN_LOCALE;
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 public class ToPgDateFunctionFactory implements FunctionFactory {
     @Override

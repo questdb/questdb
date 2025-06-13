@@ -40,7 +40,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Timestamps;
 
@@ -71,7 +71,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
             // validate timezone and parse timezone into rules, that provide the offset by timestamp
             final TimeZoneRules timeZoneRules;
             try {
-                timeZoneRules = Timestamps.getTimezoneRules(DateLocale.EN_LOCALE, tzFunc.getStrA(null));
+                timeZoneRules = Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tzFunc.getStrA(null));
             } catch (NumericException e) {
                 throw SqlException.position(argPositions.getQuick(3)).put("invalid timezone [timezone=").put(tzFunc.getStrA(null)).put(']');
             }
@@ -289,7 +289,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
 
             final TimeZoneRules timeZoneRules;
             try {
-                timeZoneRules = Timestamps.getTimezoneRules(DateLocale.EN_LOCALE, tz);
+                timeZoneRules = Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
             } catch (NumericException e) {
                 throw CairoException.nonCritical().position(timezonePosition).put("invalid timezone [timezone=").put(tz).put(']');
             }

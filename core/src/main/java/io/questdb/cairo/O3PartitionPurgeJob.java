@@ -47,7 +47,7 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
-import static io.questdb.std.datetime.DateLocale.EN_LOCALE;
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPurgeTask> implements Closeable {
 

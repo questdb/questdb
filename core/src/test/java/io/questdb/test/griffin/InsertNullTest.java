@@ -47,6 +47,7 @@ public class InsertNullTest extends AbstractCairoTest {
             {"long", "null"},
             {"date", ""},
             {"timestamp", ""},
+            {"timestamp_ns", ""},
             {"float", "null"},
             {"double", "null"},
             {"string", ""},
@@ -86,46 +87,22 @@ public class InsertNullTest extends AbstractCairoTest {
 
     @Test
     public void testInsertNullFromSelectOnDesignatedColumnMustFail() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                assertQuery(
-                        "sym\ty\n",
-                        "xx",
-                        "create table xx (sym symbol, y timestamp) timestamp(y)",
-                        "y",
-                        "insert into xx select 'AA', null from long_sequence(1)",
-                        "y\n",
-                        true,
-                        false,
-                        false
-                );
-                Assert.fail();
-            } catch (CairoException expected) {
-                Assert.assertTrue(expected.getMessage().contains("designated timestamp column cannot be NULL"));
-            }
-        });
+        _testInsertNullFromSelectOnDesignatedColumnMustFail("timestamp");
+    }
+
+    @Test
+    public void testInsertNullFromSelectOnDesignatedNSColumnMustFail() throws Exception {
+        _testInsertNullFromSelectOnDesignatedColumnMustFail("timestamp_ns");
     }
 
     @Test
     public void testInsertNullFromValuesOnDesignatedColumnMustFail() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                assertQuery(
-                        "sym\ty\n",
-                        "xx",
-                        "create table xx (sym symbol, y timestamp) timestamp(y)",
-                        "y",
-                        "insert into xx values('AA', null)",
-                        "y\n",
-                        true,
-                        false,
-                        false
-                );
-                Assert.fail();
-            } catch (SqlException expected) {
-                Assert.assertEquals("[28] designated timestamp column cannot be NULL", expected.getMessage());
-            }
-        });
+        _testInsertNullFromValuesOnDesignatedColumnMustFail("timestamp");
+    }
+
+    @Test
+    public void testInsertNullFromValuesOnDesignatedNSColumnMustFail() throws Exception {
+        _testInsertNullFromValuesOnDesignatedColumnMustFail("timestamp_ns");
     }
 
     @Test
@@ -232,6 +209,48 @@ public class InsertNullTest extends AbstractCairoTest {
         return Chars.equalsLowerCaseAscii(type, "short") ||
                 Chars.equalsLowerCaseAscii(type, "byte") ||
                 Chars.equalsLowerCaseAscii(type, "boolean");
+    }
+
+    private void _testInsertNullFromSelectOnDesignatedColumnMustFail(String timestampType) throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                assertQuery(
+                        "sym\ty\n",
+                        "xx",
+                        "create table xx (sym symbol, y #TIMESTAMP_TYPE) timestamp(y)".replace("#TIMESTAMP_TYPE", timestampType),
+                        "y",
+                        "insert into xx select 'AA', null from long_sequence(1)",
+                        "y\n",
+                        true,
+                        false,
+                        false
+                );
+                Assert.fail();
+            } catch (CairoException expected) {
+                Assert.assertTrue(expected.getMessage().contains("designated timestamp column cannot be NULL"));
+            }
+        });
+    }
+
+    private void _testInsertNullFromValuesOnDesignatedColumnMustFail(String timestamp) throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                assertQuery(
+                        "sym\ty\n",
+                        "xx",
+                        "create table xx (sym symbol, y #TIMESTAMP_TYPE) timestamp(y)".replace("#TIMESTAMP_TYPE", timestamp),
+                        "y",
+                        "insert into xx values('AA', null)",
+                        "y\n",
+                        true,
+                        false,
+                        false
+                );
+                Assert.fail();
+            } catch (SqlException expected) {
+                Assert.assertEquals("[28] designated timestamp column cannot be NULL", expected.getMessage());
+            }
+        });
     }
 
     static String expectedNullInserts(String header, String nullValue, int count, boolean expectsOutput) {

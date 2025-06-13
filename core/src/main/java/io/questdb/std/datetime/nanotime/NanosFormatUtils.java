@@ -30,6 +30,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
@@ -99,21 +100,21 @@ public class NanosFormatUtils {
         if (nanos == Long.MIN_VALUE) {
             return;
         }
-        UTC_FORMAT.format(nanos, DateLocale.EN_LOCALE, "Z", sink);
+        UTC_FORMAT.format(nanos, DateLocaleFactory.EN_LOCALE, "Z", sink);
     }
 
     public static void appendDateTimeNSec(@NotNull CharSink<?> sink, long nanos) {
         if (nanos == Long.MIN_VALUE) {
             return;
         }
-        NSEC_UTC_FORMAT.format(nanos, DateLocale.EN_LOCALE, "Z", sink);
+        NSEC_UTC_FORMAT.format(nanos, DateLocaleFactory.EN_LOCALE, "Z", sink);
     }
 
     public static void appendDateTimeUSec(@NotNull CharSink<?> sink, long nanos) {
         if (nanos == Long.MIN_VALUE) {
             return;
         }
-        USEC_UTC_FORMAT.format(nanos, DateLocale.EN_LOCALE, "Z", sink);
+        USEC_UTC_FORMAT.format(nanos, DateLocaleFactory.EN_LOCALE, "Z", sink);
     }
 
     public static void appendEra(@NotNull CharSink<?> sink, int year, @NotNull DateLocale locale) {
@@ -289,7 +290,7 @@ public class NanosFormatUtils {
 
     @TestOnly
     public static long parseNSecUTC(@NotNull CharSequence seq) throws NumericException {
-        return NSEC_UTC_FORMAT.parse(seq, 0, seq.length(), DateLocale.EN_LOCALE);
+        return NSEC_UTC_FORMAT.parse(seq, 0, seq.length(), DateLocaleFactory.EN_LOCALE);
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmZ
@@ -300,7 +301,7 @@ public class NanosFormatUtils {
     public static long parseNanos(@NotNull CharSequence value, int lo, int hi) throws NumericException {
         for (int i = 0, n = FORMATS.length; i < n; i++) {
             try {
-                return FORMATS[i].parse(value, lo, hi, DateLocale.EN_LOCALE);
+                return FORMATS[i].parse(value, lo, hi, DateLocaleFactory.EN_LOCALE);
             } catch (NumericException ignore) {
                 // try next
             }

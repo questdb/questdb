@@ -52,7 +52,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.PartitionBy.getPartitionDirFormatMethod;
 import static io.questdb.std.Files.DT_DIR;
-import static io.questdb.std.datetime.DateLocale.EN_LOCALE;
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 public class VacuumColumnVersions implements Closeable {
     private static final int COLUMN_VERSION_LIST_CAPACITY = 8;

@@ -106,9 +106,9 @@ public class NanosFormatCompilerTest {
         DateFormat fmt = compiler.compile("E, dd MMM yyyy a KK:m:s.S Z");
         String utcPattern = "yyyy-MM-ddTHH:mm:ss.SSSz";
         DateFormat utc = compiler.compile(utcPattern);
-        long millis = fmt.parse("Mon, 08 Apr 2017 PM 11:11:10.123 UTC", DateLocale.EN_LOCALE);
+        long millis = fmt.parse("Mon, 08 Apr 2017 PM 11:11:10.123 UTC", DateLocaleFactory.EN_LOCALE);
         sink.clear();
-        utc.format(millis, DateLocale.EN_LOCALE, "Z", sink);
+        utc.format(millis, DateLocaleFactory.EN_LOCALE, "Z", sink);
         TestUtils.assertEquals("2017-04-08T23:11:10.123Z", sink);
     }
 
@@ -968,14 +968,14 @@ public class NanosFormatCompilerTest {
     private static void assertException(String pattern, String input) {
         DateFormat format = get(pattern);
         try {
-            format.parse(pattern, DateLocale.EN_LOCALE);
+            format.parse(pattern, DateLocaleFactory.EN_LOCALE);
             Assert.fail();
         } catch (NumericException ignored) {
         }
 
         DateFormat compiled = compiler.compile(pattern);
         try {
-            compiled.parse(input, DateLocale.EN_LOCALE);
+            compiled.parse(input, DateLocaleFactory.EN_LOCALE);
             Assert.fail();
         } catch (NumericException ignored) {
         }
@@ -989,21 +989,21 @@ public class NanosFormatCompilerTest {
         long nanos = NanosFormatUtils.parseNSecUTC(utcInput);
 
         sink.clear();
-        get(pattern).format(nanos, DateLocale.EN_LOCALE, "GMT", sink);
+        get(pattern).format(nanos, DateLocaleFactory.EN_LOCALE, "GMT", sink);
         TestUtils.assertEqualsIgnoreCase(expected, sink);
 
         sink.clear();
-        compiler.compile(pattern, false).format(nanos, DateLocale.EN_LOCALE, "GMT", sink);
+        compiler.compile(pattern, false).format(nanos, DateLocaleFactory.EN_LOCALE, "GMT", sink);
         TestUtils.assertEqualsIgnoreCase(expected, sink);
     }
 
     private void assertNanos(String pattern, String expected, String input) throws NumericException {
         sink.clear();
-        REFERENCE.format(get(pattern).parse(input, DateLocale.EN_LOCALE), DateLocale.EN_LOCALE, "Z", sink);
+        REFERENCE.format(get(pattern).parse(input, DateLocaleFactory.EN_LOCALE), DateLocaleFactory.EN_LOCALE, "Z", sink);
         TestUtils.assertEquals(expected, sink);
 
         sink.clear();
-        REFERENCE.format(compiler.compile(pattern).parse(input, DateLocale.EN_LOCALE), DateLocale.EN_LOCALE, "Z", sink);
+        REFERENCE.format(compiler.compile(pattern).parse(input, DateLocaleFactory.EN_LOCALE), DateLocaleFactory.EN_LOCALE, "Z", sink);
     }
 
     private void assertThat(String pattern, String expected, String input, CharSequence localeId) throws NumericException {
@@ -1038,17 +1038,17 @@ public class NanosFormatCompilerTest {
             long tsMillis = nanos / Nanos.MILLI_NANOS;
             String javaFormatted = javaFmt.format(new Date(tsMillis));
 
-            genericQuestFmt.format(nanos, DateLocale.EN_LOCALE, "UTC", sink);
+            genericQuestFmt.format(nanos, DateLocaleFactory.EN_LOCALE, "UTC", sink);
             TestUtils.assertEqualsIgnoreCase(javaFormatted, sink);
 
             sink.clear();
-            compiledQuestFmt.format(nanos, DateLocale.EN_LOCALE, "UTC", sink);
+            compiledQuestFmt.format(nanos, DateLocaleFactory.EN_LOCALE, "UTC", sink);
             TestUtils.assertEqualsIgnoreCase(javaFormatted, sink);
 
             // now we know both Java and QuestDB format the same way.
             // let's try to parse it back.
-            Assert.assertEquals(nanos, genericQuestFmt.parse(sink, DateLocale.EN_LOCALE));
-            Assert.assertEquals(nanos, compiledQuestFmt.parse(sink, DateLocale.EN_LOCALE));
+            Assert.assertEquals(nanos, genericQuestFmt.parse(sink, DateLocaleFactory.EN_LOCALE));
+            Assert.assertEquals(nanos, compiledQuestFmt.parse(sink, DateLocaleFactory.EN_LOCALE));
 
             // sanity check
             Assert.assertEquals(tsMillis, javaFmt.parse(sink.toString()).getTime());
