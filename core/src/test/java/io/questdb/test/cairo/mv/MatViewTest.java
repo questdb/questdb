@@ -52,6 +52,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
@@ -1931,6 +1932,11 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImmediatePeriodMatView() throws Exception {
+        testPeriodRefresh("immediate", null, true);
+    }
+
+    @Test
     public void testImmediatePeriodMatViewFullRefreshNoTimerJob() throws Exception {
         testPeriodRefresh("immediate", "full", false);
     }
@@ -1951,13 +1957,8 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testImmediatePeriodWithTzIncrementalRefreshNoTimerJob() throws Exception {
-        testPeriodWithTzRefresh("immediate", "incremental", false);
-    }
-
-    @Test
-    public void testImmediatePeriodWithTzIncrementalRefreshRunTimerJob() throws Exception {
-        testPeriodWithTzRefresh("immediate", "incremental", true);
+    public void testImmediatePeriodMatViewWithTz() throws Exception {
+        testPeriodWithTzRefresh("immediate", null, true);
     }
 
     @Test
@@ -1968,6 +1969,16 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testImmediatePeriodWithTzMatViewFullRefreshRunTimerJob() throws Exception {
         testPeriodWithTzRefresh("immediate", "full", true);
+    }
+
+    @Test
+    public void testImmediatePeriodWithTzMatViewIncrementalRefreshNoTimerJob() throws Exception {
+        testPeriodWithTzRefresh("immediate", "incremental", false);
+    }
+
+    @Test
+    public void testImmediatePeriodWithTzMatViewIncrementalRefreshRunTimerJob() throws Exception {
+        testPeriodWithTzRefresh("immediate", "incremental", true);
     }
 
     @Test
@@ -2531,11 +2542,6 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testManualPeriodWithTzIncrementalRefreshNoTimerJob() throws Exception {
-        testPeriodWithTzRefresh("manual", "incremental", false);
-    }
-
-    @Test
     public void testManualPeriodWithTzIncrementalRefreshRunTimerJob() throws Exception {
         testPeriodWithTzRefresh("manual", "incremental", true);
     }
@@ -2548,6 +2554,11 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testManualPeriodWithTzMatViewFullRefreshRunTimerJob() throws Exception {
         testPeriodWithTzRefresh("manual", "full", true);
+    }
+
+    @Test
+    public void testManualPeriodWithTzMatViewIncrementalRefreshNoTimerJob() throws Exception {
+        testPeriodWithTzRefresh("manual", "incremental", false);
     }
 
     @Test
@@ -4164,6 +4175,11 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimerPeriodMatView() throws Exception {
+        testPeriodRefresh("every 1h", null, true);
+    }
+
+    @Test
     public void testTimerPeriodMatViewFullRefresh() throws Exception {
         testPeriodRefresh("every 1h", "full", true);
     }
@@ -4174,12 +4190,17 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimerPeriodWithTzFullRefresh() throws Exception {
+    public void testTimerPeriodWithTzMatView() throws Exception {
+        testPeriodWithTzRefresh("every 1h", null, true);
+    }
+
+    @Test
+    public void testTimerPeriodWithTzMatViewFullRefresh() throws Exception {
         testPeriodWithTzRefresh("every 1h", "full", true);
     }
 
     @Test
-    public void testTimerPeriodWithTzIncrementalRefresh() throws Exception {
+    public void testTimerPeriodWithTzMatViewIncrementalRefresh() throws Exception {
         testPeriodWithTzRefresh("every 1h", "incremental", true);
     }
 
@@ -4493,7 +4514,7 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
-    private void testPeriodRefresh(String viewType, String refreshType, boolean runTimerJob) throws Exception {
+    private void testPeriodRefresh(@NotNull String viewType, @Nullable String refreshType, boolean runTimerJob) throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
@@ -4517,7 +4538,9 @@ public class MatViewTest extends AbstractCairoTest {
 
             // no refresh should happen as the first period hasn't finished
             currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
-            execute("refresh materialized view price_1h " + refreshType);
+            if (refreshType != null) {
+                execute("refresh materialized view price_1h " + refreshType);
+            }
             if (runTimerJob) {
                 drainMatViewTimerQueue(timerJob);
             }
@@ -4527,19 +4550,21 @@ public class MatViewTest extends AbstractCairoTest {
                     "price_1h order by sym"
             );
             final String matViewsSql = "select view_name, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn, timer_time_zone, " +
-                    "timer_start, period_length, period_length_unit, period_delay, period_delay_unit " +
+                    "view_sql, view_status, timer_time_zone, timer_start, " +
+                    "period_length, period_length_unit, period_delay, period_delay_unit " +
                     "from materialized_views";
             assertQueryNoLeakCheck(
-                    "view_name\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
-                            "price_1h\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t-1\t1\t\t2000-01-01T00:00:00.000000Z\t1\tDAY\t0\t\n",
+                    "view_name\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\ttimer_time_zone\ttimer_start\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
+                            "price_1h\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t\t2000-01-01T00:00:00.000000Z\t1\tDAY\t0\t\n",
                     matViewsSql,
                     null
             );
 
             // the first period still hasn't finished
             currentMicros = parseFloorPartialTimestamp("2000-01-01T23:59:59.999999Z");
-            execute("refresh materialized view price_1h " + refreshType);
+            if (refreshType != null) {
+                execute("refresh materialized view price_1h " + refreshType);
+            }
             if (runTimerJob) {
                 drainMatViewTimerQueue(timerJob);
             }
@@ -4551,7 +4576,9 @@ public class MatViewTest extends AbstractCairoTest {
 
             // the first period has finished - only half of the rows should be aggregated
             currentMicros = parseFloorPartialTimestamp("2000-01-02T00:00:00.000000Z");
-            execute("refresh materialized view price_1h " + refreshType);
+            if (refreshType != null) {
+                execute("refresh materialized view price_1h " + refreshType);
+            }
             if (runTimerJob) {
                 drainMatViewTimerQueue(timerJob);
             }
@@ -4565,7 +4592,9 @@ public class MatViewTest extends AbstractCairoTest {
 
             // finally, the second period has finished - all rows should be aggregated
             currentMicros = parseFloorPartialTimestamp("2000-01-03T00:00:01.000000Z");
-            execute("refresh materialized view price_1h " + refreshType);
+            if (refreshType != null) {
+                execute("refresh materialized view price_1h " + refreshType);
+            }
             if (runTimerJob) {
                 drainMatViewTimerQueue(timerJob);
             }
@@ -4581,15 +4610,15 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "view_name\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
-                            "price_1h\tbase_price\t2000-01-03T00:00:01.000000Z\t2000-01-03T00:00:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t1\t1\t\t2000-01-01T00:00:00.000000Z\t1\tDAY\t0\t\n",
+                    "view_name\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\ttimer_time_zone\ttimer_start\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
+                            "price_1h\tbase_price\t2000-01-03T00:00:01.000000Z\t2000-01-03T00:00:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t\t2000-01-01T00:00:00.000000Z\t1\tDAY\t0\t\n",
                     matViewsSql,
                     null
             );
         });
     }
 
-    private void testPeriodWithTzRefresh(String viewType, String refreshType, boolean runTimerJob) throws Exception {
+    private void testPeriodWithTzRefresh(@NotNull String viewType, @Nullable String refreshType, boolean runTimerJob) throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
@@ -4613,7 +4642,9 @@ public class MatViewTest extends AbstractCairoTest {
 
             // no refresh should happen as the first period hasn't finished
             currentMicros = parseFloorPartialTimestamp("2020-01-01T00:00:00.000000Z");
-            execute("refresh materialized view price_1h " + refreshType);
+            if (refreshType != null) {
+                execute("refresh materialized view price_1h " + refreshType);
+            }
             if (runTimerJob) {
                 drainMatViewTimerQueue(timerJob);
             }
@@ -4623,19 +4654,21 @@ public class MatViewTest extends AbstractCairoTest {
                     "price_1h order by sym"
             );
             final String matViewsSql = "select view_name, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn, timer_time_zone, " +
-                    "timer_start, period_length, period_length_unit, period_delay, period_delay_unit " +
+                    "view_sql, view_status, timer_time_zone, timer_start, " +
+                    "period_length, period_length_unit, period_delay, period_delay_unit " +
                     "from materialized_views";
             assertQueryNoLeakCheck(
-                    "view_name\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
-                            "price_1h\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t-1\t1\tEurope/Berlin\t2020-01-01T00:00:00.000000Z\t1\tDAY\t1\tHOUR\n",
+                    "view_name\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\ttimer_time_zone\ttimer_start\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
+                            "price_1h\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\tEurope/Berlin\t2020-01-01T00:00:00.000000Z\t1\tDAY\t1\tHOUR\n",
                     matViewsSql,
                     null
             );
 
             // the first period still hasn't finished due to 1h delay
-            currentMicros = parseFloorPartialTimestamp("2020-01-01T23:00:00.000000Z");
-            execute("refresh materialized view price_1h " + refreshType);
+            currentMicros = parseFloorPartialTimestamp("2020-01-01T22:59:59.000000Z");
+            if (refreshType != null) {
+                execute("refresh materialized view price_1h " + refreshType);
+            }
             if (runTimerJob) {
                 drainMatViewTimerQueue(timerJob);
             }
@@ -4646,8 +4679,10 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             // the first period has finished - only half of the rows should be aggregated
-            currentMicros = parseFloorPartialTimestamp("2020-01-02T00:00:00.000000Z");
-            execute("refresh materialized view price_1h " + refreshType);
+            currentMicros = parseFloorPartialTimestamp("2020-01-02T00:00:00.000001Z");
+            if (refreshType != null) {
+                execute("refresh materialized view price_1h " + refreshType);
+            }
             if (runTimerJob) {
                 drainMatViewTimerQueue(timerJob);
             }
@@ -4661,7 +4696,9 @@ public class MatViewTest extends AbstractCairoTest {
 
             // finally, the second period has finished - all rows should be aggregated
             currentMicros = parseFloorPartialTimestamp("2020-01-03T00:00:01.000000Z");
-            execute("refresh materialized view price_1h " + refreshType);
+            if (refreshType != null) {
+                execute("refresh materialized view price_1h " + refreshType);
+            }
             if (runTimerJob) {
                 drainMatViewTimerQueue(timerJob);
             }
@@ -4677,8 +4714,8 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "view_name\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
-                            "price_1h\tbase_price\t2020-01-03T00:00:01.000000Z\t2020-01-03T00:00:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\t1\t1\tEurope/Berlin\t2020-01-01T00:00:00.000000Z\t1\tDAY\t1\tHOUR\n",
+                    "view_name\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\ttimer_time_zone\ttimer_start\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
+                            "price_1h\tbase_price\t2020-01-03T00:00:01.000000Z\t2020-01-03T00:00:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1d\tvalid\tEurope/Berlin\t2020-01-01T00:00:00.000000Z\t1\tDAY\t1\tHOUR\n",
                     matViewsSql,
                     null
             );

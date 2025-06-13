@@ -298,14 +298,14 @@ public class MatViewTimerJob extends SynchronizedJob {
             switch (type) {
                 case INCREMENTAL_REFRESH_TYPE:
                     // It's fine if the timer triggers immediately.
-                    deadlineUtc = now > start + startEpsilon ? sampler.nextTimestamp(sampler.round(now - 1)) : start;
-                    deadlineLocal = tzRules != null ? deadlineUtc + tzRules.getOffset(deadlineUtc) : deadlineUtc;
+                    deadlineLocal = now > start + startEpsilon ? sampler.nextTimestamp(sampler.round(now - 1)) : start;
+                    deadlineUtc = tzRules != null ? deadlineLocal - tzRules.getOffset(deadlineLocal) : deadlineLocal;
                     break;
                 case PERIOD_REFRESH_TYPE:
                     // Unlike with incremental timer views, we want to trigger the timer
                     // for all complete periods, if they exist.
-                    deadlineUtc = now > start + startEpsilon ? sampler.round(now) : start;
-                    deadlineLocal = tzRules != null ? deadlineUtc + tzRules.getOffset(deadlineUtc) : deadlineUtc;
+                    deadlineLocal = now > start + startEpsilon ? sampler.round(now) : start;
+                    deadlineUtc = tzRules != null ? deadlineLocal - tzRules.getOffset(deadlineLocal) : deadlineLocal;
                     break;
                 default:
                     throw new IllegalStateException("unexpected timer type: " + type);
