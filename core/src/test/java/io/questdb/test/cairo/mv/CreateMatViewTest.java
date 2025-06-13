@@ -178,6 +178,37 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewBaseTableSelfUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "with cte1 as (" +
+                    "  select ts, k, sum(v) sum_v from " + TABLE1 + " where k = 'k0' sample by 1d" +
+                    "), " +
+                    "cte2 as (" +
+                    "  select ts, k, sum(v) sum_v from " + TABLE1 + " where k = 'k1' sample by 1d" +
+                    ") " +
+                    "select ts, k, last(sum_v) as sum_v " +
+                    "from (" +
+                    "  select *" +
+                    "  from (" +
+                    "    select c1.ts, c1.k, c1.sum_v, c2.sum_v " +
+                    "    from cte1 c1 left join cte2 c2 on c1.ts = c2.ts" +
+                    "    union" +
+                    "    select c2.ts, c2.k, c2.sum_v, c1.sum_v " +
+                    "    from cte2 c2 left join cte1 c1 on c2.ts = c1.ts" +
+                    "  )" +
+                    "  order by ts asc" +
+                    ") timestamp(ts) " +
+                    "sample by 1d";
+            execute("create materialized view test as (" + query + ") partition by month;");
+            assertQuery0("ts\tk\tsum_v\n", "test", "ts");
+            assertMatViewDefinition(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'd');
+            assertMatViewDefinitionFile(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, "test", query, TABLE1, 1, 'd');
+        });
+    }
+
+    @Test
     public void testCreateMatViewCopySymbolCapacity() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -292,6 +323,30 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertFalse(metadata.isDedupKey(2));
                 assertEquals(3 * 7 * 24, metadata.getTtlHoursOrMonths());
             }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewFailsOnUnionWithNonBaseTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+
+            assertExceptionNoLeakCheck(
+                    "create materialized view test with base " + TABLE1 + " as (" +
+                            "  with b as (" +
+                            "    select ts, v from " + TABLE2 +
+                            "    union all" +
+                            "    select ts, v from " + TABLE1 +
+                            "  )" +
+                            "  select a.ts, avg(a.v)" +
+                            "  from " + TABLE1 + " a " +
+                            "  left outer join b on a.ts = b.ts" +
+                            "  sample by 1d" +
+                            ") partition by day",
+                    106,
+                    "union on base table is not supported for materialized views: " + TABLE1
+            );
         });
     }
 
@@ -1099,30 +1154,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertFalse(metadata.isDedupKey(2));
                 assertEquals(-1, metadata.getTtlHoursOrMonths());
             }
-        });
-    }
-
-    @Test
-    public void testCreateMatViewUnion() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable(TABLE1);
-            createTable(TABLE2);
-
-            assertExceptionNoLeakCheck(
-                    "create materialized view test with base " + TABLE1 + " as (" +
-                            "  with b as (" +
-                            "    select ts, v from " + TABLE2 +
-                            "    union all" +
-                            "    select ts, v from " + TABLE1 +
-                            "  )" +
-                            "  select a.ts, avg(a.v)" +
-                            "  from " + TABLE1 + " a " +
-                            "  left outer join b on a.ts = b.ts" +
-                            "  sample by 1d" +
-                            ") partition by day",
-                    106,
-                    "union on base table is not supported for materialized views: " + TABLE1
-            );
         });
     }
 
