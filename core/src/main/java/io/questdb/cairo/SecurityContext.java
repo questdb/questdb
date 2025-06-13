@@ -113,7 +113,7 @@ public interface SecurityContext extends Mutable {
 
     void authorizeTableVacuum(TableToken tableToken);
 
-    void authorizeViewCompile();
+    void authorizeViewCompile(TableToken tableToken);
 
     void authorizeViewCreate();
 

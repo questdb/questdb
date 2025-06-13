@@ -222,7 +222,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeViewCompile() {
+    public void authorizeViewCompile(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 

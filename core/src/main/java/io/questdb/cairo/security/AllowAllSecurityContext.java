@@ -194,7 +194,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeViewCompile() {
+    public void authorizeViewCompile(TableToken tableToken) {
     }
 
     @Override
