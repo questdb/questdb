@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -858,6 +859,44 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "AAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\n";
                 assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
+        });
+    }
+
+    @Test
+    public void testJoinHighCardinalityKeysAndTolerance() throws Exception {
+        // this tests set low threshold for evacuation of full fat ASOF join map
+        // and compares that Fast and FullFat results are the same
+
+        setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, "10");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (vch VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (vch VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute(
+                    "INSERT INTO master SELECT " +
+                            "rnd_int()::varchar as vch, " +
+                            "timestamp_sequence(0, 1000000) + x * 1000000 as ts " +
+                            "FROM long_sequence(1_000)"
+            );
+
+            execute(
+                    "INSERT INTO slave SELECT " +
+                            "rnd_int()::varchar as vch, " +
+                            "timestamp_sequence(0, 1000000) + x * 1000000 as ts " +
+                            "FROM long_sequence(1_000)"
+            );
+
+            String query = "SELECT * FROM master ASOF JOIN slave y ON(vch) TOLERANCE 1s";
+            printSql("EXPLAIN " + query, true);
+            TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
+            printSql(query, true);
+            String fullFatResult = sink.toString();
+
+            printSql("EXPLAIN " + query, false);
+            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+            printSql(query, false);
+            String lightResult = sink.toString();
+            TestUtils.assertEquals(fullFatResult, lightResult);
         });
     }
 
