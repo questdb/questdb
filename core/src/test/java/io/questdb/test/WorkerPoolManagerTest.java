@@ -277,7 +277,7 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
-            public WorkerPoolConfiguration getViewRefreshPoolConfiguration() {
+            public WorkerPoolConfiguration getViewCompilerPoolConfiguration() {
                 return null;
             }
 

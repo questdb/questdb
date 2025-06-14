@@ -479,8 +479,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int utf8SinkSize;
     private final PropertyValidator validator;
     private final int vectorAggregateQueueCapacity;
+    private final WorkerPoolConfiguration viewCompilerPoolConfiguration = new PropViewCompilerPoolConfiguration();
     private final boolean viewEnabled;
-    private final WorkerPoolConfiguration viewRefreshPoolConfiguration = new PropViewRefreshPoolConfiguration();
     private final long viewRefreshSleepTimeout;
     private final int[] viewRefreshWorkerAffinity;
     private final int viewRefreshWorkerCount;
@@ -1809,8 +1809,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getViewRefreshPoolConfiguration() {
-        return viewRefreshPoolConfiguration;
+    public WorkerPoolConfiguration getViewCompilerPoolConfiguration() {
+        return viewCompilerPoolConfiguration;
     }
 
     @Override
@@ -5565,7 +5565,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropViewRefreshPoolConfiguration implements WorkerPoolConfiguration {
+    private class PropViewCompilerPoolConfiguration implements WorkerPoolConfiguration {
         @Override
         public Metrics getMetrics() {
             return metrics;

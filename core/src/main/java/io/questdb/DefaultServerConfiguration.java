@@ -126,7 +126,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getViewRefreshPoolConfiguration() {
+    public WorkerPoolConfiguration getViewCompilerPoolConfiguration() {
         return viewRefreshPoolConfiguration;
     }
 

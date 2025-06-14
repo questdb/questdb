@@ -89,7 +89,7 @@ public interface ServerConfiguration {
         return 0;
     }
 
-    WorkerPoolConfiguration getViewRefreshPoolConfiguration();
+    WorkerPoolConfiguration getViewCompilerPoolConfiguration();
 
     WorkerPoolConfiguration getWalApplyPoolConfiguration();
 

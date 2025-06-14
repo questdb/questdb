@@ -373,7 +373,7 @@ public class ServerMain implements Closeable {
                             setupMatViewJobs(sharedPool, engine, sharedPool.getWorkerCount());
                         }
 
-                        if (viewEnabled && !config.getViewRefreshPoolConfiguration().isEnabled()) {
+                        if (viewEnabled && !config.getViewCompilerPoolConfiguration().isEnabled()) {
                             setupViewJobs(sharedPool, engine, sharedPool.getWorkerCount());
                         }
                     }
@@ -404,10 +404,10 @@ public class ServerMain implements Closeable {
             setupMatViewJobs(matViewRefreshWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
         }
 
-        if (viewEnabled && !isReadOnly && config.getViewRefreshPoolConfiguration().isEnabled()) {
+        if (viewEnabled && !isReadOnly && config.getViewCompilerPoolConfiguration().isEnabled()) {
             // create dedicated worker pool for view refresh
             WorkerPool viewRefreshWorkerPool = workerPoolManager.getInstance(
-                    config.getViewRefreshPoolConfiguration(),
+                    config.getViewCompilerPoolConfiguration(),
                     WorkerPoolManager.Requester.VIEW_REFRESH
             );
             setupViewJobs(viewRefreshWorkerPool, engine, workerPoolManager.getSharedWorkerCount());

@@ -250,7 +250,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getViewRefreshPoolConfiguration() {
+    public WorkerPoolConfiguration getViewCompilerPoolConfiguration() {
         return confViewRefreshPool;
     }
 
