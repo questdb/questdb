@@ -37,7 +37,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     public static final LenComparator COMPARATOR = new LenComparator();
     public static final CharSequenceHashSet WHITESPACE = new CharSequenceHashSet();
     public static final IntHashSet WHITESPACE_CH = new IntHashSet();
-    private static final String NULL_SENTINEL = "NULL";
+    private static final String NULL_SENTINEL = "NULL_SENTINEL";
     private final ObjectPool<FloatingSequencePair> csPairPool;
     private final ObjectPool<FloatingSequence> csPool;
     private final CharSequence flyweightSequence = new InternalFloatingSequence();
