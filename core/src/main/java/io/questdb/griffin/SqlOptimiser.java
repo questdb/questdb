@@ -3141,37 +3141,43 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private boolean isModelEligibleForOptimisation(QueryModel model) {
-        boolean isValidOrderBy = true;
+    private boolean isModelEligibleForOptimisation(SqlExecutionContext executionContext , QueryModel model) {
         boolean isOrderByPresent = false;
-        boolean isValidWherClause = false;
         boolean isLimitPresent = false;
-        if(model!= null && model.getNestedModel()!= null  && model.getNestedModel().getJoinModels().size() > 1 &&
-          model.getNestedModel().getJoinModels().get(1).getJoinType() == QueryModel.JOIN_ASOF) {
+        boolean isValidWhereClause = true;
+        if (model != null && model.getNestedModel() != null && model.getNestedModel().getJoinModels().size() > 1 &&
+                model.getNestedModel().getJoinModels().get(1).getJoinType() == QueryModel.JOIN_ASOF) {
             CharSequence slaveTableName = model.getNestedModel().getJoinModels().get(1).getTableNameExpr().token;
+            CharSequence masterTableName = model.getNestedModel().getTableNameExpr().token;
+            TableToken masterTableToken = executionContext.getTableToken(masterTableName);
+            TableToken slaveTableToken = executionContext.getTableToken(slaveTableName);
+            TableReader slaveTableReader = executionContext.getReader(slaveTableToken);
             for (int i = 0; i < model.getNestedModel().getOrderBy().size(); i++) {
                 isOrderByPresent = true;
                 String orderByColumn = model.getNestedModel().getOrderBy().get(i).token.toString();
                 int dot = orderByColumn.indexOf('.');
-                String orderByTableName = dot != -1 ? orderByColumn.substring(0, dot) : orderByColumn;
-                if (orderByTableName == slaveTableName) {
-                    isValidOrderBy = false;
-                    break;
+                String orderByColumnName = orderByColumn.substring(dot + 1);
+                //if any order by column is from slave table, then order optimisation will not be applied
+                if (slaveTableReader.getMetadata().getColumnIndexQuiet(orderByColumnName) != -1) {
+                    return false;
                 }
             }
-            String whereClauseTableName = null;
-            if (model.getNestedModel().getWhereClause() != null) {
-                String whereClauseToken = model.getNestedModel().getWhereClause().lhs.token.toString();
-                int dot = whereClauseToken.indexOf('.');
-                whereClauseTableName = whereClauseToken.substring(0, dot);
-            }
-            isLimitPresent = model.getNestedModel().getLimitLo() != null;
-            isValidWherClause = whereClauseTableName!=null && whereClauseTableName != slaveTableName;
-            return (isOrderByPresent && isValidOrderBy && isLimitPresent) || isValidWherClause;
-        }
-       return false;
-    }
 
+            if (model.getNestedModel().getWhereClause() != null) {
+                String whereClauseColumn = model.getNestedModel().getWhereClause().lhs.token.toString();
+                int dot = whereClauseColumn.indexOf('.');
+                String whereClauseColumnName = whereClauseColumn.substring(dot + 1);
+                //if where clause column is from slave table, then ASOF join optimisation will not be applied
+                if (slaveTableReader.getMetadata().getColumnIndexQuiet(whereClauseColumnName) != -1) {
+                    return false;
+                }
+            }
+
+            isLimitPresent = model.getLimitLo() != null;
+            return isValidWhereClause || (isOrderByPresent && isLimitPresent);
+        }
+        return false;
+    }
     /**
      * Optimises models with ASOF joins, to push up .
      * <p>
@@ -3181,17 +3187,17 @@ public class SqlOptimiser implements Mutable {
      * @param model the query model to optimise
      * @throws SqlException if an error occurs during optimisation
      */
-    private void optimiseModelsWithASOFJoins(QueryModel model) throws SqlException {
+    private void optimiseModelsWithASOFJoins(SqlExecutionContext executionContext, QueryModel model) throws SqlException {
 
-        if(!isModelEligibleForOptimisation(model))
+        if(!isModelEligibleForOptimisation(executionContext, model))
             return;
 
         ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 1, n = joinModels.size(); i < n; i++) {
-            optimiseModelsWithASOFJoins(joinModels.getQuick(i));
+            optimiseModelsWithASOFJoins(executionContext, joinModels.getQuick(i));
         }
 
-        optimiseModelsWithASOFJoins(model.getUnionModel());
+        optimiseModelsWithASOFJoins(executionContext, model.getUnionModel());
 
         QueryModel level0 = QueryModel.FACTORY.newInstance();
         level0.copyColumnsFrom(model.getNestedModel(), queryColumnPool, expressionNodePool);
@@ -6799,7 +6805,7 @@ public class SqlOptimiser implements Mutable {
             optimiseBooleanNot(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
-            optimiseModelsWithASOFJoins(rewrittenModel);
+            optimiseModelsWithASOFJoins(sqlExecutionContext, rewrittenModel);
             optimiseJoins(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
