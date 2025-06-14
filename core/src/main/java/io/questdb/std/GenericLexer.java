@@ -37,11 +37,12 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     public static final LenComparator COMPARATOR = new LenComparator();
     public static final CharSequenceHashSet WHITESPACE = new CharSequenceHashSet();
     public static final IntHashSet WHITESPACE_CH = new IntHashSet();
+    private static final String NULL_SENTINEL = "NULL_SENTINEL";
     private final ObjectPool<FloatingSequencePair> csPairPool;
     private final ObjectPool<FloatingSequence> csPool;
     private final CharSequence flyweightSequence = new InternalFloatingSequence();
-    private final IntStack parkedPosition = new IntStack();
-    private final ArrayDeque<CharSequence> parkedUnparsed = new ArrayDeque<>();
+    private final IntStack stashedNumbers = new IntStack();
+    private final ArrayDeque<CharSequence> stashedStrings = new ArrayDeque<>();
     private final IntObjHashMap<ObjList<CharSequence>> symbols = new IntObjHashMap<>();
     private final ArrayDeque<CharSequence> unparsed = new ArrayDeque<>();
     private final IntStack unparsedPosition = new IntStack();
@@ -329,20 +330,21 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         this.unparsed.clear();
         this.unparsedPosition.clear();
         this.last = null;
-        this.parkedPosition.clear();
-        this.parkedUnparsed.clear();
+        this.stashedNumbers.clear();
+        this.stashedStrings.clear();
     }
 
     public void stash() {
         int count = 0;
         while (!unparsed.isEmpty()) {
-            parkedUnparsed.push(unparsed.pop());
-            parkedPosition.push(unparsedPosition.pop());
-            parkedPosition.push(unparsedPosition.pop());
+            stashedStrings.push(unparsed.pop());
+            stashedNumbers.push(unparsedPosition.pop());
+            stashedNumbers.push(unparsedPosition.pop());
             count++;
         }
-        parkedPosition.push(getPosition());
-        parkedPosition.push(count);
+        stashedStrings.push(next != null ? next : NULL_SENTINEL);
+        stashedNumbers.push(getPosition());
+        stashedNumbers.push(count);
         // clear next because we create a new parsing context
         next = null;
     }
@@ -362,19 +364,21 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     }
 
     public void unstash() {
-        int count = parkedPosition.pop();
-        _pos = parkedPosition.pop();
+        int count = stashedNumbers.pop();
+        _pos = stashedNumbers.pop();
+        next = stashedStrings.pop();
+        if (next == NULL_SENTINEL) {
+            next = null;
+        }
 
         unparsed.clear();
         unparsedPosition.clear();
         while (count > 0) {
-            unparsed.push(parkedUnparsed.pop());
-            unparsedPosition.push(parkedPosition.pop()); // last
-            unparsedPosition.push(parkedPosition.pop()); // pos
+            unparsed.push(stashedStrings.pop());
+            unparsedPosition.push(stashedNumbers.pop()); // last
+            unparsedPosition.push(stashedNumbers.pop()); // pos
             count--;
         }
-        // clear next because we create a new parsing context
-        next = null;
     }
 
     private static CharSequence findToken0(char c, CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols) {
