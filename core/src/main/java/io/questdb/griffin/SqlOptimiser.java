@@ -3141,6 +3141,131 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private boolean isModelEligibleForOptimisation(SqlExecutionContext executionContext , QueryModel model) {
+        boolean isOrderByPresent = false;
+        boolean isLimitPresent = false;
+        boolean isValidWhereClause = true;
+        if (model != null && model.getNestedModel() != null && model.getNestedModel().getJoinModels().size() > 1 &&
+                model.getNestedModel().getJoinModels().get(1).getJoinType() == QueryModel.JOIN_ASOF) {
+            CharSequence slaveTableName = model.getNestedModel().getJoinModels().get(1).getTableNameExpr().token;
+            CharSequence masterTableName = model.getNestedModel().getTableNameExpr().token;
+            TableToken masterTableToken = executionContext.getTableToken(masterTableName);
+            TableToken slaveTableToken = executionContext.getTableToken(slaveTableName);
+            TableReader slaveTableReader = executionContext.getReader(slaveTableToken);
+            for (int i = 0; i < model.getNestedModel().getOrderBy().size(); i++) {
+                isOrderByPresent = true;
+                String orderByColumn = model.getNestedModel().getOrderBy().get(i).token.toString();
+                int dot = orderByColumn.indexOf('.');
+                String orderByColumnName = orderByColumn.substring(dot + 1);
+                //if any order by column is from slave table, then order optimisation will not be applied
+                if (slaveTableReader.getMetadata().getColumnIndexQuiet(orderByColumnName) != -1) {
+                    return false;
+                }
+            }
+
+            if (model.getNestedModel().getWhereClause() != null) {
+                String whereClauseColumn = model.getNestedModel().getWhereClause().lhs.token.toString();
+                int dot = whereClauseColumn.indexOf('.');
+                String whereClauseColumnName = whereClauseColumn.substring(dot + 1);
+                //if where clause column is from slave table, then ASOF join optimisation will not be applied
+                if (slaveTableReader.getMetadata().getColumnIndexQuiet(whereClauseColumnName) != -1) {
+                    return false;
+                }
+            }
+
+            isLimitPresent = model.getLimitLo() != null;
+            return isValidWhereClause || (isOrderByPresent && isLimitPresent);
+        }
+        return false;
+    }
+    /**
+     * Optimises models with ASOF joins, to push up .
+     * <p>
+     * This method traverses the query model and optimises it by restructuring
+     * the nested models to facilitate ASOF joins.
+     *
+     * @param model the query model to optimise
+     * @throws SqlException if an error occurs during optimisation
+     */
+    private void optimiseModelsWithASOFJoins(SqlExecutionContext executionContext, QueryModel model) throws SqlException {
+
+        if(!isModelEligibleForOptimisation(executionContext, model))
+            return;
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            optimiseModelsWithASOFJoins(executionContext, joinModels.getQuick(i));
+        }
+
+        optimiseModelsWithASOFJoins(executionContext, model.getUnionModel());
+
+        QueryModel level0 = QueryModel.FACTORY.newInstance();
+        level0.copyColumnsFrom(model.getNestedModel(), queryColumnPool, expressionNodePool);
+        level0.setTableNameExpr(model.getNestedModel().getTableNameExpr());
+        level0.setTimestamp(model.getTimestamp());
+        level0.setLimit(model.getLimitLo(), null);
+        level0.setWhereClause(model.getNestedModel().getWhereClause());
+        for(int i=0 ; i<model.getNestedModel().getModelAliasIndexes().keys().size(); i++){
+            CharSequence alias = model.getNestedModel().getModelAliasIndexes().keys().getQuick(i);
+            ExpressionNode aliasNode = expressionNodePool.next();
+            aliasNode.token = alias;
+            level0.addModelAliasIndex(aliasNode, i);
+        }
+        for(int i=0 ; i< model.getNestedModel().getOrderBy().size(); i++){
+            ExpressionNode aliasNode = expressionNodePool.next();
+            CharSequence truncateAlias = model.getNestedModel().getTableNameExpr().token+".";
+            String originalAlias = model.getNestedModel().getOrderBy().get(i).token.toString();
+            aliasNode.token = originalAlias.replace(truncateAlias, "");;
+            level0.addOrderBy(aliasNode, model.getNestedModel().getOrderByDirection().getQuick(i));
+        }
+
+        QueryModel level1 = QueryModel.FACTORY.newInstance();
+        final CharSequence timestampColumn = model.getNestedModel().getTimestamp().token;
+        final ExpressionNode timestampNode = expressionNodePool.next();
+        timestampNode.token = timestampColumn;
+        level1.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
+        level1.copyColumnsFrom(model.getNestedModel(), queryColumnPool, expressionNodePool);
+        level1.setSelectModelType(1);
+        level1.copyColumnsFrom(model.getNestedModel(), queryColumnPool, expressionNodePool);
+        final ObjList<CharSequence> aliases = model.getNestedModel().getAliasToColumnMap().keys();
+        for (int i = 0, n = aliases.size(); i < n; i++) {
+            final CharSequence alias = aliases.getQuick(i);
+            QueryColumn qc = model.getNestedModel().getAliasToColumnMap().get(alias);
+            if (qc != null) {
+                QueryColumn newQc = queryColumnPool.next();
+                newQc.of(alias, qc.getAst());
+                level1.getAliasToColumnMap().put(alias, qc);
+                level1.getBottomUpColumns().add(newQc);
+            }
+        }
+
+        QueryModel level2 = QueryModel.FACTORY.newInstance();
+        level2.setAlias(model.getNestedModel().getTableNameExpr());
+        for(int i=0 ; i<model.getNestedModel().getModelAliasIndexes().keys().size(); i++){
+            CharSequence alias = model.getNestedModel().getModelAliasIndexes().keys().getQuick(i);
+            ExpressionNode aliasNode = expressionNodePool.next();
+            aliasNode.token = alias;
+            level2.addModelAliasIndex(aliasNode, i);
+        }
+        for(int i=1; i< model.getNestedModel().getJoinModels().size(); i++){
+            QueryModel joinModel = model.getNestedModel().getJoinModels().getQuick(i);
+            level2.getJoinModels().add(joinModel);
+        }
+        for(int i=0 ; i< model.getNestedModel().getOrderBy().size(); i++){
+            ExpressionNode aliasNode = expressionNodePool.next();
+            CharSequence truncateAlias = model.getNestedModel().getTableNameExpr().token+".";
+            String originalAlias = model.getNestedModel().getOrderBy().get(i).token.toString();
+            aliasNode.token = originalAlias.replace(truncateAlias, "");;
+            level2.addOrderBy(aliasNode, model.getNestedModel().getOrderByDirection().getQuick(i));
+        }
+
+        level1.setNestedModel(level0);
+        level2.setNestedModel(level1);
+        model.setNestedModel(level2);
+        model.setLimit(null, null);
+
+    }
+
     private void optimiseJoins(QueryModel model) throws SqlException {
         ObjList<QueryModel> joinModels = model.getJoinModels();
 
@@ -6682,6 +6807,7 @@ public class SqlOptimiser implements Mutable {
             optimiseBooleanNot(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
+            optimiseModelsWithASOFJoins(sqlExecutionContext, rewrittenModel);
             optimiseJoins(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
