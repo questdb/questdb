@@ -666,6 +666,38 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testMultipleVarcharCols() throws Exception {
+        useLegacyStringDefault = false;
+        runInContext(r -> {
+            String table = "string_table";
+            CountDownLatch released = createTableCommitNotifier(table);
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()
+            ) {
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2024-02-27");
+                sender.table(table)
+                        .stringColumn("string1", "some string")
+                        .stringColumn("string2", "another string")
+                        .stringColumn("string3", "yet another string")
+                        .at(tsMicros, ChronoUnit.MICROS);
+                sender.flush();
+                waitTableWriterFinish(released);
+                assertTableSizeEventually(engine, table, 1);
+                try (RecordCursorFactory fac = engine.select(table, sqlExecutionContext);
+                     RecordCursor cursor = fac.getCursor(sqlExecutionContext)
+                ) {
+                    TestUtils.assertCursor(
+                            "some string:VARCHAR\tanother string:VARCHAR\tyet another string:VARCHAR\t2024-02-27T00:00:00.000000Z:TIMESTAMP\n",
+                            cursor, fac.getMetadata(), false, true, sink
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testServerIgnoresUnfinishedRows() throws Exception {
         Assume.assumeTrue(!walEnabled);
         String tableName = "myTable";

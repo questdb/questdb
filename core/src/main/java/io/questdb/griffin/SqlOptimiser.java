@@ -5472,7 +5472,7 @@ public class SqlOptimiser implements Mutable {
      * <p>
      * This is to allow for the generation of an interval scan and minimise reading of un-needed data.
      */
-    private void rewriteSampleByFromTo(QueryModel model) {
+    private void rewriteSampleByFromTo(QueryModel model) throws SqlException {
         QueryModel curr;
         QueryModel fromToModel;
         QueryModel whereModel = null;
@@ -5520,7 +5520,9 @@ public class SqlOptimiser implements Mutable {
                     timestamp = whereModel.getTimestamp();
                 }
             }
-            assert timestamp != null;
+            if (timestamp == null) {
+                throw SqlException.$(fromToModel.getSampleBy().position, "Sample by requires a designated TIMESTAMP");
+            }
 
             if (Chars.indexOf(timestamp.token, '.') < 0) {
                 // prefix the timestamp column name only if the table is not dotted
