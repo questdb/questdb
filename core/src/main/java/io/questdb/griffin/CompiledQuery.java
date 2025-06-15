@@ -129,4 +129,6 @@ public interface CompiledQuery {
     CompiledQuery withContext(SqlExecutionContext sqlExecutionContext);
 
     void withSqlText(String sqlText);
+
+    boolean isCacheable();
 }
