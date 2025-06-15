@@ -202,7 +202,11 @@ public class MetadataCache implements QuietCloseable {
             table.setMatViewRefreshLimitHoursOrMonths(TableUtils.getMatViewRefreshLimitHoursOrMonths(metaMem));
             table.setMatViewTimerStart(TableUtils.getMatViewTimerStart(metaMem));
             table.setMatViewTimerInterval(TableUtils.getMatViewTimerInterval(metaMem));
-            table.setMatViewTimerIntervalUnit(TableUtils.getMatViewTimerIntervalUnit(metaMem));
+            table.setMatViewTimerUnit(TableUtils.getMatViewTimerUnit(metaMem));
+            table.setMatViewPeriodLength(TableUtils.getMatViewPeriodLength(metaMem));
+            table.setMatViewPeriodLengthUnit(TableUtils.getMatViewPeriodLengthUnit(metaMem));
+            table.setMatViewPeriodDelay(TableUtils.getMatViewPeriodDelay(metaMem));
+            table.setMatViewPeriodDelayUnit(TableUtils.getMatViewPeriodDelayUnit(metaMem));
             table.setSoftLinkFlag(isSoftLink);
 
             TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
@@ -546,7 +550,11 @@ public class MetadataCache implements QuietCloseable {
             table.setMatViewRefreshLimitHoursOrMonths(tableMetadata.getMatViewRefreshLimitHoursOrMonths());
             table.setMatViewTimerStart(tableMetadata.getMatViewTimerStart());
             table.setMatViewTimerInterval(tableMetadata.getMatViewTimerInterval());
-            table.setMatViewTimerIntervalUnit(tableMetadata.getMatViewTimerIntervalUnit());
+            table.setMatViewTimerUnit(tableMetadata.getMatViewTimerUnit());
+            table.setMatViewPeriodLength(tableMetadata.getMatViewPeriodLength());
+            table.setMatViewPeriodLengthUnit(tableMetadata.getMatViewPeriodLengthUnit());
+            table.setMatViewPeriodDelay(tableMetadata.getMatViewPeriodDelay());
+            table.setMatViewPeriodDelayUnit(tableMetadata.getMatViewPeriodDelayUnit());
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
             table.setSoftLinkFlag(Files.isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 

@@ -177,7 +177,7 @@ public interface MetadataService {
     /**
      * Sets incremental refresh timer values for materialized view.
      */
-    void setMetaMatViewRefreshTimer(long start, int interval, char unit);
+    void setMetaMatViewTimer(long start, int interval, char unit);
 
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 

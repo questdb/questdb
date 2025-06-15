@@ -565,7 +565,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         txnDetails.getMatViewRefreshTxn(s),
                                         txnDetails.getMatViewRefreshTimestamp(s),
                                         false,
-                                        null
+                                        null,
+                                        txnDetails.getMatViewPeriodHi(s)
                                 );
                             } catch (CairoException e) {
                                 LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
@@ -612,13 +613,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     int tablePathLen = path.size();
                     path.slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                     final WalEventCursor walEventCursor = eventReader.of(path, segmentTxn);
-                    final WalEventCursor.MatViewInvalidationInfo info = walEventCursor.getMvInvalidationInfo();
+                    final WalEventCursor.MatViewInvalidationInfo info = walEventCursor.getMatViewInvalidationInfo();
                     updateMatViewRefreshState(
                             path.trimTo(tablePathLen),
                             info.getLastRefreshBaseTableTxn(),
                             info.getLastRefreshTimestamp(),
                             info.isInvalid(),
-                            info.getInvalidationReason()
+                            info.getInvalidationReason(),
+                            info.getLastPeriodHi()
                     );
                 } catch (CairoException e) {
                     LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
@@ -736,7 +738,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             long lastRefreshBaseTxn,
             long lastRefreshTimestamp,
             boolean invalid,
-            @Nullable CharSequence invalidationReason
+            @Nullable CharSequence invalidationReason,
+            long lastPeriodHi
     ) {
         try (BlockFileWriter stateWriter = mvStateWriter) {
             stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
@@ -746,6 +749,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     lastRefreshBaseTxn,
                     invalid,
                     invalidationReason,
+                    lastPeriodHi,
                     stateWriter
             );
         }
