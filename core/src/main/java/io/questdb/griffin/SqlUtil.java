@@ -39,10 +39,12 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
+import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -61,10 +63,12 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.std.GenericLexer.unquote;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
 
 public class SqlUtil {
 
+    static final String STAR = "*";
     static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
     private static final DateFormat[] DATE_FORMATS_FOR_TIMESTAMP;
     private static final int DATE_FORMATS_FOR_TIMESTAMP_SIZE;
@@ -75,8 +79,79 @@ public class SqlUtil {
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<ExpressionNode> expressionNodePool
     ) throws SqlException {
-        model.addBottomUpColumn(nextColumn(queryColumnPool, expressionNodePool, "*", "*", 0));
+        model.addBottomUpColumn(nextColumn(queryColumnPool, expressionNodePool, STAR, STAR, 0));
         model.setArtificialStar(true);
+    }
+
+    public static void collectAllTableNames(
+            QueryModel model, LowerCaseCharSequenceHashSet outTableNames, IntList outTableNamePositions
+    ) {
+        QueryModel m = model;
+        do {
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
+                if (outTableNames.add(unquote(tableNameExpr.token))) {
+                    outTableNamePositions.add(tableNameExpr.position);
+                }
+            }
+
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel == m) {
+                    continue;
+                }
+                collectAllTableNames(joinModel, outTableNames, outTableNamePositions);
+            }
+
+            final QueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                collectAllTableNames(unionModel, outTableNames, outTableNamePositions);
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
+    }
+
+    public static void collectAllTableNames(
+            QueryModel model, ObjList<CharSequence> outTableNames
+    ) {
+        collectAllTableNames(model, outTableNames, false);
+    }
+
+    public static void collectAllTableNames(
+            QueryModel model, ObjList<CharSequence> outTableNames, boolean viewsOnly
+    ) {
+        QueryModel m = model;
+        do {
+            if (!viewsOnly) {
+                final ExpressionNode tableNameExpr = m.getTableNameExpr();
+                if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
+                    outTableNames.add(unquote(tableNameExpr.token));
+                }
+            }
+
+            final ExpressionNode viewNameExpr = m.getViewNameExpr();
+            if (viewNameExpr != null) {
+                outTableNames.add(unquote(viewNameExpr.token));
+            }
+
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel == m) {
+                    continue;
+                }
+                collectAllTableNames(joinModel, outTableNames, viewsOnly);
+            }
+
+            final QueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                collectAllTableNames(unionModel, outTableNames, viewsOnly);
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
     }
 
     // used by Copier assembler
