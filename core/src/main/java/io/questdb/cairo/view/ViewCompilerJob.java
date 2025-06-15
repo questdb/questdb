@@ -41,10 +41,11 @@ import org.jetbrains.annotations.TestOnly;
 
 public class ViewCompilerJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(ViewCompilerJob.class);
-    private final ObjList<TableToken> childViewSink = new ObjList<>();
+    private final ObjList<TableToken> compileViewsSink = new ObjList<>();
     private final ViewCompilerExecutionContext compilerExecutionContext;
     private final ViewCompilerTask compilerTask = new ViewCompilerTask();
     private final CairoEngine engine;
+    private final ObjList<TableToken> invalidateViewsSink = new ObjList<>();
     private final ViewStateStore stateStore;
     private final ViewGraph viewGraph;
     private final int workerId;
@@ -81,23 +82,35 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     }
 
     private void compile(TableToken tableToken, long updateTimestamp) {
-        if (tableToken == null || !tableToken.isView()) {
-            LOG.error().$("cannot compile view, not a view token [token=").$(tableToken).I$();
-            return;
+        compileDependentViews(tableToken, updateTimestamp);
+        if (tableToken.isView()) {
+            compileView(tableToken, updateTimestamp);
         }
-        final ViewDefinition viewDefinition = viewGraph.getViewDefinition(tableToken);
+    }
+
+    private void compileDependentViews(TableToken tableToken, long updateTimestamp) {
+        compileViewsSink.clear();
+        viewGraph.getDependentViews(tableToken, compileViewsSink);
+        for (int i = 0, n = compileViewsSink.size(); i < n; i++) {
+            final TableToken viewToken = compileViewsSink.get(i);
+            compileView(viewToken, updateTimestamp);
+        }
+    }
+
+    private void compileView(TableToken viewToken, long updateTimestamp) {
+        final ViewDefinition viewDefinition = viewGraph.getViewDefinition(viewToken);
         if (viewDefinition == null) {
-            LOG.error().$("cannot compile view, probably dropped concurrently [token=").$(tableToken).I$();
+            LOG.error().$("cannot compile view, probably dropped concurrently [token=").$(viewToken).I$();
             return;
         }
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.testCompileModel(viewDefinition.getViewSql(), compilerExecutionContext);
-            reset(tableToken, updateTimestamp);
+            reset(viewToken, updateTimestamp);
         } catch (SqlException | CairoException e) {
-            invalidate(tableToken, e.getFlyweightMessage(), updateTimestamp);
+            invalidate(viewToken, e.getFlyweightMessage(), updateTimestamp);
         } catch (Throwable e) {
-            invalidate(tableToken, e.getMessage(), updateTimestamp);
+            invalidate(viewToken, e.getMessage(), updateTimestamp);
         }
     }
 
@@ -109,11 +122,11 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     }
 
     private void invalidateDependentViews(TableToken tableToken, CharSequence invalidationReason, long updateTimestamp) {
-        childViewSink.clear();
-        viewGraph.getDependentViews(tableToken, childViewSink);
-        for (int i = 0, n = childViewSink.size(); i < n; i++) {
-            final TableToken viewToken = childViewSink.get(i);
-            invalidate(viewToken, invalidationReason, updateTimestamp);
+        invalidateViewsSink.clear();
+        viewGraph.getDependentViews(tableToken, invalidateViewsSink);
+        for (int i = 0, n = invalidateViewsSink.size(); i < n; i++) {
+            final TableToken viewToken = invalidateViewsSink.get(i);
+            resetViewState(viewToken, true, invalidationReason, updateTimestamp);
         }
     }
 
@@ -143,17 +156,19 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             return;
         }
 
-        final ViewDefinition viewDefinition = viewGraph.getViewDefinition(tableToken);
-        if (viewDefinition == null) {
-            LOG.error().$("cannot reset view, probably dropped concurrently [token=").$(tableToken).I$();
-            return;
-        }
-
         resetViewState(tableToken, false, null, updateTimestamp);
-        // todo: also compile dependent views (but not their dependent views)
+
+        // compile dependent views, they could be valid too
+        compileDependentViews(tableToken, updateTimestamp);
     }
 
     private void resetViewState(TableToken viewToken, boolean invalid, CharSequence invalidationReason, long updateTimestamp) {
+        final ViewDefinition viewDefinition = viewGraph.getViewDefinition(viewToken);
+        if (viewDefinition == null) {
+            LOG.error().$("cannot reset view, probably dropped concurrently [token=").$(viewToken).I$();
+            return;
+        }
+
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             // todo: add the timestamp to the WAL event
             walWriter.resetViewState(invalid, invalidationReason);

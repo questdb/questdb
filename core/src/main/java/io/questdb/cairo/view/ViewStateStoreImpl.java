@@ -88,8 +88,8 @@ public class ViewStateStoreImpl implements ViewStateStore {
     }
 
     @Override
-    public void enqueueCompile(@NotNull TableToken viewToken) {
-        enqueueViewTask(viewToken, ViewCompilerTask.COMPILE, null);
+    public void enqueueCompile(@NotNull TableToken tableToken) {
+        enqueueViewTask(tableToken, ViewCompilerTask.COMPILE, null);
     }
 
     @Override

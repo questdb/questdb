@@ -634,8 +634,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tableToken.isWal()) {
             if (notifyDropped(tableToken)) {
                 tableSequencerAPI.dropTable(tableToken, false);
-                viewStateStore.removeViewState(tableToken);
-                viewGraph.removeView(tableToken);
+                notifyViewsAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);
                 matViewGraph.removeView(tableToken);
             } else {
@@ -658,6 +657,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
 
                 tableNameRegistry.dropTable(tableToken);
+                notifyViewsAboutDrop(tableToken);
                 return;
             }
             throw CairoException.nonCritical().put("could not lock '").put(tableToken.getTableName()).put("' [reason='").put(lockedReason).put("']");
@@ -1467,6 +1467,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
             }
 
+            getViewStateStore().enqueueCompile(fromTableToken);
             getDdlListener(fromTableToken).onTableRenamed(securityContext, fromTableToken, toTableToken);
 
             return toTableToken;
@@ -1785,6 +1786,12 @@ public class CairoEngine implements Closeable, WriterSource {
 
             return tableToken;
         }
+    }
+
+    private void notifyViewsAboutDrop(TableToken tableToken) {
+        viewStateStore.removeViewState(tableToken);
+        viewStateStore.enqueueCompile(tableToken);
+        viewGraph.removeView(tableToken);
     }
 
     private TableToken rename0(Path fromPath, TableToken fromTableToken, Path toPath, CharSequence toTableName) {

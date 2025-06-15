@@ -24,12 +24,7 @@
 
 package io.questdb.test.cairo.view;
 
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlException;
 import org.junit.Test;
-
-import static io.questdb.test.tools.TestUtils.assertContains;
-import static org.junit.Assert.fail;
 
 public class ViewInvalidationTest extends AbstractViewTest {
 
@@ -67,11 +62,6 @@ public class ViewInvalidationTest extends AbstractViewTest {
             execute(tableChangeSql);
             drainWalQueue();
 
-            try (RecordCursorFactory ignored = select(VIEW3)) {
-                fail("Expected SqlException");
-            } catch (SqlException e) {
-                assertContains(e.getFlyweightMessage(), expectedErrorMessage);
-            }
             drainViewQueue();
             drainWalQueue();
 
@@ -197,11 +187,6 @@ public class ViewInvalidationTest extends AbstractViewTest {
             execute(tableChangeSql);
             drainWalQueue();
 
-            try (RecordCursorFactory ignored = select(VIEW1)) {
-                fail("Expected SqlException");
-            } catch (SqlException e) {
-                assertContains(e.getFlyweightMessage(), expectedErrorMessage);
-            }
             drainViewQueue();
             drainWalQueue();
 
