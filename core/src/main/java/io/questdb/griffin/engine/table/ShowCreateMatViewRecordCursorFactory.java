@@ -135,7 +135,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             this.executionContext = executionContext;
             try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
                 this.table = metadataRO.getTable(tableToken);
-                if (this.table == null) {
+                if (table == null) {
                     throw SqlException.$(tokenPosition, "table does not exist [table=")
                             .put(tableToken.getTableName()).put(']');
                 } else if (!tableToken.equals(table.getTableToken())) {
@@ -188,13 +188,27 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             sink.putAscii("CREATE MATERIALIZED VIEW '")
                     .put(tableToken.getTableName())
                     .putAscii("' WITH BASE '")
-                    .put(matViewDefinition.getBaseTableName())
-                    .putAscii("' REFRESH INCREMENTAL AS ( ")
+                    .put(matViewDefinition.getBaseTableName());
+            sink.putAscii("' REFRESH");
+            if (matViewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
+                sink.putAscii(" START '");
+                sink.putISODate(table.getMatViewTimerStart());
+                if (matViewDefinition.getTimerTimeZone() != null) {
+                    sink.putAscii("' TIME ZONE '");
+                    sink.put(matViewDefinition.getTimerTimeZone());
+                }
+                sink.putAscii("' EVERY ");
+                sink.put(table.getMatViewTimerInterval());
+                sink.putAscii(table.getMatViewTimerIntervalUnit());
+            } else if (matViewDefinition.getRefreshType() == MatViewDefinition.IMMEDIATE_REFRESH_TYPE) {
+                sink.putAscii(" IMMEDIATE");
+            } else if (matViewDefinition.getRefreshType() == MatViewDefinition.MANUAL_REFRESH_TYPE) {
+                sink.putAscii(" MANUAL");
+            }
+            sink.putAscii(" AS (\n")
+                    .put(matViewDefinition.getMatViewSql())
                     .putAscii('\n');
-            sink.put(matViewDefinition.getMatViewSql());
-            sink.putAscii('\n');
-            sink.putAscii(')');
-            sink.putAscii(" PARTITION BY ").put(table.getPartitionByName());
+            sink.putAscii(") PARTITION BY ").put(table.getPartitionByName());
             ttlToSink(table.getTtlHoursOrMonths(), sink);
             inVolumeToSink(configuration, table, sink);
             putAdditional();

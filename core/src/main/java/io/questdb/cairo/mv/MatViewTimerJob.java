@@ -37,8 +37,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Queue;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
 import java.util.PriorityQueue;
@@ -50,7 +52,7 @@ import java.util.function.Predicate;
 public class MatViewTimerJob extends SynchronizedJob {
     private static final int INITIAL_QUEUE_CAPACITY = 16;
     private static final Log LOG = LogFactory.getLog(MatViewTimerJob.class);
-    private static final Comparator<Timer> timerComparator = Comparator.comparingLong(t -> t.deadline);
+    private static final Comparator<Timer> timerComparator = Comparator.comparingLong(t -> t.deadlineUtc);
     private final MicrosecondClock clock;
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
@@ -90,7 +92,14 @@ public class MatViewTimerJob extends SynchronizedJob {
                 throw CairoException.critical(0).put("invalid EVERY interval and/or unit: ").put(interval)
                         .put(", ").put(unit);
             }
-            final Timer timer = new Timer(viewToken, sampler, start, configuration.getMatViewTimerStartEpsilon(), now);
+            final Timer timer = new Timer(
+                    viewToken,
+                    sampler,
+                    viewDefinition.getTimerTzRules(),
+                    start,
+                    configuration.getMatViewTimerStartEpsilon(),
+                    now
+            );
             timerQueue.add(timer);
             LOG.info().$("registered timer for materialized view [view=").$(viewToken)
                     .$(", start=").$ts(start)
@@ -112,7 +121,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         expired.clear();
         boolean ran = false;
         Timer timer;
-        while ((timer = timerQueue.peek()) != null && timer.deadline <= now) {
+        while ((timer = timerQueue.peek()) != null && timer.deadlineUtc <= now) {
             timer = timerQueue.poll();
             expired.add(timer);
             final TableToken viewToken = timer.getMatViewToken();
@@ -188,16 +197,27 @@ public class MatViewTimerJob extends SynchronizedJob {
 
     private static class Timer {
         private final TableToken matViewToken;
+        private final TimeZoneRules rules;
         private final TimestampSampler sampler;
-        private long deadline;
+        private long deadlineLocal; // used for sampler interaction only
+        private long deadlineUtc;
         private long knownRefreshSeq = -1;
 
-        private Timer(@NotNull TableToken matViewToken, @NotNull TimestampSampler sampler, long start, long startEpsilon, long now) {
+        private Timer(
+                @NotNull TableToken matViewToken,
+                @NotNull TimestampSampler sampler,
+                @Nullable TimeZoneRules rules,
+                long start,
+                long startEpsilon,
+                long now
+        ) {
             this.matViewToken = matViewToken;
             this.sampler = sampler;
+            this.rules = rules;
             sampler.setStart(start);
             // It's fine if the timer triggers immediately.
-            deadline = now > start + startEpsilon ? sampler.nextTimestamp(sampler.round(now - 1)) : start;
+            deadlineUtc = now > start + startEpsilon ? sampler.nextTimestamp(sampler.round(now - 1)) : start;
+            deadlineLocal = rules != null ? deadlineUtc + rules.getOffset(deadlineUtc) : deadlineUtc;
         }
 
         @Override
@@ -231,7 +251,8 @@ public class MatViewTimerJob extends SynchronizedJob {
         }
 
         private void nextDeadline() {
-            deadline = sampler.nextTimestamp(deadline);
+            deadlineLocal = sampler.nextTimestamp(deadlineLocal);
+            deadlineUtc = rules != null ? deadlineLocal - rules.getLocalOffset(deadlineLocal) : deadlineLocal;
         }
     }
 }
