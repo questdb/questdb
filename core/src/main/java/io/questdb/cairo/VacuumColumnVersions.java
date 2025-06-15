@@ -30,7 +30,18 @@ import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FindVisitor;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Os;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -85,7 +96,7 @@ public class VacuumColumnVersions implements Closeable {
             throw CairoException.nonCritical().put("cannot vacuum while checkpoint is in progress");
         }
 
-        LOG.info().$("processing [dirName=").utf8(reader.getTableToken().getDirName()).I$();
+        LOG.info().$("processing [table=").$(reader.getTableToken()).I$();
         fileNameSink = new Utf8StringSink();
         columnNameSink = new StringSink();
 
@@ -309,7 +320,3 @@ public class VacuumColumnVersions implements Closeable {
         }
     }
 }
-
-
-
-

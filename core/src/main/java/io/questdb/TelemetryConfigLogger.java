@@ -192,7 +192,7 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
         } catch (CairoException ex) {
             LOG.error()
                     .$("could not update config telemetry [table=`").utf8(TELEMETRY_CONFIG_TABLE_NAME)
-                    .$("`, msg=").$(ex.getFlyweightMessage())
+                    .$("`, msg=").utf8(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
         }

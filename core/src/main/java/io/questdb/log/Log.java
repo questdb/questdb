@@ -25,7 +25,6 @@
 package io.questdb.log;
 
 public interface Log {
-
     LogRecord advisory();
 
     LogRecord advisoryW();

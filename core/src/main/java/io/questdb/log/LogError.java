@@ -32,4 +32,8 @@ public class LogError extends Error {
     public LogError(String message, Throwable cause) {
         super(message, cause);
     }
+
+    public LogError(String message, boolean writableStackTrace) {
+        super(message, null, true, writableStackTrace);
+    }
 }

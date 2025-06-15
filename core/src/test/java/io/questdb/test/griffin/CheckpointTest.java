@@ -535,7 +535,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 execute("drop table test;");
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not lock 'test' [reason='checkpointInProgress']");
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not lock 'test~' [reason='checkpointInProgress']");
             }
             engine.checkpointRelease();
         });

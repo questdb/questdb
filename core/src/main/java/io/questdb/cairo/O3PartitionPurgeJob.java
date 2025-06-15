@@ -139,7 +139,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             TxReader txReader,
             int partitionBy
     ) {
-        LOG.info().$("processing [table=").utf8(tableToken.getDirName()).I$();
+        LOG.info().$("processing [table=").$(tableToken).I$();
         Path path = Path.getThreadLocal(root).concat(tableToken);
         int plimit = path.size();
         partitionList.clear();
@@ -217,16 +217,16 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         } catch (TableReferenceOutOfDateException e) {
             // the table is dropped and recreated since we started processing it.
             // abort the table processing
-            LOG.info().$("table reference out of date, aborting [table=").$(tableToken.getDirName()).I$();
+            LOG.info().$("table reference out of date, aborting [table=").$(tableToken).I$();
         } catch (CairoException ex) {
             // It is possible that the table is dropped while this async job was in the queue.
             // so it can be not too bad. Log error and continue work on the queue
             LOG.error()
-                    .$("could not purge partition open [table=`").utf8(tableToken.getDirName())
-                    .$("`, msg=").$(ex.getFlyweightMessage())
+                    .$("could not purge partition open [table=`").$(tableToken)
+                    .$("`, msg=").utf8(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
-            LOG.error().$(ex.getFlyweightMessage()).$();
+            LOG.error().utf8(ex.getFlyweightMessage()).$();
         } finally {
             txReader.clear();
             Misc.free(txnScoreboard);
@@ -268,7 +268,9 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 purgePartition(tableToken, ff, path, tableRootLen - tableToken.getDirNameUtf8().size() - 1, "purging dropped partition directory [path=");
                 lastTxn = nameTxn;
             } else {
-                LOG.debug().$("cannot purge partition directory, locked for reading [path=").$substr(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path).I$();
+                LOG.debug().$("cannot purge partition directory, locked for reading [path=")
+                        .$substr(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path)
+                        .I$();
                 break;
             }
         }
@@ -356,7 +358,8 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, partitionTimestamp, previousNameVersion - 1, 0);
                     purgePartition(tableToken, ff, path, tableRootLen - tableToken.getDirNameUtf8().size() - 1, "purging overwritten partition directory [path=");
                 } else {
-                    LOG.info().$("cannot purge overwritten partition directory, locked for reading path=").$substr(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path).I$();
+                    LOG.info().$("cannot purge overwritten partition directory, locked for reading path=")
+                            .$substr(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path).I$();
                 }
             }
         }

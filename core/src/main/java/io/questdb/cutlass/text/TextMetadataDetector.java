@@ -88,7 +88,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             header = true;
         } else {
             LOG.info()
-                    .$("no header [table=").$(tableName)
+                    .$("no header [table=").utf8(tableName)
                     .$(", lineCount=").$(lineCount)
                     .$(", errorCount=").$(errorCount)
                     .$(", forceHeader=").$(forceHeader)
@@ -288,7 +288,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             if (Utf8s.utf8ToUtf16(value.lo(), value.hi(), utf8Sink)) {
                 columnNames.setQuick(i, normalise(utf8Sink));
             } else {
-                LOG.info().$("utf8 error [table=").$(tableName).$(", line=0, col=").$(i).$(']').$();
+                LOG.info().$("utf8 error [table=").utf8(tableName).$(", line=0, col=").$(i).$(']').$();
                 columnNames.setQuick(i, "");
             }
         }

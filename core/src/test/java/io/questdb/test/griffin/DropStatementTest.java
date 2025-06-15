@@ -215,7 +215,7 @@ public class DropStatementTest extends AbstractCairoTest {
             } catch (CairoException expected) {
                 TestUtils.assertContains(
                         expected.getFlyweightMessage(),
-                        "failed to drop tables and materialized views ['public table': [-1] could not lock 'public table' [reason='busyReader']]"
+                        "failed to drop tables and materialized views ['public table': [-1] could not lock 'public table~' [reason='busyReader']]"
                 );
             }
             tableBucket.clear();
@@ -240,7 +240,7 @@ public class DropStatementTest extends AbstractCairoTest {
             } catch (CairoException expected) {
                 TestUtils.assertContains(
                         expected.getFlyweightMessage(),
-                        "failed to drop tables and materialized views ['public table': [-1] could not lock 'public table' [reason='test']]"
+                        "failed to drop tables and materialized views ['public table': [-1] could not lock 'public table~' [reason='test']]"
                 );
             }
             tableBucket.clear();

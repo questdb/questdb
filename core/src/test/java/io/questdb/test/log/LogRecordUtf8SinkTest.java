@@ -151,7 +151,7 @@ public class LogRecordUtf8SinkTest {
     public void testLoggerApi() {
         final String str = "abcde ðãµ¶ Āڜ 嚜꓂ \uD83D\uDCA9 \uD83E\uDD9E!";
         try (Utf8 msg = new Utf8(str)) {
-            LOG.info().$utf8(msg.lo(), msg.hi()).$();
+            LOG.info().$safe(msg.lo(), msg.hi()).$();
             Assert.assertEquals(str, msg.toString());
         }
     }
