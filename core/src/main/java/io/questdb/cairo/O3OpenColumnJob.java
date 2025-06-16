@@ -465,7 +465,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // 'long long value'
                     // 'long long value'
                     // Which is longer than oooLen + dataLen
-                    // To deal with unpredicatability of the dedup var col size run the dedup merged size calculation
+                    // To deal with unpredictability of the dedup var col size run the dedup merged size calculation
                     mergeDataSize = timestampMergeIndexAddr > 0 ? columnTypeDriver.dedupMergeVarColumnSize(
                             timestampMergeIndexAddr,
                             mergeRowCount,
