@@ -1653,6 +1653,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             throw SqlException.$(lexer.lastTokenPosition(), "materialized view must be of timer refresh type");
                         }
 
+                        final long periodLength;
+                        final long oldStart;
+                        try (TableMetadata matViewMeta = engine.getTableMetadata(matViewToken)) {
+                            periodLength = matViewMeta.getMatViewPeriodLength();
+                            oldStart = matViewMeta.getMatViewTimerStart();
+                        }
+
                         long start = Numbers.LONG_NULL;
                         if (isStartKeyword(tok)) {
                             tok = expectToken(lexer, "START timestamp");
@@ -1661,17 +1668,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             } catch (NumericException e) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                             }
+                            if (periodLength > 0 && start != oldStart) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "changing start timestamp is not allowed on period materialized views");
+                            }
                             tok = expectToken(lexer, "'every'");
-                        }
-
-                        final long periodLength;
-                        final long oldStart;
-                        try (TableMetadata matViewMeta = engine.getTableMetadata(matViewToken)) {
-                            periodLength = matViewMeta.getMatViewPeriodLength();
-                            oldStart = matViewMeta.getMatViewTimerStart();
-                        }
-                        if (periodLength > 0 && start != oldStart) {
-                            throw SqlException.$(lexer.lastTokenPosition(), "changing start timestamp is not allowed on period materialized views");
+                        } else if (periodLength > 0) {
+                            // Start can't be changed on period mat views, so keep it unchanged.
+                            start = oldStart;
                         }
 
                         if (isEveryKeyword(tok)) {
