@@ -2334,6 +2334,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 typesAndSelect = new TypesAndSelect(cq.getRecordCursorFactory());
                 typesAndSelect.copyTypesFrom(bindVariableService);
                 queryTag = TAG_SELECT;
+                typesAndSelectIsCached = cq.isCacheable();
                 LOG.debug().$("cache select [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).I$();
                 break;
             case CompiledQuery.INSERT:
@@ -2738,6 +2739,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     // This method is currently unused. it's used for the COPY sub-protocol, which is currently not implemented.
     // It's left here so when we add the sub-protocol later we won't need to reimplemented it.
     // We could keep it just in git history, but chances are nobody would recall to search for it there
+    @SuppressWarnings("unused")
     private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
         TableToken tableToken = engine.getTableTokenIfExists(textLoader.getTableName());
         if (TableUtils.TABLE_EXISTS == engine.getTableStatus(path, tableToken)) {

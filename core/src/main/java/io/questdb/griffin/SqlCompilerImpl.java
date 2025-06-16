@@ -2224,33 +2224,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private ExecutionModel compileExecutionModel0(SqlExecutionContext executionContext, ExecutionModel model) throws SqlException {
-        switch (model.getModelType()) {
-            case ExecutionModel.QUERY:
-                return optimiser.optimise((QueryModel) model, executionContext, this);
-            case ExecutionModel.INSERT: {
-                final InsertModel insertModel = (InsertModel) model;
-                if (insertModel.getQueryModel() != null) {
-                    validateAndOptimiseInsertAsSelect(executionContext, insertModel);
-                } else {
-                    lightlyValidateInsertModel(insertModel);
-                }
-                final TableToken tableToken = engine.getTableTokenIfExists(insertModel.getTableName());
-                executionContext.getSecurityContext().authorizeInsert(tableToken);
-                return insertModel;
-            }
-            case ExecutionModel.UPDATE:
-                final QueryModel queryModel = (QueryModel) model;
-                TableToken tableToken = executionContext.getTableToken(queryModel.getTableName());
-                try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
-                    optimiser.optimiseUpdate(queryModel, executionContext, metadata, this);
-                    return model;
-                }
-            default:
-                return model;
-        }
-    }
-
     private ExecutionModel compileExplainExecutionModel0(SqlExecutionContext executionContext, ExecutionModel model) throws SqlException {
         // CREATE TABLE AS SELECT and CREATE MATERIALIZED VIEW have an unoptimized SELECT model after the parsing.
         // We optimize and validate the model during the execution, but in case of EXPLAIN the model is
@@ -2616,7 +2589,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
             executionContext.setAllowNonDeterministicFunction(false);
             try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, executionContext, false));
+                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, executionContext, false), true);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
@@ -2906,7 +2879,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     (QueryModel) executionModel,
                                     executionContext,
                                     generateProgressLogger
-                            )
+                            ),
+                            ((QueryModel) executionModel).isCacheable()
                     );
                     break;
                 case ExecutionModel.CREATE_TABLE:
@@ -3917,6 +3891,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     protected void compileDropReportExpected(int position) throws SqlException {
         throw SqlException.position(position).put("'table' or 'materialized view' or 'all' expected");
+    }
+
+    protected ExecutionModel compileExecutionModel0(SqlExecutionContext executionContext, ExecutionModel model) throws SqlException {
+        switch (model.getModelType()) {
+            case ExecutionModel.QUERY:
+                return optimiser.optimise((QueryModel) model, executionContext, this);
+            case ExecutionModel.INSERT: {
+                final InsertModel insertModel = (InsertModel) model;
+                if (insertModel.getQueryModel() != null) {
+                    validateAndOptimiseInsertAsSelect(executionContext, insertModel);
+                } else {
+                    lightlyValidateInsertModel(insertModel);
+                }
+                final TableToken tableToken = engine.getTableTokenIfExists(insertModel.getTableName());
+                executionContext.getSecurityContext().authorizeInsert(tableToken);
+                return insertModel;
+            }
+            case ExecutionModel.UPDATE:
+                final QueryModel queryModel = (QueryModel) model;
+                TableToken tableToken = executionContext.getTableToken(queryModel.getTableName());
+                try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
+                    optimiser.optimiseUpdate(queryModel, executionContext, metadata, this);
+                    return model;
+                }
+            default:
+                return model;
+        }
     }
 
     protected RecordCursorFactory generateSelectOneShot(
