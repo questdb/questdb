@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilderImpl;
+import io.questdb.griffin.model.CompileViewModel;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExecutionModel;
@@ -93,6 +94,7 @@ public class SqlParser {
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>();
     private final CharacterStore characterStore;
     private final CharSequence column;
+    private final ObjectPool<CompileViewModel> compileViewModelPool;
     private final CairoConfiguration configuration;
     private final ObjectPool<CopyModel> copyModelPool;
     private final CreateMatViewOperationBuilderImpl createMatViewOperationBuilder = new CreateMatViewOperationBuilderImpl();
@@ -145,6 +147,7 @@ public class SqlParser {
         this.renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, configuration.getRenameTableModelPoolCapacity());
         this.withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, configuration.getWithClauseModelPoolCapacity());
         this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, configuration.getInsertModelPoolCapacity());
+        this.compileViewModelPool = new ObjectPool<>(CompileViewModel.FACTORY, configuration.getCompileViewModelPoolCapacity());
         this.copyModelPool = new ObjectPool<>(CopyModel.FACTORY, configuration.getCopyPoolCapacity());
         this.explainModelPool = new ObjectPool<>(ExplainModel.FACTORY, configuration.getExplainPoolCapacity());
         this.traversalAlgo = traversalAlgo;
@@ -763,6 +766,31 @@ public class SqlParser {
     ) throws SqlException {
         final QueryModel model = parseAsSubQuery(lexer, withClauses, useTopLevelWithClauses, sqlParserCallback, decls);
         expectTok(lexer, ')');
+        return model;
+    }
+
+    private ExecutionModel parseCompileView(GenericLexer lexer) throws SqlException {
+        expectTok(lexer, "view");
+        if (!configuration.isViewEnabled()) {
+            throw SqlException.$(0, "views are disabled");
+        }
+
+        CharSequence tok = tok(lexer, "view name");
+        final TableToken tt = engine.getTableTokenIfExists(tok);
+        if (tt == null) {
+            throw SqlException.viewDoesNotExist(lexer.lastTokenPosition(), tok);
+        }
+        if (!tt.isView()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "view expected, got table");
+        }
+
+        final CompileViewModel model = compileViewModelPool.next();
+        model.setTableNameExpr(nextLiteral(unquote(tok), lexer.lastTokenPosition()));
+
+        final QueryModel queryModel = queryModelPool.next();
+        model.setQueryModel(queryModel);
+
+        compileViewQuery(queryModel, tt, lexer.lastTokenPosition());
         return model;
     }
 
@@ -3961,6 +3989,7 @@ public class SqlParser {
         createTableColumnModelPool.clear();
         renameTableModelPool.clear();
         withClauseModelPool.clear();
+        compileViewModelPool.clear();
         subQueryMode = false;
         characterStore.clear();
         insertModelPool.clear();
@@ -4043,6 +4072,10 @@ public class SqlParser {
 
         if (isWithKeyword(tok)) {
             return parseWith(lexer, sqlParserCallback, null);
+        }
+
+        if (isCompileKeyword(tok)) {
+            return parseCompileView(lexer);
         }
 
         if (isFromKeyword(tok)) {

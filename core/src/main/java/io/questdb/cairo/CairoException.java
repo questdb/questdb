@@ -250,6 +250,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 && errno != METADATA_VALIDATION_RECOVERABLE
                 && errno != TABLE_DROPPED
                 && errno != MAT_VIEW_DOES_NOT_EXIST
+                && errno != VIEW_DOES_NOT_EXIST
                 && errno != TABLE_DOES_NOT_EXIST;
     }
 

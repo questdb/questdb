@@ -70,7 +70,8 @@ public interface CompiledQuery {
     short CREATE_MAT_VIEW = TABLE_SUSPEND + 1; // 32
     short REFRESH_MAT_VIEW = CREATE_MAT_VIEW + 1; // 33
     short CREATE_VIEW = REFRESH_MAT_VIEW + 1; // 34
-    short EMPTY = CREATE_VIEW + 1;
+    short COMPILE_VIEW = CREATE_VIEW + 1; // 35
+    short EMPTY = COMPILE_VIEW + 1;
     short TYPES_COUNT = EMPTY;
 
     /**

@@ -142,6 +142,8 @@ public class ViewCompilerJob implements Job, QuietCloseable {
                     break;
                 case ViewCompilerTask.RESET:
                     reset(compilerTask.tableToken, compilerTask.updateTimestamp);
+                    // compile dependent views as well, they could be valid too
+                    compileDependentViews(compilerTask.tableToken, compilerTask.updateTimestamp);
                     break;
                 default:
                     throw new RuntimeException("unrecognized operation: " + operation);
@@ -157,9 +159,6 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         }
 
         resetViewState(tableToken, false, null, updateTimestamp);
-
-        // compile dependent views, they could be valid too
-        compileDependentViews(tableToken, updateTimestamp);
     }
 
     private void resetViewState(TableToken viewToken, boolean invalid, CharSequence invalidationReason, long updateTimestamp) {

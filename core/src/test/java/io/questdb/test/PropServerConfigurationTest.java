@@ -278,6 +278,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(128, configuration.getCairoConfiguration().getWithClauseModelPoolCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getRenameTableModelPoolCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getInsertModelPoolCapacity());
+        Assert.assertEquals(8, configuration.getCairoConfiguration().getCompileViewModelPoolCapacity());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getInsertModelBatchSize());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getCreateTableColumnModelPoolCapacity());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getCreateTableModelBatchSize());
@@ -1784,6 +1785,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1024, configuration.getWithClauseModelPoolCapacity());
         Assert.assertEquals(512, configuration.getRenameTableModelPoolCapacity());
         Assert.assertEquals(128, configuration.getInsertModelPoolCapacity());
+        Assert.assertEquals(32, configuration.getCompileViewModelPoolCapacity());
         Assert.assertEquals(256, configuration.getCreateTableColumnModelPoolCapacity());
         Assert.assertEquals(2001, configuration.getSampleByIndexSearchPageSize());
         Assert.assertFalse(configuration.getSampleByDefaultAlignmentCalendar());

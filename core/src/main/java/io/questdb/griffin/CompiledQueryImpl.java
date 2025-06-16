@@ -227,6 +227,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
+    public void ofCompileView() {
+        of(COMPILE_VIEW);
+        this.isExecutedAtParseTime = true;
+    }
+
     public void ofCopyRemote() {
         of(COPY_REMOTE);
         this.isExecutedAtParseTime = true;

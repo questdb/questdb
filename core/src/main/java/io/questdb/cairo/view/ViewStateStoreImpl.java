@@ -98,6 +98,11 @@ public class ViewStateStoreImpl implements ViewStateStore {
     }
 
     @Override
+    public void enqueueReset(@NotNull TableToken tableToken) {
+        enqueueViewTask(tableToken, ViewCompilerTask.RESET, null);
+    }
+
+    @Override
     public ViewState getViewState(TableToken viewToken) {
         final ViewState state = stateByTableDirName.get(viewToken.getDirName());
         if (state != null) {

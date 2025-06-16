@@ -669,6 +669,10 @@ public class CairoEngine implements Closeable, WriterSource {
         partitionOverwriteControl.enable();
     }
 
+    public void enqueueCompileView(TableToken tableToken) {
+        viewStateStore.enqueueCompile(tableToken);
+    }
+
     public void execute(CharSequence sqlText) throws SqlException {
         execute(sqlText, rootExecutionContext);
     }
@@ -1467,7 +1471,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
             }
 
-            getViewStateStore().enqueueCompile(fromTableToken);
+            enqueueCompileView(fromTableToken);
+            enqueueCompileView(toTableToken);
             getDdlListener(fromTableToken).onTableRenamed(securityContext, fromTableToken, toTableToken);
 
             return toTableToken;
@@ -1744,7 +1749,6 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
 
                         if (tableToken.isView()) {
-                            // todo: enqueue this for the view refresh job instead?
                             try (WalWriter walWriter = walWriterPool.get(tableToken)) {
                                 walWriter.resetViewState(false, null);
                             }
@@ -1784,13 +1788,14 @@ public class CairoEngine implements Closeable, WriterSource {
                 unlockTableCreate(tableToken);
             }
 
+            enqueueCompileView(tableToken);
             return tableToken;
         }
     }
 
     private void notifyViewsAboutDrop(TableToken tableToken) {
         viewStateStore.removeViewState(tableToken);
-        viewStateStore.enqueueCompile(tableToken);
+        enqueueCompileView(tableToken);
         viewGraph.removeView(tableToken);
     }
 

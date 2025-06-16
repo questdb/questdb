@@ -46,6 +46,8 @@ public interface ViewStateStore extends QuietCloseable, Mutable {
 
     void enqueueInvalidate(TableToken viewToken, String invalidationReason);
 
+    void enqueueReset(TableToken viewToken);
+
     @Nullable
     ViewState getViewState(TableToken viewToken);
 

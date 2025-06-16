@@ -146,6 +146,8 @@ public interface CairoConfiguration {
 
     int getCommitMode();
 
+    int getCompileViewModelPoolCapacity();
+
     @NotNull
     CharSequence getConfRoot(); // same as root/../conf
 

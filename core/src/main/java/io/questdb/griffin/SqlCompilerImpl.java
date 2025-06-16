@@ -99,6 +99,7 @@ import io.questdb.griffin.engine.ops.InsertAsSelectOperationImpl;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.model.CompileViewModel;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
@@ -1533,6 +1534,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             ex.position(tableNamePosition);
             throw ex;
         }
+    }
+
+    private TableToken authorizeCompileView(SecurityContext securityContext, CompileViewModel model) {
+        final CharSequence viewName = GenericLexer.unquote(model.getTableName());
+        final TableToken tt = engine.getTableTokenIfExists(viewName);
+        if (tt == null) {
+            throw CairoException.viewDoesNotExist(viewName);
+        }
+        if (!tt.isView()) {
+            throw CairoException.nonCritical().put(viewName).put(" is not a view");
+        }
+
+        securityContext.authorizeViewCompile(tt);
+        return tt;
     }
 
     private CharSequence authorizeInsertForCopy(SecurityContext securityContext, CopyModel model) {
@@ -3005,6 +3020,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     compiledQuery.ofExplain(generateExplain((ExplainModel) executionModel, executionContext));
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
+                case ExecutionModel.COMPILE_VIEW:
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    compileView(executionContext, (CompileViewModel) executionModel);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    break;
                 default:
                     checkMatViewModification(executionModel);
                     final InsertModel insertModel = (InsertModel) executionModel;
@@ -3074,6 +3094,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } else {
             throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
         }
+    }
+
+    private void compileView(SqlExecutionContext executionContext, CompileViewModel compileViewModel) throws SqlException {
+        final TableToken viewToken = authorizeCompileView(executionContext.getSecurityContext(), compileViewModel);
+
+        final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
+        if (viewDefinition == null) {
+            LOG.error().$("missing view, probably dropped concurrently [token=").$(viewToken).I$();
+            throw CairoException.viewDoesNotExist(viewToken.getTableName());
+        }
+
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.testCompileModel(viewDefinition.getViewSql(), executionContext);
+            engine.getViewStateStore().enqueueReset(viewToken);
+        } catch (SqlException | CairoException e) {
+            // position would be reported from the view SQL, so we are overriding it with 14 which
+            // points to the name of the view in 'COMPILE VIEW viewName'
+            throw SqlException.$(14, e.getFlyweightMessage());
+        }
+        compiledQuery.ofCompileView();
     }
 
     private void compileViewQuery(
@@ -3236,10 +3276,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void enqueueCompileView(TableToken viewToken) {
-        engine.getViewStateStore().enqueueCompile(viewToken);
-    }
-
     private void enqueueCompileViews(ExecutionModel model) {
         final QueryModel queryModel = model.getQueryModel();
         if (queryModel == null) {
@@ -3251,7 +3287,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         for (int i = 0, n = views.size(); i < n; i++) {
             final ViewDefinition viewDefinition = getViewDefinition(views.getQuick(i));
             if (viewDefinition != null) {
-                enqueueCompileView(viewDefinition.getViewToken());
+                engine.getViewStateStore().enqueueCompile(viewDefinition.getViewToken());
             }
         }
     }

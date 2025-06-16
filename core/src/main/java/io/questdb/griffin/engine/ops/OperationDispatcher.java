@@ -64,7 +64,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             final long result = apply(operation, writer);
             isDone = true;
             if (operation.isStructural()) {
-                engine.getViewStateStore().enqueueCompile(operation.getTableToken());
+                engine.enqueueCompileView(operation.getTableToken());
             }
             return doneFuture.of(result);
         } catch (EntryUnavailableException busyException) {

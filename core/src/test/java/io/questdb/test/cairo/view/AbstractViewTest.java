@@ -145,6 +145,16 @@ class AbstractViewTest extends AbstractCairoTest {
         assertQueryNoLeakCheck(expectedPlan, "explain " + query, null, false, true);
     }
 
+    void compileView(String viewName) throws SqlException {
+        execute("COMPILE VIEW " + viewName);
+        drainViewQueue();
+        drainWalQueue();
+    }
+
+    void compileView(String viewName, String expectedErrorMessage) throws Exception {
+        assertExceptionNoLeakCheck("COMPILE VIEW " + viewName, 14, expectedErrorMessage);
+    }
+
     void createTable(String tableName) throws SqlException {
         execute(
                 "create table if not exists " + tableName +

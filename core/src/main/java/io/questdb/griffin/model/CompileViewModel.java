@@ -22,55 +22,59 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.view;
+package io.questdb.griffin.model;
 
-import io.questdb.cairo.TableToken;
-import org.jetbrains.annotations.TestOnly;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjectFactory;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
-public class NoOpViewStateStore implements ViewStateStore {
-    public static final NoOpViewStateStore INSTANCE = new NoOpViewStateStore();
+public class CompileViewModel implements ExecutionModel, Mutable, Sinkable {
+    public static final ObjectFactory<CompileViewModel> FACTORY = CompileViewModel::new;
+    private QueryModel queryModel;
+    private ExpressionNode viewExpr;
 
-    @Override
-    public ViewState addViewState(ViewDefinition viewDefinition) {
-        return null;
+    public CompileViewModel() {
     }
 
-    @TestOnly
     @Override
     public void clear() {
+        viewExpr = null;
+        queryModel = null;
     }
 
     @Override
-    public void close() {
+    public int getModelType() {
+        return ExecutionModel.COMPILE_VIEW;
     }
 
     @Override
-    public void createViewState(ViewDefinition viewDefinition) {
+    public QueryModel getQueryModel() {
+        return queryModel;
     }
 
     @Override
-    public void enqueueCompile(TableToken viewToken) {
+    public CharSequence getTableName() {
+        return viewExpr.token;
     }
 
     @Override
-    public void enqueueInvalidate(TableToken viewToken, String invalidationReason) {
+    public ExpressionNode getTableNameExpr() {
+        return viewExpr;
+    }
+
+    public void setQueryModel(QueryModel queryModel) {
+        this.queryModel = queryModel;
+    }
+
+    public void setTableNameExpr(ExpressionNode expr) {
+        viewExpr = expr;
     }
 
     @Override
-    public void enqueueReset(TableToken viewToken) {
-    }
-
-    @Override
-    public ViewState getViewState(TableToken viewToken) {
-        return null;
-    }
-
-    @Override
-    public void removeViewState(TableToken viewToken) {
-    }
-
-    @Override
-    public boolean tryDequeueCompilerTask(ViewCompilerTask task) {
-        return false;
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.putAscii("compile view ");
+        sink.put(viewExpr.token);
     }
 }
