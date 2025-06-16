@@ -129,12 +129,14 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             this.engine = engine;
             this.configuration = engine.getConfiguration();
             this.reader = new BlockFileReader(this.configuration);
+            System.out.println("MatViewsFunctionFactory: Creating cursor factory for materialized views");
         }
 
         @Override
         public void close() {
             Misc.free(path);
             Misc.free(reader);
+            System.out.println("MatViewsFunctionFactory: Closing cursor factory for materialized views");
         }
 
         @Override
@@ -293,6 +295,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             @Override
             public void close() {
                 viewTokens.clear();
+                // close the reader to release mmap memory, but keep the object for reuse
+                reader.close();
                 path.resetCapacity();
             }
 
