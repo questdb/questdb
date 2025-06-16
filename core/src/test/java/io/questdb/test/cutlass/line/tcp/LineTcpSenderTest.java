@@ -80,16 +80,19 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     private static final Consumer<Sender> SET_TABLE_NAME_ACTION = s -> s.table("mytable");
     private final static String TOKEN = "UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=";
     private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthUtils.toPrivateKey(TOKEN);
+    private final int timestampType;
     private final boolean walEnabled;
 
-    public LineTcpSenderTest(WalMode walMode) {
+    public LineTcpSenderTest(WalMode walMode, int timestampType) {
         this.walEnabled = (walMode == WalMode.WITH_WAL);
+        this.timestampType = timestampType;
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "{0}-{1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
+                {WalMode.WITH_WAL, ColumnType.TIMESTAMP_MICRO}, {WalMode.NO_WAL, ColumnType.TIMESTAMP_MICRO},
+                {WalMode.WITH_WAL, ColumnType.TIMESTAMP_NANO}, {WalMode.NO_WAL, ColumnType.TIMESTAMP_NANO},
         });
     }
 
