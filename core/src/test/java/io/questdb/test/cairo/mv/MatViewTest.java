@@ -496,12 +496,11 @@ public class MatViewTest extends AbstractCairoTest {
                             "select sym, last(price) as price, ts from base_price sample by 1h" +
                             ") partition by day"
             );
-
             execute(
-                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2020-12-12T12:01')" +
-                            ",('gbpusd', 1.323, '2020-12-12T12:02')" +
-                            ",('jpyusd', 103.21, '2020-12-13T12:02')" +
-                            ",('jpyusd', 1.321, '2020-12-13T13:02')"
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-12-12T12:01')" +
+                            ",('gbpusd', 1.323, '2024-12-12T12:02')" +
+                            ",('jpyusd', 103.21, '2024-12-13T12:02')" +
+                            ",('jpyusd', 1.321, '2024-12-13T13:02')"
             );
 
             // no refresh should happen as the start timestamp is in future
@@ -555,23 +554,51 @@ public class MatViewTest extends AbstractCairoTest {
                 Assert.assertEquals(parseFloorPartialTimestamp(start), matViewMeta.getMatViewTimerStart());
             }
 
-            // we need timers to tick
+            // the inserted rows are still in the future, just like the period start
+            currentMicros = parseFloorPartialTimestamp("1999-12-30T00:00:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n",
+                    "price_1h order by sym"
+            );
+
+            // the period has started, yet the rows are still in the future
             currentMicros = parseFloorPartialTimestamp("2020-12-14T00:00:00.000000Z");
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
             assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n",
+                    "price_1h order by sym"
+            );
+
+            // finally, all periods that stand for the rows are complete
+            currentMicros = parseFloorPartialTimestamp("2024-12-31T00:00:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-12-12T12:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-12-13T12:00:00.000000Z\n" +
+                            "jpyusd\t1.321\t2024-12-13T13:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\trefresh_base_table_txn\tbase_table_txn\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\n" +
-                            "price_1h\ttimer\tbase_price\t2020-12-14T00:00:00.000000Z\t2020-12-14T00:00:00.000000Z\tvalid\t1\t1\t1\tDAY\t0\t\t\t2020-12-12T00:00:00.000000Z\t15\tMINUTE\n",
+                            "price_1h\ttimer\tbase_price\t2024-12-31T00:00:00.000000Z\t2024-12-31T00:00:00.000000Z\tvalid\t1\t1\t1\tDAY\t0\t\t\t2020-12-12T00:00:00.000000Z\t15\tMINUTE\n",
                     matViewsSql,
                     null
             );
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2020-12-12T12:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2020-12-13T12:00:00.000000Z\n" +
-                            "jpyusd\t1.321\t2020-12-13T13:00:00.000000Z\n",
-                    "price_1h order by sym"
+                    "name\tsuspended\n" +
+                            "base_price\tfalse\n" +
+                            "price_1h\tfalse\n",
+                    "select name, suspended from wal_tables()",
+                    null
             );
         });
     }
@@ -1658,6 +1685,55 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupKeysNoRowsRangeReplace() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL DEDUP UPSERT KEYS(ts);"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price where sym <> 'gbpusd' sample by 1h");
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')"
+            );
+            currentMicros = parseFloorPartialTimestamp("2023-01-01T01:01:01.123456Z");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    "price_1h",
+                    "ts",
+                    true,
+                    true
+            );
+
+            // Replace the jpyusd symbol value with gbpusd, so that we get a no data range replace commit.
+            execute("insert into base_price values('gbpusd', 103.21, '2024-09-10T12:02')");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n",
+                    "price_1h",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\timmediate\tbase_price\t2023-01-01T01:01:01.123456Z\t2023-01-01T01:01:01.123456Z\tselect sym, last(price) as price, ts from base_price where sym <> 'gbpusd' sample by 1h\tvalid\t\t2\t2\n",
+                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                            "from materialized_views",
+                    null
+            );
+        });
+    }
+
+    @Test
     public void testDisableParallelSqlExecution() throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, "false");
         assertMemoryLeak(() -> {
@@ -1836,12 +1912,13 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
             drainQueues();
 
+            final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views";
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
                             "price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t1\t1\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views",
+                    matViewsSql,
                     null
             );
 
@@ -1857,9 +1934,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
                             "price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views",
+                    matViewsSql,
                     null
             );
 
@@ -1869,9 +1944,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
                             "price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t-1\t2\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views",
+                    matViewsSql,
                     null
             );
             assertQueryNoLeakCheck(
@@ -1899,12 +1972,13 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             // The view is expected to be invalid due to npe() in where clause.
+            final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views";
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
                             "price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price where npe() sample by 1h\tinvalid\t-1\t1\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views",
+                    matViewsSql,
                     null
             );
 
@@ -1915,9 +1989,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
                             "price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price where npe() sample by 1h\tinvalid\t-1\t1\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views",
+                    matViewsSql,
                     null
             );
         });
@@ -1937,12 +2009,13 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2001-01-01T01:01:01.000000Z");
             drainQueues();
 
+            final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views";
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
                             "price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t1\t1\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views",
+                    matViewsSql,
                     null
             );
 
@@ -1952,9 +2025,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
                             "price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views",
+                    matViewsSql,
                     null
             );
 
@@ -1965,9 +2036,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
                             "price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t-1\t2\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views",
+                    matViewsSql,
                     null
             );
         });
@@ -2155,12 +2224,13 @@ public class MatViewTest extends AbstractCairoTest {
                     "sym\tprice\tts\n",
                     "price_1h order by sym"
             );
+            final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views";
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
                             "price_1h\ttimer\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t-1\t1\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views",
+                    matViewsSql,
                     null
             );
 
@@ -2172,9 +2242,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
                             "price_1h\ttimer\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t1\t1\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views",
+                    matViewsSql,
                     null
             );
             assertQueryNoLeakCheck(
@@ -2560,12 +2628,13 @@ public class MatViewTest extends AbstractCairoTest {
                     "sym\tprice\tts\n",
                     "price_1h order by sym"
             );
+            final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views";
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
                             "price_1h\tmanual\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t-1\t1\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views",
+                    matViewsSql,
                     null
             );
 
@@ -2577,9 +2646,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
                             "price_1h\tmanual\tbase_price\t2099-01-01T01:01:01.000000Z\t2099-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t1\t1\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views",
+                    matViewsSql,
                     null
             );
             assertQueryNoLeakCheck(
@@ -2601,9 +2668,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
                             "price_1h\tmanual\tbase_price\t2100-01-01T01:01:01.000000Z\t2100-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t2\t2\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views",
+                    matViewsSql,
                     null
             );
             assertQueryNoLeakCheck(
@@ -2746,12 +2811,13 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
+            final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views";
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn\n" +
                             "price_1h\timmediate\tbase_price\t2024-10-24T17:22:09.842574Z\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t\t1\t1\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views",
+                    matViewsSql,
                     null
             );
 
@@ -2763,9 +2829,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn\n" +
                             "price_1h_renamed\timmediate\tbase_price\t2024-10-24T17:22:09.842574Z\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t\t1\t1\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views",
+                    matViewsSql,
                     null
             );
 

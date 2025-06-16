@@ -8350,7 +8350,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void processWalCommitFinishApply(long walLagRowCount, long timestampAddr, long o3Lo, long o3Hi, TableWriterPressureControl pressureControl, boolean copiedToMemory, long initialPartitionTimestampHi) {
-
         long commitMinTimestamp = txWriter.getLagMinTimestamp();
         long commitMaxTimestamp = txWriter.getLagMaxTimestamp();
         txWriter.setLagMinTimestamp(Long.MAX_VALUE);
