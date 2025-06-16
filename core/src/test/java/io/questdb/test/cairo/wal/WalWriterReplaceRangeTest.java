@@ -586,9 +586,6 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         drainWalQueue();
 
         var ttExpected = engine.verifyTableName(expectedTableName);
-        if (generateNoRowsCommit) {
-            commitNoRowsWithRangeReplace(ttExpected, rangeStartStr, rangeEndStr);
-        }
         insertRowsWithRangeReplace(ttExpected, sink, tsStr, rangeStartStr, rangeEndStr, false);
         drainWalQueue();
 
