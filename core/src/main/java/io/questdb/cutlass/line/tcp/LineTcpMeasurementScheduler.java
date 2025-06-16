@@ -142,7 +142,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                 address,
                                 addressSize,
                                 lineConfiguration.getMicrosecondClock(),
-                                lineConfiguration.getTimestampAdapter(),
+                                lineConfiguration.getTimestampUnit(),
                                 defaultColumnTypes,
                                 lineConfiguration.isStringToCharCastAllowed(),
                                 lineConfiguration.getMaxFileNameLength(),
@@ -179,9 +179,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
             lineWalAppender = new LineWalAppender(
                     autoCreateNewColumns,
                     configuration.isStringToCharCastAllowed(),
-                    configuration.getTimestampAdapter(),
-                    cairoConfiguration.getMaxFileNameLength(),
-                    configuration.getMicrosecondClock()
+                    configuration.getTimestampUnit(),
+                    cairoConfiguration.getMaxFileNameLength()
             );
         } catch (Throwable t) {
             close();

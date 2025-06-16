@@ -48,6 +48,14 @@ public class CommonUtils {
     public static final String NSEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz";
     public static final String PG_TIMESTAMP_MILLI_TIME_Z_PATTERN = "y-MM-dd HH:mm:ss.SSSz";
     public static final String SEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ssz";
+
+    public static final byte TIMESTAMP_UNIT_NANOS = 1;
+    public static final byte TIMESTAMP_UNIT_MICROS = TIMESTAMP_UNIT_NANOS + 1;
+    public static final byte TIMESTAMP_UNIT_MILLIS = TIMESTAMP_UNIT_MICROS + 1;
+    public static final byte TIMESTAMP_UNIT_SECONDS = TIMESTAMP_UNIT_MILLIS + 1;
+    public static final byte TIMESTAMP_UNIT_MINUTES = TIMESTAMP_UNIT_SECONDS + 1;
+    public static final byte TIMESTAMP_UNIT_HOURS = TIMESTAMP_UNIT_MINUTES + 1;
+
     public static final String USEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUz";
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     public static final String WEEK_PATTERN = "YYYY-Www";
@@ -152,11 +160,8 @@ public class CommonUtils {
     }
 
     public static long microsToNanos(long micros) {
-        if (micros == Numbers.LONG_NULL) {
-            return Numbers.LONG_NULL;
-        }
         try {
-            return Math.multiplyExact(micros, 1000L);
+            return scaleTimestamp(micros, 1000L);
         } catch (ArithmeticException e) {
             throw ImplicitCastException.inconvertibleValue(micros, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO);
         }
@@ -179,6 +184,10 @@ public class CommonUtils {
                 throw NumericException.INSTANCE;
         }
         return tzSign;
+    }
+
+    public static long scaleTimestamp(long ts, long scales) {
+        return ts == Numbers.LONG_NULL ? Numbers.LONG_NULL : Math.multiplyExact(ts, scales);
     }
 
     public static int tenPow(int i) throws NumericException {

@@ -22,22 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cutlass.line;
+package io.questdb.test.cairo;
 
-import io.questdb.cutlass.line.LineNanoTimestampAdapter;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
-import io.questdb.cutlass.line.tcp.LineTcpParser;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class LineTcpTimestampAdapterTest {
+public class MicroTimestampDriverTest extends AbstractCairoTest {
+    TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_MICRO);
 
     @Test
-    public void testSmoke() {
-        LineTcpTimestampAdapter adapter = new LineTcpTimestampAdapter(LineNanoTimestampAdapter.INSTANCE);
-        Assert.assertEquals(56799L, adapter.getMicros(56799000, LineTcpParser.ENTITY_UNIT_NONE));
-        Assert.assertEquals(56799L, adapter.getMicros(56799000, LineTcpParser.ENTITY_UNIT_NANO));
-        Assert.assertEquals(5679L, adapter.getMicros(5679, LineTcpParser.ENTITY_UNIT_MICRO));
-        Assert.assertEquals(5679000L, adapter.getMicros(5679, LineTcpParser.ENTITY_UNIT_MILLI));
+    public void testFromTimestampUnit() throws Exception {
+        Assert.assertEquals(56799L, driver.from(56799001, CommonUtils.TIMESTAMP_UNIT_NANOS));
+        Assert.assertEquals(56799L, driver.from(56799, CommonUtils.TIMESTAMP_UNIT_MICROS));
+        Assert.assertEquals(56799_000L, driver.from(56799, CommonUtils.TIMESTAMP_UNIT_MILLIS));
+        Assert.assertEquals(60_000_000L, driver.from(60, CommonUtils.TIMESTAMP_UNIT_SECONDS));
+        Assert.assertEquals(3600_000_000L, driver.from(60, CommonUtils.TIMESTAMP_UNIT_MINUTES));
+        Assert.assertEquals(86400_000_000L, driver.from(24, CommonUtils.TIMESTAMP_UNIT_HOURS));
     }
 }

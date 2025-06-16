@@ -28,6 +28,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
@@ -203,23 +204,6 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long castAsDate(long timestamp) {
-        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / 1000L;
-    }
-
-    @Override
-    public long castDateAs(long date) {
-        if (date == Numbers.LONG_NULL) {
-            return Numbers.LONG_NULL;
-        }
-        try {
-            return Math.multiplyExact(date, 1000L);
-        } catch (ArithmeticException e) {
-            throw ImplicitCastException.inconvertibleValue(date, ColumnType.DATE, ColumnType.TIMESTAMP_MICRO);
-        }
-    }
-
-    @Override
     public boolean convertToVar(long fixedAddr, CharSink<?> sink) {
         long value = Unsafe.getUnsafe().getLong(fixedAddr);
         if (value != Numbers.LONG_NULL) {
@@ -238,6 +222,18 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long fromDate(long date) {
+        if (date == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        try {
+            return Math.multiplyExact(date, 1000L);
+        } catch (ArithmeticException e) {
+            throw ImplicitCastException.inconvertibleValue(date, ColumnType.DATE, ColumnType.TIMESTAMP_MICRO);
+        }
+    }
+
+    @Override
     public long fromDays(int days) {
         return days * Timestamps.DAY_MICROS;
     }
@@ -248,8 +244,23 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long fromMicros(long micros) {
+        return micros;
+    }
+
+    @Override
+    public long fromMillis(long millis) {
+        return millis * Timestamps.MILLI_MICROS;
+    }
+
+    @Override
     public long fromMinutes(int minutes) {
         return minutes * Timestamps.MINUTE_MICROS;
+    }
+
+    @Override
+    public long fromNanos(long nanos) {
+        return CommonUtils.nanosToMicros(nanos);
     }
 
     @Override
@@ -334,6 +345,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             default:
                 return null;
         }
+    }
+
+    @Override
+    public long getTicks() {
+        return Os.currentTimeMicros();
     }
 
     @Override
@@ -763,13 +779,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long toMicros(long timestamp) {
-        return timestamp;
-    }
-
-    @Override
-    public long toNanos(long micros) {
-        return CommonUtils.microsToNanos(micros);
+    public long toDate(long timestamp) {
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / 1000L;
     }
 
     @Override

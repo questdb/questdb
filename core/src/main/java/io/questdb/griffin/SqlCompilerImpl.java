@@ -749,7 +749,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok;
         tok = expectToken(lexer, "column type");
 
-        short typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
+        int typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
+        if (typeTag == ColumnType.TIMESTAMP) {
+            typeTag = ColumnType.typeOf(tok);
+        }
         int typePosition = lexer.lastTokenPosition();
 
         int dim = SqlUtil.parseArrayDimensionality(lexer);

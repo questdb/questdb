@@ -254,11 +254,10 @@ public final class ColumnType {
         }
 
         assert tagOf(timestampType) == TIMESTAMP;
-        final int precisionFlag = timestampType & TIMESTAMP_PRECISION_MASK;
-        switch (precisionFlag) {
-            case TIMESTAMP_MICRO_PRECISION_FLAG:
+        switch (timestampType) {
+            case TIMESTAMP_MICRO:
                 return MicrosTimestampDriver.INSTANCE;
-            case TIMESTAMP_NANO_PRECISION_FLAG:
+            case TIMESTAMP_NANO:
                 return NanoTimestampDriver.INSTANCE;
             default:
                 throw new UnsupportedOperationException();

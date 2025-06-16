@@ -38,6 +38,7 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.griffin.SqlUtil.castPGDates;
 
 public interface TimestampDriver {
+
     long addMonths(long timestamp, int months);
 
     long addPeriod(long lo, char type, int period);
@@ -56,14 +57,6 @@ public interface TimestampDriver {
 
     void appendPGWireText(CharSink<?> sink, long timestamp);
 
-    @SuppressWarnings("unused")
-        // used by the row copier
-    long castAsDate(long timestamp);
-
-    @SuppressWarnings("unused")
-        // used by the row copier
-    long castDateAs(long timestamp);
-
     default long castStr(CharSequence value, int tupleIndex, int fromType, int toType) {
         try {
             return parseFloorLiteral(value);
@@ -77,11 +70,40 @@ public interface TimestampDriver {
 
     long from(long timestamp, int timestampType);
 
+    default long from(long ts, byte unit) {
+        switch (unit) {
+            case CommonUtils.TIMESTAMP_UNIT_NANOS:
+                return fromNanos(ts);
+            case CommonUtils.TIMESTAMP_UNIT_MICROS:
+                return fromMicros(ts);
+            case CommonUtils.TIMESTAMP_UNIT_MILLIS:
+                return fromMillis(ts);
+            case CommonUtils.TIMESTAMP_UNIT_SECONDS:
+                return fromSeconds((int) ts);
+            case CommonUtils.TIMESTAMP_UNIT_MINUTES:
+                return fromMinutes((int) ts);
+            case CommonUtils.TIMESTAMP_UNIT_HOURS:
+                return fromHours((int) ts);
+            default:
+                throw new UnsupportedOperationException();
+        }
+    }
+
+    @SuppressWarnings("unused")
+        // used by the row copier
+    long fromDate(long timestamp);
+
     long fromDays(int days);
 
     long fromHours(int hours);
 
+    long fromMicros(long micros);
+
+    long fromMillis(long millis);
+
     long fromMinutes(int minutes);
+
+    long fromNanos(long nanos);
 
     long fromSeconds(int seconds);
 
@@ -94,6 +116,8 @@ public interface TimestampDriver {
     DateFormat getPartitionDirFormatMethod(int partitionBy);
 
     PartitionFloorMethod getPartitionFloorMethod(int partitionBy);
+
+    long getTicks();
 
     CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType);
 
@@ -166,9 +190,9 @@ public interface TimestampDriver {
 
     long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi);
 
-    long toMicros(long timestamp);
-
-    long toNanos(long timestamp);
+    @SuppressWarnings("unused")
+        // used by the row copier
+    long toDate(long timestamp);
 
     long toNanosScale();
 

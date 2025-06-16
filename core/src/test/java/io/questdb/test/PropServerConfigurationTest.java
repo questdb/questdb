@@ -38,12 +38,6 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
-import io.questdb.cutlass.line.LineHourTimestampAdapter;
-import io.questdb.cutlass.line.LineMicroTimestampAdapter;
-import io.questdb.cutlass.line.LineMilliTimestampAdapter;
-import io.questdb.cutlass.line.LineMinuteTimestampAdapter;
-import io.questdb.cutlass.line.LineNanoTimestampAdapter;
-import io.questdb.cutlass.line.LineSecondTimestampAdapter;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -63,6 +57,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
@@ -375,7 +370,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getListenBacklog());
         Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(8, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
-        Assert.assertEquals(LineNanoTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter().getDefaultAdapter());
+        Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_NANOS, configuration.getLineTcpReceiverConfiguration().getTimestampUnit());
         Assert.assertEquals(131072, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
         Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getNetRecvBufferSize());
         Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getSendBufferSize());
@@ -650,6 +645,55 @@ public class PropServerConfigurationTest {
         properties.setProperty("line.integer.default.column.type", "BITE");
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
+    }
+
+    @Test
+    public void testDefaultAddColumnTypeForTimestamp() throws Exception {
+        Properties properties = new Properties();
+
+        // default
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+
+        // empty
+        properties.setProperty("line.timestamp.default.column.type", "");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+
+        // timestamp
+        properties.setProperty("line.timestamp.default.column.type", "TIMESTAMP");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+
+        // timestamp_ns
+        properties.setProperty("line.timestamp.default.column.type", "TIMESTAMP_NS");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+
+        // lowercase
+        properties.setProperty("line.timestamp.default.column.type", "timestamp");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+
+        // camel case
+        properties.setProperty("line.timestamp.default.column.type", "Timestamp_Ns");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+
+        // not allowed
+        properties.setProperty("line.timestamp.default.column.type", "STRING");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+
+        // not allowed
+        properties.setProperty("line.timestamp.default.column.type", "SHORT");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+
+        // nonexistent type
+        properties.setProperty("line.timestamp.default.column.type", "TIMESTAMP_MS");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
     }
 
     @Test
@@ -1034,31 +1078,31 @@ public class PropServerConfigurationTest {
         properties.setProperty("http.enabled", "false");
         properties.setProperty("line.udp.timestamp", "");
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertSame(LineNanoTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_NANOS, configuration.getLineUdpReceiverConfiguration().getTimestampUnit());
 
         properties.setProperty("line.udp.timestamp", "n");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertSame(LineNanoTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_NANOS, configuration.getLineUdpReceiverConfiguration().getTimestampUnit());
 
         properties.setProperty("line.udp.timestamp", "u");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertSame(LineMicroTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_MICROS, configuration.getLineUdpReceiverConfiguration().getTimestampUnit());
 
         properties.setProperty("line.udp.timestamp", "ms");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertSame(LineMilliTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_MILLIS, configuration.getLineUdpReceiverConfiguration().getTimestampUnit());
 
         properties.setProperty("line.udp.timestamp", "s");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertSame(LineSecondTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_SECONDS, configuration.getLineUdpReceiverConfiguration().getTimestampUnit());
 
         properties.setProperty("line.udp.timestamp", "m");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertSame(LineMinuteTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_MINUTES, configuration.getLineUdpReceiverConfiguration().getTimestampUnit());
 
         properties.setProperty("line.udp.timestamp", "h");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertSame(LineHourTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_HOURS, configuration.getLineUdpReceiverConfiguration().getTimestampUnit());
     }
 
     @Test
@@ -1280,7 +1324,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getListenBacklog());
             Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(32, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
-            Assert.assertEquals(LineMicroTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter().getDefaultAdapter());
+            Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_MICROS, configuration.getLineTcpReceiverConfiguration().getTimestampUnit());
             Assert.assertEquals(2049, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
             Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getNetRecvBufferSize());
             Assert.assertEquals(128, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());

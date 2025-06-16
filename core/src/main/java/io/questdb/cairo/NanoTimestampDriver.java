@@ -28,6 +28,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
@@ -202,23 +203,6 @@ public class NanoTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long castAsDate(long timestamp) {
-        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / 1000_000L;
-    }
-
-    @Override
-    public long castDateAs(long date) {
-        if (date == Numbers.LONG_NULL) {
-            return Numbers.LONG_NULL;
-        }
-        try {
-            return Math.multiplyExact(date, 1000_000L);
-        } catch (ArithmeticException e) {
-            throw ImplicitCastException.inconvertibleValue(date, ColumnType.DATE, ColumnType.TIMESTAMP_NANO);
-        }
-    }
-
-    @Override
     public boolean convertToVar(long fixedAddr, CharSink<?> sink) {
         long value = Unsafe.getUnsafe().getLong(fixedAddr);
         if (value != Numbers.LONG_NULL) {
@@ -237,23 +221,50 @@ public class NanoTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long fromDate(long date) {
+        if (date == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        try {
+            return Math.multiplyExact(date, 1000_000L);
+        } catch (ArithmeticException e) {
+            throw ImplicitCastException.inconvertibleValue(date, ColumnType.DATE, ColumnType.TIMESTAMP_NANO);
+        }
+    }
+
+    @Override
     public long fromDays(int days) {
-        return days * Nanos.DAY_NANOS;
+        return CommonUtils.scaleTimestamp(days, Nanos.DAY_NANOS);
     }
 
     @Override
     public long fromHours(int hours) {
-        return hours * Nanos.HOUR_NANOS;
+        return CommonUtils.scaleTimestamp(hours, Nanos.HOUR_NANOS);
+    }
+
+    @Override
+    public long fromMicros(long micros) {
+        return CommonUtils.scaleTimestamp(micros, Nanos.MICRO_NANOS);
+    }
+
+    @Override
+    public long fromMillis(long millis) {
+        return CommonUtils.scaleTimestamp(millis, Nanos.MILLI_NANOS);
     }
 
     @Override
     public long fromMinutes(int minutes) {
-        return minutes * Nanos.MINUTE_NANOS;
+        return CommonUtils.scaleTimestamp(minutes, Nanos.MINUTE_NANOS);
+    }
+
+    @Override
+    public long fromNanos(long nanos) {
+        return nanos;
     }
 
     @Override
     public long fromSeconds(int seconds) {
-        return seconds * Nanos.SECOND_NANOS;
+        return CommonUtils.scaleTimestamp(seconds, Nanos.SECOND_NANOS);
     }
 
     @Override
@@ -333,6 +344,11 @@ public class NanoTimestampDriver implements TimestampDriver {
             default:
                 return null;
         }
+    }
+
+    @Override
+    public long getTicks() {
+        return Os.currentTimeNanos();
     }
 
     @Override
@@ -746,13 +762,8 @@ public class NanoTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long toMicros(long nanos) {
-        return CommonUtils.nanosToMicros(nanos);
-    }
-
-    @Override
-    public long toNanos(long timestamp) {
-        return timestamp;
+    public long toDate(long timestamp) {
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / 1000_000L;
     }
 
     @Override

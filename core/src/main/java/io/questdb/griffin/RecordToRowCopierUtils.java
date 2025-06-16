@@ -158,8 +158,8 @@ public class RecordToRowCopierUtils {
         int implicitCastFloatAsInt = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsInt", "(F)I");
         int implicitCastDoubleAsInt = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsInt", "(D)I");
 
-        int implicitCastDateAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "castDateAs", "(J)J");
-        int implicitCastTimestampAsDate = asm.poolInterfaceMethod(TimestampDriver.class, "castAsDate", "(J)J");
+        int implicitCastDateAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "fromDate", "(J)J");
+        int implicitCastTimestampAsDate = asm.poolInterfaceMethod(TimestampDriver.class, "toDate", "(J)J");
         int implicitCastTimestampMicroAsNanos = asm.poolMethod(CommonUtils.class, "microsToNanos", "(J)J");
         int implicitCastTimestampNanosAsMicros = asm.poolMethod(CommonUtils.class, "nanosToMicros", "(J)J");
 
