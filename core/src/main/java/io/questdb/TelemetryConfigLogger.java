@@ -45,8 +45,8 @@ import io.questdb.preferences.PreferencesUpdateListener;
 import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.nanotime.NanosecondClock;
 
 import java.io.Closeable;
 

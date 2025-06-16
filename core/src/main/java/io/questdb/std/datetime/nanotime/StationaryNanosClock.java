@@ -22,8 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.std.datetime.nanotime;
 
-public interface NanosecondClock {
-    long getTicks();
+public class StationaryNanosClock implements NanosecondClock {
+    public static final StationaryNanosClock INSTANCE = new StationaryNanosClock();
+
+    @Override
+    public long getTicks() {
+        return 0L;
+    }
 }

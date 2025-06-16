@@ -25,15 +25,23 @@
 package io.questdb.mp;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnIndexerJob;
+import io.questdb.cairo.ColumnPurgeJob;
+import io.questdb.cairo.ColumnTaskJob;
+import io.questdb.cairo.O3CopyJob;
+import io.questdb.cairo.O3OpenColumnJob;
+import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.nanotime.NanosecondClock;
 
 public class WorkerPoolUtils {
 

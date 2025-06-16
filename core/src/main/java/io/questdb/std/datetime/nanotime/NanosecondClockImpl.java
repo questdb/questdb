@@ -24,13 +24,11 @@
 
 package io.questdb.std.datetime.nanotime;
 
-import io.questdb.std.Os;
-
 public class NanosecondClockImpl implements NanosecondClock {
-    public static final NanosecondClock INSTANCE = new NanosecondClockImpl();
+    public final static NanosecondClock INSTANCE = new NanosecondClockImpl();
 
     @Override
     public long getTicks() {
-        return Os.currentTimeNanos();
+        return System.nanoTime();
     }
 }

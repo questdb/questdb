@@ -28,17 +28,19 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.PartitionBy.*;
 import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
@@ -47,7 +49,6 @@ import static io.questdb.std.datetime.microtime.TimestampFormatUtils.*;
 
 public class MicrosTimestampDriver implements TimestampDriver {
     public static final TimestampDriver INSTANCE = new MicrosTimestampDriver();
-
     private static final PartitionAddMethod ADD_DD = Timestamps::addDays;
     private static final PartitionAddMethod ADD_HH = Timestamps::addHours;
     private static final PartitionAddMethod ADD_MM = Timestamps::addMonths;
@@ -84,6 +85,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
     private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(FLOOR_MM, MONTH_FORMAT);
     private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(FLOOR_YYYY, YEAR_FORMAT);
+    private MicrosecondClock clock = MicrosecondClockImpl.INSTANCE;
 
     public static CairoException expectedPartitionDirNameFormatCairoException(CharSequence partitionName, int lo, int hi, int partitionBy) {
         final CairoException ee = CairoException.critical(0).put('\'');
@@ -349,7 +351,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long getTicks() {
-        return Os.currentTimeMicros();
+        return clock.getTicks();
     }
 
     @Override
@@ -776,6 +778,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             }
             throw expectedPartitionDirNameFormatCairoException(partitionName, lo, hi, partitionBy);
         }
+    }
+
+    @TestOnly
+    public void setTicker(MicrosecondClock clock) {
+        this.clock = clock;
     }
 
     @Override

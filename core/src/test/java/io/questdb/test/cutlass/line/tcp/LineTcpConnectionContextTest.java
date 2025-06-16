@@ -571,7 +571,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 model.wal();
             }
             AbstractCairoTest.create(model);
-            microSecondTicks = 1465839830102800L;
+            timestampTicks = 1465839830102800L;
             recvBuffer = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i\n" +
                     "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i\n";
             handleContextIO0();
@@ -590,7 +590,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             TableModel model = new TableModel(configuration, "t_ilp21", PartitionBy.NONE).col("l", ColumnType.LONG);
             AbstractCairoTest.create(model);
-            microSecondTicks = 1465839830102800L;
+            timestampTicks = 1465839830102800L;
             recvBuffer = "t_ilp21 l=843530699759026177i\n" +
                     "t_ilp21 l=\"843530699759026178\"\n" +
                     "t_ilp21 l=843530699759026179i\n";
@@ -1676,7 +1676,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testNoTimestamp() throws Exception {
         String table = "notimestamp";
-        microSecondTicks = Timestamps.DAY_MICROS;
+        timestampTicks = Timestamps.DAY_MICROS;
         runInContext(() -> {
             recvBuffer =
                     table + ",platform=APP val=1\n" +
@@ -1922,7 +1922,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testUseReceivedTimestamp1() throws Exception {
         String table = "testAutoTimestamp";
         runInContext(() -> {
-            microSecondTicks = 0;
+            timestampTicks = 0;
             recvBuffer =
                     table + ",location=us-midwest temperature=82\n" +
                             table + ",location=us-midwest temperature=83\n" +

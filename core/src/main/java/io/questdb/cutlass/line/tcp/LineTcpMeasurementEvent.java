@@ -43,7 +43,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.CommonUtils;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -58,7 +57,6 @@ class LineTcpMeasurementEvent implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementEvent.class);
     private final boolean autoCreateNewColumns;
     private final LineTcpEventBuffer buffer;
-    private final MicrosecondClock clock;
     private final DefaultColumnTypes defaultColumnTypes;
     private final int maxColumnNameLength;
     private final PrincipalOnlySecurityContext principalOnlySecurityContext = new PrincipalOnlySecurityContext();
@@ -71,7 +69,6 @@ class LineTcpMeasurementEvent implements Closeable {
     LineTcpMeasurementEvent(
             long bufLo,
             long bufSize,
-            MicrosecondClock clock,
             byte timestampUnit,
             DefaultColumnTypes defaultColumnTypes,
             boolean stringToCharCastAllowed,
@@ -81,7 +78,6 @@ class LineTcpMeasurementEvent implements Closeable {
         this.maxColumnNameLength = maxColumnNameLength;
         this.autoCreateNewColumns = autoCreateNewColumns;
         this.buffer = new LineTcpEventBuffer(bufLo, bufSize);
-        this.clock = clock;
         this.defaultColumnTypes = defaultColumnTypes;
         this.timestampUnit = timestampUnit;
         this.stringToCharCastAllowed = stringToCharCastAllowed;
@@ -132,7 +128,7 @@ class LineTcpMeasurementEvent implements Closeable {
             long timestamp = buffer.readLong(address);
             address += Long.BYTES;
             if (timestamp == LineTcpParser.NULL_TIMESTAMP) {
-                timestamp = clock.getTicks();
+                timestamp = tableUpdateDetails.getTimestampDriver().getTicks();
             }
             row = writer.newRow(timestamp);
             final int nEntities = buffer.readInt(address);

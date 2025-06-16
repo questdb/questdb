@@ -258,7 +258,7 @@ public final class ColumnType {
             case TIMESTAMP_MICRO:
                 return MicrosTimestampDriver.INSTANCE;
             case TIMESTAMP_NANO:
-                return NanoTimestampDriver.INSTANCE;
+                return NanosTimestampDriver.INSTANCE;
             default:
                 throw new UnsupportedOperationException();
         }

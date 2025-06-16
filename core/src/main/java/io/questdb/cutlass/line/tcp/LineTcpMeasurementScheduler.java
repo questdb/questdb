@@ -141,7 +141,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         (address, addressSize) -> new LineTcpMeasurementEvent(
                                 address,
                                 addressSize,
-                                lineConfiguration.getMicrosecondClock(),
                                 lineConfiguration.getTimestampUnit(),
                                 defaultColumnTypes,
                                 lineConfiguration.isStringToCharCastAllowed(),

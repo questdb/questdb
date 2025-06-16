@@ -27,8 +27,8 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.nanotime.NanosecondClock;
 
 public interface JsonQueryProcessorConfiguration {
 

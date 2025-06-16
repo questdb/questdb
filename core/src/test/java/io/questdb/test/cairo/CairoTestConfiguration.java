@@ -35,10 +35,10 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.nanotime.NanosecondClock;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
 

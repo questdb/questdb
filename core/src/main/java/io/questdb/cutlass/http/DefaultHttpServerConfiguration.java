@@ -38,13 +38,13 @@ import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.datetime.nanotime.NanosecondClock;
 
 import java.io.IOException;
 import java.io.InputStream;
