@@ -435,7 +435,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             }
 
             // offset 2
-            if (mergeDataLo > -1 && mergeOOOLo > -1) {
+            if (mergeDataLo > -1 && mergeOOOLo > -1 && mergeOOOHi >= mergeDataLo) {
                 final long mergeDataSize;
                 if (mergeRowCount == mergeDataHi - mergeDataLo + 1 + mergeOOOHi - mergeOOOLo + 1) {
                     // No deduplication, all rows from O3 and column data will be written.
@@ -465,7 +465,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // 'long long value'
                     // 'long long value'
                     // Which is longer than oooLen + dataLen
-                    // To deal with unpredicatability of the dedup var col size run the dedup merged size calculation
+                    // To deal with unpredictability of the dedup var col size run the dedup merged size calculation
                     mergeDataSize = timestampMergeIndexAddr > 0 ? columnTypeDriver.dedupMergeVarColumnSize(
                             timestampMergeIndexAddr,
                             mergeRowCount,

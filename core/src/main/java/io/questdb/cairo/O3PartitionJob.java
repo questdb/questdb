@@ -47,6 +47,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -1088,40 +1089,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
     }
 
-    private static long calculateMinDataTimestampAfterReplacement(
-            long srcDataTimestampAddr,
-            long o3TimestampsAddr,
-            int prefixType,
-            int suffixType,
-            long prefixLo,
-            long suffixLo,
-            long srcOooLo,
-            long srcOooHi
-    ) {
-        if (prefixType == O3_BLOCK_DATA) {
-            return Unsafe.getUnsafe().getLong(srcDataTimestampAddr + prefixLo * Long.BYTES);
-        }
-        if (srcOooLo <= srcOooHi) {
-            // If there is O3 data, it will replace the partition data in merge section
-            return getTimestampIndexValue(o3TimestampsAddr, srcOooLo);
-        }
-        if (suffixType == O3_BLOCK_DATA) {
-            // No prefix, no merge, just suffix from the partition data
-            return Unsafe.getUnsafe().getLong(srcDataTimestampAddr + suffixLo * Long.BYTES);
-        }
-        return Long.MAX_VALUE;
-    }
-
-    private static void updatePartitionSink(long partitionUpdateSinkAddr, long partitionTimestamp, long o3TimestampMin, long newPartitionSize, long oldPartitionSize, long partitionMutates) {
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize); // new partition size
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates); // partitionMutates
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // update parquet partition file size
-    }
-
     public static void processPartition(
             O3PartitionTask task,
             long cursor,
@@ -1185,6 +1152,30 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 o3TimestampLo,
                 o3TimestampHi
         );
+    }
+
+    private static long calculateMinDataTimestampAfterReplacement(
+            long srcDataTimestampAddr,
+            long o3TimestampsAddr,
+            int prefixType,
+            int suffixType,
+            long prefixLo,
+            long suffixLo,
+            long srcOooLo,
+            long srcOooHi
+    ) {
+        if (prefixType == O3_BLOCK_DATA) {
+            return Unsafe.getUnsafe().getLong(srcDataTimestampAddr + prefixLo * Long.BYTES);
+        }
+        if (srcOooLo <= srcOooHi) {
+            // If there is O3 data, it will replace the partition data in merge section
+            return getTimestampIndexValue(o3TimestampsAddr, srcOooLo);
+        }
+        if (suffixType == O3_BLOCK_DATA) {
+            // No prefix, no merge, just suffix from the partition data
+            return Unsafe.getUnsafe().getLong(srcDataTimestampAddr + suffixLo * Long.BYTES);
+        }
+        return Long.MAX_VALUE;
     }
 
     private static long createMergeIndex(
@@ -1772,6 +1763,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long columnNameTxn
     ) {
         while (cursor == -2) {
+            Os.pause();
             cursor = tableWriter.getO3OpenColumnPubSeq().next();
         }
 
@@ -2427,6 +2419,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         } finally {
             ff.munmap(parquetAddr, newParquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         }
+    }
+
+    private static void updatePartitionSink(long partitionUpdateSinkAddr, long partitionTimestamp, long o3TimestampMin, long newPartitionSize, long oldPartitionSize, long partitionMutates) {
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize); // new partition size
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates); // partitionMutates
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // update parquet partition file size
     }
 
     @Override
