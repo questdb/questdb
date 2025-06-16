@@ -617,7 +617,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             assert mergeDataHi > -1;
 
                             if (mergeDataLo > mergeDataHi) {
-                                // the OO data implodes right between rows of existing data
+                                // the o3 data implodes right between rows of existing data
                                 // so we will have both data prefix and suffix and the middle bit
                                 // is the out of order
                                 mergeType = O3_BLOCK_O3;
@@ -642,7 +642,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             branch = 3;
                             // When deduplication is enabled, take in to the merge
-                            // all OOO rows that are equal to the last row in the data
+                            // all o3 rows that are equal to the last row in the data
                             mergeO3Hi = Vect.boundedBinarySearchIndexT(
                                     sortedTimestampsAddr,
                                     dataTimestampHi,
@@ -854,9 +854,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
                     } else {
                         if (mergeType == O3_BLOCK_O3 && prefixType == O3_BLOCK_DATA && suffixType == O3_BLOCK_DATA) {
-                            // O3 data is supposed to be merged into the middle existing partition
+                            // O3 data is supposed to be merged into the middle of an existing partition
                             // but there is no O3 data, it's a replacing commit with no new rows, just the range.
-                            // At the end we have exising column data prefix, suffix and nothing to insert in between.
+                            // At the end we have existing column data prefix, suffix and nothing to insert in between.
                             // We can finish here without modifying this partition.
                             updatePartition(ff, srcTimestampAddr, srcTimestampSize, srcTimestampFd, tableWriter, partitionUpdateSinkAddr, partitionTimestamp, newMinPartitionTimestamp, oldPartitionSize, oldPartitionSize, 0);
                             return;
@@ -1082,28 +1082,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     dedupColSinkAddr
             );
         }
-    }
-
-    private static void updatePartition(
-            FilesFacade ff,
-            long srcTimestampAddr,
-            long srcTimestampSize,
-            long srcTimestampFd,
-            TableWriter tableWriter,
-            long partitionUpdateSinkAddr,
-            long partitionTimestamp,
-            long timestampMin,
-            long newPartitionSize,
-            long oldPartitionSize,
-            int partitionMutates
-    ) {
-        updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, timestampMin, newPartitionSize, oldPartitionSize, partitionMutates);
-
-        O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-        O3Utils.close(ff, srcTimestampFd);
-
-        tableWriter.o3ClockDownPartitionUpdateCount();
-        tableWriter.o3CountDownDoneLatch();
     }
 
     public static void processPartition(
@@ -2436,6 +2414,28 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         } finally {
             ff.munmap(parquetAddr, newParquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         }
+    }
+
+    private static void updatePartition(
+            FilesFacade ff,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            long srcTimestampFd,
+            TableWriter tableWriter,
+            long partitionUpdateSinkAddr,
+            long partitionTimestamp,
+            long timestampMin,
+            long newPartitionSize,
+            long oldPartitionSize,
+            int partitionMutates
+    ) {
+        updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, timestampMin, newPartitionSize, oldPartitionSize, partitionMutates);
+
+        O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
+        O3Utils.close(ff, srcTimestampFd);
+
+        tableWriter.o3ClockDownPartitionUpdateCount();
+        tableWriter.o3CountDownDoneLatch();
     }
 
     private static void updatePartitionSink(long partitionUpdateSinkAddr, long partitionTimestamp, long o3TimestampMin, long newPartitionSize, long oldPartitionSize, long partitionMutates) {
