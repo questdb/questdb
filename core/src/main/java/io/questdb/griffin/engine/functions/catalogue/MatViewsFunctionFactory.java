@@ -111,9 +111,10 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_TABLE_DIR_NAME = COLUMN_VIEW_SQL + 1;
         private static final int COLUMN_INVALIDATION_REASON = COLUMN_TABLE_DIR_NAME + 1;
         private static final int COLUMN_VIEW_STATUS = COLUMN_INVALIDATION_REASON + 1;
-        private static final int COLUMN_LAST_REFRESH_BASE_TABLE_TXN = COLUMN_VIEW_STATUS + 1;
-        private static final int COLUMN_LAST_APPLIED_BASE_TABLE_TXN = COLUMN_LAST_REFRESH_BASE_TABLE_TXN + 1;
-        private static final int COLUMN_REFRESH_LIMIT = COLUMN_LAST_APPLIED_BASE_TABLE_TXN + 1;
+        private static final int COLUMN_REFRESH_PERIOD_HI = COLUMN_VIEW_STATUS + 1;
+        private static final int COLUMN_REFRESH_BASE_TABLE_TXN = COLUMN_REFRESH_PERIOD_HI + 1;
+        private static final int COLUMN_APPLIED_BASE_TABLE_TXN = COLUMN_REFRESH_BASE_TABLE_TXN + 1;
+        private static final int COLUMN_REFRESH_LIMIT = COLUMN_APPLIED_BASE_TABLE_TXN + 1;
         private static final int COLUMN_REFRESH_LIMIT_UNIT = COLUMN_REFRESH_LIMIT + 1;
         private static final int COLUMN_TIMER_TIME_ZONE = COLUMN_REFRESH_LIMIT_UNIT + 1;
         private static final int COLUMN_TIMER_START = COLUMN_TIMER_TIME_ZONE + 1;
@@ -212,6 +213,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             }
                         }
 
+                        final long lastPeriodHi = viewStateReader.getLastPeriodHi();
                         final long lastRefreshedBaseTxn = viewStateReader.getLastRefreshBaseTxn();
                         final long lastRefreshTimestamp = viewStateReader.getLastRefreshTimestamp();
 
@@ -243,12 +245,14 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         }
 
                         final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+                        // start timestamp is not persisted
                         final long lastRefreshStartTimestamp = state != null ? state.getLastRefreshStartTimestamp() : Numbers.LONG_NULL;
 
                         record.of(
                                 matViewDefinition,
                                 lastRefreshStartTimestamp,
                                 lastRefreshTimestamp,
+                                lastPeriodHi,
                                 lastRefreshedBaseTxn,
                                 lastAppliedBaseTxn,
                                 viewStateReader.getInvalidationReason(),
@@ -285,6 +289,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 private final StringSink invalidationReason = new StringSink();
                 private boolean invalid;
                 private long lastAppliedBaseTxn;
+                private long lastPeriodHi;
                 private long lastRefreshFinishTimestamp;
                 private long lastRefreshStartTimestamp;
                 private long lastRefreshTxn;
@@ -321,9 +326,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             return lastRefreshStartTimestamp;
                         case COLUMN_LAST_REFRESH_FINISH_TIMESTAMP:
                             return lastRefreshFinishTimestamp;
-                        case COLUMN_LAST_REFRESH_BASE_TABLE_TXN:
+                        case COLUMN_REFRESH_PERIOD_HI:
+                            return lastPeriodHi;
+                        case COLUMN_REFRESH_BASE_TABLE_TXN:
                             return lastRefreshTxn;
-                        case COLUMN_LAST_APPLIED_BASE_TABLE_TXN:
+                        case COLUMN_APPLIED_BASE_TABLE_TXN:
                             return lastAppliedBaseTxn;
                         case COLUMN_TIMER_START:
                             return timerStart;
@@ -390,6 +397,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         MatViewDefinition viewDefinition,
                         long lastRefreshStartTimestamp,
                         long lastRefreshFinishTimestamp,
+                        long lastPeriodHi,
                         long lastRefreshTxn,
                         long lastAppliedBaseTxn,
                         CharSequence invalidationReason,
@@ -406,6 +414,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshStartTimestamp = lastRefreshStartTimestamp;
                     this.lastRefreshFinishTimestamp = lastRefreshFinishTimestamp;
+                    this.lastPeriodHi = lastPeriodHi;
                     this.lastRefreshTxn = lastRefreshTxn;
                     this.lastAppliedBaseTxn = lastAppliedBaseTxn;
                     this.invalidationReason.clear();
@@ -443,6 +452,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("view_table_dir_name", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("invalidation_reason", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("view_status", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("refresh_period_hi", ColumnType.TIMESTAMP));
             metadata.add(new TableColumnMetadata("refresh_base_table_txn", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("base_table_txn", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_limit", ColumnType.INT));

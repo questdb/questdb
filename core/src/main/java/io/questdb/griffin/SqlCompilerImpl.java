@@ -1636,10 +1636,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (isTtlKeyword(tok)) {
                     final int ttlValuePos = lexer.getPosition();
                     final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
-                    try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
-                        CairoTable table = metadataRO.getTable(matViewToken);
-                        assert table != null : "CairoTable == null after we already checked it exists";
-                        PartitionBy.validateTtlGranularity(table.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
+                    try (TableMetadata matViewMeta = engine.getTableMetadata(matViewToken)) {
+                        PartitionBy.validateTtlGranularity(matViewMeta.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
                     }
                     final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
                             matViewNamePosition,
@@ -1664,6 +1662,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                             }
                             tok = expectToken(lexer, "'every'");
+                        }
+
+                        final long periodLength;
+                        final long oldStart;
+                        try (TableMetadata matViewMeta = engine.getTableMetadata(matViewToken)) {
+                            periodLength = matViewMeta.getMatViewPeriodLength();
+                            oldStart = matViewMeta.getMatViewTimerStart();
+                        }
+                        if (periodLength > 0 && start != oldStart) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "changing start timestamp is not allowed on period materialized views");
                         }
 
                         if (isEveryKeyword(tok)) {
