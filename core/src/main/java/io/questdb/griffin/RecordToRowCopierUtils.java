@@ -180,7 +180,7 @@ public class RecordToRowCopierUtils {
         int transferStrToVarcharCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferStrToVarcharCol", "(Lio/questdb/cairo/TableWriter$Row;ILjava/lang/CharSequence;)V");
         int validateArrayDimensionsAndTransferCol = asm.poolMethod(RecordToRowCopierUtils.class, "validateArrayDimensionsAndTransferCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/cutlass/pgwire/modern/DoubleArrayParser;Ljava/lang/CharSequence;I)V");
         int microTimestampDriverClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/cairo/MicrosTimestampDriver"));
-        int nanoTimestampDriverClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/cairo/NanoTimestampDriver"));
+        int nanoTimestampDriverClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/cairo/NanosTimestampDriver"));
         int timestampInstanceIndex = asm.poolUtf8("INSTANCE");
         int timestampDriverTypeIndex = asm.poolUtf8("Lio/questdb/cairo/TimestampDriver;");
         int microTimestampDriverRef = asm.poolField(
