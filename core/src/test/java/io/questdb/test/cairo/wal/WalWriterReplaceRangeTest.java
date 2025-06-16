@@ -81,7 +81,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     @Test
     public void testReplaceCommitAdds2PartitionsBeforeExistingNoRowsCommit() throws Exception {
-        testReplaceCommitAdds2PartitionsBeforeExisting(false);
+        testReplaceCommitAdds2PartitionsBeforeExisting(true);
     }
 
     @Test
@@ -91,7 +91,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     @Test
     public void testReplaceCommitNotOrderedNoRowsCommit() throws Exception {
-        testReplaceCommitNotOrdered(false);
+        testReplaceCommitNotOrdered(true);
     }
 
     @Test
@@ -432,7 +432,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReplaceTruncatesAllDataAndAddsNewBeforeExistingNoRowsCommmit() throws Exception {
+    public void testReplaceTruncatesAllDataAndAddsNewBeforeExistingNoRowsCommit() throws Exception {
         testReplaceTruncatesAllDataAndAddsNewBeforeExisting(true);
     }
 
