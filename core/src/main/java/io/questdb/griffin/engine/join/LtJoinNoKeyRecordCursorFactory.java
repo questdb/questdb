@@ -203,9 +203,7 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFact
             }
             if (record.hasSlave()) {
                 slaveBTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                if (toleranceInterval != Numbers.LONG_NULL) {
-                    record.hasSlave(slaveBTimestamp >= masterTimestamp - toleranceInterval);
-                }
+                record.hasSlave(slaveBTimestamp >= masterTimestamp - toleranceInterval);
             }
             assert !record.hasSlave() || slaveBTimestamp < masterTimestamp;
         }
