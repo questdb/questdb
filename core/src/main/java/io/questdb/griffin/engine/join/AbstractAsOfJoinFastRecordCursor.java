@@ -141,7 +141,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         isSlaveForwardScan = true;
     }
 
-    private long binarySearchScanDown(long v, long low, long high) {
+    private long binarySearchScanDown(long v, long low, long high, long totalRowLo) {
         for (long i = high - 1; i >= low; i--) {
             slaveTimeFrameCursor.recordAtRowIndex(slaveRecA, i);
             long that = slaveRecA.getTimestamp(slaveTimestampIndex);
@@ -152,8 +152,8 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                 return i;
             }
         }
-        // all values are greater than v, return low - 1
-        return low - 1;
+        // all values are greater than v, return totalRowLo - 1
+        return totalRowLo - 1;
     }
 
     private long binarySearchScrollDown(long low, long high, long value) {
@@ -285,7 +285,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
             }
         }
 
-        return binarySearchScanDown(value, low, high + 1);
+        return binarySearchScanDown(value, low, high + 1, rowLo);
     }
 
     protected void nextSlave(long masterTimestamp) {
