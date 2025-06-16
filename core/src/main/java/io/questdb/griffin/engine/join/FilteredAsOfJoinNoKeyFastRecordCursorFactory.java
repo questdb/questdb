@@ -178,14 +178,14 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             }
 
             final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-            TimeFrame timeFrame = slaveCursor.getTimeFrame();
+            TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
             if (masterTimestamp >= lookaheadTimestamp) {
                 if (unfilteredRecordRowId != -1 && slaveRecB.getRowId() != unfilteredRecordRowId) {
-                    slaveCursor.recordAt(slaveRecB, unfilteredRecordRowId);
+                    slaveTimeFrameCursor.recordAt(slaveRecB, unfilteredRecordRowId);
                 }
                 if (unfilteredCursorFrameIndex != -1 && (timeFrame.getFrameIndex() != unfilteredCursorFrameIndex || !timeFrame.isOpen())) {
-                    slaveCursor.jumpTo(unfilteredCursorFrameIndex);
-                    slaveCursor.open();
+                    slaveTimeFrameCursor.jumpTo(unfilteredCursorFrameIndex);
+                    slaveTimeFrameCursor.open();
                 }
 
                 nextSlave(masterTimestamp);
@@ -224,8 +224,8 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             final int initialFilteredFrameIndex = Rows.toPartitionIndex(rowId);
             final long initialFilteredRowId = Rows.toLocalRowID(rowId);
 
-            slaveCursor.jumpTo(initialFilteredFrameIndex);
-            slaveCursor.open();
+            slaveTimeFrameCursor.jumpTo(initialFilteredFrameIndex);
+            slaveTimeFrameCursor.open();
 
             long currentFrameLo = timeFrame.getRowLo();
             long filteredRowId = initialFilteredRowId;
@@ -242,7 +242,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                     // ops, we exhausted this frame, let's try the previous one
                     circuitBreaker.statefulThrowExceptionIfTripped(); // check if we are still alive
 
-                    if (!slaveCursor.prev()) {
+                    if (!slaveTimeFrameCursor.prev()) {
                         // there is no previous frame, we are done, no match :(
                         // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor
                         // until we either exhaust the cursor or find a matching record
@@ -257,7 +257,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                         break;
                     }
 
-                    slaveCursor.open();
+                    slaveTimeFrameCursor.open();
                     filteredFrameIndex = timeFrame.getFrameIndex();
                     filteredRowId = timeFrame.getRowHi() - 1;
                     currentFrameLo = timeFrame.getRowLo();
@@ -266,7 +266,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                     // invariant: when exiting from this branch then either we fully exhausted the slave cursor
                     // or slaveRecB is set to the current filteredFrameIndex so the outside loop can continue
                     // searching for a match by just moving filteredRowId down
-                    slaveCursor.recordAt(slaveRecB, Rows.toRowID(filteredFrameIndex, filteredRowId));
+                    slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(filteredFrameIndex, filteredRowId));
                 }
 
                 if (filteredRowId < stopUnderRowId) {
@@ -275,7 +275,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                     break;
                 }
 
-                slaveCursor.recordAtRowIndex(slaveRecB, filteredRowId);
+                slaveTimeFrameCursor.recordAtRowIndex(slaveRecB, filteredRowId);
                 slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
                 if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
                     // we are past the tolerance interval, no need to traverse the slave cursor any further
