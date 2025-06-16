@@ -107,6 +107,10 @@ public class QueryColumn implements Mutable, Sinkable {
         this.alias = alias;
     }
 
+    public void setIncludeIntoWildcard(boolean includeIntoWildcard) {
+        this.includeIntoWildcard = includeIntoWildcard;
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.put(ast).putAscii(" as ").put(alias);

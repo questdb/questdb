@@ -5846,6 +5846,9 @@ public class SqlOptimiser implements Mutable {
                         // outer model supporting arithmetic such as:
                         // select sum(a)+sum(b) ...
                         QueryColumn ref = nextColumn(qc.getAlias());
+                        // it is possible to order by a group-by column, which isn't referenced by
+                        // the SQL projection. In this case we need to preserve the wildcard visibility
+                        ref.setIncludeIntoWildcard(qc.isIncludeIntoWildcard());
                         outerVirtualModel.addBottomUpColumn(ref);
                         distinctModel.addBottomUpColumn(ref);
                         // sample-by implementation requires innerVirtualModel
