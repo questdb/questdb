@@ -647,7 +647,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
             drainWalQueue();
 
-            insertRowWithReplaceRange("2022-02-20T17,2022-02-21T17", "2022-02-20T17", "2022-02-21T18", tableToken, true, true, "rg", "expected", true, generateNoRowsCommit);
+            insertRowWithReplaceRange("2022-02-20T17,2022-02-21T17", "2022-02-20T17", "2022-02-21T18", tableToken, !generateNoRowsCommit, !generateNoRowsCommit, "rg", "expected", true, generateNoRowsCommit);
         });
     }
 
@@ -660,7 +660,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
             drainWalQueue();
 
-            insertRowWithReplaceRange("2022-02-21T17,2022-02-20T17", "2022-02-20T17", "2022-02-21T18", tableToken, true, true, "rg", "expected", true, generateNoRowsCommit);
+            insertRowWithReplaceRange("2022-02-21T17,2022-02-20T17", "2022-02-20T17", "2022-02-21T18", tableToken, !generateNoRowsCommit, !generateNoRowsCommit, "rg", "expected", true, generateNoRowsCommit);
         });
     }
 
@@ -673,7 +673,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
             drainWalQueue();
 
-            insertRowWithReplaceRange("2022-02-26T17", "2022-02-24T17", "2022-02-28T02", tableToken, true, true, "rg", "expected", true, generateNoRowsCommit);
+            insertRowWithReplaceRange("2022-02-26T17", "2022-02-24T17", "2022-02-28T02", tableToken, !generateNoRowsCommit, !generateNoRowsCommit, "rg", "expected", true, generateNoRowsCommit);
         });
     }
 
@@ -686,7 +686,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(20)");
             drainWalQueue();
 
-            insertRowWithReplaceRange("2022-02-25T02:36:07.769840Z", "2022-02-24T23:20:30", "2022-02-27T01:34:56.265527", tableToken, true, true, "rg", "expected", true, generateNoRowsCommit);
+            insertRowWithReplaceRange("2022-02-25T02:36:07.769840Z", "2022-02-24T23:20:30", "2022-02-27T01:34:56.265527", tableToken, !generateNoRowsCommit, !generateNoRowsCommit, "rg", "expected", true, generateNoRowsCommit);
         });
     }
 
@@ -699,7 +699,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
             drainWalQueue();
 
-            insertRowWithReplaceRange("2022-02-20T17", "2022-02-19T17", "2022-02-21T18", tableToken, true, true, "rg", "expected", true, generateNoRowsCommit);
+            insertRowWithReplaceRange("2022-02-20T17", "2022-02-19T17", "2022-02-21T18", tableToken, !generateNoRowsCommit, !generateNoRowsCommit, "rg", "expected", true, generateNoRowsCommit);
         });
     }
 
