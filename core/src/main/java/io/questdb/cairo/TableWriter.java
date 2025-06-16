@@ -6974,7 +6974,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     AtomicInteger columnCounter = o3ColumnCounters.next();
 
                     if (isCommitReplaceMode() && srcOooLo > srcOooHi && (srcDataMax == 0 || append)) {
-                        // Noting to insert and replace range does not intersect with existing data
+                        // Nothing to insert and replace range does not intersect with existing data
                         partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
                         pressureControl.updateInflightPartitions(--inflightPartitions);
                         continue;
@@ -7154,12 +7154,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } // end while(srcOoo < srcOooMax)
 
             // at this point we should know the last partition row count
-            this.partitionTimestampHi = Math.max(this.partitionTimestampHi, txWriter.getNextPartitionTimestamp(o3TimestampMax) - 1);
+            partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getNextPartitionTimestamp(o3TimestampMax) - 1);
 
             if (!isCommitReplaceMode()) {
-                this.txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));
+                txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));
             } else if (replaceMaxTimestamp != Long.MIN_VALUE) {
-                this.txWriter.updateMaxTimestamp(replaceMaxTimestamp);
+                txWriter.updateMaxTimestamp(replaceMaxTimestamp);
             }
         } catch (Throwable th) {
             LOG.error().$("failed to commit data block [table=").$(tableToken).$(", error=").$(th).I$();
@@ -7192,7 +7192,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     srcOooMax,
                     0L,
                     0,
-                    this.cthO3ShiftColumnInLagToTopRef
+                    cthO3ShiftColumnInLagToTopRef
             );
         }
     }
@@ -8287,9 +8287,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         processWalCommitFinishApply(0, timestampAddr, rowLo, rowHi, pressureControl, false, partitionTimestampHi);
                     } else {
                         LOG.debug().$("sorting WAL [table=").$(tableToken)
-                                .$(", ordered=").$(ordered)
+                                .$(", ordered=false")
                                 .$(", walRowLo=").$(rowLo)
-                                .$(", walRowHi=").$(rowHi).I$();
+                                .$(", walRowHi=").$(rowHi)
+                                .I$();
 
                         long totalUncommitted = rowHi - rowLo;
                         final long timestampMemorySize = totalUncommitted << 4;
@@ -8349,8 +8350,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void processWalCommitFinishApply(long walLagRowCount, long timestampAddr, long o3Lo, long o3Hi, TableWriterPressureControl pressureControl, boolean copiedToMemory, long initialPartitionTimestampHi) {
-
+    private void processWalCommitFinishApply(
+            long walLagRowCount,
+            long timestampAddr,
+            long o3Lo,
+            long o3Hi,
+            TableWriterPressureControl pressureControl,
+            boolean copiedToMemory,
+            long initialPartitionTimestampHi
+    ) {
         long commitMinTimestamp = txWriter.getLagMinTimestamp();
         long commitMaxTimestamp = txWriter.getLagMaxTimestamp();
         txWriter.setLagMinTimestamp(Long.MAX_VALUE);
