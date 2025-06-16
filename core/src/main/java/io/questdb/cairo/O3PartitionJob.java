@@ -47,7 +47,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -1780,7 +1779,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long columnNameTxn
     ) {
         while (cursor == -2) {
-            Os.pause();
             cursor = tableWriter.getO3OpenColumnPubSeq().next();
         }
 
