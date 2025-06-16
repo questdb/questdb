@@ -435,7 +435,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             }
 
             // offset 2
-            if (mergeDataLo > -1 && mergeOOOLo > -1 && mergeOOOHi > -1) {
+            if (mergeDataLo > -1 && mergeOOOLo > -1) {
                 final long mergeDataSize;
                 if (mergeRowCount == mergeDataHi - mergeDataLo + 1 + mergeOOOHi - mergeOOOLo + 1) {
                     // No deduplication, all rows from O3 and column data will be written.

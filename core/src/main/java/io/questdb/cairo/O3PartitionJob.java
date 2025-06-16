@@ -853,6 +853,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             }
                         }
                     } else {
+                        if (mergeType == O3_BLOCK_O3 && prefixType == O3_BLOCK_DATA && suffixType == O3_BLOCK_DATA) {
+                            // O3 data is supposed to be merged into the middle existing partition
+                            // but there is no O3 data, it's a replacing commit with no new rows, just the range.
+                            // At the end we have exising column data prefix, suffix and nothing to insert in between.
+                            // We can finish here without modifying this partition.
+                            updatePartition(ff, srcTimestampAddr, srcTimestampSize, srcTimestampFd, tableWriter, partitionUpdateSinkAddr, partitionTimestamp, newMinPartitionTimestamp, oldPartitionSize, oldPartitionSize, 0);
+                            return;
+                        }
+
                         // srcOooLo > srcOooHi means that O3 data is empty
                         if (prefixType == O3_BLOCK_O3) {
                             prefixType = O3_BLOCK_NONE;
@@ -866,14 +875,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         if (prefixType == O3_BLOCK_NONE && suffixType == O3_BLOCK_NONE) {
                             // full partition removal
-                            updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, Long.MAX_VALUE, 0, oldPartitionSize, 1);
-
-                            O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-                            O3Utils.close(ff, srcTimestampFd);
-
-                            tableWriter.o3ClockDownPartitionUpdateCount();
-                            tableWriter.o3CountDownDoneLatch();
-
+                            updatePartition(ff, srcTimestampAddr, srcTimestampSize, srcTimestampFd, tableWriter, partitionUpdateSinkAddr, partitionTimestamp, Long.MAX_VALUE, 0, oldPartitionSize, 1);
                             return;
                         }
 
@@ -885,14 +887,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 // There is nothing to do
 
                                 // Nothing to do, use the existing partition to the prefix size
-                                updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, newMinPartitionTimestamp, prefixHi + 1, oldPartitionSize, 0);
-
-                                O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-                                O3Utils.close(ff, srcTimestampFd);
-
-                                tableWriter.o3ClockDownPartitionUpdateCount();
-                                tableWriter.o3CountDownDoneLatch();
-
+                                updatePartition(ff, srcTimestampAddr, srcTimestampSize, srcTimestampFd, tableWriter, partitionUpdateSinkAddr, partitionTimestamp, newMinPartitionTimestamp, prefixHi + 1, oldPartitionSize, 0);
                                 return;
                             }
 
@@ -1087,6 +1082,28 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     dedupColSinkAddr
             );
         }
+    }
+
+    private static void updatePartition(
+            FilesFacade ff,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            long srcTimestampFd,
+            TableWriter tableWriter,
+            long partitionUpdateSinkAddr,
+            long partitionTimestamp,
+            long timestampMin,
+            long newPartitionSize,
+            long oldPartitionSize,
+            int partitionMutates
+    ) {
+        updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, timestampMin, newPartitionSize, oldPartitionSize, partitionMutates);
+
+        O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
+        O3Utils.close(ff, srcTimestampFd);
+
+        tableWriter.o3ClockDownPartitionUpdateCount();
+        tableWriter.o3CountDownDoneLatch();
     }
 
     public static void processPartition(

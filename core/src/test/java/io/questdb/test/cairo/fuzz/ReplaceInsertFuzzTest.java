@@ -28,7 +28,6 @@ import io.questdb.std.Rnd;
 import org.junit.Test;
 
 public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
-
     @Test
     public void testSimpleDataTransactionBigReplaceProb() throws Exception {
         Rnd rnd = generateRandom(LOG);
