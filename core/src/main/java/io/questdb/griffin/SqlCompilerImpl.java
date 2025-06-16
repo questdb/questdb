@@ -3283,7 +3283,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         views.clear();
-        SqlUtil.collectAllTableNames(queryModel, views, true);
+        SqlUtil.collectAllTableAndViewNames(queryModel, views, true);
         for (int i = 0, n = views.size(); i < n; i++) {
             final ViewDefinition viewDefinition = getViewDefinition(views.getQuick(i));
             if (viewDefinition != null) {

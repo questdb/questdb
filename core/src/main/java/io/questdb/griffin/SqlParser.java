@@ -280,36 +280,6 @@ public class SqlParser {
         return SqlException.unexpectedToken(lexer.lastTokenPosition(), token, extraMessage);
     }
 
-    private static boolean isTableQueried(QueryModel model, String tableName) {
-        for (QueryModel m = model; m != null; m = m.getNestedModel()) {
-            final ExpressionNode tableNameExpr = m.getTableNameExpr();
-            if (tableNameExpr != null
-                    && tableNameExpr.type == ExpressionNode.LITERAL
-                    && Chars.equalsIgnoreCase(tableName, unquote(tableNameExpr.token))
-            ) {
-                return true;
-            }
-
-            final ObjList<QueryModel> joinModels = m.getJoinModels();
-            for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final QueryModel joinModel = joinModels.getQuick(i);
-                if (joinModel == m) {
-                    continue;
-                }
-                if (isTableQueried(joinModel, tableName)) {
-                    return true;
-                }
-            }
-
-            final QueryModel unionModel = m.getUnionModel();
-            if (unionModel != null && isTableQueried(unionModel, tableName)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private static boolean isValidSampleByPeriodLetter(CharSequence token) {
         if (token.length() != 1) return false;
         switch (token.charAt(0)) {
@@ -369,7 +339,11 @@ public class SqlParser {
 
     private static void validateMatViewQuery(QueryModel model, String baseTableName) throws SqlException {
         for (QueryModel m = model; m != null; m = m.getNestedModel()) {
-            final boolean baseTableQueried = isTableQueried(m, baseTableName);
+            tableNames.clear();
+            tableNamePositions.clear();
+            SqlUtil.collectAllTableNames(m, tableNames, null);
+            final boolean baseTableQueried = tableNames.contains(baseTableName);
+            final int queriedTableCount = tableNames.size();
             if (baseTableQueried) {
                 if (m.getSampleBy() != null && m.getSampleByOffset() == null) {
                     throw SqlException.position(m.getSampleBy().position + m.getSampleBy().token.length() + 1)
@@ -413,7 +387,8 @@ public class SqlParser {
 
             final QueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
-                if (baseTableQueried) {
+                // allow self-UNION on base table, but disallow UNION on base table with any other tables
+                if (baseTableQueried && queriedTableCount > 1) {
                     throw SqlException.position(m.getUnionModel().getModelPosition())
                             .put("union on base table is not supported for materialized views: ").put(baseTableName);
                 }
@@ -1011,11 +986,12 @@ public class SqlParser {
             final QueryModel queryModel = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
             final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
+            tableNames.clear();
+            tableNamePositions.clear();
+            SqlUtil.collectAllTableNames(queryModel, tableNames, tableNamePositions);
+
             // Find base table name if not set explicitly.
             if (baseTableName == null) {
-                tableNames.clear();
-                tableNamePositions.clear();
-                SqlUtil.collectAllTableNames(queryModel, tableNames, tableNamePositions);
                 if (tableNames.size() < 1) {
                     throw SqlException.$(startOfQuery, "missing base table, materialized views have to be based on a table");
                 }
@@ -1031,7 +1007,7 @@ public class SqlParser {
             mvOpBuilder.setBaseTableName(baseTableNameStr);
 
             // Basic validation - check all nested models that read from the base table for window functions, unions, FROM-TO, or FILL.
-            if (!isTableQueried(queryModel, baseTableNameStr)) {
+            if (!tableNames.contains(baseTableNameStr)) {
                 throw SqlException.position(queryModel.getModelPosition())
                         .put("base table is not referenced in materialized view query: ").put(baseTableName);
             }
@@ -1685,7 +1661,7 @@ public class SqlParser {
             tableOpBuilder.setSelectText(viewSql, startOfQuery);
             tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only
 
-            SqlUtil.collectAllTableNames(queryModel, createViewOperationBuilder.getDependencies());
+            SqlUtil.collectAllTableAndViewNames(queryModel, createViewOperationBuilder.getDependencies(), false);
 
             if (enclosedInParentheses) {
                 expectTok(lexer, ')');

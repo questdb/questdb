@@ -83,44 +83,10 @@ public class SqlUtil {
         model.setArtificialStar(true);
     }
 
-    public static void collectAllTableNames(
-            QueryModel model, LowerCaseCharSequenceHashSet outTableNames, IntList outTableNamePositions
-    ) {
-        QueryModel m = model;
-        do {
-            final ExpressionNode tableNameExpr = m.getTableNameExpr();
-            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
-                if (outTableNames.add(unquote(tableNameExpr.token))) {
-                    outTableNamePositions.add(tableNameExpr.position);
-                }
-            }
-
-            final ObjList<QueryModel> joinModels = m.getJoinModels();
-            for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final QueryModel joinModel = joinModels.getQuick(i);
-                if (joinModel == m) {
-                    continue;
-                }
-                collectAllTableNames(joinModel, outTableNames, outTableNamePositions);
-            }
-
-            final QueryModel unionModel = m.getUnionModel();
-            if (unionModel != null) {
-                collectAllTableNames(unionModel, outTableNames, outTableNamePositions);
-            }
-
-            m = m.getNestedModel();
-        } while (m != null);
-    }
-
-    public static void collectAllTableNames(
-            QueryModel model, ObjList<CharSequence> outTableNames
-    ) {
-        collectAllTableNames(model, outTableNames, false);
-    }
-
-    public static void collectAllTableNames(
-            QueryModel model, ObjList<CharSequence> outTableNames, boolean viewsOnly
+    public static void collectAllTableAndViewNames(
+            @NotNull QueryModel model,
+            @NotNull ObjList<CharSequence> outTableNames,
+            boolean viewsOnly
     ) {
         QueryModel m = model;
         do {
@@ -142,12 +108,44 @@ public class SqlUtil {
                 if (joinModel == m) {
                     continue;
                 }
-                collectAllTableNames(joinModel, outTableNames, viewsOnly);
+                collectAllTableAndViewNames(joinModel, outTableNames, viewsOnly);
             }
 
             final QueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
-                collectAllTableNames(unionModel, outTableNames, viewsOnly);
+                collectAllTableAndViewNames(unionModel, outTableNames, viewsOnly);
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
+    }
+
+    public static void collectAllTableNames(
+            @NotNull QueryModel model,
+            @NotNull LowerCaseCharSequenceHashSet outTableNames,
+            @Nullable IntList outTableNamePositions
+    ) {
+        QueryModel m = model;
+        do {
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
+                if (outTableNames.add(unquote(tableNameExpr.token)) && outTableNamePositions != null) {
+                    outTableNamePositions.add(tableNameExpr.position);
+                }
+            }
+
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel == m) {
+                    continue;
+                }
+                collectAllTableNames(joinModel, outTableNames, outTableNamePositions);
+            }
+
+            final QueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                collectAllTableNames(unionModel, outTableNames, outTableNamePositions);
             }
 
             m = m.getNestedModel();
