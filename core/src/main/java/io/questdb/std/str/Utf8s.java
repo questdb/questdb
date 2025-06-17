@@ -1447,7 +1447,7 @@ public final class Utf8s {
             i += Short.BYTES;
         }
 
-        return i >= limit  || l.byteAt(i) == r.byteAt(i);
+        return i >= limit || l.byteAt(i) == r.byteAt(i);
     }
 
     private static int encodeUtf16Surrogate(@NotNull Utf8Sink sink, char c, @NotNull CharSequence in, int pos, int hi) {
