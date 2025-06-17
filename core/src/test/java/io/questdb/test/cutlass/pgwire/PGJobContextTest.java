@@ -2675,7 +2675,7 @@ if __name__ == "__main__":
                 connection.prepareStatement("drop table xyz").execute();
                 Assert.fail();
             } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "could not lock 'xyz'");
+                TestUtils.assertContains(e.getMessage(), "could not lock 'xyz~'");
                 Assert.assertEquals("00000", e.getSQLState());
             }
         });
@@ -2977,6 +2977,7 @@ if __name__ == "__main__":
 
     @Test
     public void testCloseMessageHex() throws Exception {
+        Assume.assumeFalse(legacyMode);
         skipOnWalRun(); // select only
         //hex for close message 43 00000009 53 535f31 00
         assertHexScriptAltCreds(

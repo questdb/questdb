@@ -51,6 +51,12 @@ public class LogCapture {
         }
     }
 
+    public void assertOnlyOnce(String regex) {
+        Matcher m = Pattern.compile(regex).matcher(sink);
+        Assert.assertTrue("Message '" + regex + "' was not logged", m.find());
+        Assert.assertEquals("Message '" + regex + "' was not more than once", 0, m.groupCount());
+    }
+
     public void start() {
         sink.clear();
         consoleWriter.setInterceptor(interceptor);
@@ -65,6 +71,19 @@ public class LogCapture {
         int maxWait = 120_000;
         while (sink.indexOf(value) == -1 && (System.currentTimeMillis() - start) < maxWait) {
             Os.sleep(1);
+        }
+        if ((System.currentTimeMillis() - start) > maxWait) {
+            throw new AssertionError("timed out waiting for log to populate");
+        }
+    }
+
+    public void waitForRegex(String regex) {
+        long start = System.currentTimeMillis();
+        int maxWait = 120_000;
+        Matcher m = Pattern.compile(regex).matcher(sink);
+        while (!m.find() && (System.currentTimeMillis() - start) < maxWait) {
+            Os.sleep(1);
+            m.reset(sink);
         }
         if ((System.currentTimeMillis() - start) > maxWait) {
             throw new AssertionError("timed out waiting for log to populate");

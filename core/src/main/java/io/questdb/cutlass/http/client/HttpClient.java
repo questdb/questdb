@@ -26,8 +26,8 @@ package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
-import io.questdb.cutlass.line.array.ArrayBufferAppender;
 import io.questdb.cutlass.http.HttpKeywords;
+import io.questdb.cutlass.line.array.ArrayBufferAppender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOOperation;

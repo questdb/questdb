@@ -460,7 +460,7 @@ public class WalTxnDetails implements QuietCloseable {
         final long lastLoadedSeqTxn = getLastSeqTxn();
         long loadFromSeqTxn = appliedSeqTxn + 1;
 
-        if (lastLoadedSeqTxn >= loadFromSeqTxn && startSeqTxn < loadFromSeqTxn) {
+        if (lastLoadedSeqTxn >= loadFromSeqTxn && startSeqTxn <= loadFromSeqTxn) {
             int shift = (int) (loadFromSeqTxn - startSeqTxn);
             long newSymbolsOffset = getMinSymbolIndexOffsetFromTxn(loadFromSeqTxn);
             assert newSymbolsOffset >= currentSymbolIndexesStartOffset;
@@ -496,6 +496,7 @@ public class WalTxnDetails implements QuietCloseable {
         int txnLoadCount = maxLookaheadTxn;
         long rowsToLoad;
 
+        int initialSize = transactionMeta.size();
         do {
             long rowsLoaded = loadTransactionDetails(tempPath, transactionLogCursor, loadFromSeqTxn, rootLen, txnLoadCount);
             totalRowsLoadedToApply += rowsLoaded;
@@ -512,36 +513,38 @@ public class WalTxnDetails implements QuietCloseable {
             }
         } while (rowsToLoad > 0 && getLastSeqTxn() < transactionLogCursor.getMaxTxn());
 
+        if (transactionMeta.size() == initialSize) {
+            // No transactions loaded, no need to do anything
+            return;
+        }
+
         // set commit to timestamp moving backwards
         long runningMinTimestamp = LAST_ROW_COMMIT;
         for (int i = transactionMeta.size() - TXN_METADATA_LONGS_SIZE; i > -1; i -= TXN_METADATA_LONGS_SIZE) {
 
             long commitToTimestamp = runningMinTimestamp;
             long currentMinTimestamp = transactionMeta.getQuick(i + WAL_TXN_MIN_TIMESTAMP_OFFSET);
-
-            // Find out if the wal/segment is not used anymore for future transactions.
-            // Since we're moving backwards, if this is the first time this combination occurs
-            // it means that it's the last transaction from this wal/segment.
             runningMinTimestamp = Math.min(runningMinTimestamp, currentMinTimestamp);
 
             if (transactionMeta.get(i + COMMIT_TO_TIMESTAMP_OFFSET) != FORCE_FULL_COMMIT) {
                 transactionMeta.set(i + COMMIT_TO_TIMESTAMP_OFFSET, commitToTimestamp);
             } else {
                 // Force full commit before this record
-                runningMinTimestamp = FORCE_FULL_COMMIT;
+                // when this is newly loaded record with FORCE_FULL_COMMIT value
+                if (i >= initialSize) {
+                    runningMinTimestamp = FORCE_FULL_COMMIT;
+                }
             }
         }
 
         // Avoid O3 commits with existing data. Start from beginning and set commit to timestamp to be min infinity until
         // the all future min timestamp are greater than current max timestamp.
         for (int i = 0, n = transactionMeta.size(); i < n; i += TXN_METADATA_LONGS_SIZE) {
-
             long commitToTimestamp = transactionMeta.get(i + COMMIT_TO_TIMESTAMP_OFFSET);
             if (commitToTimestamp < maxCommittedTimestamp) {
                 transactionMeta.set(i + COMMIT_TO_TIMESTAMP_OFFSET, Long.MIN_VALUE);
             }
         }
-
     }
 
     public void setIncrementRowsCommitted(long rowsCommitted) {

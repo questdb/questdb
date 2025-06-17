@@ -6245,6 +6245,15 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByWithoutTimestamp() throws Exception {
+        assertException(
+                "SELECT * FROM ( SELECT null as x) SAMPLE BY 1d FROM '2021-01-02T00:00:00' " +
+                        "TO dateadd('d', 1095, '2021-01-02T00:00:00');",
+                44,
+                "Sample by requires a designated TIMESTAMP");
+    }
+
+    @Test
     public void testSampleCountFillLinear() throws Exception {
         assertQuery(
                 "b\tcount\tk\n" +
