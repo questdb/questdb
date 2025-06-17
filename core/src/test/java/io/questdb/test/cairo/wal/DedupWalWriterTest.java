@@ -25,67 +25,112 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class DedupWalWriterTest extends AbstractCairoTest {
     @Test
-    public void testDedupNoPartitionRewrite() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp, x int, v varchar) timestamp(ts) partition by DAY WAL dedup upsert keys (ts, x) ");
-            execute("insert into test(ts,x,v) values ('2022-02-24', 1, 'abcd123456'), ('2022-02-24', 2, 'b'), ('2022-02-24', 3, 'bcde2345567')");
-            drainWalQueue();
+    public void testDedupNoPartitionRewriteArray() throws Exception {
+        assertMemoryLeak(() -> testSameAndShuffledInserts("double[]", "null", "ARRAY[1.0,1.0]", "ARRAY[2.0,2.0]", "ARRAY[3.0,3.0]"));
+    }
 
-            assertSql(
-                    "ts\tx\tv\n" +
-                            "2022-02-24T00:00:00.000000Z\t1\tabcd123456\n" +
-                            "2022-02-24T00:00:00.000000Z\t2\tb\n" +
-                            "2022-02-24T00:00:00.000000Z\t3\tbcde2345567\n",
-                    "test"
-            );
+    @Test
+    public void testDedupNoPartitionRewriteByte() throws Exception {
+        assertMemoryLeak(() -> testSameAndShuffledInserts("byte", "0", "123", "127", "22"));
+    }
 
-            TableToken tt = engine.verifyTableName("test");
-            String partitionsTxnFile = readTxnToString(tt, false, true);
+    @Test
+    public void testDedupNoPartitionRewriteInt() throws Exception {
+        assertMemoryLeak(() -> testSameAndShuffledInserts("int", "null", "123", "2345567", "22"));
+    }
 
-            // Insert same values
-            execute("insert into test(ts,x,v) values ('2022-02-24', 1, 'abcd123456'), ('2022-02-24', 2, 'b'), ('2022-02-24', 3, 'bcde2345567')");
-            drainWalQueue();
+    @Test
+    public void testDedupNoPartitionRewriteLong() throws Exception {
+        assertMemoryLeak(() -> testSameAndShuffledInserts("long", "null", "123", "2345567", "22"));
+    }
 
-            assertSql(
-                    "ts\tx\tv\n" +
-                            "2022-02-24T00:00:00.000000Z\t1\tabcd123456\n" +
-                            "2022-02-24T00:00:00.000000Z\t2\tb\n" +
-                            "2022-02-24T00:00:00.000000Z\t3\tbcde2345567\n",
-                    "test"
-            );
-            Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true));
+    @Test
+    public void testDedupNoPartitionRewriteShort() throws Exception {
+        assertMemoryLeak(() -> testSameAndShuffledInserts("short", "0", "123", "2342", "22"));
+    }
 
-            // Insert same values reodered
-            execute("insert into test(ts,x,v) values ('2022-02-24', 3, 'bcde2345567'), ('2022-02-24', 2, 'b')");
-            drainWalQueue();
+    @Test
+    public void testDedupNoPartitionRewriteString() throws Exception {
+        assertMemoryLeak(() -> testSameAndShuffledInserts("string", "", "'123'", "'2345567'", "'22'"));
+    }
 
-            assertSql(
-                    "ts\tx\tv\n" +
-                            "2022-02-24T00:00:00.000000Z\t1\tabcd123456\n" +
-                            "2022-02-24T00:00:00.000000Z\t2\tb\n" +
-                            "2022-02-24T00:00:00.000000Z\t3\tbcde2345567\n",
-                    "test"
-            );
-            Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true));
+    @Test
+    public void testDedupNoPartitionRewriteVarchar() throws Exception {
+        assertMemoryLeak(() -> testSameAndShuffledInserts("varchar", "", "'123'", "'2345567'", "'22'"));
+    }
 
-            // Change one varchar
-            execute("insert into test(ts,x,v) values ('2022-02-24', 3, 'bcde2345567'), ('2022-02-24', 2, 'bbbbbbbb')");
-            drainWalQueue();
+    private void testSameAndShuffledInserts(String columnType, String nullValue, String value1, String value2, String nullValueUpdated) throws SqlException {
+        execute("create table test (ts timestamp, x int, v " + columnType + ") timestamp(ts) partition by DAY WAL dedup upsert keys (ts, x) ");
+        execute("insert into test(ts,x,v) values ('2022-02-24', 1, " + value1 + "), ('2022-02-24', 2, null), ('2022-02-24', 3, " + value2 + ")");
+        drainWalQueue();
 
-            assertSql(
-                    "ts\tx\tv\n" +
-                            "2022-02-24T00:00:00.000000Z\t1\tabcd123456\n" +
-                            "2022-02-24T00:00:00.000000Z\t2\tbbbbbbbb\n" +
-                            "2022-02-24T00:00:00.000000Z\t3\tbcde2345567\n",
-                    "test"
-            );
-            Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true));
-        });
+        String value1Unquoted = unquote(value1);
+        String value2Unquoted = unquote(value2);
+        assertSql(
+                "ts\tx\tv\n" +
+                        "2022-02-24T00:00:00.000000Z\t1\t" + value1Unquoted + "\n" +
+                        "2022-02-24T00:00:00.000000Z\t2\t" + nullValue + "\n" +
+                        "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n",
+                "test"
+        );
+
+        TableToken tt = engine.verifyTableName("test");
+        String partitionsTxnFile = readTxnToString(tt, false, true);
+
+        // Insert same values
+        execute("insert into test(ts,x,v) values ('2022-02-24', 1, " + value1 + "), ('2022-02-24', 2, null), ('2022-02-24', 3, " + value2 + ")");
+        drainWalQueue();
+
+        assertSql(
+                "ts\tx\tv\n" +
+                        "2022-02-24T00:00:00.000000Z\t1\t" + value1Unquoted + "\n" +
+                        "2022-02-24T00:00:00.000000Z\t2\t" + nullValue + "\n" +
+                        "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n",
+                "test"
+        );
+        Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true));
+
+        // Insert same values reodered
+        execute("insert into test(ts,x,v) values ('2022-02-24', 3, " + value2 + "), ('2022-02-24', 2, null)");
+        drainWalQueue();
+
+        assertSql(
+                "ts\tx\tv\n" +
+                        "2022-02-24T00:00:00.000000Z\t1\t" + value1Unquoted + "\n" +
+                        "2022-02-24T00:00:00.000000Z\t2\t" + nullValue + "\n" +
+                        "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n",
+                "test"
+        );
+        Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true));
+
+        // Change one varchar
+        execute("insert into test(ts,x,v) values ('2022-02-24', 3, " + value2 + "), ('2022-02-24', 2, " + nullValueUpdated + ")");
+        drainWalQueue();
+
+        assertSql(
+                "ts\tx\tv\n" +
+                        "2022-02-24T00:00:00.000000Z\t1\t" + value1Unquoted + "\n" +
+                        "2022-02-24T00:00:00.000000Z\t2\t" + unquote(nullValueUpdated) + "\n" +
+                        "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n",
+                "test"
+        );
+        Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true));
+    }
+
+    private String unquote(String v) {
+        if (v.startsWith("'") && v.endsWith("'")) {
+            return v.substring(1, v.length() - 1);
+        }
+        if (v.startsWith("ARRAY")) {
+            return v.substring(5); // remove ARRAY
+        }
+        return v;
     }
 }

@@ -61,11 +61,13 @@ enum class ColumnType : int {
     LONG128 = 24,
     IPV4 = 25,
     VARCHAR = 26,
-    REGCLASS = 27,
-    REGPROCEDURE = 28,
-    ARRAY_STRING = 29,
-    PARAMETER = 30,
-    NULL_ = 31
+    ARRAY = 27,
+    REGCLASS = 28,
+    REGPROCEDURE = 29,
+    ARRAY_STRING = 30,
+    PARAMETER = 31,
+    INTERVAL = 32,
+    NULL_ = 33
 };
 
 #pragma pack (push, 1)
@@ -80,6 +82,12 @@ struct VarcharAuxEntrySplit {
     uint8_t chars[6];
     uint16_t offset_lo;
     uint32_t offset_hi;
+};
+
+struct ArrayAuxEntry {
+    uint64_t offset_48;
+    int32_t size;
+    int32_t reserved2;
 };
 #pragma pack(pop)
 
