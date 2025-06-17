@@ -54,21 +54,38 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 
+@RunWith(Parameterized.class)
 public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private final static Log LOG = LogFactory.getLog(AlterWalTableLineTcpReceiverTest.class);
 
     private final SCSequence scSequence = new SCSequence();
     private SqlException sqlException;
+
+    public AlterWalTableLineTcpReceiverTest(int timestampType) {
+        this.timestampType = timestampType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+        });
+    }
 
     @Before
     public void setUp() {
@@ -96,86 +113,28 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
             drainWalQueue();
 
-            String expected = "room\twatts\ttimestamp\tlabel2\tlabel\n" +
+            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "room\twatts\ttimestamp\tlabel2\tlabel\n" +
                     "6C\t333\t1970-01-01T00:25:31.817902Z\tnull\t\n" +
                     "6C\t666\t1970-01-01T00:25:31.817902Z\tnull\tLine\n" +
                     "6B\t22\t1970-01-01T00:27:11.817902Z\tnull\t\n" +
                     "6B\t55\t1970-01-01T00:27:11.817902Z\tnull\tPower\n" +
                     "6A\t1\t1970-01-01T00:43:51.819999Z\tnull\t\n" +
-                    "6A\t4\t1970-01-01T00:43:51.819999Z\tnull\tPower\n";
+                    "6A\t4\t1970-01-01T00:43:51.819999Z\tnull\tPower\n"
+                    : "room\twatts\ttimestamp\tlabel2\tlabel\n" +
+                    "6C\t333\t1970-01-01T00:25:31.817902842Z\tnull\t\n" +
+                    "6C\t666\t1970-01-01T00:25:31.817902842Z\tnull\tLine\n" +
+                    "6B\t22\t1970-01-01T00:27:11.817902842Z\tnull\t\n" +
+                    "6B\t55\t1970-01-01T00:27:11.817902842Z\tnull\tPower\n" +
+                    "6A\t1\t1970-01-01T00:43:51.819999000Z\tnull\t\n" +
+                    "6A\t4\t1970-01-01T00:43:51.819999000Z\tnull\tPower\n";
             assertTable(expected);
         });
     }
 
     @Test
     public void testAlterCommandDropAllPartitions() throws Exception {
-        long day1 = MicrosTimestampDriver.floor("2023-02-27") * 1000;
-        long day2 = MicrosTimestampDriver.floor("2023-02-28") * 1000;
-        runInContext((server) -> {
-            final AtomicLong ilpProducerWatts = new AtomicLong(0L);
-            final AtomicBoolean keepSending = new AtomicBoolean(true);
-            final AtomicReference<Throwable> ilpProducerProblem = new AtomicReference<>();
-            final SOCountDownLatch ilpProducerHalted = new SOCountDownLatch(1);
-
-            final Thread ilpProducer = new Thread(() -> {
-                String lineTpt = "plug,room=6A watts=\"%di\" %d%n";
-                try {
-                    while (keepSending.get()) {
-                        try {
-                            long watts = ilpProducerWatts.getAndIncrement();
-                            long day = (watts + 1) % 4 == 0 ? day1 : day2;
-                            String lineData = String.format(lineTpt, watts, day);
-                            send(lineData);
-                            LOG.info().$("sent: ").$(lineData).$();
-                        } catch (Throwable unexpected) {
-                            ilpProducerProblem.set(unexpected);
-                            keepSending.set(false);
-                            break;
-                        }
-                    }
-                } finally {
-                    LOG.info().$("sender finished").$();
-                    Path.clearThreadLocals();
-                    ilpProducerHalted.countDown();
-                }
-            }, "ilp-producer");
-            ilpProducer.start();
-
-            final AtomicReference<SqlException> partitionDropperProblem = new AtomicReference<>();
-
-            final Thread partitionDropper = new Thread(() -> {
-                while (ilpProducerWatts.get() < 20) {
-                    Os.pause();
-                }
-                LOG.info().$("ABOUT TO DROP PARTITIONS").$();
-                try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                    engine.execute("ALTER TABLE plug DROP PARTITION WHERE timestamp > 0", sqlExecutionContext, scSequence);
-                } catch (SqlException e) {
-                    partitionDropperProblem.set(e);
-                } finally {
-                    Path.clearThreadLocals();
-                    // a few rows may have made it into the active partition,
-                    // as dropping it is concurrent with inserting
-                    keepSending.set(false);
-                }
-
-            }, "partition-dropper");
-            partitionDropper.start();
-
-            ilpProducerHalted.await();
-
-            drainWalQueue();
-
-            Assert.assertNull(ilpProducerProblem.get());
-            Assert.assertNull(partitionDropperProblem.get());
-        }, true, 50L);
-    }
-
-    @Test
-    public void testAlterCommandDropAllPartitionsWithNano() throws Exception {
-        long day1 = NanosTimestampDriver.floor("2023-02-27");
-        long day2 = NanosTimestampDriver.floor("2023-02-28");
-        timestampType = ColumnType.TIMESTAMP_NANO;
+        long day1 = timestampType == ColumnType.TIMESTAMP_MICRO ? MicrosTimestampDriver.floor("2023-02-27") * 1000 : NanosTimestampDriver.floor("2023-02-27");
+        long day2 = timestampType == ColumnType.TIMESTAMP_MICRO ? MicrosTimestampDriver.floor("2023-02-28") * 1000 : NanosTimestampDriver.floor("2023-02-28");
         runInContext((server) -> {
             final AtomicLong ilpProducerWatts = new AtomicLong(0L);
             final AtomicBoolean keepSending = new AtomicBoolean(true);
@@ -244,12 +203,16 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY);
             tm.col("room", ColumnType.SYMBOL);
             tm.col("watts", ColumnType.LONG);
-            tm.timestamp();
+            if (timestampType == ColumnType.TIMESTAMP_MICRO) {
+                tm.timestamp();
+            } else {
+                tm.timestampNs();
+            }
             tm.wal();
             TableToken ignored = TestUtils.createTable(engine, tm);
 
             try (TableWriterAPI writer = getTableWriterAPI("plug")) {
-                TableWriter.Row row = writer.newRow(day1 / 1000);
+                TableWriter.Row row = writer.newRow(timestampType == ColumnType.TIMESTAMP_MICRO ? day1 / 1000 : day1);
                 row.putSym(0, "6A");
                 row.putLong(1, 100L);
                 row.append();
@@ -273,9 +236,10 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             lineData = "plug,room=6A watts=125i " + day1 + "\n";
             send(lineData);
             drainWalQueue();
-
-            assertTable("room\twatts\ttimestamp\n" +
-                    "6A\t125\t2023-02-27T00:00:00.000000Z\n");
+            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "room\twatts\ttimestamp\n" +
+                    "6A\t125\t2023-02-27T00:00:00.000000Z\n" : "room\twatts\ttimestamp\n" +
+                    "6A\t125\t2023-02-27T00:00:00.000000000Z\n";
+            assertTable(expected);
         }, true, 50L);
     }
 
@@ -298,9 +262,11 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
             drainWalQueue();
 
-            String expected = "room\twatts\ttimestamp\n" +
+            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "room\twatts\ttimestamp\n" +
                     "6B\t22\t1970-02-02T00:00:00.000000Z\n" +
-                    "6C\t333\t1970-03-03T00:00:00.000000Z\n";
+                    "6C\t333\t1970-03-03T00:00:00.000000Z\n" : "room\twatts\ttimestamp\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000000Z\n" +
+                    "6C\t333\t1970-03-03T00:00:00.000000000Z\n";
             assertTable(expected);
         }, true, 250);
     }
@@ -326,13 +292,20 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             send(lineData);
             drainWalQueue();
 
-            String expected = "label2\troom\twatts\ttimestamp\tlabel\n" +
+            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "label2\troom\twatts\ttimestamp\tlabel\n" +
                     "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\tnull\n" +
                     "\t6C\t666\t1970-01-01T00:25:31.817902Z\t1\n" +
                     "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\tnull\n" +
                     "\t6B\t55\t1970-01-01T00:27:11.817902Z\t0\n" +
                     "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\tnull\n" +
-                    "\t6A\t4\t1970-01-01T00:43:51.819999Z\t0\n";
+                    "\t6A\t4\t1970-01-01T00:43:51.819999Z\t0\n"
+                    : "label2\troom\twatts\ttimestamp\tlabel\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902842Z\tnull\n" +
+                    "\t6C\t666\t1970-01-01T00:25:31.817902843Z\t1\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902842Z\tnull\n" +
+                    "\t6B\t55\t1970-01-01T00:27:11.817902843Z\t0\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999000Z\tnull\n" +
+                    "\t6A\t4\t1970-01-01T00:43:51.819999001Z\t0\n";
             assertTable(expected);
         }, false, 1000);
     }
@@ -358,13 +331,20 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             send(lineData);
             drainWalQueue();
 
-            String expected = "label2\troom\twatts\ttimestamp\tlabel\n" +
+            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "label2\troom\twatts\ttimestamp\tlabel\n" +
                     "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\t\n" +
                     "\t6C\t666\t1970-01-01T00:25:31.817902Z\tLine\n" +
                     "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\t\n" +
                     "\t6B\t55\t1970-01-01T00:27:11.817902Z\tPower\n" +
                     "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\t\n" +
-                    "\t6A\t4\t1970-01-01T00:43:51.819999Z\tPower\n";
+                    "\t6A\t4\t1970-01-01T00:43:51.819999Z\tPower\n"
+                    : "label2\troom\twatts\ttimestamp\tlabel\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902842Z\t\n" +
+                    "\t6C\t666\t1970-01-01T00:25:31.817902843Z\tLine\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902842Z\t\n" +
+                    "\t6B\t55\t1970-01-01T00:27:11.817902843Z\tPower\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999000Z\t\n" +
+                    "\t6A\t4\t1970-01-01T00:43:51.819999001Z\tPower\n";
             assertTable(expected);
         }, false, 1000);
     }
@@ -387,7 +367,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             }
             drainWalQueue();
 
-            String expected = "room\twatts\ttimestamp\tcol0\tcol1\tcol2\tcol3\tcol4\tcol5\tcol6\tcol7\tcol8\tcol9\n" +
+            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "room\twatts\ttimestamp\tcol0\tcol1\tcol2\tcol3\tcol4\tcol5\tcol6\tcol7\tcol8\tcol9\n" +
                     "6A\t1\t1970-01-01T00:00:00.000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
                     "6B\t22\t1970-02-02T00:00:00.000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
                     "6B\t22\t1970-02-02T00:00:00.000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
@@ -398,7 +378,19 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     "6B\t22\t1970-02-02T00:00:00.000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
                     "6B\t22\t1970-02-02T00:00:00.000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
                     "6B\t22\t1970-02-02T00:00:00.000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
-                    "6B\t22\t1970-02-02T00:00:00.000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n";
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n"
+                    : "room\twatts\ttimestamp\tcol0\tcol1\tcol2\tcol3\tcol4\tcol5\tcol6\tcol7\tcol8\tcol9\n" +
+                    "6A\t1\t1970-01-01T00:00:00.000000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n";
             assertTable(expected);
         }, true, 250);
     }
@@ -430,7 +422,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
             drainWalQueue();
 
-            assertTable("label\troom\twatts\ttimestamp\n" +
+            assertTable(timestampType == ColumnType.TIMESTAMP_MICRO ? "label\troom\twatts\ttimestamp\n" +
                     "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
                     "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
                     "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
@@ -440,7 +432,16 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
                     "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
                     "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n"
-            );
+                    : "label\troom\twatts\ttimestamp\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902842Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902842Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902842Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902842Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902842Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902842Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999000Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999000Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999000Z\n");
 
             engine.releaseAllReaders();
             try (TableReader reader = getReader("plug")) {
@@ -536,6 +537,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
     @Test
     public void testAlterTableAddIndex() throws Exception {
+        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
         runInContext((server) -> {
             String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
@@ -576,11 +578,16 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             send("plug,room=6A watts=\"1\",watts=2,power=220 2631819999000\n");
             drainWalQueue();
 
-            String expected = "room\tpower\ttimestamp\twatts\n" +
+            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "room\tpower\ttimestamp\twatts\n" +
                     "6C\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
                     "6B\tnull\t1970-01-01T00:27:11.817902Z\t\n" +
                     "6A\t220.0\t1970-01-01T00:43:51.819999Z\t\n" +
-                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t1\n";
+                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t1\n"
+                    : "room\tpower\ttimestamp\twatts\n" +
+                    "6C\t220.0\t1970-01-01T00:25:31.817902842Z\t\n" +
+                    "6B\tnull\t1970-01-01T00:27:11.817902842Z\t\n" +
+                    "6A\t220.0\t1970-01-01T00:43:51.819999000Z\t\n" +
+                    "6A\t220.0\t1970-01-01T00:43:51.819999000Z\t1\n";
             assertTable(expected);
         });
     }
@@ -659,19 +666,27 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             send(lineData);
             drainWalQueue();
 
-            String expected = "room\tpower\ttimestamp\twatts\n" +
+            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "room\tpower\ttimestamp\twatts\n" +
                     "6C\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
                     "6C\t220.0\t1970-01-01T00:25:31.817902Z\t333\n" +
                     "6B\tnull\t1970-01-01T00:27:11.817902Z\t\n" +
                     "6B\tnull\t1970-01-01T00:27:11.817902Z\t22\n" +
                     "6A\t220.0\t1970-01-01T00:43:51.819999Z\t\n" +
-                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t1\n";
+                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t1\n"
+                    : "room\tpower\ttimestamp\twatts\n" +
+                    "6C\t220.0\t1970-01-01T00:25:31.817902842Z\t\n" +
+                    "6C\t220.0\t1970-01-01T00:25:31.817902842Z\t333\n" +
+                    "6B\tnull\t1970-01-01T00:27:11.817902842Z\t\n" +
+                    "6B\tnull\t1970-01-01T00:27:11.817902842Z\t22\n" +
+                    "6A\t220.0\t1970-01-01T00:43:51.819999000Z\t\n" +
+                    "6A\t220.0\t1970-01-01T00:43:51.819999000Z\t1\n";
             assertTable(expected);
         });
     }
 
     @Test
     public void testRandomColumnAddedDeleted() throws Exception {
+        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
         runInContext((server) -> {
             IntList columnsAdded = new IntList();
 
@@ -789,13 +804,20 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             );
             drainWalQueue();
 
-            String expected = "watts\tpower\ttimestamp\troom\n" +
+            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "watts\tpower\ttimestamp\troom\n" +
                     "333\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
                     "333\t220.0\t1970-01-01T00:25:31.817902Z\t6C\n" +
                     "22\tnull\t1970-01-01T00:27:11.817902Z\t\n" +
                     "22\tnull\t1970-01-01T00:27:11.817902Z\t6BB\n" +
                     "1\t220.0\t1970-01-01T00:43:51.819999Z\t\n" +
-                    "1\t220.0\t1970-01-01T00:43:51.819999Z\t\n";
+                    "1\t220.0\t1970-01-01T00:43:51.819999Z\t\n"
+                    : "watts\tpower\ttimestamp\troom\n" +
+                    "333\t220.0\t1970-01-01T00:25:31.817902842Z\t\n" +
+                    "333\t220.0\t1970-01-01T00:25:31.817902842Z\t6C\n" +
+                    "22\tnull\t1970-01-01T00:27:11.817902842Z\t\n" +
+                    "22\tnull\t1970-01-01T00:27:11.817902842Z\t6BB\n" +
+                    "1\t220.0\t1970-01-01T00:43:51.819999000Z\t\n" +
+                    "1\t220.0\t1970-01-01T00:43:51.819999000Z\t\n";
             assertTable(expected);
         });
     }

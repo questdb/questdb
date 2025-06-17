@@ -498,7 +498,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             if (timestampType == ColumnType.TIMESTAMP_MICRO) {
                 model.timestamp();
             } else {
-                model.timestamp_ns();
+                model.timestampNs();
             }
             AbstractCairoTest.create(model);
             CountDownLatch released = createTableCommitNotifier("mytable");
@@ -545,7 +545,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             if (timestampType == ColumnType.TIMESTAMP_MICRO) {
                 model.timestamp();
             } else {
-                model.timestamp_ns();
+                model.timestampNs();
             }
             AbstractCairoTest.create(model);
 
@@ -584,7 +584,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             if (timestampType == ColumnType.TIMESTAMP_MICRO) {
                 model.timestamp();
             } else {
-                model.timestamp_ns();
+                model.timestampNs();
             }
 
             AbstractCairoTest.create(model);
@@ -621,7 +621,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             if (timestampType == ColumnType.TIMESTAMP_MICRO) {
                 model.timestamp();
             } else {
-                model.timestamp_ns();
+                model.timestampNs();
             }
             AbstractCairoTest.create(model);
             CountDownLatch released = createTableCommitNotifier("mytable");
@@ -715,7 +715,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             if (timestampType == ColumnType.TIMESTAMP_MICRO) {
                 model.timestamp();
             } else {
-                model.timestamp_ns();
+                model.timestampNs();
             }
             AbstractCairoTest.create(model);
             CountDownLatch released = createTableCommitNotifier("mytable");
@@ -1113,7 +1113,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             if (timestampType == ColumnType.TIMESTAMP_MICRO) {
                 model.timestamp();
             } else {
-                model.timestamp_ns();
+                model.timestampNs();
             }
             AbstractCairoTest.create(model);
             CountDownLatch released = createTableCommitNotifier("mytable", walEnabled ? 2 : 1);

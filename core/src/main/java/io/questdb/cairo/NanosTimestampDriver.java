@@ -251,7 +251,7 @@ public class NanosTimestampDriver implements TimestampDriver {
         if (timestampType != ColumnType.TIMESTAMP_MICRO) {
             return timestamp;
         }
-        return CommonUtils.nanosToMicros(timestamp);
+        return CommonUtils.microsToNanos(timestamp);
     }
 
     @Override

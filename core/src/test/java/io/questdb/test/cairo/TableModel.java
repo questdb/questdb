@@ -189,7 +189,7 @@ public class TableModel implements TableStructure {
             case ColumnType.TIMESTAMP_MICRO:
                 return timestamp();
             case ColumnType.TIMESTAMP_NANO:
-                return timestamp_ns();
+                return timestampNs();
         }
         return this;
     }
@@ -199,7 +199,7 @@ public class TableModel implements TableStructure {
             case ColumnType.TIMESTAMP_MICRO:
                 return timestamp(name);
             case ColumnType.TIMESTAMP_NANO:
-                return timestamp_ns(name);
+                return timestampNs(name);
         }
         return this;
     }
@@ -215,11 +215,11 @@ public class TableModel implements TableStructure {
         return this;
     }
 
-    public TableModel timestamp_ns() {
-        return timestamp_ns("timestamp");
+    public TableModel timestampNs() {
+        return timestampNs("timestamp");
     }
 
-    public TableModel timestamp_ns(CharSequence name) {
+    public TableModel timestampNs(CharSequence name) {
         assert timestampIndex == -1;
         timestampIndex = columnNames.size();
         col(name, ColumnType.TIMESTAMP_NANO);
