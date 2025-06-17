@@ -665,11 +665,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
-            // keyed join and slave has no timeframe support -> should use AsOfJoinLightRecordCursorFactory
+            // keyed join and slave has a stealable filter -> should use FilteredAsOfJoinFastRecordCursorFactory
             query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) ON id TOLERANCE 2s;";
-            // sanity check: uses AsOfJoinLightRecordCursorFactory
+            // sanity check: uses FilteredAsOfJoinFastRecordCursorFactory
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "AsOf Join Light");
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             assertQueryFullFatNoLeakCheck(expected, query, "ts", false, true, true);
