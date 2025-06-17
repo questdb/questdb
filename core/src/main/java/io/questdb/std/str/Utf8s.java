@@ -1036,8 +1036,7 @@ public final class Utf8s {
         }
         Utf16Sink b = getThreadLocalSink();
         if (!utf8ToUtf16(lo, hi, b)) {
-            throw CairoException.nonCritical()
-                    .put("Error converting UTF-8 sequence to UTF-16 [partialResult=" + b + "]");
+            throw CairoException.nonCritical().put("cannot convert invalid UTF-8 sequence to UTF-16");
         }
         return b.toString();
     }
@@ -1048,8 +1047,7 @@ public final class Utf8s {
         }
         Utf16Sink b = getThreadLocalSink();
         if (!utf8ToUtf16(seq, b)) {
-            throw CairoException.nonCritical()
-                    .put("Error converting UTF-8 sequence to UTF-16 [partialResult=" + b + "]");
+            throw CairoException.nonCritical().put("cannot convert invalid UTF-8 sequence to UTF-16");
         }
         return b.toString();
     }
