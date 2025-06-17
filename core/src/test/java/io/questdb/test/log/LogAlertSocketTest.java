@@ -689,7 +689,7 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public LogRecord $utf8(long lo, long hi) {
+        public LogRecord $ts(TimestampDriver driver, long x) {
             throw new UnsupportedOperationException();
         }
 

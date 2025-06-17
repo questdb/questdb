@@ -448,8 +448,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             String rangeEndStr
     ) throws NumericException {
         try (WalWriter ww = engine.getWalWriter(tableToken)) {
-            long rangeStart = IntervalUtils.parseFloorPartialTimestamp(rangeStartStr);
-            long rangeEnd = IntervalUtils.parseFloorPartialTimestamp(rangeEndStr) + 1;
+            long rangeStart = MicrosTimestampDriver.floor(rangeStartStr);
+            long rangeEnd = MicrosTimestampDriver.floor(rangeEndStr) + 1;
             ww.commitWithParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
         }
     }
