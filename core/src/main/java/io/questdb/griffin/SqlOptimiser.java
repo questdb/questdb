@@ -3140,25 +3140,24 @@ public class SqlOptimiser implements Mutable {
             optimiseExpressionModels(model.getUnionModel(), executionContext, sqlParserCallback);
         }
     }
-
+/*
+  "select a.x, b.y from (select x,z from tab1 where x = 'Z' order by z) a " +
+                        "asof join (select y,z,s from tab2 where s ~ 'K' order by s) b where a.x = b.z"
+ */
     private boolean isModelEligibleForOptimisation(SqlExecutionContext executionContext , QueryModel model) {
         boolean isOrderByPresent = false;
         boolean isLimitPresent = false;
         boolean isValidWhereClause = true;
         if (model != null && model.getNestedModel() != null && model.getNestedModel().getJoinModels().size() > 1 &&
                 model.getNestedModel().getJoinModels().get(1).getJoinType() == QueryModel.JOIN_ASOF) {
-            CharSequence slaveTableName = model.getNestedModel().getJoinModels().get(1).getTableNameExpr().token;
-            CharSequence masterTableName = model.getNestedModel().getTableNameExpr().token;
-            TableToken masterTableToken = executionContext.getTableToken(masterTableName);
-            TableToken slaveTableToken = executionContext.getTableToken(slaveTableName);
-            TableReader slaveTableReader = executionContext.getReader(slaveTableToken);
+
             for (int i = 0; i < model.getNestedModel().getOrderBy().size(); i++) {
                 isOrderByPresent = true;
                 String orderByColumn = model.getNestedModel().getOrderBy().get(i).token.toString();
                 int dot = orderByColumn.indexOf('.');
                 String orderByColumnName = orderByColumn.substring(dot + 1);
                 //if any order by column is from slave table, then order optimisation will not be applied
-                if (slaveTableReader.getMetadata().getColumnIndexQuiet(orderByColumnName) != -1) {
+                if (!model.getNestedModel().getAliasToColumnMap().contains(orderByColumnName)) {
                     return false;
                 }
             }
@@ -3168,7 +3167,7 @@ public class SqlOptimiser implements Mutable {
                 int dot = whereClauseColumn.indexOf('.');
                 String whereClauseColumnName = whereClauseColumn.substring(dot + 1);
                 //if where clause column is from slave table, then ASOF join optimisation will not be applied
-                if (slaveTableReader.getMetadata().getColumnIndexQuiet(whereClauseColumnName) != -1) {
+                if (!model.getNestedModel().getAliasToColumnMap().contains(whereClauseColumnName)) {
                     return false;
                 }
             }
@@ -3200,8 +3199,13 @@ public class SqlOptimiser implements Mutable {
         optimiseModelsWithASOFJoins(executionContext, model.getUnionModel());
 
         QueryModel level0 = QueryModel.FACTORY.newInstance();
+        level0.setNestedModel(model.getNestedModel().getNestedModel());
         level0.copyColumnsFrom(model.getNestedModel(), queryColumnPool, expressionNodePool);
-        level0.setTableNameExpr(model.getNestedModel().getTableNameExpr());
+        if(model.getNestedModel().getTableNameExpr() != null)
+            level0.setTableNameExpr(model.getNestedModel().getTableNameExpr());
+        else if(model.getNestedModel().getAlias() != null){
+            level0.setAlias(model.getNestedModel().getAlias());
+        }
         level0.setTimestamp(model.getTimestamp());
         level0.setLimit(model.getLimitLo(), null);
         level0.setWhereClause(model.getNestedModel().getWhereClause());
@@ -3213,20 +3217,22 @@ public class SqlOptimiser implements Mutable {
         }
         for(int i=0 ; i< model.getNestedModel().getOrderBy().size(); i++){
             ExpressionNode aliasNode = expressionNodePool.next();
-            CharSequence truncateAlias = model.getNestedModel().getTableNameExpr().token+".";
+            CharSequence truncateAlias = model.getNestedModel().getTableNameExpr() != null ?
+                    model.getNestedModel().getTableNameExpr().token+"." : model.getNestedModel().getAlias().token+".";
             String originalAlias = model.getNestedModel().getOrderBy().get(i).token.toString();
             aliasNode.token = originalAlias.replace(truncateAlias, "");;
             level0.addOrderBy(aliasNode, model.getNestedModel().getOrderByDirection().getQuick(i));
         }
 
         QueryModel level1 = QueryModel.FACTORY.newInstance();
-        final CharSequence timestampColumn = model.getNestedModel().getTimestamp().token;
-        final ExpressionNode timestampNode = expressionNodePool.next();
-        timestampNode.token = timestampColumn;
-        level1.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
+        if(model.getNestedModel().getTimestamp()!=null) {
+            final CharSequence timestampColumn = model.getNestedModel().getTimestamp().token;
+            final ExpressionNode timestampNode = expressionNodePool.next();
+            timestampNode.token = timestampColumn;
+            level1.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
+        }
         level1.copyColumnsFrom(model.getNestedModel(), queryColumnPool, expressionNodePool);
         level1.setSelectModelType(1);
-        level1.copyColumnsFrom(model.getNestedModel(), queryColumnPool, expressionNodePool);
         final ObjList<CharSequence> aliases = model.getNestedModel().getAliasToColumnMap().keys();
         for (int i = 0, n = aliases.size(); i < n; i++) {
             final CharSequence alias = aliases.getQuick(i);
@@ -3238,9 +3244,12 @@ public class SqlOptimiser implements Mutable {
                 level1.getBottomUpColumns().add(newQc);
             }
         }
+        level1.setNestedModel(level0);
 
         QueryModel level2 = QueryModel.FACTORY.newInstance();
-        level2.setAlias(model.getNestedModel().getTableNameExpr());
+        level2.copyColumnsFrom(model.getNestedModel(), queryColumnPool, expressionNodePool);
+        level2.setAlias(model.getNestedModel().getTableNameExpr() ==  null ? model.getNestedModel().getAlias() :
+                model.getNestedModel().getTableNameExpr());
         for(int i=0 ; i<model.getNestedModel().getModelAliasIndexes().keys().size(); i++){
             CharSequence alias = model.getNestedModel().getModelAliasIndexes().keys().getQuick(i);
             ExpressionNode aliasNode = expressionNodePool.next();
@@ -3253,17 +3262,15 @@ public class SqlOptimiser implements Mutable {
         }
         for(int i=0 ; i< model.getNestedModel().getOrderBy().size(); i++){
             ExpressionNode aliasNode = expressionNodePool.next();
-            CharSequence truncateAlias = model.getNestedModel().getTableNameExpr().token+".";
+            CharSequence truncateAlias = model.getNestedModel().getTableNameExpr() != null ?
+                    model.getNestedModel().getTableNameExpr().token+"." : model.getNestedModel().getAlias().token+".";
             String originalAlias = model.getNestedModel().getOrderBy().get(i).token.toString();
             aliasNode.token = originalAlias.replace(truncateAlias, "");;
             level2.addOrderBy(aliasNode, model.getNestedModel().getOrderByDirection().getQuick(i));
         }
-
-        level1.setNestedModel(level0);
         level2.setNestedModel(level1);
         model.setNestedModel(level2);
         model.setLimit(null, null);
-
     }
 
     private void optimiseJoins(QueryModel model) throws SqlException {
@@ -6817,14 +6824,23 @@ public class SqlOptimiser implements Mutable {
             rewriteOrderByPosition(rewrittenModel);
             rewriteOrderByPositionForUnionModels(rewrittenModel);
             rewrittenModel = rewriteOrderBy(rewrittenModel);
+            System.out.println("***" + rewrittenModel.toString0() + "***");
             optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
+            System.out.println("***" + rewrittenModel.toString0() + "***");
             createOrderHash(rewrittenModel);
+            System.out.println("***" + rewrittenModel.toString0() + "***");
             moveWhereInsideSubQueries(rewrittenModel);
+            System.out.println("***" + rewrittenModel.toString0() + "***");
             eraseColumnPrefixInWhereClauses(rewrittenModel);
+            System.out.println("***" + rewrittenModel.toString0() + "***");
             moveTimestampToChooseModel(rewrittenModel);
+            System.out.println("***" + rewrittenModel.toString0() + "***");
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
+            System.out.println("***lIMIT DISSAPEARS***" + rewrittenModel.toString0() + "***");
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
+            System.out.println("***" + rewrittenModel.toString0() + "***");
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
+            System.out.println("***" + rewrittenModel.toString0() + "***");
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions than need to be freed
