@@ -27,7 +27,6 @@ package io.questdb.test;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -90,22 +89,9 @@ public class ServerMainQueryTimeoutTest extends AbstractBootstrapTest {
                                 " from long_sequence(" + rowCount + ")" +
                                 ") timestamp (ts) PARTITION BY MONTH WAL;"
                 );
-                long rowsObserved = 0;
-                for (int i = 0; i < 100; i++) {
-                    try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM tab")) {
-                        Assert.assertTrue(rs.next());
-                        rowsObserved = rs.getLong(1);
-                        if (rowsObserved == rowCount) {
-                            break;
-                        }
-                    } catch (PSQLException e) {
-                        // timeouts are fine
-                        TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
-                    }
-                    Os.sleep(100);
-                }
-                Assert.assertEquals("All inserted rows still not visible", rowCount, rowsObserved);
             }
+
+            TestUtils.drainWalQueue(serverMain.getEngine());
 
             final int nThreads = 4;
             final int nIterations = 100;
