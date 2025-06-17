@@ -86,9 +86,11 @@ struct VarcharAuxEntrySplit {
 
 struct ArrayAuxEntry {
     uint64_t offset_48;
-    int32_t size;
+    int32_t data_size;
     int32_t reserved2;
 };
+
+constexpr uint64_t ARRAY_OFFSET_MAX = (1ULL << 48) - 1ULL;
 #pragma pack(pop)
 
 #endif //COLUMN_TYPE_H

@@ -1189,20 +1189,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long mergeDataHi,
             long mergeOOOLo,
             long mergeOOOHi,
-            Path tableRootPath
+            Path path
     ) {
         LOG.info().$("checking dedup insert results for noop [table=").$(tableWriter.getTableToken()).I$();
-        int pathSize = tableRootPath.size();
+        int pathSize = path.size();
         setSinkForNativePartition(
-                tableRootPath.slash(),
+                path.slash(),
                 tableWriter.getPartitionBy(),
                 partitionTimestamp,
                 partitionNameTxn
         );
 
         TableRecordMetadata metadata = tableWriter.getMetadata();
-        Path paritionPath = tableRootPath;
-        try (Frame partitionFrame = tableWriter.openPartitionFrameRO(paritionPath, partitionTimestamp, metadata, oldPartitionSize)) {
+        try (Frame partitionFrame = tableWriter.openPartitionFrameRO(path, partitionTimestamp, metadata, oldPartitionSize)) {
             try (Frame commitFrame = tableWriter.openCommitFrame()) {
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
                     int columnType = metadata.getColumnType(i);
@@ -1224,12 +1223,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
             }
         } finally {
-            tableRootPath.trimTo(pathSize);
+            path.trimTo(pathSize);
         }
         return true;
 //        TableRecordMetadata metadata = tableWriter.getMetadata();
 //        int dedupColumnIndex = 0;
-//        int tableRootPathLen = tableRootPath.size();
+//        int tableRootPathLen = path.size();
 //        FilesFacade ff = tableWriter.getFilesFacade();
 //
 //        int mapMemTag = MemoryTag.MMAP_O3;
@@ -1264,8 +1263,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 //                    } else { // if (columnTop > mergeDataHi)
 //                        if (columnSize > 0) {
 //                            // Fixed length column
-//                            TableUtils.setSinkForNativePartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
-//                            long fd = TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG);
+//                            TableUtils.setSinkForNativePartition(path.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+//                            long fd = TableUtils.openRO(ff, TableUtils.dFile(path, columnName, columnNameTxn), LOG);
 //
 //                            long fixMapSize = (mergeDataHi + 1 - columnTop) * columnSize;
 //                            long fixMappedAddress = TableUtils.mapAppendColumnBuffer(
@@ -1307,8 +1306,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 //                            ColumnTypeDriver driver = ColumnType.getDriver(columnType);
 //                            long auxMapSize = driver.getAuxVectorSize(rows);
 //
-//                            TableUtils.setSinkForNativePartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
-//                            long auxFd = TableUtils.openRO(ff, TableUtils.iFile(tableRootPath, columnName, columnNameTxn), LOG);
+//                            TableUtils.setSinkForNativePartition(path.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+//                            long auxFd = TableUtils.openRO(ff, TableUtils.iFile(path, columnName, columnNameTxn), LOG);
 //                            long auxMappedAddress = TableUtils.mapAppendColumnBuffer(
 //                                    ff,
 //                                    auxFd,
@@ -1320,9 +1319,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 //
 //                            long varMapSize = driver.getDataVectorSizeAt(auxMappedAddress, rows - 1);
 //                            if (varMapSize > 0) {
-//                                TableUtils.setSinkForNativePartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+//                                TableUtils.setSinkForNativePartition(path.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
 //                            }
-//                            long varFd = varMapSize > 0 ? TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG) : -1;
+//                            long varFd = varMapSize > 0 ? TableUtils.openRO(ff, TableUtils.dFile(path, columnName, columnNameTxn), LOG) : -1;
 //                            long varMappedAddress = varMapSize > 0 ? TableUtils.mapAppendColumnBuffer(
 //                                    ff,
 //                                    varFd,

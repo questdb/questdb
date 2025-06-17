@@ -556,7 +556,7 @@ bool is_varchar_column_replace_identical(
     if (column_top1 >= hi1_pos) {
         // All old values were nulls, check that the new values are null
         for (int64_t i = std::max<int64_t>(lo2_pos - column_top2, 0); i < hi2_pos - column_top2; i++) {
-            if (!(aux1[i].header & HEADER_FLAG_NULL)) {
+            if (!(aux2[i].header & HEADER_FLAG_NULL)) {
                 return false;
             }
         }
@@ -576,7 +576,7 @@ bool is_varchar_column_replace_identical(
 
             if (data1_index < 0) {
                 // data1 points to column top, check new data2 is also null
-                if (data2_index > -1 && !(aux1[data2_index].header & HEADER_FLAG_NULL)) {
+                if (data2_index > -1 && !(aux2[data2_index].header & HEADER_FLAG_NULL)) {
                     return false;
                 }
             } else {
@@ -677,7 +677,7 @@ bool is_array_column_replace_identical(
     if (column_top1 >= hi1_pos) {
         // All old values were nulls, check that the new values are null
         for (int64_t i = std::max<int64_t>(lo2_pos - column_top2, 0); i < hi2_pos - column_top2; i++) {
-            if (aux1[i].size != 0) {
+            if (aux2[i].data_size != 0) {
                 return false;
             }
         }
@@ -697,18 +697,18 @@ bool is_array_column_replace_identical(
 
             if (data1_index < 0) {
                 // data1 points to column top, check new data2 is also null
-                if (data2_index > -1 && aux1[data2_index].size != 0) {
+                if (data2_index > -1 && aux2[data2_index].data_size != 0) {
                     return false;
                 }
             } else {
-                int32_t size1 = aux1[data1_index].size;
+                int32_t size1 = aux1[data1_index].data_size;
                 if (data2_index > -1) {
                     // data was not null, check new data is the same
-                    int32_t size2 = aux2[data2_index].size;
+                    int32_t size2 = aux2[data2_index].data_size;
 
                     if (size1 == size2) {
-                        auto offset1 = aux1[data1_index].offset_48 >> 16;
-                        auto offset2 = aux2[data2_index].offset_48 >> 16;
+                        auto offset1 = aux1[data1_index].offset_48 & ARRAY_OFFSET_MAX;
+                        auto offset2 = aux2[data2_index].offset_48 & ARRAY_OFFSET_MAX;
                         if (memcmp(data1 + offset1, data2 + offset2, size1) != 0) {
                             return false;
                         }

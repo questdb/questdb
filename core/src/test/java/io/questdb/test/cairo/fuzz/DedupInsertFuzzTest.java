@@ -328,7 +328,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupMultipleKeyCol() throws Exception {
-        Rnd rnd = generateRandomAndProps(1472759931876541L, 1749810333164L);
+        Rnd rnd = generateRandomAndProps();
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
@@ -366,7 +366,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     public void testRandomColumnsDedupMultipleKeyColWithRCommits() throws Exception {
         // Replace commits not yet supported with Parquet
         Assume.assumeFalse(convertToParquet);
-        Rnd rnd = generateRandomAndProps();
+        Rnd rnd = generateRandomAndProps(1546398767811666L, 1750173741936L); //1546446936741291L, 1750173790103L
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
@@ -403,7 +403,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupOneKeyCol() throws Exception {
-        Rnd rnd = generateRandomAndProps();
+        Rnd rnd = generateRandomAndProps(1546446023131208L, 1750173789190L);
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
@@ -442,7 +442,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     public void testRandomDedupRepeat() throws Exception {
         // TODO(eugene): update the parquet partition with a missed column (e.g. column top) is not yet implemented
         Assume.assumeFalse(convertToParquet);
-        Rnd rnd = generateRandomAndProps();
+        Rnd rnd = generateRandomAndProps(1546447589871500L, 1750173790756L);
         setFuzzProbabilities(
                 0,
                 rnd.nextDouble(),
