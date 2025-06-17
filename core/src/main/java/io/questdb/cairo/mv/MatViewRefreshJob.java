@@ -391,7 +391,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 LOG.error().$("could not perform full refresh, could not verify base table [view=").$(viewToken)
                         .$(", baseTableName=").$(baseTableName)
                         .$(", errno=").$(e.getErrno())
-                        .$(", errorMsg=").$(e.getFlyweightMessage())
+                        .$(", errorMsg=").utf8(e.getFlyweightMessage())
                         .I$();
                 refreshFailState(viewState, walWriter, e);
                 return false;
@@ -576,7 +576,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                     .$(", sql=").$(viewSql)
                                     .$(", errorPos=").$(e.getPosition())
                                     .$(", attempt=").$(i)
-                                    .$(", error=").$(e.getFlyweightMessage())
+                                    .$(", error=").utf8(e.getFlyweightMessage())
                                     .I$();
                             refreshFailState(viewState, walWriter, e);
                             return false;
@@ -673,7 +673,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     if (i == maxRetries) {
                         LOG.info().$("base table is under heavy DDL changes, will retry refresh later [view=").$(viewTableToken)
                                 .$(", totalAttempts=").$(maxRetries)
-                                .$(", msg=").$(e.getFlyweightMessage())
+                                .$(", msg=").utf8(e.getFlyweightMessage())
                                 .I$();
                         stateStore.enqueueIncrementalRefresh(viewTableToken);
                         return false;
@@ -684,7 +684,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         intervalStep /= 2;
                         LOG.info().$("query failed with out-of-memory, retrying with a reduced intervalStep [view=").$(viewTableToken)
                                 .$(", intervalStep=").$(intervalStep)
-                                .$(", error=").$(((CairoException) th).getFlyweightMessage())
+                                .$(", error=").utf8(((CairoException) th).getFlyweightMessage())
                                 .I$();
                         Os.sleep(oomRetryTimeout);
                         continue;
@@ -800,7 +800,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
                             final long invalidationTimestamp = microsecondClock.getTicks();
                             LOG.error().$("marking materialized view as invalid [view=").$(viewToken)
-                                    .$(", reason=").$(invalidationReason)
+                                    .$(", reason=").utf8(invalidationReason)
                                     .$(", ts=").$ts(invalidationTimestamp)
                                     .I$();
 
@@ -883,7 +883,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         .$(", to=").$ts(rangeTo)
                         .$(", baseTableName=").$(baseTableName)
                         .$(", errno=").$(e.getErrno())
-                        .$(", errorMsg=").$(e.getFlyweightMessage())
+                        .$(", errorMsg=").utf8(e.getFlyweightMessage())
                         .I$();
                 refreshFailState(viewState, walWriter, e);
                 return false;
@@ -1058,7 +1058,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         .$("could not perform incremental refresh, could not verify base table [view=").$(viewToken)
                         .$(", baseTableName=").$(baseTableName)
                         .$(", errno=").$(e.getErrno())
-                        .$(", errorMsg=").$(e.getFlyweightMessage())
+                        .$(", errorMsg=").utf8(e.getFlyweightMessage())
                         .I$();
                 refreshFailState(viewState, walWriter, e);
                 return false;

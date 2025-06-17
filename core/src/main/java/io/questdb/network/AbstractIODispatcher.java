@@ -243,7 +243,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         try {
             context.init();
         } catch (CairoException e) {
-            LOG.error().$("could not initialize connection context [fd=").$(fd).$(", e=").$(e.getFlyweightMessage()).I$();
+            LOG.error().$("could not initialize connection context [fd=").$(fd).$(", e=").utf8(e.getFlyweightMessage()).I$();
             ioContextFactory.done(context);
             return;
         }
