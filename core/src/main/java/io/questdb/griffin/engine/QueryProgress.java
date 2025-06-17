@@ -192,7 +192,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                         .$("`, ").$(executionContext)
                         .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
                         .$(", time=").$(durationNanos)
-                        .$(", msg=").$(message)
+                        .$(", msg=").utf8(message)
                         .$(", errno=").$(errno)
                         .$(", pos=").$(pos);
             } else {
