@@ -1416,6 +1416,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCTEWithTimestampClause() throws Exception {
+        assertQuery(
+                "select-choose ts from (" +
+                        "select-choose [ts] ts from (" +
+                        "select-choose [ts] ts from (" +
+                        "select-choose [ts] ts from (select [ts] from tango)) samba timestamp (ts)" +
+                        ") rhumba" +
+                        ") chacha",
+                "WITH samba AS (tango), rhumba AS (samba TIMESTAMP(ts)), chacha AS (rhumba), unused AS (chacha) SELECT * FROM chacha",
+                modelOf("tango").col("ts", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
     public void testCaseImpossibleRewrite1() throws SqlException {
         // referenced columns in 'when' clauses are different
         assertQuery(
