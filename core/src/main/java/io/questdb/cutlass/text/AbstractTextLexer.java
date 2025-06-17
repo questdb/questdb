@@ -112,7 +112,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         if (useLineRollBuf) {
             if (inQuote && lastQuotePos < fieldHi) {
                 errorCount++;
-                LOG.info().$("quote is missing [table=").$(tableName).$(']').$();
+                LOG.info().$("quote is missing [table=").utf8(tableName).$(']').$();
             } else {
                 this.fieldHi++;
                 stashField(fieldIndex);
@@ -203,7 +203,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
 
     private void extraField(int fieldIndex) {
         LogRecord logRecord = LOG.error()
-                .$("extra fields [table=").$(tableName)
+                .$("extra fields [table=").utf8(tableName)
                 .$(", fieldIndex=").$(fieldIndex)
                 .$(", fieldMax=").$(fieldMax)
                 .$("]\n\t").$(lineCount)
@@ -232,7 +232,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     private boolean growRollBuf(int requiredLength, boolean updateFields) {
         if (requiredLength > lineRollBufLimit) {
             LOG.info()
-                    .$("too long [table=").$(tableName)
+                    .$("too long [table=").utf8(tableName)
                     .$(", line=").$(lineCount)
                     .$(", requiredLen=").$(requiredLength)
                     .$(", rollLimit=").$(lineRollBufLimit)
@@ -243,7 +243,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         }
 
         final int len = Math.min(lineRollBufLimit, requiredLength << 1);
-        LOG.info().$("resizing ").$(lineRollBufSize).$(" -> ").$(len).$(" [table=").$(tableName).$(']').$();
+        LOG.info().$("resizing ").$(lineRollBufSize).$(" -> ").$(len).$(" [table=").utf8(tableName).$(']').$();
         long p = Unsafe.malloc(len, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         long l = lineRollBufCur - lineRollBufPtr;
         if (l > 0) {

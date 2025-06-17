@@ -421,7 +421,7 @@ public class ColumnTypeConverter {
             }
         } catch (CairoException ex) {
             LOG.error().$("cannot read STRING column data vector size, column data is corrupt will fall back reading file sizes [srcFixFd=").$(srcFixFd)
-                    .$(", msg=").$(ex.getFlyweightMessage())
+                    .$(", msg=").utf8(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             return false;
