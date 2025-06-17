@@ -46,10 +46,10 @@ import io.questdb.std.str.Path;
 
 public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
     static final Log LOG = LogFactory.getLog(FuzzDropCreateTableOperation.class);
+    private boolean dedupTsColumn;
     private boolean isWal;
     private RecordMetadata recreateTableMetadata;
     private String tableName;
-    private boolean dedupTsColumn;
 
     @Override
     public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex, LongList excludedTsIntervals) {
@@ -63,7 +63,7 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
             engine.releaseInactive();
             while (true) {
                 try {
-                    LOG.info().$("dropping table ").$(tableToken.getDirName()).$();
+                    LOG.info().$("dropping table ").$(tableToken).$();
                     engine.dropTableOrMatView(path, tableToken);
                     break;
                 } catch (CairoException ignore) {
