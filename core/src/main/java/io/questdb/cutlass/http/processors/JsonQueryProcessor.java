@@ -219,7 +219,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                     sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_JSON);
                     executeCachedSelect(state, factory);
                 } catch (TableReferenceOutOfDateException e) {
-                    LOG.info().$(e.getFlyweightMessage()).$();
+                    LOG.info().utf8(e.getFlyweightMessage()).$();
                     compileAndExecuteQuery(state);
                 }
             } else {
@@ -392,22 +392,22 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         if (e instanceof CairoException) {
             CairoException ce = (CairoException) e;
             if (ce.isInterruption()) {
-                state.info().$("query cancelled [reason=`").$(((CairoException) e).getFlyweightMessage())
+                state.info().$("query cancelled [reason=`").utf8(((CairoException) e).getFlyweightMessage())
                         .$("`, q=`").utf8(state.getQueryOrHidden())
                         .$("`]").$();
             } else if (ce.isCritical()) {
-                state.critical().$("error [msg=`").$(ce.getFlyweightMessage())
+                state.critical().$("error [msg=`").utf8(ce.getFlyweightMessage())
                         .$("`, errno=").$(ce.getErrno())
                         .$(", q=`").utf8(state.getQueryOrHidden())
                         .$("`]").$();
             } else {
-                state.error().$("error [msg=`").$(ce.getFlyweightMessage())
+                state.error().$("error [msg=`").utf8(ce.getFlyweightMessage())
                         .$("`, errno=").$(ce.getErrno())
                         .$(", q=`").utf8(state.getQueryOrHidden())
                         .$("`]").$();
             }
         } else if (e instanceof HttpException) {
-            state.error().$("internal HTTP server error [reason=`").$(((HttpException) e).getFlyweightMessage())
+            state.error().$("internal HTTP server error [reason=`").utf8(((HttpException) e).getFlyweightMessage())
                     .$("`, q=`").utf8(state.getQueryOrHidden())
                     .$("`]").$();
         } else {
@@ -532,7 +532,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                     if (retries == maxSqlRecompileAttempts) {
                         throw SqlException.$(0, e.getFlyweightMessage());
                     }
-                    LOG.info().$(e.getFlyweightMessage()).$();
+                    LOG.info().utf8(e.getFlyweightMessage()).$();
                     // will recompile
                 }
             }

@@ -137,9 +137,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.tasks.TableWriterTask.*;
@@ -672,7 +672,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.fsyncAndClose(openRO(ff, path.$(), LOG));
                 } catch (CairoException e) {
                     LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
-                            .$(", msg=").$(e.getFlyweightMessage())
+                            .$(", msg=").utf8(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())
                             .I$();
                 }
@@ -713,10 +713,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         final int existingType = columnMetadata.getColumnType();
-        LOG.info().$("adding index to '").utf8(columnName).$("' [").$(ColumnType.nameOf(existingType)).$(", path=").$substr(pathRootSize, path).I$();
+        LOG.info().$("adding index to '").utf8(columnName).$("' [")
+                .$(ColumnType.nameOf(existingType)).$(", path=").$substr(pathRootSize, path).I$();
 
         if (!ColumnType.isSymbol(existingType)) {
-            LOG.error().$("cannot create index for [column='").utf8(columnName).$(", type=").$(ColumnType.nameOf(existingType)).$(", path=").$substr(pathRootSize, path).I$();
+            LOG.error().$("cannot create index for [column='").utf8(columnName)
+                    .$(", type=").$(ColumnType.nameOf(existingType))
+                    .$(", path=").$substr(pathRootSize, path).I$();
             throw CairoException.invalidMetadataRecoverable("cannot create index, column type is not SYMBOL", columnName);
         }
 
@@ -736,7 +739,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
-        LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$substr(pathRootSize, path).$();
+        LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType))
+                .$("]' to ").$substr(pathRootSize, path).$();
     }
 
     public void addPhysicallyWrittenRows(long rows) {
@@ -772,7 +776,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 rollback(); // rollback seqTxn
             } catch (Throwable th2) {
-                LOG.critical().$("could not rollback, table is distressed [table=").utf8(tableToken.getTableName()).$(", error=").$(th2).I$();
+                LOG.critical().$("could not rollback, table is distressed [table=")
+                        .utf8(tableToken.getTableName()).$(", error=").$(th2).I$();
             }
             throw th;
         }
@@ -1060,7 +1065,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             clearTodoAndCommitMetaStructureVersion();
         } catch (Throwable th) {
-            LOG.critical().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").utf8(columnName)
+            LOG.critical().$("could not change column type [table=").utf8(tableToken.getTableName()).$(", column=").utf8(columnName)
                     .$(", error=").$(th).I$();
             distressed = true;
             throw th;
@@ -1087,7 +1092,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // It is possible in concurrent schema modification that SQL compiler allowed
             // this alter, but by the time it is applied, the colum type has changed.
             LOG.error().$("cannot change column type, column does not exist [table=").$(tableToken)
-                    .$(", column=").$(colName).I$();
+                    .$(", column=").utf8(colName).I$();
             return;
         }
 
@@ -1100,7 +1105,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // It is possible in concurrent schema modification that SQL compiler allowed
             // this alter, but by the time it is applied, the colum type has changed.
             LOG.error().$("cannot symbol capacity, column is not symbol [table=").$(tableToken)
-                    .$(", column=").$(columnName).$(", columnType=").$(ColumnType.nameOf(existingType)).I$();
+                    .$(", column=").utf8(columnName).$(", columnType=").$(ColumnType.nameOf(existingType)).I$();
             return;
         }
 
@@ -1185,7 +1190,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         } catch (Throwable th) {
-            LOG.critical().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").utf8(columnName)
+            LOG.critical().$("could not change column type [table=").utf8(tableToken.getTableName()).$(", column=").utf8(columnName)
                     .$(", error=").$(th).I$();
             distressed = true;
             throw th;
@@ -1457,7 +1462,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxVectorAddr, columnRowCount - 1);
                             if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
-                                LOG.critical().$("Invalid var len column size [column=").$(columnName)
+                                LOG.critical().$("Invalid var len column size [column=").utf8(columnName)
                                         .$(", size=").$(dataSize)
                                         .$(", path=").$(path)
                                         .I$();
@@ -1519,7 +1524,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (CairoException e) {
             LOG.error().$("could not convert partition to parquet [table=").utf8(tableToken.getTableName())
                     .$(", partition=").$ts(partitionTimestamp)
-                    .$(", error=").$(e.getMessage()).I$();
+                    .$(", error=").utf8(e.getMessage()).I$();
 
             // rollback
             if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
@@ -1691,7 +1696,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (CairoException e) {
             LOG.error().$("could not convert partition to native [table=").utf8(tableToken.getTableName())
                     .$(", partition=").$ts(partitionTimestamp)
-                    .$(", error=").$(e.getMessage()).I$();
+                    .$(", error=").utf8(e.getMessage()).I$();
 
             // rollback
             if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
@@ -1738,8 +1743,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void destroy() {
         // Closes all the files and makes this instance unusable e.g., it cannot return to the pool on close.
-        LOG.info().$("closing table files [table=").utf8(tableToken.getTableName())
-                .$(", dirName=").utf8(tableToken.getDirName()).I$();
+        LOG.info().$("closing table files [table=").$(tableToken).I$();
         distressed = true;
         doClose(false);
     }
@@ -2052,7 +2056,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (i > 0) {
                     logRec.$(',');
                 }
-                logRec.$(getColumnNameSafe(dedupColIndex)).$(':').$(ColumnType.nameOf(columnType));
+                logRec.utf8(getColumnNameSafe(dedupColIndex)).$(':').$(ColumnType.nameOf(columnType));
             }
         } finally {
             logRec.I$();
@@ -2114,7 +2118,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     : Timestamps.getMonthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
             if (shouldEvict) {
                 LOG.info()
-                        .$("Partition's TTL expired, evicting. table=").$(metadata.getTableName())
+                        .$("Partition's TTL expired, evicting. table=").utf8(metadata.getTableName())
                         .$(" partitionTs=").microTime(partitionTimestamp)
                         .$();
                 dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
@@ -2752,7 +2756,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean isIndexed = metadata.isIndexed(index);
         String columnName = metadata.getColumnName(index);
 
-        LOG.info().$("renaming column '").utf8(columnName).$('[').$(ColumnType.nameOf(type)).$("]' to '").utf8(newName).$("' in ").$substr(pathRootSize, path).$();
+        LOG.info().$("renaming column '").utf8(columnName).$('[')
+                .$(ColumnType.nameOf(type)).$("]' to '").utf8(newName)
+                .$("' in ").$substr(pathRootSize, path).$();
 
         commit();
 
@@ -3735,8 +3741,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (lastErrno == O3_ERRNO_FATAL) {
                 distressed = true;
                 throw new CairoError("commit failed with fatal error, see logs for details [table=" +
-                        tableToken.getTableName() +
-                        ", tableDir=" + tableToken.getDirName() + "]");
+                        tableToken.getTableName() + ", tableDir=" + tableToken.getDirName() + "]");
             } else {
                 throw CairoException.critical(lastErrno)
                         .setOutOfMemory(o3oomObserved)
@@ -4079,7 +4084,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (CairoException e) {
             LOG.error().$("could not copy index files [table=").utf8(tableToken.getTableName())
                     .$(", partition=").$ts(partitionTimestamp)
-                    .$(", error=").$(e.getMessage()).I$();
+                    .$(", error=").utf8(e.getMessage()).I$();
 
             // rollback
             if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
@@ -4120,7 +4125,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // let's not leave a half-baked file sitting around
                 LOG.error()
                         .$("could not create index [name=").$(path)
-                        .$(", msg=").$(e.getFlyweightMessage())
+                        .$(", msg=").utf8(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .I$();
                 if (!ff.removeQuiet(path.$())) {
@@ -4911,7 +4916,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     DedupColumnCommitAddresses.getAddress(dedupCommitAddr)
             );
 
-            LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken.getDirName())
+            LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken)
                     .$(", totalRows=").$(longIndexLength)
                     .$(", lagRows=").$(lagRows)
                     .$(", dups=")
@@ -5351,8 +5356,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Throwable e
     ) {
         o3ErrorCount.incrementAndGet();
-        LogRecord logRecord = LOG.critical().$(message + " [table=").$(tableToken.getTableName())
-                .$(", column=").$(getColumnNameSafe(columnIndex))
+        LogRecord logRecord = LOG.critical().$(message + " [table=").utf8(tableToken.getTableName())
+                .$(", column=").utf8(getColumnNameSafe(columnIndex))
                 .$(", type=").$(ColumnType.nameOf(columnType))
                 .$(", long0=").$(long0)
                 .$(", long1=").$(long1)
@@ -5362,7 +5367,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             o3oomObserved = ((CairoException) e).isOutOfMemory();
             lastErrno = lastErrno == 0 ? ((CairoException) e).errno : lastErrno;
             logRecord
-                    .$(", msg=").$(((CairoException) e).getFlyweightMessage())
+                    .$(", msg=").utf8(((CairoException) e).getFlyweightMessage())
                     .$(", errno=").$(lastErrno)
                     .I$();
         } else {
@@ -6725,7 +6730,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             publishTableWriterEvent(cmdType, tableId, correlationId, AsyncWriterCommand.Error.OK, null, 0L, TSK_BEGIN);
             LOG.info()
                     .$("received async cmd [type=").$(cmdType)
-                    .$(", tableName=").utf8(tableToken.getTableName())
+                    .$(", table=").$(tableToken)
                     .$(", tableId=").$(tableId)
                     .$(", correlationId=").$(correlationId)
                     .$(", cursor=").$(cursor)
@@ -6735,7 +6740,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (TableReferenceOutOfDateException ex) {
             LOG.info()
                     .$("cannot complete async cmd, reader is out of date [type=").$(cmdType)
-                    .$(", tableName=").utf8(tableToken.getTableName())
+                    .$(", table=").$(tableToken)
                     .$(", tableId=").$(tableId)
                     .$(", correlationId=").$(correlationId)
                     .I$();
@@ -6744,7 +6749,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (AlterTableContextException ex) {
             LOG.info()
                     .$("cannot complete async cmd, table structure change is not allowed [type=").$(cmdType)
-                    .$(", tableName=").utf8(tableToken.getTableName())
+                    .$(", tableName=").$(tableToken)
                     .$(", tableId=").$(tableId)
                     .$(", correlationId=").$(correlationId)
                     .I$();
@@ -7185,7 +7190,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (o3LagRowCount > 0 && !metadata.isWalEnabled()) {
-            LOG.info().$("shifting lag rows up [table=").$(tableToken.getTableName()).$(", lagCount=").$(o3LagRowCount).I$();
+            LOG.info().$("shifting lag rows up [table=").utf8(tableToken.getTableName()).$(", lagCount=").$(o3LagRowCount).I$();
             dispatchColumnTasks(
                     o3LagRowCount,
                     IGNORE,
@@ -7582,7 +7587,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        LOG.info().$("processing WAL transaction block [table=").$(tableToken.getDirName())
+        LOG.info().$("processing WAL transaction block [table=").$(tableToken)
                 .$(", seqTxn=").$(startSeqTxn).$("..").$(startSeqTxn + blockTransactionCount - 1)
                 .$(", rows=").$(segmentCopyInfo.getTotalRows())
                 .$(", segments=").$(segmentCopyInfo.getSegmentCount())
@@ -7604,7 +7609,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3LoHi;
 
             if (!isCommitDedupMode() && segmentCopyInfo.getAllTxnDataInOrder() && segmentCopyInfo.getSegmentCount() == 1) {
-                LOG.info().$("all data in order, single segment, processing optimised [table=").$(tableToken.getDirName()).I$();
+                LOG.info().$("all data in order, single segment, processing optimised [table=").$(tableToken).I$();
                 // all data comes from a single segment and is already sorted
                 if (denseSymbolMapWriters.size() > 0) {
                     segmentFileCache.mmapWalColsEager();
@@ -7693,7 +7698,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         o3ColumnOverrides.set(primaryColumnIndex, remappedColumn);
 
                         LOG.info().$("using remapped column buffer [table=").$(tableToken)
-                                .$("name=").$(metadata.getColumnName(i)).$(", index=").$(i).I$();
+                                .$(", name=").utf8(metadata.getColumnName(i)).$(", index=").$(i).I$();
                     }
                 }
                 columnSegmentAddressesBase += Long.BYTES;
@@ -7738,7 +7743,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long minTs = segmentCopyInfo.getMinTimestamp();
             long maxTs = segmentCopyInfo.getMaxTimestamp();
 
-            LOG.debug().$("sorting [table=").$(tableToken.getTableName())
+            LOG.debug().$("sorting [table=").utf8(tableToken.getTableName())
                     .$(", rows=").$(segmentCopyInfo.getTotalRows())
                     .$(", segments=").$(segmentCopyInfo.getSegmentCount())
                     .$(", minTs=").$ts(minTs)
@@ -7769,7 +7774,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             tsAddresses.set(0, 0L);
 
             if (!Vect.isIndexSuccess(indexFormat)) {
-                LOG.info().$("transaction sort error, will switch to 1 commit [table=").$(tableToken.getDirName())
+                LOG.info().$("transaction sort error, will switch to 1 commit [table=").$(tableToken)
                         .$(", totalRows=").$(totalRows)
                         .$(", indexFormat=").$(indexFormat)
                         .I$();
@@ -7804,7 +7809,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // to understand the difference
 
                 if (!Vect.isIndexSuccess(indexFormat)) {
-                    LOG.critical().$("WAL dedup sorted index failed will switch to 1 commit [table=").$(tableToken.getDirName())
+                    LOG.critical().$("WAL dedup sorted index failed will switch to 1 commit [table=").$(tableToken)
                             .$(", totalRows=").$(totalRows)
                             .$(", indexFormat=").$(indexFormat)
                             .I$();
@@ -7813,7 +7818,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 long dedupedRowCount = Vect.readIndexResultRowCount(indexFormat);
-                LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken.getDirName())
+                LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken)
                         .$(", totalRows=").$(totalRows)
                         .$(", dups=").$(totalRows - dedupedRowCount)
                         .I$();
@@ -7823,7 +7828,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 totalRows = dedupedRowCount;
             }
 
-            LOG.debug().$("shuffling [table=").$(tableToken.getDirName()).$(", columCount=")
+            LOG.debug().$("shuffling [table=").$(tableToken).$(", columCount=")
                     .$(metadata.getColumnCount() - 1)
                     .$(", rows=").$(totalRows)
                     .$(", indexFormat=").$(indexFormat).I$();
@@ -8041,8 +8046,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 destinationColumn.jumpTo((rowsOffset + totalRows) << shl);
 
-                LOG.debug().$("remapping WAL symbols [table=").$(tableToken.getTableName())
-                        .$(", column=").$(metadata.getColumnName(columnIndex))
+                LOG.debug().$("remapping WAL symbols [table=").utf8(tableToken.getTableName())
+                        .$(", column=").utf8(metadata.getColumnName(columnIndex))
                         .$(", rows=").$(totalRows)
                         .$(", txnCount=").$(txnCount)
                         .$(", offset=").$(rowsOffset)
@@ -8067,8 +8072,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else {
                 // Save the hint that symbol column is not re-mapped
                 Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary, 0);
-                LOG.debug().$("no new symbols, no remapping needed [table=").$(tableToken.getTableName())
-                        .$(", column=").$(metadata.getColumnName(columnIndex))
+                LOG.debug().$("no new symbols, no remapping needed [table=").utf8(tableToken.getTableName())
+                        .$(", column=").utf8(metadata.getColumnName(columnIndex))
                         .$(", rows=").$(totalRows)
                         .I$();
             }
@@ -8429,9 +8434,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (eventType == TSK_COMPLETE) {
                 LogRecord lg = LOG.info()
                         .$("published async command complete event [type=").$(cmdType)
-                        .$(",tableName=").utf8(tableToken.getTableName())
-                        .$(",tableId=").$(tableId)
-                        .$(",correlationId=").$(correlationId);
+                        .$(", table=").$(tableToken)
+                        .$(", tableId=").$(tableId)
+                        .$(", correlationId=").$(correlationId);
                 if (errorCode != AsyncWriterCommand.Error.OK) {
                     lg.$(",errorCode=").$(errorCode).$(",errorMsg=").$(errorMsg);
                 }
@@ -8441,9 +8446,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // The queue is full
             LOG.error()
                     .$("could not publish sync command complete event [type=").$(cmdType)
-                    .$(",tableName=").utf8(tableToken.getTableName())
-                    .$(",tableId=").$(tableId)
-                    .$(",correlationId=").$(correlationId)
+                    .$(", table=").$(tableToken)
+                    .$(", tableId=").$(tableId)
+                    .$(", correlationId=").$(correlationId)
                     .I$();
         }
     }
@@ -9323,7 +9328,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (quiet) {
                     distressed = true;
                     CharSequence columnName = metadata.getColumnName(i);
-                    LOG.error().$("could not rollback symbol table [table=").$(tableToken).$(", columnName=").$(columnName)
+                    LOG.error().$("could not rollback symbol table [table=").$(tableToken)
+                            .$(", columnName=").utf8(columnName)
                             .$(", exception=").$(th)
                             .I$();
                 } else {
@@ -9551,7 +9557,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (checkpointStatus.partitionsLocked()) {
-            LOG.info().$("cannot squash partition [table=").$(tableToken.getTableName()).$("], checkpoint in progress").$();
+            LOG.info().$("cannot squash partition [table=").utf8(tableToken.getTableName())
+                    .$("], checkpoint in progress").$();
             return;
         }
 
@@ -9641,7 +9648,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     FrameAlgebra.append(targetFrame, sourceFrame, configuration.getCommitMode());
                     addPhysicallyWrittenRows(sourceFrame.getRowCount());
                 } catch (Throwable th) {
-                    LOG.critical().$("partition squashing failed [table=").$(tableToken).$(", error=").$(th).I$();
+                    LOG.critical().$("partition squashing failed [table=").$(tableToken)
+                            .$(", error=").$(th).I$();
                     throw th;
                 }
 
@@ -9757,7 +9765,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void throwApplyBlockColumnShuffleFailed(int columnIndex, int columnType, long totalRows, long rowCount) {
         LOG.error().$("wal block apply failed [table=").$(tableToken)
-                .$(", column=").$(metadata.getColumnName(columnIndex))
+                .$(", column=").utf8(metadata.getColumnName(columnIndex))
                 .$(", columnType=").$(ColumnType.nameOf(columnType))
                 .$(", expectedResult=").$(totalRows)
                 .$(", actualResult=").$(rowCount)

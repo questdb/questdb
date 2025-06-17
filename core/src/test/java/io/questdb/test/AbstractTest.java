@@ -88,14 +88,14 @@ public class AbstractTest {
 
     @Before
     public void setUp() {
-        LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
+        LOG.info().$("Starting test ").utf8(getClass().getSimpleName()).$('#').utf8(testName.getMethodName()).$();
         TestUtils.createTestPath(root);
         Metrics.ENABLED.clear();
     }
 
     @After
     public void tearDown() throws Exception {
-        LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
+        LOG.info().$("Finished test ").utf8(getClass().getSimpleName()).$('#').utf8(testName.getMethodName()).$();
         TestUtils.removeTestPath(root);
         OFF_POOL_READER_ID.set(0);
     }

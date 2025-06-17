@@ -138,8 +138,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             txnScoreboard = scoreboardPool.getTxnScoreboard(tableToken);
             LOG.debug()
                     .$("open [id=").$(metadata.getTableId())
-                    .$(", table=").utf8(tableToken.getTableName())
-                    .$(", dirName=").utf8(tableToken.getDirName())
+                    .$(", table=").$(tableToken)
                     .I$();
             txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             path.trimTo(rootLen);
@@ -187,8 +186,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             txnScoreboard = scoreboardPool.getTxnScoreboard(tableToken);
             LOG.debug()
                     .$("open as copy [id=").$(metadata.getTableId())
-                    .$(", table=").utf8(tableToken.getTableName())
-                    .$(", dirName=").utf8(tableToken.getDirName())
+                    .$(", table=").$(tableToken)
                     .$(", srcTxn=").$(srcReader.getTxn())
                     .I$();
             txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
@@ -625,7 +623,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // Scoreboard can be over allocated
                 LOG.critical().$("cannot lock txn in scoreboard [table=").$(tableToken)
                         .$(", txn=").$(txn)
-                        .$(", error=").$(ex.getFlyweightMessage())
+                        .$(", error=").utf8(ex.getFlyweightMessage())
                         .I$();
                 throw ex;
             }
@@ -658,7 +656,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                 LOG.error()
                         .$("could not queue purge partition task, queue is full [")
-                        .$("dirName=").utf8(tableToken.getDirName())
+                        .$("table=").$(tableToken)
                         .$(", txn=").$(txn)
                         .$(']').$();
             }
@@ -1467,7 +1465,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         auxMem = openOrCreateColumnMemory(path, columns, secondaryIndex, auxMem, auxSize, lastPartition);
                         long dataSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), columnRowCount - 1);
                         if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
-                            LOG.critical().$("Invalid var len column size [column=").$(name)
+                            LOG.critical().$("Invalid var len column size [column=").utf8(name)
                                     .$(", size=").$(dataSize)
                                     .$(", path=").$(path)
                                     .I$();

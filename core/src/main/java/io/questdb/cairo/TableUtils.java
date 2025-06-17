@@ -2081,7 +2081,7 @@ public final class TableUtils {
                         // right, cannot open file for some reason?
                         LOG.error()
                                 .$("could not open swap [file=").$(path)
-                                .$(", msg=").$(e.getFlyweightMessage())
+                                .$(", msg=").utf8(e.getFlyweightMessage())
                                 .$(", errno=").$(e.getErrno())
                                 .I$();
                     }
