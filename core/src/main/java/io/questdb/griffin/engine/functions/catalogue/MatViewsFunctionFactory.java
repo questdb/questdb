@@ -333,7 +333,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                 viewStateReader.of(reader, viewToken);
                             } catch (CairoException e) {
                                 LOG.info().$("could not read materialized view state file [view=").utf8(viewToken.getTableName())
-                                        .$(", msg=").$(e.getFlyweightMessage())
+                                        .$(", msg=").utf8(e.getFlyweightMessage())
                                         .$(", errno=").$(e.getErrno())
                                         .I$();
                                 continue;
