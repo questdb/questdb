@@ -399,15 +399,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else {
                 this.lockFd = -1;
             }
-            int todo = readTodo();
+
+            this.ddlMem = Vm.getCMARWInstance();
+            // Read txn file, without accurately specifying partitionBy.
+            // We need the lastest txn to check if the _meta file needs to be repaired.
+            this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$());
+            path.trimTo(pathSize);
+            int todo = readTodo(txWriter.txn);
             if (todo == TODO_RESTORE_META) {
                 repairMetaRename((int) todoMem.getLong(48));
             }
-            this.ddlMem = Vm.getCMARWInstance();
             this.metadata = new TableWriterMetadata(this.tableToken);
             openMetaFile(ff, path, pathSize, ddlMem, metadata);
             this.partitionBy = metadata.getPartitionBy();
-            this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$(), partitionBy);
+            this.txWriter.initPartitionBy(metadata.getPartitionBy());
+
             this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
             path.trimTo(pathSize);
             this.columnVersionWriter = openColumnVersionFile(configuration, path, pathSize, partitionBy != PartitionBy.NONE);
@@ -1135,11 +1141,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             commit();
             long columnNameTxn = getTxn();
             metadata.updateColumnSymbolCapacity(columnIndex, newSymbolCapacity);
-            rewriteAndSwapMetadata(metadata);
 
             try {
-                // remove _todo
-                clearTodoLog();
+                rewriteAndSwapMetadata(metadata);
 
                 // linking of the files has to be done after _todo is removed
                 hardLinkAndPurgeColumnFiles(
@@ -1150,6 +1154,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         ColumnType.SYMBOL,
                         true
                 );
+
                 oldSymbolWriter.rebuildCapacity(
                         configuration,
                         path,
@@ -1158,37 +1163,41 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         newSymbolCapacity,
                         symbolCacheFlag
                 );
+
+                bumpMetadataVersion();
+
+                // remove _todo as last step, after the commit.
+                // if anything fails before the commit, meta file will be reverted
+                clearTodoLog();
             } catch (CairoException e) {
                 throwDistressException(e);
             }
 
-            bumpMetadataVersion();
+            try {
 
-            // Call finish purge to remove old column files before renaming them in metadata
-            finishColumnPurge();
+                // Call finish purge to remove old column files before renaming them in metadata
+                finishColumnPurge();
 
-            // open new column files
-            long transientRowCount = txWriter.getTransientRowCount();
-            if (transientRowCount > 0) {
-                long partitionTimestamp = txWriter.getLastPartitionTimestamp();
-                setStateForTimestamp(path, partitionTimestamp);
-                int plen = path.size();
-                openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
-                setColumnAppendPosition(columnIndex, transientRowCount, false);
-                path.trimTo(pathSize);
+                // open new column files
+                long transientRowCount = txWriter.getTransientRowCount();
+                if (transientRowCount > 0) {
+                    long partitionTimestamp = txWriter.getLastPartitionTimestamp();
+                    setStateForTimestamp(path, partitionTimestamp);
+                    int plen = path.size();
+                    openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
+                    setColumnAppendPosition(columnIndex, transientRowCount, false);
+                    path.trimTo(pathSize);
 
-                if (metadata.isIndexed(columnIndex)) {
-                    ColumnIndexer indexer = indexers.get(columnIndex);
-                    final long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, columnIndex);
-                    assert indexer != null;
-                    indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
+                    if (metadata.isIndexed(columnIndex)) {
+                        ColumnIndexer indexer = indexers.get(columnIndex);
+                        final long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, columnIndex);
+                        assert indexer != null;
+                        indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
+                    }
                 }
+            } catch (Throwable th) {
+                handleHousekeepingException(th);
             }
-        } catch (Throwable th) {
-            LOG.critical().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").utf8(columnName)
-                    .$(", error=").$(th).I$();
-            distressed = true;
-            throw th;
         } finally {
             partitionRemoveCandidates.clear();
             // clear temp resources
@@ -2114,9 +2123,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     : Timestamps.getMonthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
             if (shouldEvict) {
                 LOG.info()
-                        .$("Partition's TTL expired, evicting. table=").$(metadata.getTableName())
-                        .$(" partitionTs=").microTime(partitionTimestamp)
-                        .$();
+                        .$("Partition's TTL expired, evicting [table=").$(metadata.getTableName())
+                        .$(", partitionTs=").microTime(partitionTimestamp)
+                        .I$();
                 dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
                 evictedPartitionTimestamp = partitionTimestamp;
             } else {
@@ -2756,38 +2765,62 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         commit();
 
-        metadata.renameColumn(columnName, newName);
-        String newColumnName = metadata.getColumnName(index);
-        rewriteAndSwapMetadata(metadata);
+        String newColumnName = null;
 
         try {
-            // remove _todo
+            metadata.renameColumn(columnName, newName);
+            newColumnName = metadata.getColumnName(index);
+            rewriteAndSwapMetadata(metadata);
+
+            // rename column files has to be done before _todo is removed
+            hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type, false);
+
+            // commit to _txn file
+            bumpMetadataAndColumnStructureVersion();
+
+            // remove _todo as last step, after the commit.
+            // if anything fails before the commit, meta file will be reverted
             clearTodoLog();
 
-            // rename column files has to be done after _todo is removed
-            hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type, false);
         } catch (CairoException e) {
             throwDistressException(e);
         }
 
-        bumpMetadataAndColumnStructureVersion();
+        try {
+            // Call finish purge to remove old column files before renaming them in metadata
+            finishColumnPurge();
 
-        // Call finish purge to remove old column files before renaming them in metadata
-        finishColumnPurge();
+            if (index == metadata.getTimestampIndex()) {
+                designatedTimestampColumnName = newColumnName;
+            }
 
-        if (index == metadata.getTimestampIndex()) {
-            designatedTimestampColumnName = newColumnName;
+            if (securityContext != null) {
+                ddlListener.onColumnRenamed(securityContext, tableToken, columnName, newColumnName);
+            }
+
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
+
+            LOG.info().$("RENAMED column '").utf8(columnName).$("' to '").utf8(newColumnName).$("' from ").$substr(pathRootSize, path).$();
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
         }
+    }
 
-        if (securityContext != null) {
-            ddlListener.onColumnRenamed(securityContext, tableToken, columnName, newColumnName);
+    private void handleHousekeepingException(Throwable e) {
+        // Log the exception stack.
+        LOG.error().$("data has been persisted, but we could not perform housekeeping [table=").$(tableToken)
+                .$(", error=").$(e)
+                .I$();
+        CairoException ex;
+        if (e instanceof Sinkable) {
+            ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put((Sinkable) e).put(']');
+        } else {
+            ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put(e.getMessage()).put(']');
         }
-
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
-        }
-
-        LOG.info().$("RENAMED column '").utf8(columnName).$("' to '").utf8(newColumnName).$("' from ").$substr(pathRootSize, path).$();
+        ex.setHousekeeping(true);
+        throw ex;
     }
 
     @Override
@@ -3764,22 +3797,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void clearTodoAndCommitMeta() {
         try {
+            bumpMetadataVersion();
+
             // remove _todo
             clearTodoLog();
         } catch (CairoException e) {
             throwDistressException(e);
         }
-        bumpMetadataVersion();
     }
 
     private void clearTodoAndCommitMetaStructureVersion() {
         try {
+            bumpMetadataAndColumnStructureVersion();
+
             // remove _todo
             clearTodoLog();
         } catch (CairoException e) {
             throwDistressException(e);
         }
-        bumpMetadataAndColumnStructureVersion();
     }
 
     private void clearTodoLog() {
@@ -5457,17 +5492,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             enforceTtl();
         } catch (Throwable e) {
             // Log the exception stack.
-            LOG.error().$("data has been persisted, but we could not perform housekeeping [table=").$(tableToken)
-                    .$(", error=").$(e)
-                    .I$();
-            CairoException ex;
-            if (e instanceof Sinkable) {
-                ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put((Sinkable) e).put(']');
-            } else {
-                ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put(e.getMessage()).put(']');
-            }
-            ex.setHousekeeping(true);
-            throw ex;
+            handleHousekeepingException(e);
         }
     }
 
@@ -6659,7 +6684,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private long openTodoMem() {
+    private long openTodoMem(long tableTxn) {
         path.concat(TODO_FILE_NAME);
         try {
             if (ff.exists(path.$())) {
@@ -6671,7 +6696,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 todoMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
                 this.todoTxn = todoMem.getLong(0);
                 // check if _todo_ file is consistent, if not, we just ignore its contents and reset hash
-                if (todoMem.getLong(24) != todoTxn) {
+                if (todoTxn == tableTxn && todoMem.getLong(24) != todoTxn) {
                     todoMem.putLong(8, configuration.getDatabaseIdLo());
                     todoMem.putLong(16, configuration.getDatabaseIdHi());
                     Unsafe.getUnsafe().storeFence();
@@ -8660,12 +8685,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private int readTodo() {
+    private int readTodo(long tableTxn) {
         long todoCount;
         try {
             // This is the first FS call the table directory.
             // If table is removed / renamed, this should fail with table does not exist.
-            todoCount = openTodoMem();
+            todoCount = openTodoMem(tableTxn);
         } catch (CairoException ex) {
             if (ex.errnoFileCannotRead()) {
                 throw CairoException.tableDoesNotExist(tableToken.getTableName());
@@ -10083,7 +10108,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void writeRestoreMetaTodo() {
         try {
-            todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
+            todoMem.putLong(0, txWriter.txn); // write txn, reader will first read txn at offset 24 and then at offset 0
             Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
             todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
             todoMem.putLong(16, configuration.getDatabaseIdHi());
@@ -10092,7 +10117,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             todoMem.putLong(40, TODO_RESTORE_META);
             todoMem.putLong(48, metaPrevIndex);
             Unsafe.getUnsafe().storeFence();
-            todoMem.putLong(24, todoTxn);
+            todoMem.putLong(24, txWriter.txn);
             todoMem.jumpTo(56);
             todoMem.sync(false);
         } catch (CairoException e) {

@@ -4144,23 +4144,27 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.DAY, 10000);
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
-            try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
+            DefaultTestCairoConfiguration conf = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
-            }, PRODUCT)) {
+            };
+            try (TableWriter writer = newOffPoolWriter(conf, PRODUCT)) {
                 ts = append10KProducts(ts, rnd, writer);
                 writer.commit();
 
                 try {
                     writer.renameColumn("productName", "nameOfProduct");
                     Assert.fail();
-                } catch (CairoException ignore) {
+                } catch (CairoError renameError) {
+                    Assert.assertTrue(writer.isDistressed());
                 }
 
                 Assert.assertTrue(ff.wasCalled());
+            }
 
+            try (TableWriter writer = newOffPoolWriter(conf, PRODUCT)) {
                 ts = append10KProducts(ts, rnd, writer);
                 writer.commit();
             }
