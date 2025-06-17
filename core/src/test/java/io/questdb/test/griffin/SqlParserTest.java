@@ -1453,6 +1453,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCTEWithTimestampClause() throws Exception {
+        assertQuery(
+                "select-choose ts from (" +
+                        "select-choose [ts] ts from (" +
+                        "select-choose [ts] ts from (" +
+                        "select-choose [ts] ts from (select [ts] from tango)) samba timestamp (ts)" +
+                        ") rhumba" +
+                        ") chacha",
+                "WITH samba AS (tango), rhumba AS (samba TIMESTAMP(ts)), chacha AS (rhumba), unused AS (chacha) SELECT * FROM chacha",
+                modelOf("tango").col("ts", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
     public void testCaseImpossibleRewrite1() throws SqlException {
         // referenced columns in 'when' clauses are different
         assertQuery(
@@ -1714,6 +1728,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("tab")
                         .col("b", ColumnType.BYTE)
                         .col("b", ColumnType.BOOLEAN)
+        );
+    }
+
+    @Test
+    public void testCreateAsSelectErrorPosition() throws Exception {
+        assertSyntaxError(
+                "create table tmp as (select rnd_symbol(10) sym from long_sequence(10));",
+                39,
+                "STRING constant expected"
         );
     }
 
