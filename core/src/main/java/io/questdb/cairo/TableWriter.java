@@ -408,8 +408,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$());
                 path.trimTo(pathSize);
             } catch (CairoException ex) {
-                // This is very first time we open the table, so there is no txn file.
-                // it means that the table does not exist.
+                // This is the first FS call the table directory.
+                // If table is removed / renamed, this should fail with table does not exist.
                 if (ex.errnoFileCannotRead()) {
                     throw CairoException.tableDoesNotExist(tableToken.getTableName());
                 }
@@ -8697,8 +8697,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private int readTodo(long tableTxn) {
         long todoCount;
-        // This is the first FS call the table directory.
-        // If table is removed / renamed, this should fail with table does not exist.
         todoCount = openTodoMem(tableTxn);
 
         int todo;
