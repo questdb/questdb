@@ -225,7 +225,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             }
             if (masterHasNext) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-                final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL ? 0 : masterTimestamp - toleranceInterval;
+                final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL ? Long.MIN_VALUE : masterTimestamp - toleranceInterval;
                 MapKey key;
                 MapValue value;
                 long slaveTimestamp = this.slaveTimestamp;

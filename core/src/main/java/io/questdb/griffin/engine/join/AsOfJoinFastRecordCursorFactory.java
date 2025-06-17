@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
@@ -217,7 +218,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             int keyedFrameIndex = timeFrame.getFrameIndex();
             for (; ; ) {
                 long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                if (slaveTimestamp < masterTimestamp - toleranceInterval) {
+                if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
                     // we are past the tolerance interval, no need to traverse the slave cursor any further
                     record.hasSlave(false);
                     break;

@@ -42,6 +42,7 @@ import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -251,7 +252,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
 
             for (; ; ) {
                 long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                if (slaveTimestamp < masterTimestamp - toleranceInterval) {
+                if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
                     // we are past the tolerance interval, no need to traverse the slave cursor any further
                     record.hasSlave(false);
                     break;

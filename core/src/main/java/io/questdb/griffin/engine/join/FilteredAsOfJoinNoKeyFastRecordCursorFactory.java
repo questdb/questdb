@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -204,8 +205,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 return true;
             }
 
-            long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-            if (slaveTimestamp < masterTimestamp - toleranceInterval) {
+            if (toleranceInterval != Numbers.LONG_NULL && slaveRecB.getTimestamp(slaveTimestampIndex) < masterTimestamp - toleranceInterval) {
                 // we are past the tolerance interval, no need to traverse the slave cursor any further
                 record.hasSlave(false);
                 return true;
@@ -275,8 +275,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 }
 
                 slaveTimeFrameCursor.recordAtRowIndex(slaveRecB, filteredRowId);
-                slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                if (slaveTimestamp < masterTimestamp - toleranceInterval) {
+                if (toleranceInterval != Numbers.LONG_NULL && slaveRecB.getTimestamp(slaveTimestampIndex) < masterTimestamp - toleranceInterval) {
                     // we are past the tolerance interval, no need to traverse the slave cursor any further
                     record.hasSlave(false);
                     highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);
