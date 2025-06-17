@@ -943,7 +943,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             }
                         }
                     } catch (Throwable err) {
-                        LOG.error().$("Error '").$(err.getMessage()).$("' comparing table: ").$(tableName).$();
+                        LOG.error().$("Error '").$(err.getMessage()).$("' comparing table: ").utf8(tableName).$();
                         throw err;
                     }
                 }
@@ -1869,9 +1869,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     private void sendWaitWalReleaseCount(String lineData, int walReleaseCount) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(walReleaseCount);
-        engine.setPoolListener((factoryType, thread, tableName1, event, segment, position) -> {
-            if (factoryType == PoolListener.SRC_WAL_WRITER && event == PoolListener.EV_RETURN && tableName1 != null) {
-                LOG.info().$("=== released WAL writer === ").$(tableName1.getDirName()).$(":").$(tableName1.getTableName()).$();
+        engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+            if (factoryType == PoolListener.SRC_WAL_WRITER && event == PoolListener.EV_RETURN && tableToken != null) {
+                LOG.info().$("=== released WAL writer === ").$(tableToken).$();
                 releaseLatch.countDown();
             }
         });
@@ -2069,7 +2069,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                                     }
                                     break;
                                 } catch (EntryLockedException ex) {
-                                    LOG.info().$("retrying read for ").$(tableName).$();
+                                    LOG.info().$("retrying read for ").utf8(tableName).$();
                                     Os.pause();
                                 }
                             }
@@ -2086,7 +2086,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             for (int n = 0; n < tables.size(); n++) {
                 CharSequence tableName = tables.get(n);
-                LOG.info().$("checking table ").$(tableName).$();
+                LOG.info().$("checking table ").utf8(tableName).$();
                 if (walEnabled) {
                     Assert.assertTrue(isWalTable(tableName));
                 }

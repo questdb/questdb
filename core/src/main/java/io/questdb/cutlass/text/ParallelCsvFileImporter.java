@@ -679,7 +679,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         } catch (TextImportException e) {
             LOG.error()
                     .$("could not import [phase=").$(CopyTask.getPhaseName(e.getPhase()))
-                    .$(", ex=").$(e.getFlyweightMessage())
+                    .$(", ex=").utf8(e.getFlyweightMessage())
                     .I$();
             throw e;
         }
@@ -955,7 +955,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void logTypeError(int i, int type) {
         LOG.info()
-                .$("mis-detected [table=").$(tableName)
+                .$("mis-detected [table=").utf8(tableName)
                 .$(", column=").$(i)
                 .$(", type=").$(ColumnType.nameOf(type))
                 .$(", workerCount=").$(workerCount)

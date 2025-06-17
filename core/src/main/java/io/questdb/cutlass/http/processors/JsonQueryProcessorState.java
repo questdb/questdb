@@ -512,7 +512,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             int hi
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (start == hi) {
-            info().$("empty column in list '").$(columnNames).$('\'').$();
+            info().$("empty column in list '").utf8(columnNames).$('\'').$();
             HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
             JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
             response.putAscii('{')
@@ -525,7 +525,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
         int columnIndex = metadata.getColumnIndexQuiet(columnNames, start, hi);
         if (columnIndex == RecordMetadata.COLUMN_NOT_FOUND) {
-            info().$("invalid column in list: '").$(columnNames, start, hi).$('\'').$();
+            info().$("invalid column in list: '").$safe(columnNames, start, hi).$('\'').$();
             HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
             JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
             response.putAscii('{')
@@ -992,7 +992,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (columnNames != null) {
             columnsQueryParameter.clear();
             if (!Utf8s.utf8ToUtf16(columnNames.lo(), columnNames.hi(), columnsQueryParameter)) {
-                info().$("utf8 error when decoding column list '").$(columnNames).$('\'').$();
+                info().$("utf8 error when decoding column list '").$safe(columnNames).$('\'').$();
                 HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
                 JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
                 response.putAscii('{')

@@ -583,12 +583,6 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
-            sink.put(sequence, lo, hi);
-            return this;
-        }
-
-        @Override
         public LogRecord $(int x) {
             sink.put(x);
             return this;
@@ -658,6 +652,27 @@ public class LogAlertSocketTest {
         }
 
         @Override
+        public LogRecord $safe(@NotNull CharSequence sequence, int lo, int hi) {
+            sink.put(sequence, lo, hi);
+            return this;
+        }
+
+        @Override
+        public LogRecord $safe(@Nullable DirectUtf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $safe(@Nullable Utf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $safe(long lo, long hi) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public LogRecord $size(long memoryBytes) {
             sink.putSize(memoryBytes);
             return this;
@@ -670,11 +685,6 @@ public class LogAlertSocketTest {
 
         @Override
         public LogRecord $ts(long x) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public LogRecord $ts(TimestampDriver driver, long x) {
             throw new UnsupportedOperationException();
         }
 

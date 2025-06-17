@@ -239,7 +239,7 @@ public class LogAlertSocket implements Closeable {
         int start = headerEndFound && contentLength == responseLen - lineStart ? lineStart : 0;
         $currentAlertHost(log.info().$("Received"))
                 .$(": ")
-                .$(responseSink, start, responseLen)
+                .$safe(responseSink, start, responseLen)
                 .$();
     }
 
@@ -268,7 +268,7 @@ public class LogAlertSocket implements Closeable {
                         $currentAlertHost(log.info().$("Could not send"))
                                 .$(" [errno=").$(nf.errno())
                                 .$(", size=").$(n)
-                                .$(", log=").$utf8(outBufferPtr, outBufferPtr + len).I$();
+                                .$(", log=").$safe(outBufferPtr, outBufferPtr + len).I$();
                         sendFail = true;
                         // do fail over, could not send
                         break;
@@ -316,7 +316,7 @@ public class LogAlertSocket implements Closeable {
                     .$("Giving up sending after ")
                     .$(maxSendAttempts)
                     .$(" attempts: [")
-                    .$utf8(outBufferPtr, outBufferPtr + len)
+                    .$safe(outBufferPtr, outBufferPtr + len)
                     .I$();
         }
         return success;

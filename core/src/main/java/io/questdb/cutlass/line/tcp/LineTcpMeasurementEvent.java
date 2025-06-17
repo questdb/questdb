@@ -287,7 +287,7 @@ class LineTcpMeasurementEvent implements Closeable {
         } catch (Throwable th) {
             LOG.error()
                     .$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.getTableToken())
-                    .$(", message=").$(th.getMessage())
+                    .$(", message=").utf8(th.getMessage())
                     .$(th)
                     .I$();
             if (row != null) {

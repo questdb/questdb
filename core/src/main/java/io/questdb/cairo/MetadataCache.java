@@ -101,7 +101,7 @@ public class MetadataCache implements QuietCloseable {
             }
         } catch (CairoException e) {
             LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
-            l.$(e.getFlyweightMessage()).$();
+            l.utf8(e.getFlyweightMessage()).$();
         } finally {
             Path.clearThreadLocals();
         }
@@ -278,9 +278,9 @@ public class MetadataCache implements QuietCloseable {
                         .$("could not hydrate metadata [table=").$(token)
                         .$(", msg=");
                 if (e instanceof FlyweightMessageContainer) {
-                    log.$(((FlyweightMessageContainer) e).getFlyweightMessage());
+                    log.utf8(((FlyweightMessageContainer) e).getFlyweightMessage());
                 } else {
-                    log.$(e.getMessage());
+                    log.utf8(e.getMessage());
                 }
                 log.$(", errno=").$(e instanceof CairoException ? ((CairoException) e).errno : 0);
             } finally {
@@ -351,7 +351,7 @@ public class MetadataCache implements QuietCloseable {
             // Don't stall startup.
             LOG.error().$("could not load symbol metadata [table=").$(token).$(", column=").utf8(columnName)
                     .$(", errno=").$(ex.getErrno())
-                    .$(", message=").$(ex.getMessage())
+                    .$(", message=").utf8(ex.getMessage())
                     .I$();
         }
     }

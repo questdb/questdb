@@ -42,6 +42,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Vect;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
@@ -97,7 +98,7 @@ public class VacuumColumnVersions implements Closeable {
             throw CairoException.nonCritical().put("cannot vacuum while checkpoint is in progress");
         }
 
-        LOG.info().$("processing [dirName=").utf8(reader.getTableToken().getDirName()).I$();
+        LOG.info().$("processing [table=").$(reader.getTableToken()).I$();
         fileNameSink = new Utf8StringSink();
         columnNameSink = new StringSink();
 
@@ -331,7 +332,3 @@ public class VacuumColumnVersions implements Closeable {
         }
     }
 }
-
-
-
-
