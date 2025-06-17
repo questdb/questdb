@@ -86,7 +86,8 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE,
             PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE,
             PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL,
-            PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES
+            PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES,
+            PropertyKey.CAIRO_MAT_VIEW_TIMER_START_EPSILON
     ));
     private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {
         Optional<PropertyKey> prop = PropertyKey.getByString(k);

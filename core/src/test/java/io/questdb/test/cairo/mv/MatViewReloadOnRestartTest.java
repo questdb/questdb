@@ -591,7 +591,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                 execute(
                         main1,
-                        "create materialized view price_1h_t refresh start '" + startStr + "' every 1h as " +
+                        "create materialized view price_1h_t refresh every 1h start '" + startStr + "' as " +
                                 "select sym, last(price) as price, ts from base_price sample by 1h"
                 );
 
@@ -676,7 +676,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                 execute(
                         main1,
-                        "create materialized view price_1h refresh start '" + startStr + "' every 1h as (" +
+                        "create materialized view price_1h refresh every 1h start '" + startStr + "' as (" +
                                 "select sym, last(price) as price, ts from base_price sample by 1h" +
                                 ") partition by DAY"
                 );

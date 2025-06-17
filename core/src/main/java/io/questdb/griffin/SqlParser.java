@@ -31,6 +31,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
@@ -935,40 +937,43 @@ public class SqlParser {
                 tok = tok(lexer, "'as'");
             }
 
+            int every = 0;
+            char everyUnit = 0;
             if (isImmediateKeyword(tok)) {
-                tok = tok(lexer, "'as'");
+                tok = tok(lexer, "'period' or 'as'");
             } else if (isManualKeyword(tok)) {
                 refreshType = MatViewDefinition.MANUAL_REFRESH_TYPE;
-                tok = tok(lexer, "'as'");
-            } else if (isPeriodKeyword(tok)) {
-                // REFRESH PERIOD START '<time>' [TIME ZONE '<timezone>'] LENGTH <interval> [DELAY <interval>] [IMMEDIATE | MANUAL | EVERY <interval>]
-                expectTok(lexer, "start");
-                final long start;
-                tok = tok(lexer, "START timestamp");
-                try {
-                    start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
-                } catch (NumericException e) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
-                }
-                tok = tok(lexer, "'time zone' or 'length'");
+                tok = tok(lexer, "'period' or 'as'");
+            } else if (isEveryKeyword(tok)) {
+                tok = tok(lexer, "interval");
+                every = Timestamps.getStrideMultiple(tok);
+                everyUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
+                refreshType = MatViewDefinition.TIMER_REFRESH_TYPE;
+                tok = tok(lexer, "'start' or 'period' or 'as'");
+            }
+
+            if (isPeriodKeyword(tok)) {
+                // REFRESH [IMMEDIATE | MANUAL | EVERY <interval>] PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
+                expectTok(lexer, "(");
+                expectTok(lexer, "length");
+                tok = tok(lexer, "LENGTH interval");
+                final int length = Timestamps.getStrideMultiple(tok);
+                final char lengthUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
+                final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(length, lengthUnit, lexer.lastTokenPosition());
+                tok = tok(lexer, "'time zone' or 'delay' or ')'");
 
                 String timeZone = null;
                 if (isTimeKeyword(tok)) {
                     expectTok(lexer, "zone");
                     tok = tok(lexer, "TIME ZONE name");
+                    if (Chars.equals(tok, ')') || isDelayKeyword(tok)) {
+                        throw SqlException.position(lexer.lastTokenPosition()).put("TIME ZONE name expected");
+                    }
                     timeZone = unquote(tok).toString();
-                    tok = tok(lexer, "'length'");
+                    tok = tok(lexer, "'delay' or ')'");
                 }
-
-                if (!isLengthKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'length' expected");
-                }
-
-                tok = tok(lexer, "LENGTH interval");
-                final int length = Timestamps.getStrideMultiple(tok);
-                final char lengthUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
-                validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
-                tok = tok(lexer, "'delay' or 'immediate' or 'manual' or 'every' or 'as'");
 
                 int delay = 0;
                 char delayUnit = 0;
@@ -977,29 +982,27 @@ public class SqlParser {
                     delay = Timestamps.getStrideMultiple(tok);
                     delayUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
                     validateMatViewDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
-                    tok = tok(lexer, "'immediate' or 'manual' or 'every' or 'as'");
+                    tok = tok(lexer, "')'");
                 }
 
-                int every = 0;
-                char everyUnit = 0;
-                if (isImmediateKeyword(tok)) {
-                    tok = tok(lexer, "'as'");
-                } else if (isManualKeyword(tok)) {
-                    refreshType = MatViewDefinition.MANUAL_REFRESH_TYPE;
-                    tok = tok(lexer, "'as'");
-                } else if (isEveryKeyword(tok)) {
-                    tok = tok(lexer, "interval");
-                    every = Timestamps.getStrideMultiple(tok);
-                    everyUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
-                    validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
-                    refreshType = MatViewDefinition.TIMER_REFRESH_TYPE;
-                    tok = tok(lexer, "'as'");
+                if (!Chars.equals(tok, ')')) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
                 }
+
+                // Period timer start is at the boundary of the current period.
+                final long now = configuration.getMicrosecondClock().getTicks();
+                final long start = periodSampler.round(now);
+
                 mvOpBuilder.setTimer(timeZone, start, every, everyUnit);
                 mvOpBuilder.setPeriodLength(length, lengthUnit, delay, delayUnit);
-            } else {
-                // REFRESH [START '<datetime>' [TIME ZONE '<timezone>']] EVERY <interval>
-                long start = Numbers.LONG_NULL;
+                tok = tok(lexer, "'as'");
+            } else if (!isAsKeyword(tok)) {
+                // REFRESH EVERY <interval> [START '<datetime>' [TIME ZONE '<timezone>']]
+                if (refreshType != MatViewDefinition.TIMER_REFRESH_TYPE) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'as' expected");
+                }
+                // Use the current time as the start timestamp if it wasn't specified.
+                long start = configuration.getMicrosecondClock().getTicks();
                 String timeZone = null;
                 if (isStartKeyword(tok)) {
                     tok = tok(lexer, "START timestamp");
@@ -1008,31 +1011,21 @@ public class SqlParser {
                     } catch (NumericException e) {
                         throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                     }
-                    tok = tok(lexer, "'time zone' or 'every'");
+                    tok = tok(lexer, "'time zone' or 'as'");
 
                     if (isTimeKeyword(tok)) {
                         expectTok(lexer, "zone");
                         tok = tok(lexer, "TIME ZONE name");
                         timeZone = unquote(tok).toString();
-                        tok = tok(lexer, "'every'");
+                        tok = tok(lexer, "'as'");
                     }
                 }
-
-                if (isEveryKeyword(tok)) {
-                    if (start == Numbers.LONG_NULL) {
-                        // Use the current time as the start timestamp if it wasn't specified.
-                        start = configuration.getMicrosecondClock().getTicks();
-                    }
-                    tok = tok(lexer, "interval");
-                    final int every = Timestamps.getStrideMultiple(tok);
-                    final char everyUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
-                    validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
-                    refreshType = MatViewDefinition.TIMER_REFRESH_TYPE;
-                    mvOpBuilder.setTimer(timeZone, start, every, everyUnit);
-                    tok = tok(lexer, "'as'");
-                } else if (start != Numbers.LONG_NULL) {
-                    throw SqlException.position(lexer.lastTokenPosition()).put("'every' expected");
-                }
+                mvOpBuilder.setTimer(timeZone, start, every, everyUnit);
+            } else if (refreshType == MatViewDefinition.TIMER_REFRESH_TYPE) {
+                // REFRESH EVERY <interval> AS
+                // Don't forget to set timer params.
+                final long start = configuration.getMicrosecondClock().getTicks();
+                mvOpBuilder.setTimer(null, start, every, everyUnit);
             }
         }
         mvOpBuilder.setRefreshType(refreshType);

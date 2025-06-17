@@ -344,7 +344,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
-                    "create materialized view price_1h refresh start '2999-12-12T12:00:00.000000Z' every 1h as (" +
+                    "create materialized view price_1h refresh every 1h start '2999-12-12T12:00:00.000000Z' as (" +
                             "select sym, last(price) as price, ts from base_price sample by 1h" +
                             ") partition by day"
             );
@@ -378,7 +378,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             // the view should refresh after we change the timer schedule
-            execute("alter materialized view price_1h set refresh start '" + start + "' every 1m;");
+            execute("alter materialized view price_1h set refresh every 1m start '" + start + "';");
             drainQueues();
             // we need timers to tick
             currentMicros += Timestamps.MINUTE_MICROS;
@@ -424,37 +424,17 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h_t set refresh",
                     46,
-                    "'start' or 'every' or 'limit' expected"
+                    "'every' or 'limit' expected"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h_t set refresh start",
-                    52,
-                    "START timestamp"
+                    47,
+                    "'every' or 'limit' expected"
             );
             assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h_t set refresh start 'foobar'",
-                    53,
-                    "invalid START timestamp value"
-            );
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h_t set refresh start '2020-09-10T20:00:00.000000Z'",
-                    82,
-                    "'every' expected"
-            );
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h_t set refresh start '2020-09-10T20:00:00.000000Z' barbaz",
-                    83,
-                    "'every' expected"
-            );
-            assertExceptionNoLeakCheck(
-                    "ALTER MATERIALIZED VIEW 'price_1h_t' SET REFRESH START '2020-09-10T20:00:00.000000Z' EVERY",
-                    90,
+                    "ALTER MATERIALIZED VIEW 'price_1h_t' SET REFRESH EVERY",
+                    54,
                     "interval expected"
-            );
-            assertExceptionNoLeakCheck(
-                    "ALTER MATERIALIZED VIEW 'price_1h_t' SET REFRESH START '2020-09-10T20:00:00.000000Z' EVERY foobaz",
-                    91,
-                    "Invalid unit: foobaz"
             );
             assertExceptionNoLeakCheck(
                     "ALTER MATERIALIZED VIEW 'price_1h_t' SET REFRESH EVERY foobaz",
@@ -465,6 +445,21 @@ public class MatViewTest extends AbstractCairoTest {
                     "ALTER MATERIALIZED VIEW 'price_1h_t' SET REFRESH EVERY 1s;",
                     55,
                     "unsupported interval unit: s, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh every 1h start",
+                    61,
+                    "START timestamp"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh every 3d start 'foobar'",
+                    62,
+                    "invalid START timestamp value"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh every 1M start '2020-09-10T20:00:00.000000Z' barbaz",
+                    92,
+                    "unexpected token [barbaz]"
             );
 
             assertQueryNoLeakCheck(
@@ -491,8 +486,9 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
             final String start = "2020-12-12T00:00:00.000000Z";
+            currentMicros = parseFloorPartialTimestamp(start);
             execute(
-                    "create materialized view price_1h refresh period start '" + start + "' length 1d every 1h as (" +
+                    "create materialized view price_1h refresh every 1h period (length 1d) as (" +
                             "select sym, last(price) as price, ts from base_price sample by 1h" +
                             ") partition by day"
             );
@@ -527,26 +523,16 @@ public class MatViewTest extends AbstractCairoTest {
 
             // start timestamp is not allowed to be changed on period mat views
             assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h set refresh start '1999-01-01T01:01:01.842574Z' every 1m;",
-                    51,
+                    "alter materialized view price_1h set refresh every 1m start '" + start + "';",
+                    54,
                     "changing start timestamp is not allowed on period materialized views"
             );
 
             // this time the DDL should succeed
-            execute("alter materialized view price_1h set refresh every 10d;");
+            execute("alter materialized view price_1h set refresh every 15m;");
             drainWalQueue();
             final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
             Assert.assertNotNull(viewToken);
-            try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
-                Assert.assertEquals(10, matViewMeta.getMatViewTimerInterval());
-                Assert.assertEquals('d', matViewMeta.getMatViewTimerUnit());
-                // start should stay as is
-                Assert.assertEquals(parseFloorPartialTimestamp(start), matViewMeta.getMatViewTimerStart());
-            }
-
-            // let's execute alter one more time, this time with the start timestamp
-            execute("alter materialized view price_1h set refresh start '" + start + "' every 15m;");
-            drainWalQueue();
             try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
                 Assert.assertEquals(15, matViewMeta.getMatViewTimerInterval());
                 Assert.assertEquals('m', matViewMeta.getMatViewTimerUnit());
@@ -2202,7 +2188,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
-                    "create materialized view price_1h refresh start '2199-12-12T12:00:00.000000Z' every 1h as (" +
+                    "create materialized view price_1h refresh every 1h start '2199-12-12T12:00:00.000000Z' as (" +
                             "select sym, last(price) as price, ts from base_price sample by 1h" +
                             ") partition by day"
             );
@@ -2858,8 +2844,9 @@ public class MatViewTest extends AbstractCairoTest {
                             "sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
             execute(
-                    "create materialized view price_1h refresh period start '2000-01-01T00:00:00.000000Z' length 4h immediate as " +
+                    "create materialized view price_1h refresh immediate period (length 4h) as " +
                             "select sym, last(price) as price, ts from base_price sample by 1h"
             );
             execute(
@@ -4469,7 +4456,7 @@ public class MatViewTest extends AbstractCairoTest {
         sink.clear();
         TimestampFormatUtils.appendDateTimeUSec(sink, start + n * Timestamps.SECOND_MICROS);
         execute(
-                "create materialized view price_1h_" + n + " refresh start '" + sink + "' every 1m as (" +
+                "create materialized view price_1h_" + n + " refresh every 1m start '" + sink + "' as (" +
                         "select sym, last(price) as price, ts from base_price sample by 1h" +
                         ") partition by day;"
         );
@@ -4681,8 +4668,9 @@ public class MatViewTest extends AbstractCairoTest {
                             "sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
             execute(
-                    "create materialized view price_1h refresh period start '2000-01-01T00:00:00.000000Z' length 1d " + viewType + " as " +
+                    "create materialized view price_1h refresh " + viewType + " period (length 1d)  as " +
                             "select sym, last(price) as price, ts from base_price sample by 1d"
             );
             execute(
@@ -4785,8 +4773,9 @@ public class MatViewTest extends AbstractCairoTest {
                             "sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
+            currentMicros = parseFloorPartialTimestamp("2020-01-01T00:00:00.000000Z");
             execute(
-                    "create materialized view price_1h refresh period start '2020-01-01T00:00:00.000000Z' time zone 'Europe/Berlin' length 1d delay 1h " + viewType + " as " +
+                    "create materialized view price_1h refresh " + viewType + " period (length 1d time zone 'Europe/Berlin' delay 1h) as " +
                             "select sym, last(price) as price, ts from base_price sample by 1d"
             );
             execute(
@@ -4894,13 +4883,13 @@ public class MatViewTest extends AbstractCairoTest {
 
             if (timeZone != null) {
                 execute(
-                        "create materialized view price_1h refresh start '" + start + "' time zone '" + timeZone + "' every h as (" +
+                        "create materialized view price_1h refresh every h start '" + start + "' time zone '" + timeZone + "' as (" +
                                 "select sym, last(price) as price, ts from base_price sample by 1h" +
                                 ") partition by day"
                 );
             } else {
                 execute(
-                        "create materialized view price_1h refresh start '" + start + "' every 1h as (" +
+                        "create materialized view price_1h refresh every 1h start '" + start + "' as (" +
                                 "select sym, last(price) as price, ts from base_price sample by 1h" +
                                 ") partition by day"
                 );
@@ -4973,13 +4962,13 @@ public class MatViewTest extends AbstractCairoTest {
 
             if (timeZone != null) {
                 execute(
-                        "create materialized view price_1h refresh start '" + start + "' time zone '" + timeZone + "' every " + every + " as (" +
+                        "create materialized view price_1h refresh every " + every + " start '" + start + "' time zone '" + timeZone + "' as (" +
                                 "select sym, last(price) as price, ts from base_price sample by 1h" +
                                 ") partition by day"
                 );
             } else {
                 execute(
-                        "create materialized view price_1h refresh start '" + start + "' every " + every + " as (" +
+                        "create materialized view price_1h refresh every " + every + " start '" + start + "' as (" +
                                 "select sym, last(price) as price, ts from base_price sample by 1h" +
                                 ") partition by day"
                 );

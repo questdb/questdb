@@ -97,42 +97,17 @@ public class MatViewTimerJob extends SynchronizedJob {
         }
         try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
             final long startEpsilon = configuration.getMatViewTimerStartEpsilon();
-            if (viewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
-                final long start = matViewMeta.getMatViewTimerStart();
-                final int interval = matViewMeta.getMatViewTimerInterval();
-                final char unit = matViewMeta.getMatViewTimerUnit();
-                final TimestampSampler sampler;
-                try {
-                    sampler = TimestampSamplerFactory.getInstance(interval, unit, -1);
-                } catch (SqlException e) {
-                    throw CairoException.critical(0).put("invalid EVERY interval and/or unit: ").put(interval)
-                            .put(", ").put(unit);
-                }
-                final Timer timer = new Timer(
-                        Timer.INCREMENTAL_REFRESH_TYPE,
-                        viewToken,
-                        sampler,
-                        viewDefinition.getTimerTzRules(),
-                        0,
-                        start,
-                        startEpsilon,
-                        now
-                );
-                timerQueue.add(timer);
-                LOG.info().$("registered timer for materialized view [view=").$(viewToken)
-                        .$(", start=").$ts(start)
-                        .$(", tz=").$(viewDefinition.getTimerTimeZone())
-                        .$(", interval=").$(interval).$(unit)
-                        .I$();
-            }
+            long timerStart = matViewMeta.getMatViewTimerStart();
+            TimeZoneRules timerTzRules = viewDefinition.getTimerTzRules();
 
             if (matViewMeta.getMatViewPeriodLength() > 0) {
+                // It's a period mat view, so first add the period timer.
                 final long start = matViewMeta.getMatViewTimerStart();
                 final int periodLength = matViewMeta.getMatViewPeriodLength();
                 final char periodLengthUnit = matViewMeta.getMatViewPeriodLengthUnit();
-                final TimestampSampler sampler;
+                final TimestampSampler periodSampler;
                 try {
-                    sampler = TimestampSamplerFactory.getInstance(periodLength, periodLengthUnit, -1);
+                    periodSampler = TimestampSamplerFactory.getInstance(periodLength, periodLengthUnit, -1);
                 } catch (SqlException e) {
                     throw CairoException.critical(0).put("invalid LENGTH interval and/or unit: ").put(periodLength)
                             .put(", ").put(periodLengthUnit);
@@ -140,22 +115,55 @@ public class MatViewTimerJob extends SynchronizedJob {
                 final int periodDelay = matViewMeta.getMatViewPeriodDelay();
                 final char periodDelayUnit = matViewMeta.getMatViewPeriodDelayUnit();
                 final long delay = periodDelayMicros(periodDelay, periodDelayUnit);
-                final Timer timer = new Timer(
+                final Timer periodTimer = new Timer(
                         Timer.PERIOD_REFRESH_TYPE,
                         viewToken,
-                        sampler,
+                        periodSampler,
                         viewDefinition.getTimerTzRules(),
                         delay,
                         start,
                         startEpsilon,
                         now
                 );
-                timerQueue.add(timer);
+                timerQueue.add(periodTimer);
                 LOG.info().$("registered period timer for materialized view [view=").$(viewToken)
                         .$(", start=").$ts(start)
                         .$(", tz=").$(viewDefinition.getTimerTimeZone())
                         .$(", length=").$(periodLength).$(periodLengthUnit)
                         .$(", delay=").$(periodDelay).$(periodDelayUnit)
+                        .I$();
+
+                // "Normal" timer start is volatile in case of period mat views.
+                timerStart = now;
+                timerTzRules = null;
+            }
+
+            if (viewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
+                // The view has timer refresh, so add a "normal" timer for it.
+                final int timerInterval = matViewMeta.getMatViewTimerInterval();
+                final char timerUnit = matViewMeta.getMatViewTimerUnit();
+                final TimestampSampler timerSampler;
+                try {
+                    timerSampler = TimestampSamplerFactory.getInstance(timerInterval, timerUnit, -1);
+                } catch (SqlException e) {
+                    throw CairoException.critical(0).put("invalid EVERY interval and/or unit: ").put(timerInterval)
+                            .put(", ").put(timerUnit);
+                }
+                final Timer timer = new Timer(
+                        Timer.INCREMENTAL_REFRESH_TYPE,
+                        viewToken,
+                        timerSampler,
+                        timerTzRules,
+                        0,
+                        timerStart,
+                        startEpsilon,
+                        now
+                );
+                timerQueue.add(timer);
+                LOG.info().$("registered timer for materialized view [view=").$(viewToken)
+                        .$(", start=").$ts(timerStart)
+                        .$(", tz=").$(viewDefinition.getTimerTimeZone())
+                        .$(", interval=").$(timerInterval).$(timerUnit)
                         .I$();
             }
         } catch (Throwable th) {

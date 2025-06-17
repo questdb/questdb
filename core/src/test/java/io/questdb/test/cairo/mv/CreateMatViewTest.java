@@ -1297,11 +1297,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            final String start = "2002-01-01T00:00:00.000000Z";
-            final long startEpoch = TimestampFormatUtils.parseTimestamp(start);
+            currentMicros = TimestampFormatUtils.parseTimestamp("2002-01-01T08:00:00.000000Z");
+            final long expectedStart = TimestampFormatUtils.parseTimestamp("2002-01-01T00:00:00.000000Z");
             final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute(
-                    "CREATE MATERIALIZED VIEW test REFRESH PERIOD START '" + start + "' TIME ZONE 'Europe/Berlin' LENGTH 1d DELAY 3h EVERY 6h AS (" +
+                    "CREATE MATERIALIZED VIEW test REFRESH EVERY 6h PERIOD (LENGTH 1d TIME ZONE 'Europe/Berlin' DELAY 3h) AS (" +
                             query +
                             ") PARTITION BY MONTH;"
             );
@@ -1312,7 +1312,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertEquals(0, metadata.getTimestampIndex());
                 assertFalse(metadata.isDedupKey(0));
                 assertFalse(metadata.isDedupKey(1));
-                assertEquals(startEpoch, metadata.getMatViewTimerStart());
+                assertEquals(expectedStart, metadata.getMatViewTimerStart());
                 assertEquals(6, metadata.getMatViewTimerInterval());
                 assertEquals('h', metadata.getMatViewTimerUnit());
                 assertEquals(1, metadata.getMatViewPeriodLength());
@@ -1328,11 +1328,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            final String start = "2002-01-01T00:00:00.000000Z";
-            final long startEpoch = TimestampFormatUtils.parseTimestamp(start);
+            currentMicros = TimestampFormatUtils.parseTimestamp("2002-01-01T12:00:00.000000Z");
+            final long expectedStart = TimestampFormatUtils.parseTimestamp("2002-01-01T12:00:00.000000Z");
             final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 60s";
             execute(
-                    "CREATE MATERIALIZED VIEW test REFRESH PERIOD START '" + start + "' LENGTH 8h MANUAL AS (" +
+                    "CREATE MATERIALIZED VIEW test REFRESH MANUAL PERIOD (LENGTH 12h) AS (" +
                             query +
                             ") PARTITION BY MONTH;"
             );
@@ -1343,10 +1343,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertEquals(0, metadata.getTimestampIndex());
                 assertFalse(metadata.isDedupKey(0));
                 assertFalse(metadata.isDedupKey(1));
-                assertEquals(startEpoch, metadata.getMatViewTimerStart());
+                assertEquals(expectedStart, metadata.getMatViewTimerStart());
                 assertEquals(0, metadata.getMatViewTimerInterval());
                 assertEquals(0, metadata.getMatViewTimerUnit());
-                assertEquals(8, metadata.getMatViewPeriodLength());
+                assertEquals(12, metadata.getMatViewPeriodLength());
                 assertEquals('h', metadata.getMatViewPeriodLengthUnit());
                 assertEquals(0, metadata.getMatViewPeriodDelay());
                 assertEquals(0, metadata.getMatViewPeriodDelayUnit());
@@ -1359,23 +1359,23 @@ public class CreateMatViewTest extends AbstractCairoTest {
         final String query = "select ts, k, avg(v) from " + TABLE1 + " sample by 30s";
         final DdlSerializationTest[] tests = new DdlSerializationTest[]{
                 new DdlSerializationTest(
-                        "create materialized view test1 refresh period start '2020-11-11T21:00:00.000000Z' time zone 'Europe/Sofia' length 12h delay 1h immediate as " + query,
-                        "create materialized view test1 with base " + TABLE1 + " refresh period start '2020-11-11T21:00:00.000000Z' time zone 'Europe/Sofia' length 12h delay 1h immediate " +
+                        "create materialized view test1 refresh immediate period (length 12h time zone 'Europe/Sofia' delay 1h) as " + query,
+                        "create materialized view test1 with base " + TABLE1 + " refresh immediate period (length 12h time zone 'Europe/Sofia' delay 1h) " +
                                 "as (select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00'))"
                 ),
                 new DdlSerializationTest(
-                        "create materialized view test2 refresh period start '2020-11-12T22:00:00.000000Z' time zone 'Europe/Sofia' length 10h delay 2h manual as " + query,
-                        "create materialized view test2 with base " + TABLE1 + " refresh period start '2020-11-12T22:00:00.000000Z' time zone 'Europe/Sofia' length 10h delay 2h manual " +
+                        "create materialized view test2 refresh manual period (length 10h time zone 'Europe/Sofia' delay 2h) as " + query,
+                        "create materialized view test2 with base " + TABLE1 + " refresh manual period (length 10h time zone 'Europe/Sofia' delay 2h) " +
                                 "as (select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00'))"
                 ),
                 new DdlSerializationTest(
-                        "create materialized view test3 refresh period start '2020-11-13T23:00:00.000000Z' time zone 'Europe/Sofia' length 8h delay 3h every 2d as " + query,
-                        "create materialized view test3 with base " + TABLE1 + " refresh period start '2020-11-13T23:00:00.000000Z' time zone 'Europe/Sofia' length 8h delay 3h every 2d " +
+                        "create materialized view test3 refresh every 2d period (length 8h time zone 'Europe/Sofia' delay 3h) as " + query,
+                        "create materialized view test3 with base " + TABLE1 + " refresh every 2d period (length 8h time zone 'Europe/Sofia' delay 3h) " +
                                 "as (select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00'))"
                 ),
                 new DdlSerializationTest(
-                        "CREATE MATERIALIZED VIEW 'test4' REFRESH PERIOD START '2020-11-14T00:00:00.000000Z' LENGTH 60m MANUAL AS (" + query + ")",
-                        "create materialized view test4 with base " + TABLE1 + " refresh period start '2020-11-14T00:00:00.000000Z' length 60m manual " +
+                        "CREATE MATERIALIZED VIEW 'test4' REFRESH MANUAL PERIOD (LENGTH 60m) AS (" + query + ")",
+                        "create materialized view test4 with base " + TABLE1 + " refresh manual period (length 60m) " +
                                 "as (select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00'))"
                 ),
         };
@@ -1457,7 +1457,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final long startEpoch = TimestampFormatUtils.parseTimestamp(start);
             final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute(
-                    "CREATE MATERIALIZED VIEW test REFRESH START '" + start + "' TIME ZONE 'Europe/Berlin' EVERY 5m AS (" +
+                    "CREATE MATERIALIZED VIEW test REFRESH EVERY 5m START '" + start + "' TIME ZONE 'Europe/Berlin' AS (" +
                             query +
                             ") PARTITION BY YEAR;"
             );
@@ -1520,9 +1520,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
         final String query = "select ts, k, avg(v) from " + TABLE1 + " sample by 30s";
         final DdlSerializationTest[] tests = new DdlSerializationTest[]{
                 new DdlSerializationTest(
-                        "create materialized view test refresh start '2021-01-01T01:01:00.000000Z' time zone 'Europe/Berlin' every 42m as " + query,
+                        "create materialized view test refresh every 42m start '2021-01-01T01:01:00.000000Z' time zone 'Europe/Berlin' as " + query,
                         "create materialized view test with base " + TABLE1 + " refresh " +
-                                "start '2021-01-01T01:01:00.000000Z' time zone 'Europe/Berlin' every 42m as (" +
+                                "every 42m start '2021-01-01T01:01:00.000000Z' time zone 'Europe/Berlin' as (" +
                                 "select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00')" +
                                 ")"
                 ),
@@ -1992,33 +1992,33 @@ public class CreateMatViewTest extends AbstractCairoTest {
         final DdlSerializationTest[] tests = new DdlSerializationTest[]{
                 new DdlSerializationTest(
                         "test1",
-                        "create materialized view test1 refresh period start '2020-11-11T21:00:00.000000Z' time zone 'Europe/Sofia' length 12h delay 1h immediate as " + query,
+                        "create materialized view test1 refresh immediate period (length 12h time zone 'Europe/Sofia' delay 1h) as " + query,
                         "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test1' WITH BASE '" + TABLE1 + "' REFRESH PERIOD START '2020-11-11T21:00:00.000000Z' TIME ZONE 'Europe/Sofia' LENGTH 12h DELAY 1h IMMEDIATE AS (\n" +
+                                "CREATE MATERIALIZED VIEW 'test1' WITH BASE '" + TABLE1 + "' REFRESH IMMEDIATE PERIOD (LENGTH 12h TIME ZONE 'Europe/Sofia' DELAY 1h) AS (\n" +
                                 "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
                                 ") PARTITION BY DAY;\n"
                 ),
                 new DdlSerializationTest(
                         "test2",
-                        "create materialized view test2 refresh period start '2020-11-12T22:00:00.000000Z' time zone 'Europe/Sofia' length 10h delay 2h manual as " + query,
+                        "create materialized view test2 refresh manual period (length 10h time zone 'Europe/Sofia' delay 2h) as " + query,
                         "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test2' WITH BASE '" + TABLE1 + "' REFRESH PERIOD START '2020-11-12T22:00:00.000000Z' TIME ZONE 'Europe/Sofia' LENGTH 10h DELAY 2h MANUAL AS (\n" +
+                                "CREATE MATERIALIZED VIEW 'test2' WITH BASE '" + TABLE1 + "' REFRESH MANUAL PERIOD (LENGTH 10h TIME ZONE 'Europe/Sofia' DELAY 2h) AS (\n" +
                                 "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
                                 ") PARTITION BY DAY;\n"
                 ),
                 new DdlSerializationTest(
                         "test3",
-                        "create materialized view test3 refresh period start '2020-11-13T23:00:00.000000Z' time zone 'Europe/Sofia' length 8h delay 3h every 2d as " + query,
+                        "create materialized view test3 refresh every 2d period(length 8h time zone 'Europe/Sofia' delay 3h) as " + query,
                         "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test3' WITH BASE '" + TABLE1 + "' REFRESH PERIOD START '2020-11-13T23:00:00.000000Z' TIME ZONE 'Europe/Sofia' LENGTH 8h DELAY 3h EVERY 2d AS (\n" +
+                                "CREATE MATERIALIZED VIEW 'test3' WITH BASE '" + TABLE1 + "' REFRESH EVERY 2d PERIOD (LENGTH 8h TIME ZONE 'Europe/Sofia' DELAY 3h) AS (\n" +
                                 "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
                                 ") PARTITION BY DAY;\n"
                 ),
                 new DdlSerializationTest(
                         "test4",
-                        "CREATE MATERIALIZED VIEW 'test4' REFRESH PERIOD START '2020-11-14T00:00:00.000000Z' LENGTH 60m MANUAL AS (" + query + ")",
+                        "CREATE MATERIALIZED VIEW 'test4' REFRESH MANUAL PERIOD (LENGTH 60m) AS (" + query + ")",
                         "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test4' WITH BASE '" + TABLE1 + "' REFRESH PERIOD START '2020-11-14T00:00:00.000000Z' LENGTH 60m MANUAL AS (\n" +
+                                "CREATE MATERIALIZED VIEW 'test4' WITH BASE '" + TABLE1 + "' REFRESH MANUAL PERIOD (LENGTH 60m) AS (\n" +
                                 "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
                                 ") PARTITION BY DAY;\n"
                 ),
@@ -2032,9 +2032,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
         final DdlSerializationTest[] tests = new DdlSerializationTest[]{
                 new DdlSerializationTest(
                         "test",
-                        "create materialized view test refresh start '2020-01-01T02:23:59.900000Z' time zone 'Europe/Paris' every 7d as " + query,
+                        "create materialized view test refresh every 7d start '2020-01-01T02:23:59.900000Z' time zone 'Europe/Paris' as " + query,
                         "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test' WITH BASE 'table1' REFRESH START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' EVERY 7d AS (\n" +
+                                "CREATE MATERIALIZED VIEW 'test' WITH BASE 'table1' REFRESH EVERY 7d START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (\n" +
                                 "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
                                 ") PARTITION BY DAY;\n"
                 ),

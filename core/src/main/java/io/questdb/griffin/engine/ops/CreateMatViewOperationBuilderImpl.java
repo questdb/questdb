@@ -140,44 +140,39 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
             sink.put(baseTableName);
         }
         sink.putAscii(" refresh");
-        if (createTableOperationBuilder.getMatViewPeriodLength() > 0) {
-            sink.putAscii(" period start '");
-            sink.putISODate(createTableOperationBuilder.getMatViewTimerStart());
-            if (timerTimeZone != null) {
-                sink.putAscii("' time zone '");
-                sink.put(timerTimeZone);
+        if (refreshType == MatViewDefinition.TIMER_REFRESH_TYPE) {
+            sink.putAscii(" every ");
+            sink.put(createTableOperationBuilder.getMatViewTimerInterval());
+            sink.putAscii(createTableOperationBuilder.getMatViewTimerUnit());
+            if (createTableOperationBuilder.getMatViewPeriodLength() == 0) {
+                sink.putAscii(" start '");
+                sink.putISODate(createTableOperationBuilder.getMatViewTimerStart());
+                if (timerTimeZone != null) {
+                    sink.putAscii("' time zone '");
+                    sink.put(timerTimeZone);
+                }
+                sink.putAscii('\'');
             }
-            sink.putAscii("' length ");
+        } else if (refreshType == MatViewDefinition.IMMEDIATE_REFRESH_TYPE) {
+            sink.putAscii(" immediate");
+        } else if (refreshType == MatViewDefinition.MANUAL_REFRESH_TYPE) {
+            sink.putAscii(" manual");
+        }
+        if (createTableOperationBuilder.getMatViewPeriodLength() > 0) {
+            sink.putAscii(" period (length ");
             sink.put(createTableOperationBuilder.getMatViewPeriodLength());
             sink.putAscii(createTableOperationBuilder.getMatViewPeriodLengthUnit());
+            if (timerTimeZone != null) {
+                sink.putAscii(" time zone '");
+                sink.put(timerTimeZone);
+                sink.putAscii('\'');
+            }
             if (createTableOperationBuilder.getMatViewPeriodDelay() > 0) {
                 sink.putAscii(" delay ");
                 sink.put(createTableOperationBuilder.getMatViewPeriodDelay());
                 sink.putAscii(createTableOperationBuilder.getMatViewPeriodDelayUnit());
             }
-            if (refreshType == MatViewDefinition.TIMER_REFRESH_TYPE) {
-                sink.putAscii(" every ");
-                sink.put(createTableOperationBuilder.getMatViewTimerInterval());
-                sink.putAscii(createTableOperationBuilder.getMatViewTimerUnit());
-            } else if (refreshType == MatViewDefinition.IMMEDIATE_REFRESH_TYPE) {
-                sink.putAscii(" immediate");
-            } else if (refreshType == MatViewDefinition.MANUAL_REFRESH_TYPE) {
-                sink.putAscii(" manual");
-            }
-        } else if (refreshType == MatViewDefinition.TIMER_REFRESH_TYPE) {
-            sink.putAscii(" start '");
-            sink.putISODate(createTableOperationBuilder.getMatViewTimerStart());
-            if (timerTimeZone != null) {
-                sink.putAscii("' time zone '");
-                sink.put(timerTimeZone);
-            }
-            sink.putAscii("' every ");
-            sink.put(createTableOperationBuilder.getMatViewTimerInterval());
-            sink.putAscii(createTableOperationBuilder.getMatViewTimerUnit());
-        } else if (refreshType == MatViewDefinition.IMMEDIATE_REFRESH_TYPE) {
-            sink.putAscii(" immediate");
-        } else if (refreshType == MatViewDefinition.MANUAL_REFRESH_TYPE) {
-            sink.putAscii(" manual");
+            sink.putAscii(')');
         }
         sink.putAscii(" as (");
         if (createTableOperationBuilder.getQueryModel() != null) {
