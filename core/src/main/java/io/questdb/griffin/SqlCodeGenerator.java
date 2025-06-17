@@ -1466,6 +1466,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     case SYMBOL:
                         if (selfJoin && masterIndex == slaveIndex) {
                             // self join on the same column -> there is no point in attempting short-circuiting
+                            // NOTE: This check is naive, it can generate false positives
+                            //       For example 'select t1.s, t2.s2 from t as t1 asof join t as t2 on t1.s = t2.s2'
+                            //       This is deemed as a self-join (which it is), and due to the way columns are projected
+                            //       it will take this branch (even when it fact it's comparing different columns)
+                            //       and won't create a short circuit. This is OK from correctness perspective,
+                            //       but it is a missed opportunity for performance optimization. doing a perfect check
+                            //       would require a more complex logic, which is not worth it for now
                             continue;
                         }
                         newSymbolShortCircuit = new SingleSymbolSymbolShortCircuit(configuration, masterIndex, slaveIndex);
