@@ -1681,6 +1681,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateAsSelectErrorPosition() throws Exception {
+        assertSyntaxError(
+                "create table tmp as (select rnd_symbol(10) sym from long_sequence(10));",
+                39,
+                "STRING constant expected"
+        );
+    }
+
+    @Test
     public void testCreateAsSelectInvalidIndex() throws Exception {
         assertSyntaxError(
                 "create table X as ( select a, b, c from tab ), index(x)",
