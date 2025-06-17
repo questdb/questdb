@@ -1452,7 +1452,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
-    private @NotNull SymbolShortCircuit createSymbolShortCircut(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, boolean selfJoin) {
+    private @NotNull SymbolShortCircuit createSymbolShortCircuit(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, boolean selfJoin) {
         SymbolShortCircuit symbolShortCircuit = DisabledSymbolShortCircuit.INSTANCE;
         assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
         SymbolShortCircuit[] symbolShortCircuits = null;
@@ -2606,7 +2606,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         if (!asOfAvoidBinarySearch) {
                                             if (slave.supportsTimeFrameCursor() && fastAsOfJoins) {
                                                 // support for short-circuiting when joining on a single symbol column and the slave table does not have a matching key
-                                                SymbolShortCircuit symbolShortCircuit = createSymbolShortCircut(masterMetadata, slaveMetadata, selfJoin);
+                                                SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
 
                                                 master = new AsOfJoinFastRecordCursorFactory(
                                                         configuration,
