@@ -402,9 +402,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             this.ddlMem = Vm.getCMARWInstance();
             // Read txn file, without accurately specifying partitionBy.
-            // We need the lastest txn to check if the _meta file needs to be repaired.
-            this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$());
-            path.trimTo(pathSize);
+            // We need the latest txn to check if the _meta file needs to be repaired,
+            // then we will read _meta file and initialize patitionBy in txWriter
+            try {
+                this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$());
+                path.trimTo(pathSize);
+            } catch (CairoException ex) {
+                // This is very first time we open the table, so there is no txn file.
+                // it means that the table does not exist.
+                if (ex.errnoFileCannotRead()) {
+                    throw CairoException.tableDoesNotExist(tableToken.getTableName());
+                }
+                throw ex;
+            }
             int todo = readTodo(txWriter.txn);
             if (todo == TODO_RESTORE_META) {
                 repairMetaRename((int) todoMem.getLong(48));
@@ -2806,21 +2816,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (Throwable e) {
             handleHousekeepingException(e);
         }
-    }
-
-    private void handleHousekeepingException(Throwable e) {
-        // Log the exception stack.
-        LOG.error().$("data has been persisted, but we could not perform housekeeping [table=").$(tableToken)
-                .$(", error=").$(e)
-                .I$();
-        CairoException ex;
-        if (e instanceof Sinkable) {
-            ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put((Sinkable) e).put(']');
-        } else {
-            ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put(e.getMessage()).put(']');
-        }
-        ex.setHousekeeping(true);
-        throw ex;
     }
 
     @Override
@@ -5404,6 +5399,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             lastErrno = O3_ERRNO_FATAL;
             logRecord.$(", ex=").$(e).I$();
         }
+    }
+
+    private void handleHousekeepingException(Throwable e) {
+        // Log the exception stack.
+        LOG.error().$("data has been persisted, but we could not perform housekeeping [table=").$(tableToken)
+                .$(", error=").$(e)
+                .I$();
+        CairoException ex;
+        if (e instanceof Sinkable) {
+            ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put((Sinkable) e).put(']');
+        } else {
+            ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put(e.getMessage()).put(']');
+        }
+        ex.setHousekeeping(true);
+        throw ex;
     }
 
     private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, boolean isIndexed, CharSequence newName, int columnType, boolean symbolCapacityChange) {
@@ -8687,16 +8697,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private int readTodo(long tableTxn) {
         long todoCount;
-        try {
-            // This is the first FS call the table directory.
-            // If table is removed / renamed, this should fail with table does not exist.
-            todoCount = openTodoMem(tableTxn);
-        } catch (CairoException ex) {
-            if (ex.errnoFileCannotRead()) {
-                throw CairoException.tableDoesNotExist(tableToken.getTableName());
-            }
-            throw ex;
-        }
+        // This is the first FS call the table directory.
+        // If table is removed / renamed, this should fail with table does not exist.
+        todoCount = openTodoMem(tableTxn);
+
         int todo;
         if (todoCount > 0) {
             todo = (int) todoMem.getLong(40);
