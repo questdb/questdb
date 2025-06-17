@@ -268,7 +268,12 @@ public final class Utf8s {
         }
         final int lSize = l.size();
         return lSize == r.size() && l.zeroPaddedSixPrefix() == r.zeroPaddedSixPrefix()
-                && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, lSize);
+                && dataEquals(
+                l,
+                r,
+                VARCHAR_INLINED_PREFIX_BYTES,
+                lSize
+        );
     }
 
     public static boolean equals(@NotNull Utf8Sequence l, int lLo, int lHi, @NotNull Utf8Sequence r, int rLo, int rHi) {
@@ -373,10 +378,6 @@ public final class Utf8s {
             }
         }
         return true;
-    }
-
-    public static boolean equalsIgnoreCaseNcAscii(@NotNull CharSequence asciiSeq, @Nullable Utf8Sequence seq) {
-        return seq != null && equalsIgnoreCaseAscii(asciiSeq, seq);
     }
 
     public static boolean equalsNcAscii(@NotNull CharSequence asciiSeq, @Nullable Utf8Sequence seq) {
@@ -1431,12 +1432,22 @@ public final class Utf8s {
                 return false;
             }
         }
-        for (; i < limit; i++) {
-            if (l.byteAt(i) != r.byteAt(i)) {
+
+        if (i <= limit - Integer.BYTES) {
+            if (l.intAt(i) != r.intAt(i)) {
                 return false;
             }
+            i += Integer.BYTES;
         }
-        return true;
+
+        if (i <= limit - Short.BYTES) {
+            if (l.shortAt(i) != r.shortAt(i)) {
+                return false;
+            }
+            i += Short.BYTES;
+        }
+
+        return i >= limit  || l.byteAt(i) == r.byteAt(i);
     }
 
     private static int encodeUtf16Surrogate(@NotNull Utf8Sink sink, char c, @NotNull CharSequence in, int pos, int hi) {

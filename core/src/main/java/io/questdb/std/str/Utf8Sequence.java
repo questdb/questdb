@@ -86,6 +86,21 @@ public interface Utf8Sequence extends ByteSequence {
         return result;
     }
 
+    default int intAt(int offset) {
+        int result = 0;
+        for (int i = offset; i < offset + Integer.BYTES; i++) {
+            result |= (byteAt(i) & 0xff) << (8 * (i - offset));
+        }
+        return result;
+    }
+
+    default int shortAt(int offset) {
+        int result = 0;
+        result |= byteAt(offset) & 0xff;
+        result |= (byteAt(offset + 1) & 0xff) << 8;
+        return result;
+    }
+
     /**
      * For off-heap sequences returns address of the first character.
      * For on-heap sequences returns -1.
