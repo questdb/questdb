@@ -52,7 +52,7 @@ public final class SingleVarcharSymbolShortCircuit implements SymbolShortCircuit
         }
         utf16Sink.clear();
         utf16Sink.put(masterVarchar);
-        return slaveSymbolTable.keyOf(masterVarchar.asAsciiCharSequence()) == StaticSymbolTable.VALUE_NOT_FOUND;
+        return slaveSymbolTable.keyOf(utf16Sink) == StaticSymbolTable.VALUE_NOT_FOUND;
     }
 
     @Override
