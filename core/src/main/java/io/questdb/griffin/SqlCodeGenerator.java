@@ -2581,6 +2581,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case JOIN_ASOF:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "ASOF");
+                                // note: the self-join is imperfect and might generate false negatives when using subqueries
+                                // rules: 1. when it returns `true` it means that the join is self-join for sure
+                                //        2. when it returns `false` it means that the join may or may not be self-join
                                 boolean selfJoin = isSameTable(master, slave);
                                 processJoinContext(index == 1, selfJoin, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
