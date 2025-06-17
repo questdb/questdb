@@ -490,7 +490,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             response.putAscii("null");
             return;
         }
-        response.putAscii('"').putISODate(t, driver).putAscii('"');
+        response.putAscii('"').putISODate(driver, t).putAscii('"');
     }
 
     private static void putUuidValue(HttpChunkedResponse response, Record rec, int col) {

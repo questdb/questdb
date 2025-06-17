@@ -27,6 +27,8 @@ package io.questdb.cutlass.line.http;
 import io.questdb.BuildInformationHolder;
 import io.questdb.ClientTlsConfiguration;
 import io.questdb.HttpClientConfiguration;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.HttpConstants;
@@ -49,7 +51,6 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.bytes.DirectByteSlice;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
@@ -262,14 +263,24 @@ public abstract class AbstractLineHttpSender implements Sender {
 
     @Override
     public void at(long timestamp, ChronoUnit unit) {
-        request.putAscii(' ').put(Timestamps.toMicros(timestamp, unit)).put('t');
+        request.putAscii(' ');
+        // todo. Not efficient for timestamp > Long.MAX_VALUE, consider introduce a conf like 'timestamp_transmit_use_nanos' ?
+        try {
+            request.put(NanosTimestampDriver.INSTANCE.from(timestamp, unit));
+        } catch (ArithmeticException e) {
+            request.put(MicrosTimestampDriver.INSTANCE.from(timestamp, unit)).put('t');
+        }
         atNow();
     }
 
     @Override
     public void at(Instant timestamp) {
-        long micros = timestamp.getEpochSecond() * Timestamps.SECOND_MICROS + timestamp.getNano() / 1_000;
-        request.putAscii(' ').put(micros).put('t');
+        request.putAscii(' ');
+        try {
+            request.put(NanosTimestampDriver.INSTANCE.from(timestamp));
+        } catch (ArithmeticException e) {
+            request.put(MicrosTimestampDriver.INSTANCE.from(timestamp)).put('t');
+        }
         atNow();
     }
 
@@ -402,17 +413,23 @@ public abstract class AbstractLineHttpSender implements Sender {
 
     @Override
     public Sender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
-        // micros
-        writeFieldName(name).put(Timestamps.toMicros(value, unit)).put('t');
+        writeFieldName(name);
+        try {
+            request.put(NanosTimestampDriver.INSTANCE.from(value, unit)).putAscii('n');
+        } catch (ArithmeticException e) {
+            request.put(MicrosTimestampDriver.INSTANCE.from(value, unit)).putAscii('t');
+        }
         return this;
     }
 
     @Override
     public Sender timestampColumn(CharSequence name, Instant value) {
-        // micros
-        writeFieldName(name)
-                .put((value.getEpochSecond() * Timestamps.SECOND_MICROS + value.getNano() / 1000L))
-                .put('t');
+        writeFieldName(name);
+        try {
+            request.put(NanosTimestampDriver.INSTANCE.from(value)).putAscii('n');
+        } catch (ArithmeticException e) {
+            request.put(MicrosTimestampDriver.INSTANCE.from(value)).putAscii('t');
+        }
         return this;
     }
 

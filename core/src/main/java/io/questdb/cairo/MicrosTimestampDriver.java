@@ -42,6 +42,10 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+
 import static io.questdb.cairo.PartitionBy.*;
 import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -213,6 +217,30 @@ public class MicrosTimestampDriver implements TimestampDriver {
             return true;
         }
         return false;
+    }
+
+    @Override
+    public long from(long value, ChronoUnit unit) {
+        switch (unit) {
+            case NANOS:
+                return value / 1_000;
+            case MICROS:
+                return value;
+            case MILLIS:
+                return Math.multiplyExact(value, 1_000);
+            case SECONDS:
+                return Math.multiplyExact(value, 1_000_000);
+            default:
+                Duration duration = unit.getDuration();
+                long micros = Math.multiplyExact(duration.getSeconds(), 1_000_000L);
+                micros = Math.addExact(micros, duration.getNano() / 1_000);
+                return Math.multiplyExact(micros, value);
+        }
+    }
+
+    @Override
+    public long from(Instant instant) {
+        return Math.addExact(Math.multiplyExact(instant.getEpochSecond(), Timestamps.SECOND_MICROS), instant.getNano() / 1000);
     }
 
     @Override

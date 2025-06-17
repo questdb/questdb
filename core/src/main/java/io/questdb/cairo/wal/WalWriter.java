@@ -130,6 +130,7 @@ public class WalWriter implements TableWriterAPI {
     private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
+    private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
@@ -165,7 +166,6 @@ public class WalWriter implements TableWriterAPI {
     private long txnMinTimestamp = Long.MAX_VALUE;
     private boolean txnOutOfOrder = false;
     private long walLockFd = -1;
-    private final TimestampDriver timestampDriver;
 
     public WalWriter(
             CairoConfiguration configuration,
@@ -989,9 +989,9 @@ public class WalWriter implements TableWriterAPI {
                             .$(", segTxn=").$(lastSegmentTxn)
                             .$(", seqTxn=").$(seqTxn)
                             .$(", rowLo=").$(currentTxnStartRowNum).$(", rowHi=").$(segmentRowCount)
-                            .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp);
+                            .$(", minTs=").$ts(timestampDriver, txnMinTimestamp).$(", maxTs=").$ts(timestampDriver, txnMaxTimestamp);
                     if (replaceRangeHiTs > replaceRangeLowTs) {
-                        logLine.$(", replaceRangeLo=").$ts(replaceRangeLowTs).$(", replaceRangeHi=").$ts(replaceRangeHiTs);
+                        logLine.$(", replaceRangeLo=").$ts(timestampDriver, replaceRangeLowTs).$(", replaceRangeHi=").$ts(timestampDriver, replaceRangeHiTs);
                     }
                 } finally {
                     logLine.I$();

@@ -31,8 +31,32 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.time.temporal.ChronoUnit;
+
 public class MicroTimestampDriverTest extends AbstractCairoTest {
     TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_MICRO);
+
+    @Test
+    public void testFromChronosUnit() throws Exception {
+        Assert.assertEquals(1, driver.from(1000, ChronoUnit.NANOS));
+        Assert.assertEquals(1, driver.from(1, ChronoUnit.MICROS));
+        Assert.assertEquals(1000, driver.from(1, ChronoUnit.MILLIS));
+        Assert.assertEquals(1_000_000, driver.from(1, ChronoUnit.SECONDS));
+
+        Assert.assertEquals(60 * 1000 * 1000, driver.from(1, ChronoUnit.MINUTES));
+        Assert.assertEquals(Long.MAX_VALUE, driver.from(Long.MAX_VALUE, ChronoUnit.MICROS));
+
+        Assert.assertEquals(driver.from(1, ChronoUnit.HOURS), driver.from(60, ChronoUnit.MINUTES));
+        Assert.assertEquals(0, driver.from(0, ChronoUnit.NANOS));
+        Assert.assertEquals(0, driver.from(0, ChronoUnit.MICROS));
+        Assert.assertEquals(0, driver.from(0, ChronoUnit.MILLIS));
+        Assert.assertEquals(0, driver.from(0, ChronoUnit.SECONDS));
+        Assert.assertEquals(0, driver.from(0, ChronoUnit.MINUTES));
+
+        // micros values remain unchanged
+        Assert.assertEquals(123456789L, driver.from(123456789L, ChronoUnit.MICROS));
+        Assert.assertEquals(123456789L, driver.from(123456789000L, ChronoUnit.NANOS));
+    }
 
     @Test
     public void testFromTimestampUnit() throws Exception {

@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.line.tcp;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
@@ -112,8 +113,8 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected int msgBufferSize = 256 * 1024;
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     protected int partitionByDefault = PartitionBy.DAY;
+    protected int timestampType = ColumnType.TIMESTAMP_MICRO;
     protected boolean useLegacyStringDefault = true;
-
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration(configuration) {
         @Override
         public boolean getAutoCreateNewColumns() {
@@ -142,6 +143,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public double getCommitIntervalFraction() {
             return commitIntervalFraction;
+        }
+
+        @Override
+        public int getDefaultColumnTypeForTimestamp() {
+            return timestampType;
         }
 
         @Override

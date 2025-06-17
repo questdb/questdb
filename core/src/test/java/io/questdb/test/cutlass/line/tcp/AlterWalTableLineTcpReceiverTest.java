@@ -25,7 +25,15 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -34,7 +42,12 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -98,6 +111,71 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     public void testAlterCommandDropAllPartitions() throws Exception {
         long day1 = MicrosTimestampDriver.floor("2023-02-27") * 1000;
         long day2 = MicrosTimestampDriver.floor("2023-02-28") * 1000;
+        runInContext((server) -> {
+            final AtomicLong ilpProducerWatts = new AtomicLong(0L);
+            final AtomicBoolean keepSending = new AtomicBoolean(true);
+            final AtomicReference<Throwable> ilpProducerProblem = new AtomicReference<>();
+            final SOCountDownLatch ilpProducerHalted = new SOCountDownLatch(1);
+
+            final Thread ilpProducer = new Thread(() -> {
+                String lineTpt = "plug,room=6A watts=\"%di\" %d%n";
+                try {
+                    while (keepSending.get()) {
+                        try {
+                            long watts = ilpProducerWatts.getAndIncrement();
+                            long day = (watts + 1) % 4 == 0 ? day1 : day2;
+                            String lineData = String.format(lineTpt, watts, day);
+                            send(lineData);
+                            LOG.info().$("sent: ").$(lineData).$();
+                        } catch (Throwable unexpected) {
+                            ilpProducerProblem.set(unexpected);
+                            keepSending.set(false);
+                            break;
+                        }
+                    }
+                } finally {
+                    LOG.info().$("sender finished").$();
+                    Path.clearThreadLocals();
+                    ilpProducerHalted.countDown();
+                }
+            }, "ilp-producer");
+            ilpProducer.start();
+
+            final AtomicReference<SqlException> partitionDropperProblem = new AtomicReference<>();
+
+            final Thread partitionDropper = new Thread(() -> {
+                while (ilpProducerWatts.get() < 20) {
+                    Os.pause();
+                }
+                LOG.info().$("ABOUT TO DROP PARTITIONS").$();
+                try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    engine.execute("ALTER TABLE plug DROP PARTITION WHERE timestamp > 0", sqlExecutionContext, scSequence);
+                } catch (SqlException e) {
+                    partitionDropperProblem.set(e);
+                } finally {
+                    Path.clearThreadLocals();
+                    // a few rows may have made it into the active partition,
+                    // as dropping it is concurrent with inserting
+                    keepSending.set(false);
+                }
+
+            }, "partition-dropper");
+            partitionDropper.start();
+
+            ilpProducerHalted.await();
+
+            drainWalQueue();
+
+            Assert.assertNull(ilpProducerProblem.get());
+            Assert.assertNull(partitionDropperProblem.get());
+        }, true, 50L);
+    }
+
+    @Test
+    public void testAlterCommandDropAllPartitionsWithNano() throws Exception {
+        long day1 = NanosTimestampDriver.floor("2023-02-27");
+        long day2 = NanosTimestampDriver.floor("2023-02-28");
+        timestampType = ColumnType.TIMESTAMP_NANO;
         runInContext((server) -> {
             final AtomicLong ilpProducerWatts = new AtomicLong(0L);
             final AtomicBoolean keepSending = new AtomicBoolean(true);

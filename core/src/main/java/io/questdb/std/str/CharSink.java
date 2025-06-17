@@ -199,7 +199,7 @@ public interface CharSink<T extends CharSink<?>> {
         return (T) this;
     }
 
-    default T putISODate(long value, TimestampDriver driver) {
+    default T putISODate(TimestampDriver driver, long value) {
         driver.append(this, value);
         return (T) this;
     }

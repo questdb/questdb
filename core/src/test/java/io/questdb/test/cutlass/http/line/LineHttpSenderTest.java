@@ -823,7 +823,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     flushAndAssertError(
                             sender,
                             "Could not flush buffer",
-                            "error in line 1: table: tab, timestamp: -1; designated timestamp before 1970-01-01 is not allowed"
+                            "error in line 1: table: tab, timestamp: -1000; designated timestamp before 1970-01-01 is not allowed"
                     );
                 }
             }

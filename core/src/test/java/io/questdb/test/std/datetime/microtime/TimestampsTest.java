@@ -40,8 +40,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.time.temporal.ChronoUnit;
-
 import static io.questdb.cairo.PartitionBy.getPartitionDirFormatMethod;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
@@ -722,28 +720,6 @@ public class TimestampsTest {
         long micros = TimestampFormatUtils.parseTimestamp("2017-04-06T00:00:00.000Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.previousOrSameDayOfWeek(micros, 4));
         TestUtils.assertEquals("2017-04-06T00:00:00.000Z", sink);
-    }
-
-    @Test
-    public void testToMicros() {
-        Assert.assertEquals(1, Timestamps.toMicros(1000, ChronoUnit.NANOS));
-        Assert.assertEquals(1, Timestamps.toMicros(1, ChronoUnit.MICROS));
-        Assert.assertEquals(1000, Timestamps.toMicros(1, ChronoUnit.MILLIS));
-        Assert.assertEquals(1_000_000, Timestamps.toMicros(1, ChronoUnit.SECONDS));
-
-        Assert.assertEquals(60 * 1000 * 1000, Timestamps.toMicros(1, ChronoUnit.MINUTES));
-        Assert.assertEquals(Long.MAX_VALUE, Timestamps.toMicros(Long.MAX_VALUE, ChronoUnit.MICROS));
-
-        Assert.assertEquals(Timestamps.toMicros(1, ChronoUnit.HOURS), Timestamps.toMicros(60, ChronoUnit.MINUTES));
-        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.NANOS));
-        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.MICROS));
-        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.MILLIS));
-        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.SECONDS));
-        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.MINUTES));
-
-        // micros values remain unchanged
-        Assert.assertEquals(123456789L, Timestamps.toMicros(123456789L, ChronoUnit.MICROS));
-        Assert.assertEquals(123456789L, Timestamps.toMicros(123456789000L, ChronoUnit.NANOS));
     }
 
     @Test(expected = NumericException.class)

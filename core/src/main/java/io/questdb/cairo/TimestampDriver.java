@@ -35,6 +35,9 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+
 import static io.questdb.griffin.SqlUtil.castPGDates;
 
 public interface TimestampDriver {
@@ -67,6 +70,10 @@ public interface TimestampDriver {
 
     // todo: explore static ref
     boolean convertToVar(long fixedAddr, CharSink<?> stringSink);
+
+    long from(long value, ChronoUnit unit);
+
+    long from(Instant instant);
 
     long from(long timestamp, int timestampType);
 

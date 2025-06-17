@@ -38,9 +38,6 @@ import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 
-import java.time.Duration;
-import java.time.temporal.ChronoUnit;
-
 import static io.questdb.std.datetime.CommonUtils.DAYS_PER_MONTH;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
@@ -984,31 +981,6 @@ public final class Timestamps {
                 return -(CommonUtils.YEAR_MONTHS * value);
             default:
                 throw new AssertionError("invalid value for partitionByUnit: " + partitionByUnit);
-        }
-    }
-
-    /**
-     * Convert a timestamp in arbitrary units to microseconds.
-     *
-     * @param value timestamp value
-     * @param unit  timestamp unit
-     * @return timestamp in microseconds
-     */
-    public static long toMicros(long value, ChronoUnit unit) {
-        switch (unit) {
-            case NANOS:
-                return value / 1_000;
-            case MICROS:
-                return value;
-            case MILLIS:
-                return value * 1_000;
-            case SECONDS:
-                return value * 1_000_000;
-            default:
-                Duration duration = unit.getDuration();
-                long micros = duration.getSeconds() * 1_000_000L;
-                micros += duration.getNano() / 1_000;
-                return micros * value;
         }
     }
 

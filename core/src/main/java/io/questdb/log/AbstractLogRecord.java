@@ -25,6 +25,7 @@
 package io.questdb.log;
 
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.network.Net;
@@ -288,6 +289,12 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     @Override
     public LogRecord $ts(long x) {
         sink().putISODate(x);
+        return this;
+    }
+
+    @Override
+    public LogRecord $ts(TimestampDriver driver, long x) {
+        sink().putISODate(driver, x);
         return this;
     }
 
