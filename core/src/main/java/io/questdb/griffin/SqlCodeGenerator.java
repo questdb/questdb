@@ -857,7 +857,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 return !(loFunc.getLong(null) >= 0 && hiFunc.getLong(null) < 0);
             } catch (SqlException ex) {
-                LOG.error().$("Failed to initialize lo or hi functions [").$("error=").$(ex.getMessage()).I$();
+                LOG.error().$("Failed to initialize lo or hi functions [").$("error=").utf8(ex.getMessage()).I$();
             }
         }
 
@@ -2269,7 +2269,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     Misc.free(compiledFilter);
                     LOG.debug()
                             .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())
-                            .$(", ex=").$(ex.getFlyweightMessage())
+                            .$(", ex=").utf8(ex.getFlyweightMessage())
                             .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
                 } finally {
                     jitIRSerializer.clear();

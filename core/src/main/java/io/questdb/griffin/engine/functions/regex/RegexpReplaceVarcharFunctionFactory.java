@@ -35,8 +35,18 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.regex.Matcher;
@@ -275,12 +285,12 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         }
 
         @Override
-        public boolean isThreadSafe() {
+        public boolean isRuntimeConstant() {
             return false;
         }
 
         @Override
-        public boolean isRuntimeConstant() {
+        public boolean isThreadSafe() {
             return false;
         }
 
@@ -379,12 +389,12 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         }
 
         @Override
-        public boolean isThreadSafe() {
+        public boolean isRuntimeConstant() {
             return false;
         }
 
         @Override
-        public boolean isRuntimeConstant() {
+        public boolean isThreadSafe() {
             return false;
         }
 

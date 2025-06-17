@@ -158,7 +158,7 @@ public class ColumnPurgeOperator implements Closeable {
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
                     .utf8(task.getTableName().getTableName())
                     .$(", txn=").$(updateTxn)
-                    .$(", msg=").$(ex.getFlyweightMessage())
+                    .$(", msg=").utf8(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             return true;
