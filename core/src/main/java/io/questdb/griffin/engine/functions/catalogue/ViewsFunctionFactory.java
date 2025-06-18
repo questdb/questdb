@@ -151,7 +151,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
                                     reader.of(path.trimTo(pathLen).concat(viewToken.getDirName()).concat(ViewState.VIEW_STATE_FILE_NAME).$());
                                     viewStateReader.of(reader, viewToken);
                                 } catch (CairoException e) {
-                                    LOG.info().$("could not read view state file [view=").utf8(viewToken.getTableName())
+                                    LOG.info().$("could not read view state file [view=").$(viewToken)
                                             .$(", msg=").$(e.getFlyweightMessage())
                                             .$(", errno=").$(e.getErrno())
                                             .I$();

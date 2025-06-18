@@ -381,13 +381,13 @@ public class CairoEngine implements Closeable, WriterSource {
                         if (state != null) {
                             path.trimTo(pathLen).concat(tableToken);
                             if (!WalUtils.readViewState(path, tableToken, configuration, txnMem, walEventReader, reader, viewStateReader)) {
-                                LOG.info().$("could not find view state, [view=").utf8(tableToken.getTableName()).I$();
+                                LOG.info().$("could not find view state, [view=").$(tableToken).I$();
                                 continue;
                             }
                             state.initFromReader(viewStateReader);
                         }
                     } catch (Throwable th) {
-                        final LogRecord rec = LOG.error().$("could not load view [view=").utf8(tableToken.getTableName());
+                        final LogRecord rec = LOG.error().$("could not load view [view=").$(tableToken);
                         if (th instanceof CairoException) {
                             final CairoException ce = (CairoException) th;
                             rec.$(", msg=").$(ce.getFlyweightMessage())
@@ -424,7 +424,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             final boolean baseTableExists = baseTableToken != null && !tableNameRegistry.isTableDropped(baseTableToken);
                             if (!baseTableExists) {
                                 // Print a warning, but let the mat view load in invalid state.
-                                LOG.info().$("base table for materialized view does not exist [table=").utf8(viewDefinition.getBaseTableName())
+                                LOG.info().$("base table for materialized view does not exist [table=").$safe(viewDefinition.getBaseTableName())
                                         .$(", view=").$(tableToken)
                                         .I$();
                                 matViewStateStore.enqueueInvalidate(tableToken, "base table does not exist");
@@ -433,7 +433,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
                             if (!baseTableToken.isWal()) {
                                 // Print a warning, but let the mat view load in invalid state.
-                                LOG.info().$("base table for materialized view is not WAL table [table=").utf8(viewDefinition.getBaseTableName())
+                                LOG.info().$("base table for materialized view is not WAL table [table=").$safe(viewDefinition.getBaseTableName())
                                         .$(", view=").$(tableToken)
                                         .I$();
                                 matViewStateStore.enqueueInvalidate(tableToken, "base table is not WAL table");
@@ -443,7 +443,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             path.trimTo(pathLen).concat(tableToken);
                             if (!WalUtils.readMatViewState(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader)) {
                                 LOG.info().$("could not find materialized view state, view will be fully refreshed on next base table insert [table=")
-                                        .utf8(viewDefinition.getBaseTableName())
+                                        .$safe(viewDefinition.getBaseTableName())
                                         .$(", view=").$(tableToken)
                                         .I$();
                                 continue;
@@ -456,7 +456,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
                             if (state.getLastRefreshBaseTxn() > baseTableLastTxn) {
                                 LOG.info().$("materialized view is ahead of base table and cannot be synchronized [table=")
-                                        .utf8(viewDefinition.getBaseTableName())
+                                        .$safe(viewDefinition.getBaseTableName())
                                         .$(", view=").$(tableToken)
                                         .$(", matViewBaseTxn=").$(state.getLastRefreshBaseTxn())
                                         .$(", baseTableTxn=").$(baseTableLastTxn)
@@ -471,10 +471,10 @@ public class CairoEngine implements Closeable, WriterSource {
                         final LogRecord rec = LOG.error().$("could not load materialized view [view=").$(tableToken);
                         if (th instanceof CairoException) {
                             final CairoException ce = (CairoException) th;
-                            rec.$(", msg=").utf8(ce.getFlyweightMessage())
+                            rec.$(", msg=").$safe(ce.getFlyweightMessage())
                                     .$(", errno=").$(ce.getErrno());
                         } else {
-                            rec.$(", msg=").utf8(th.getMessage());
+                            rec.$(", msg=").$safe(th.getMessage());
                         }
                         rec.I$();
                     }
@@ -879,7 +879,7 @@ public class CairoEngine implements Closeable, WriterSource {
         } catch (CairoException e) {
             LOG.critical()
                     .$("could not open reader [table=").$(tableToken)
-                    .$(", msg=").utf8(e.getFlyweightMessage())
+                    .$(", msg=").$safe(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
             throw e;
@@ -1410,8 +1410,8 @@ public class CairoEngine implements Closeable, WriterSource {
                     try {
                         try (WalWriter walWriter = getWalWriter(fromTableToken)) {
                             long seqTxn = walWriter.renameTable(fromTableName, toTableNameStr);
-                            LOG.info().$("renaming table [from='").utf8(fromTableName)
-                                    .$("', to='").utf8(toTableName)
+                            LOG.info().$("renaming table [from='").$safe(fromTableName)
+                                    .$("', to='").$safe(toTableName)
                                     .$("', wal=").$(walWriter.getWalId())
                                     .$("', seqTxn=").$(seqTxn)
                                     .I$();
@@ -1431,8 +1431,8 @@ public class CairoEngine implements Closeable, WriterSource {
                             }
                         } else {
                             LOG.info()
-                                    .$("failed to rename table [from=").utf8(fromTableName)
-                                    .$(", to=").utf8(toTableName)
+                                    .$("failed to rename table [from=").$safe(fromTableName)
+                                    .$(", to=").$safe(toTableName)
                                     .I$();
                             tableNameRegistry.removeAlias(toTableToken);
                         }
@@ -1463,8 +1463,8 @@ public class CairoEngine implements Closeable, WriterSource {
                     tableNameRegistry.dropTable(fromTableToken);
                 } else {
                     LOG.error()
-                            .$("could not lock and rename [from=").utf8(fromTableName)
-                            .$("', to=").utf8(toTableName)
+                            .$("could not lock and rename [from=").$safe(fromTableName)
+                            .$("', to=").$safe(toTableName)
                             .$("', reason=").$(lockedReason)
                             .I$();
                     throw EntryUnavailableException.instance(lockedReason);
@@ -1477,7 +1477,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             return toTableToken;
         } else {
-            LOG.error().$("cannot rename, table does not exist [table=").utf8(fromTableName).I$();
+            LOG.error().$("cannot rename, table does not exist [table=").$safe(fromTableName).I$();
             throw CairoException.nonCritical().put("cannot rename, table does not exist [table=").put(fromTableName).put(']');
         }
     }
@@ -1810,8 +1810,8 @@ public class CairoEngine implements Closeable, WriterSource {
         final TableToken toTableToken = lockTableName(toTableName, fromTableToken.getTableId(), fromTableToken.isView(), fromTableToken.isMatView(), fromTableToken.isWal());
         if (toTableToken == null) {
             LOG.error()
-                    .$("rename target exists [from='").utf8(fromTableToken.getTableName())
-                    .$("', to='").utf8(toTableName)
+                    .$("rename target exists [from='").$safe(fromTableToken.getTableName())
+                    .$("', to='").$safe(toTableName)
                     .I$();
             throw CairoException.nonCritical().put("Rename target exists");
         }
@@ -1847,7 +1847,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private void tryRepairTable(TableToken tableToken, CairoException rethrow) {
         LOG.info()
                 .$("starting table repair [table=").$(tableToken)
-                .$(", cause=").utf8(rethrow.getFlyweightMessage())
+                .$(", cause=").$safe(rethrow.getFlyweightMessage())
                 .I$();
         try {
             writerPool.get(tableToken, "repair").close();
@@ -1859,7 +1859,7 @@ public class CairoEngine implements Closeable, WriterSource {
         } catch (Throwable th) {
             LOG.critical()
                     .$("table repair failed [table=").$(tableToken)
-                    .$(", error=").utf8(th.getMessage())
+                    .$(", error=").$safe(th.getMessage())
                     .I$();
             throw rethrow;
         }

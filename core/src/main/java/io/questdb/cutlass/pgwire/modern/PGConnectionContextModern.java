@@ -461,7 +461,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             try {
                 parseMessage(recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
             } catch (BadProtocolException e) {
-                LOG.error().$("failed to parse message [err: `").utf8(e.getFlyweightMessage()).$("`]").$();
+                LOG.error().$("failed to parse message [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
                 // ignore, we are interrupting the current message processing, but have to continue processing other
                 // messages
             }
@@ -633,7 +633,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     securityContext.checkEntityEnabled();
                     r = authenticator.loginOK();
                 } catch (CairoException e) {
-                    LOG.error().$("failed to authenticate [error=").utf8(e.getFlyweightMessage()).I$();
+                    LOG.error().$("failed to authenticate [error=").$safe(e.getFlyweightMessage()).I$();
                     r = authenticator.denyAccess(e.getFlyweightMessage());
                 }
             }
@@ -1458,7 +1458,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 pipelineCurrentEntry = nextEntry;
             } else {
                 LOG.debug().$("pipeline entry not consumed [instance=)").$(pipelineCurrentEntry)
-                        .$(", sql=").utf8(pipelineCurrentEntry.getSqlText())
+                        .$(", sql=").$safe(pipelineCurrentEntry.getSqlText())
                         .$(", stmt=").$safe(pipelineCurrentEntry.getNamedStatement())
                         .$(", portal=").$safe(pipelineCurrentEntry.getNamedPortal())
                         .I$();
