@@ -132,8 +132,8 @@ public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
     public void clear() {
         of(null, 0, 0);
 
-        parkedPosition.clear();
-        parkedUnparsed.clear();
+        stashedNumbers.clear();
+        stashedStrings.clear();
     }
 
     public final void defineSymbol(String token) {

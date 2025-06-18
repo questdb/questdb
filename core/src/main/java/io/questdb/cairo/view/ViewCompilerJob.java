@@ -133,20 +133,10 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     private boolean processNotifications() {
         while (stateStore.tryDequeueCompilerTask(compilerTask)) {
             final int operation = compilerTask.operation;
-            switch (operation) {
-                case ViewCompilerTask.COMPILE:
-                    compile(compilerTask.tableToken, compilerTask.updateTimestamp);
-                    break;
-                case ViewCompilerTask.INVALIDATE:
-                    invalidate(compilerTask.tableToken, compilerTask.invalidationReason, compilerTask.updateTimestamp);
-                    break;
-                case ViewCompilerTask.RESET:
-                    reset(compilerTask.tableToken, compilerTask.updateTimestamp);
-                    // compile dependent views as well, they could be valid too
-                    compileDependentViews(compilerTask.tableToken, compilerTask.updateTimestamp);
-                    break;
-                default:
-                    throw new RuntimeException("unrecognized operation: " + operation);
+            if (operation == ViewCompilerTask.COMPILE) {
+                compile(compilerTask.tableToken, compilerTask.updateTimestamp);
+            } else {
+                throw new RuntimeException("unrecognized operation: " + operation);
             }
         }
         return false;

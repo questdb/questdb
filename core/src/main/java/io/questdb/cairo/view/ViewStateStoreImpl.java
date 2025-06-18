@@ -89,17 +89,7 @@ public class ViewStateStoreImpl implements ViewStateStore {
 
     @Override
     public void enqueueCompile(@NotNull TableToken tableToken) {
-        enqueueViewTask(tableToken, ViewCompilerTask.COMPILE, null);
-    }
-
-    @Override
-    public void enqueueInvalidate(@NotNull TableToken tableToken, String invalidationReason) {
-        enqueueViewTask(tableToken, ViewCompilerTask.INVALIDATE, invalidationReason);
-    }
-
-    @Override
-    public void enqueueReset(@NotNull TableToken tableToken) {
-        enqueueViewTask(tableToken, ViewCompilerTask.RESET, null);
+        enqueueViewTask(tableToken);
     }
 
     @Override
@@ -130,15 +120,13 @@ public class ViewStateStoreImpl implements ViewStateStore {
     }
 
     private void enqueueViewTask(
-            @NotNull TableToken tableToken,
-            int operation,
-            String invalidationReason
+            @NotNull TableToken tableToken
     ) {
         final ViewCompilerTask task = taskHolder.get();
         //task.clear();
         task.tableToken = tableToken;
-        task.operation = operation;
-        task.invalidationReason = invalidationReason;
+        task.operation = ViewCompilerTask.COMPILE;
+        task.invalidationReason = null;
         task.updateTimestamp = microsecondClock.getTicks();
         taskQueue.enqueue(task);
     }

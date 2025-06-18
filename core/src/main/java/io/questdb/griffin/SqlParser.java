@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
@@ -451,17 +450,10 @@ public class SqlParser {
     private QueryModel compileViewQuery(ViewDefinition viewDefinition, int viewPosition) throws SqlException {
         final GenericLexer viewLexer = viewLexers.next();
         viewLexer.of(viewDefinition.getViewSql());
-        try {
-            final QueryModel viewModel = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, viewDecl);
-            viewModel.setViewNameExpr(literal(viewDefinition.getViewToken().getTableName(), viewPosition));
-            return viewModel;
-        } catch (SqlException | CairoException e) {
-            enqueueInvalidateView(viewDefinition.getViewToken(), e.getFlyweightMessage());
-            throw e;
-        } catch (Throwable e) {
-            enqueueInvalidateView(viewDefinition.getViewToken(), e.getMessage());
-            throw e;
-        }
+
+        final QueryModel viewModel = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, viewDecl);
+        viewModel.setViewNameExpr(literal(viewDefinition.getViewToken().getTableName(), viewPosition));
+        return viewModel;
     }
 
     private CharSequence createColumnAlias(
@@ -497,10 +489,6 @@ public class SqlParser {
         final GenericLexer lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         SqlCompilerImpl.configureLexer(lexer);
         return lexer;
-    }
-
-    private void enqueueInvalidateView(TableToken viewToken, CharSequence invalidationReason) throws SqlException {
-        engine.getViewStateStore().enqueueInvalidate(viewToken, invalidationReason.toString());
     }
 
     private @NotNull CreateTableColumnModel ensureCreateTableColumnModel(CharSequence columnName, int columnNamePos) {

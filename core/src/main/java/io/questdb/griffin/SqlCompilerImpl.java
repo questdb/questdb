@@ -3107,11 +3107,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.testCompileModel(viewDefinition.getViewSql(), executionContext);
-            engine.getViewStateStore().enqueueReset(viewToken);
         } catch (SqlException | CairoException e) {
             // position would be reported from the view SQL, so we are overriding it with 14 which
             // points to the name of the view in 'COMPILE VIEW viewName'
             throw SqlException.$(14, e.getFlyweightMessage());
+        } finally {
+            engine.getViewStateStore().enqueueCompile(viewToken);
         }
         compiledQuery.ofCompileView();
     }

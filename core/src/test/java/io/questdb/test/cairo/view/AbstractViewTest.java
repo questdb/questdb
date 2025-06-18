@@ -45,6 +45,7 @@ class AbstractViewTest extends AbstractCairoTest {
     static final String TABLE1 = "table1";
     static final String TABLE2 = "table2";
     static final String TABLE3 = "table3";
+    static final String TABLE4 = "table4";
     static final String VIEW1 = "view1";
     static final String VIEW2 = "view2";
     static final String VIEW3 = "view3";

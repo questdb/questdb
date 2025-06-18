@@ -114,31 +114,28 @@ public class AbstractTest {
 
     @SuppressWarnings("StatementWithEmptyBody")
     protected static void drainMatViewQueue(MatViewRefreshJob refreshJob) {
-        while (refreshJob.run(0)) {
-        }
+        while (refreshJob.run(0)) ;
     }
 
     protected static void drainMatViewQueue(CairoEngine engine) {
-        try (var refreshJob = createMatViewRefreshJob(engine)) {
+        try (MatViewRefreshJob refreshJob = createMatViewRefreshJob(engine)) {
             drainMatViewQueue(refreshJob);
         }
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
     protected static void drainMatViewTimerQueue(MatViewTimerJob timerJob) {
-        while (timerJob.run(0)) {
-        }
+        while (timerJob.run(0)) ;
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
     protected static void drainViewQueue(ViewCompilerJob compilerJob) {
-        while (compilerJob.run(0)) {
-        }
+        while (compilerJob.run(0)) ;
     }
 
     protected static void drainViewQueue(CairoEngine engine) {
-        try (var refreshJob = createViewCompilerJob(engine)) {
-            drainViewQueue(refreshJob);
+        try (ViewCompilerJob compilerJob = createViewCompilerJob(engine)) {
+            drainViewQueue(compilerJob);
         }
     }
 
@@ -160,12 +157,11 @@ public class AbstractTest {
         }
     }
 
+    @SuppressWarnings("StatementWithEmptyBody")
     protected static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
-        var checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-        //noinspection StatementWithEmptyBody
+        CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
         while (walApplyJob.run(0)) ;
         if (checkWalTransactionsJob.run(0)) {
-            //noinspection StatementWithEmptyBody
             while (walApplyJob.run(0)) ;
         }
     }

@@ -30,8 +30,6 @@ import io.questdb.std.Numbers;
 
 public class ViewCompilerTask implements ValueHolder<ViewCompilerTask> {
     public static final int COMPILE = 0;
-    public static final int INVALIDATE = 1;
-    public static final int RESET = 2;
     public static final int UNDEFINED = -1;
     public String invalidationReason;
     public int operation = UNDEFINED;

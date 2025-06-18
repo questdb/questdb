@@ -53,14 +53,6 @@ public class NoOpViewStateStore implements ViewStateStore {
     }
 
     @Override
-    public void enqueueInvalidate(TableToken viewToken, String invalidationReason) {
-    }
-
-    @Override
-    public void enqueueReset(TableToken viewToken) {
-    }
-
-    @Override
     public ViewState getViewState(TableToken viewToken) {
         return null;
     }
