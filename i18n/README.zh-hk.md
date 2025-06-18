@@ -24,7 +24,8 @@
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | 繁體中文 | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](README.ja-ja.md) | [Türkçe](README.tr-tr.md) | [हिंदी](README.hn-in.md) | [Tiếng Việt](README.vi-vn.md)
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) |
+繁體中文 | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](README.ja-ja.md) | [Türkçe](README.tr-tr.md) | [हिंदी](README.hn-in.md) | [Tiếng Việt](README.vi-vn.md)
 
 # QuestDB
 
@@ -57,8 +58,8 @@ C++從頭開始構建的，沒有任何外部依賴，並且 100% 不受垃圾�
 - Trades： 每月30M+的實時加密貨幣市場數據。
 - Pos： 含有 25 萬艘船的時序地理數據集。
 
-| 查詢                                                                          | 運行時間                                                                                                                                                                                            |
-| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 查詢                                                                            | 運行時間                                                                                                                                                                                                |
+|-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
 | `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
 | `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
@@ -138,7 +139,7 @@ questdb stop  // To stop questdb
 
 - [QuestDB 文檔:](https://questdb.io/docs/introduction/) 描述了如何運行
   和配置 QuestDB 的技術參考。
-- [教程](https://questdb.io/tutorial/) 逐步了解QuestDB的功能。
+- [教程](https://questdb.com/blog/?tag=tutorial) 逐步了解QuestDB的功能。
 - [産品路線圖](https://github.com/questdb/questdb/projects) 了解我們下個産品發布的計劃。
 
 ### ❓ 尋求支持
@@ -150,10 +151,10 @@ questdb stop  // To stop questdb
 
 ### 🚢 部署 QuestDB
 
-- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
-- [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
-- [Official Docker image](https://questdb.io/docs/get-started/docker)
-- [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
+- [AWS AMI](https://questdb.com/docs/deployment/aws/)
+- [Google Cloud Platform](https://questdb.com/docs/deployment/gcp/)
+- [Official Docker image](https://questdb.com/docs/quick-start/#docker)
+- [DigitalOcean droplets](https://questdb.com/docs/deployment/digital-ocean/)
 - [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
 
 ## 貢獻
