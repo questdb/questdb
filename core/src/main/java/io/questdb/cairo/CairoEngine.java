@@ -31,6 +31,7 @@ import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
@@ -147,6 +148,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
+    private final FrameFactory frameFactory;
     private final MatViewGraph matViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
@@ -206,6 +208,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.rootExecutionContext = createRootExecutionContext();
             this.matViewTimerQueue = createMatViewTimerQueue();
             this.matViewGraph = new MatViewGraph(matViewTimerQueue);
+            this.frameFactory = new FrameFactory(configuration);
 
             settingsStore = new SettingsStore(configuration);
             settingsStore.init();
@@ -462,6 +465,7 @@ public class CairoEngine implements Closeable, WriterSource {
         boolean b6 = tableMetadataPool.releaseAll();
         scoreboardPool.clear();
         partitionOverwriteControl.clear();
+        frameFactory.clear();
         return b1 & b2 & b3 & b4 & b5 & b6;
     }
 
@@ -483,6 +487,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(scoreboardPool);
         Misc.free(matViewStateStore);
         Misc.free(settingsStore);
+        Misc.free(frameFactory);
     }
 
     @TestOnly
@@ -659,6 +664,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public Job getEngineMaintenanceJob() {
         return engineMaintenanceJob;
+    }
+
+    public FrameFactory getFrameFactory() {
+        return frameFactory;
     }
 
     public FunctionFactoryCache getFunctionFactoryCache() {

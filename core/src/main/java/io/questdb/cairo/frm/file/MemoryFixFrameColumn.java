@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.frm.file;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.cairo.vm.api.MemoryCR;
 
@@ -34,7 +33,7 @@ public class MemoryFixFrameColumn implements FrameColumn {
     private int columnIndex;
     private MemoryCR columnMemory;
     private int columnType;
-    private RecycleBin<MemoryFixFrameColumn> recycleBin;
+    private RecycleBin<FrameColumn> recycleBin;
     private long rowCount;
 
     @Override
@@ -118,7 +117,7 @@ public class MemoryFixFrameColumn implements FrameColumn {
         this.closed = false;
     }
 
-    public void setPool(RecycleBin<MemoryFixFrameColumn> recycleBin) {
+    public void recycle(RecycleBin<FrameColumn> recycleBin) {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
     }

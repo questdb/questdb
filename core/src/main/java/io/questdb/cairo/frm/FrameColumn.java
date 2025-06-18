@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.frm;
 
+import io.questdb.cairo.frm.file.RecycleBin;
+
 import java.io.Closeable;
 
 public interface FrameColumn extends Closeable {
@@ -62,4 +64,6 @@ public interface FrameColumn extends Closeable {
     long getSecondaryFd();
 
     int getStorageType();
+
+    void recycle(RecycleBin<FrameColumn> pool);
 }

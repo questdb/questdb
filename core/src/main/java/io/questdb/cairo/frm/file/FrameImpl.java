@@ -63,6 +63,8 @@ public class FrameImpl implements Frame {
 
     @Override
     public void close() {
+        this.columnsMemory = null;
+        this.crv = null;
         if (frameRecycleBin != null && !frameRecycleBin.isClosed()) {
             frameRecycleBin.put(this);
         } else {

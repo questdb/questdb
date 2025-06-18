@@ -61,7 +61,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private long dataMapAddr;
     private long dataMapSize;
     private boolean isReadOnly;
-    private RecycleBin<ContiguousFileVarFrameColumn> recycleBin;
+    private RecycleBin<FrameColumn> recycleBin;
 
     public ContiguousFileVarFrameColumn(CairoConfiguration configuration) {
         this.ff = configuration.getFilesFacade();
@@ -373,7 +373,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         }
     }
 
-    public void setPool(RecycleBin<ContiguousFileVarFrameColumn> recycleBin) {
+    public void recycle(RecycleBin<FrameColumn> recycleBin) {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
     }

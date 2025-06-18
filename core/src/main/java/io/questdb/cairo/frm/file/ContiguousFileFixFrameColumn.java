@@ -54,7 +54,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     private boolean isReadOnly;
     private long mapAddr;
     private long mapSize;
-    private RecycleBin<ContiguousFileFixFrameColumn> recycleBin;
+    private RecycleBin<FrameColumn> recycleBin;
     private int shl;
 
     public ContiguousFileFixFrameColumn(CairoConfiguration configuration) {
@@ -254,7 +254,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         }
     }
 
-    public void setPool(RecycleBin<ContiguousFileFixFrameColumn> recycleBin) {
+    public void recycle(RecycleBin<FrameColumn> recycleBin) {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
     }

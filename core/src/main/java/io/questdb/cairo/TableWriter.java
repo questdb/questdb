@@ -199,7 +199,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final int fileOperationRetryCount;
-    private final FrameFactory frameFactory;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
     private final ObjList<ColumnIndexer> indexers;
@@ -373,7 +372,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.configuration = configuration;
         this.ddlListener = ddlListener;
         this.checkpointStatus = checkpointStatus;
-        this.frameFactory = new FrameFactory(configuration);
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
         this.metrics = configuration.getMetrics();
         this.ownMessageBus = ownMessageBus;
@@ -2553,7 +2551,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public Frame openCommitFrame() {
-        return frameFactory.openFromMemoryColumns(o3Columns, metadata, commitRowCount);
+        return engine.getFrameFactory().openFromMemoryColumns(o3Columns, metadata, commitRowCount);
     }
 
     public void openLastPartition() {
@@ -5034,7 +5032,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         noOpRowCount = 0L;
         lastOpenPartitionTs = Long.MIN_VALUE;
         lastOpenPartitionIsReadOnly = false;
-        Misc.free(frameFactory);
         assert !truncate || distressed || assertColumnPositionIncludeWalLag();
         freeColumns(truncate & !distressed);
         try {
@@ -6308,6 +6305,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$();
 
                         int insertPartitionIndex = i;
+                        FrameFactory frameFactory = engine.getFrameFactory();
                         try (Frame sourceFrame = frameFactory.openRO(path, prevPartitionTimestamp, metadata, columnVersionWriter, prevPartitionSize)) {
                             // Create the source frame and then manipulate partitions in txWriter
                             // When newSplitPartitionTimestamp == partitionTimestamp it is the only way
@@ -9606,6 +9604,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         boolean rw = !copyTargetFrame;
         Frame targetFrame = null;
+        FrameFactory frameFactory = engine.getFrameFactory();
         Frame firstPartitionFrame = frameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, originalSize);
         try {
             if (copyTargetFrame) {
@@ -10196,14 +10195,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3DoneLatch.countDown();
     }
 
-    synchronized Frame openPartitionFrameRO(
+    Frame openPartitionFrameRO(
             Path partitionPath,
             long partitionTimestamp,
             RecordMetadata metadata,
             long partitionRowCount
     ) {
         // TODO: make frame factory thread safe, including closing it
-        return frameFactory.openRO(partitionPath, partitionTimestamp, metadata, columnVersionWriter, partitionRowCount);
+        return engine.getFrameFactory().openRO(partitionPath, partitionTimestamp, metadata, columnVersionWriter, partitionRowCount);
     }
 
     void purgeUnusedPartitions() {

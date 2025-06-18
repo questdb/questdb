@@ -34,7 +34,7 @@ public class MemoryVarFrameColumn implements FrameColumn {
     private MemoryCR columnMemoryAux;
     private MemoryCR columnMemoryData;
     private int columnType;
-    private RecycleBin<MemoryVarFrameColumn> recycleBin;
+    private RecycleBin<FrameColumn> recycleBin;
     private long rowCount;
 
     @Override
@@ -123,7 +123,7 @@ public class MemoryVarFrameColumn implements FrameColumn {
         this.closed = false;
     }
 
-    public void setPool(RecycleBin<MemoryVarFrameColumn> recycleBin) {
+    public void recycle(RecycleBin<FrameColumn> recycleBin) {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
     }

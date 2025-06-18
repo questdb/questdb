@@ -30,23 +30,27 @@ import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.cairo.frm.FrameColumnPool;
 import io.questdb.cairo.frm.FrameColumnTypePool;
 import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.std.ObjList;
+import io.questdb.mp.ConcurrentPool;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
 public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
     private final ColumnTypePool columnTypePool = new ColumnTypePool();
-    private final CairoConfiguration configuration;
-    private final ListPool<MemoryFixFrameColumn> fixMemColumnPool = new ListPool<>();
-    private final ListPool<MemoryVarFrameColumn> varMemColumnPool = new ListPool<>();
-    private final ListPool<ContiguousFileFixFrameColumn> fixColumnPool = new ListPool<>();
-    private final ListPool<ContiguousFileFixFrameColumn> indexedColumnPool = new ListPool<>();
-    private final ListPool<ContiguousFileVarFrameColumn> varColumnPool = new ListPool<>();
+    private final ConcurrentQueuePool<ContiguousFileFixFrameColumn> fixColumnPool;
+    private final ConcurrentQueuePool<MemoryFixFrameColumn> fixMemColumnPool;
+    private final ConcurrentQueuePool<ContiguousFileFixFrameColumn> indexedColumnPool;
+    private final ConcurrentQueuePool<ContiguousFileVarFrameColumn> varColumnPool;
+    private final ConcurrentQueuePool<MemoryVarFrameColumn> varMemColumnPool;
     private boolean isClosed;
 
     public ContiguousFileColumnPool(CairoConfiguration configuration) {
-        this.configuration = configuration;
+        fixColumnPool = new ConcurrentQueuePool<>(() -> new ContiguousFileFixFrameColumn(configuration));
+        fixMemColumnPool = new ConcurrentQueuePool<>(MemoryFixFrameColumn::new);
+        indexedColumnPool = new ConcurrentQueuePool<>(() -> new ContiguousFileIndexedFrameColumn(configuration));
+        varColumnPool = new ConcurrentQueuePool<>(() -> new ContiguousFileVarFrameColumn(configuration));
+        varMemColumnPool = new ConcurrentQueuePool<>(MemoryVarFrameColumn::new);
     }
 
     @Override
@@ -135,53 +139,33 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
         }
 
         private ContiguousFileFixFrameColumn getFixColumn() {
-            if (fixColumnPool.size() > 0) {
-                return fixColumnPool.pop();
-            }
-            ContiguousFileFixFrameColumn col = new ContiguousFileFixFrameColumn(configuration);
-            col.setPool(fixColumnPool);
-            return col;
+            return fixColumnPool.pop();
         }
 
         private ContiguousFileIndexedFrameColumn getIndexedColumn() {
-            if (indexedColumnPool.size() > 0) {
-                return (ContiguousFileIndexedFrameColumn) indexedColumnPool.pop();
-            }
-            ContiguousFileIndexedFrameColumn col = new ContiguousFileIndexedFrameColumn(configuration);
-            col.setPool(indexedColumnPool);
-            return col;
-        }
-
-        private ContiguousFileVarFrameColumn getVarColumn() {
-            if (varColumnPool.size() > 0) {
-                return varColumnPool.pop();
-            }
-            ContiguousFileVarFrameColumn col = new ContiguousFileVarFrameColumn(configuration);
-            col.setPool(varColumnPool);
-            return col;
+            return (ContiguousFileIndexedFrameColumn) indexedColumnPool.pop();
         }
 
         private MemoryFixFrameColumn getMemFixColumn() {
-            if (fixMemColumnPool.size() > 0) {
-                return fixMemColumnPool.pop();
-            }
-            MemoryFixFrameColumn col = new MemoryFixFrameColumn();
-            col.setPool(fixMemColumnPool);
-            return col;
+            return fixMemColumnPool.pop();
         }
 
         private MemoryVarFrameColumn getMemVarColumn() {
-            if (varMemColumnPool.size() > 0) {
-                return varMemColumnPool.pop();
-            }
-            MemoryVarFrameColumn col = new MemoryVarFrameColumn();
-            col.setPool(varMemColumnPool);
-            return col;
+            return varMemColumnPool.pop();
+        }
+
+        private ContiguousFileVarFrameColumn getVarColumn() {
+            return varColumnPool.pop();
         }
     }
 
-    private class ListPool<T> implements RecycleBin<T> {
-        private final ObjList<T> pool = new ObjList<>();
+    private class ConcurrentQueuePool<T extends FrameColumn> implements RecycleBin<T> {
+        private final ObjectFactory<T> factory;
+        private final ConcurrentPool<T> pool = new ConcurrentPool<>();
+
+        public ConcurrentQueuePool(ObjectFactory<T> factory) {
+            this.factory = factory;
+        }
 
         @Override
         public boolean isClosed() {
@@ -189,18 +173,19 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
         }
 
         public T pop() {
-            T last = pool.getLast();
-            pool.setPos(pool.size() - 1);
-            return last;
+            T item = pool.pop();
+            if (item != null) {
+                return item;
+            }
+            item = factory.newInstance();
+            //noinspection unchecked
+            item.recycle((RecycleBin<FrameColumn>) this);
+            return item;
         }
 
         @Override
         public void put(T frame) {
-            pool.add(frame);
-        }
-
-        public int size() {
-            return pool.size();
+            pool.push(frame);
         }
     }
 }
