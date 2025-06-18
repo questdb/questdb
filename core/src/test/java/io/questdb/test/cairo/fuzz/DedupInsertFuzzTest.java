@@ -403,7 +403,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupOneKeyCol() throws Exception {
-        Rnd rnd = generateRandomAndProps(1546446023131208L, 1750173789190L);
+        Rnd rnd = generateRandomAndProps();
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
