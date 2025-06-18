@@ -102,7 +102,7 @@ public class DropIndexOperator {
                 }
             }
         } catch (Throwable th) {
-            LOG.error().$("Could not DROP INDEX: ").$(th.getMessage()).$();
+            LOG.error().$("Could not DROP INDEX: ").$safe(th.getMessage()).$();
             purgingOperator.clear();
 
             // cleanup successful links prior to the failed link operation

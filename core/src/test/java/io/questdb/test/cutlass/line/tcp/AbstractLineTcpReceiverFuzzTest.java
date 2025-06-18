@@ -206,11 +206,11 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             throw new RuntimeException("Table name is missing");
         }
         try (TableReader reader = getReader(tableName)) {
-            getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+            getLog().info().$("table.getName(): ").$safe(table.getName()).$(", tableName: ").$safe(tableName)
                     .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
             final TableReaderMetadata metadata = reader.getMetadata();
             final CharSequence expected = table.generateRows(metadata);
-            getLog().info().$(table.getName()).$(" expected:\n").utf8(expected).$();
+            getLog().info().$safe(table.getName()).$(" expected:\n").$safe(expected).$();
 
             if (timestampMark < 0L) {
                 try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
@@ -238,7 +238,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                         int size = table.size();
                         long cursorSize = cursor.size();
 
-                        getLog().info().$("table.getName(): ").$(name).$(", tableName: ").$(tableName)
+                        getLog().info().$("table.getName(): ").$(name).$(", tableName: ").$safe(tableName)
                                 .$(", table.size(): ").$(size).$(", cursor.size(): ").$(cursorSize).$();
                         assertCursorTwoPass(expected, cursor, metadata);
                     }
@@ -350,18 +350,18 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     boolean checkTable(TableData table) throws SqlException {
         final CharSequence tableName = tableNames.get(table.getName());
         if (tableName == null) {
-            getLog().info().$(table.getName()).$(" has not been created yet").$();
+            getLog().info().$safe(table.getName()).$(" has not been created yet").$();
             return false;
         }
 
         if (timestampMark < 0L) {
             try (TableReader reader = getReader(tableName)) {
-                getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                getLog().info().$("table.getName(): ").$safe(table.getName()).$(", tableName: ").$safe(tableName)
                         .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
                 return table.size() <= reader.size();
             } catch (CairoException ex) {
                 if (ex.getFlyweightMessage().toString().contains("table does not exist")) {
-                    getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                    getLog().info().$("table.getName(): ").$safe(table.getName()).$(", tableName: ").$safe(tableName)
                             .$(", table.size(): ").$(table.size()).$(", reader.size(): table does not exist").$();
                     return table.size() <= 0;
                 } else {
@@ -380,7 +380,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 CharSequence name = table.getName();
 
                 getLog().info().$("table.getName(): ")
-                        .$(name).$(", tableName: ").$(tableName)
+                        .$safe(name).$(", tableName: ").$safe(tableName)
                         .$(", table.size(): ").$(tableSize)
                         .$(", cursor.size(): ").$(size).$();
                 return tableSize <= size;
@@ -394,7 +394,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 CharSequence name = table.getName();
 
                 getLog().info().$("table.getName(): ")
-                        .$(name).$(", tableName: ").$(tableName)
+                        .$safe(name).$(", tableName: ").$safe(tableName)
                         .$(", table.size(): ").$(size)
                         .$(", cursor.size(): table does not exist")
                         .$();
