@@ -65,7 +65,6 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     private int defaultSymbolCapacity;
     private String indexCol = "sym";
     private int indexPos = -1;
-    private int startOfSelect;
     private String strCol = "str";
     private int strPos = -1;
     private String symCol = "sym";
@@ -237,7 +236,6 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
 
     private void appendAsSelect(StringBuilder ddl) {
         ddl.append(" AS (");
-        startOfSelect = ddl.length();
         ddl.append("SELECT ");
         if (useSelectStar) {
             ddl.append('*');
@@ -354,7 +352,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                 return;
             case DROP_STR:
                 if (!useSelectStar) {
-                    expected = withErrPos(strPos - startOfSelect, "Invalid column: " + strCol);
+                    expected = withErrPos(strPos, "Invalid column: " + strCol);
                 } else if (useCast) {
                     expected = withErrPos(castPos,
                             String.format("CAST column doesn't exist [column=%s]", castCol));
@@ -365,7 +363,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                 return;
             case DROP_SYM:
                 if (!useSelectStar) {
-                    expected = withErrPos(symPos - startOfSelect, "Invalid column: " + symCol);
+                    expected = withErrPos(symPos, "Invalid column: " + symCol);
                 } else if (useIndex) {
                     expected = withErrPos(indexPos,
                             String.format("INDEX column doesn't exist [column=%s]", indexCol));

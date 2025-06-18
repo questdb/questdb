@@ -3381,9 +3381,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         } catch (TableReferenceOutOfDateException e) {
                             if (retryCount == maxRecompileAttempts) {
                                 Misc.free(newFactory);
-                                throw SqlException.$(0, e.getFlyweightMessage());
+                                throw SqlException.$(createTableOp.getSelectTextPosition(), e.getFlyweightMessage());
                             }
                             LOG.info().$("retrying plan [q=`").$(createTableOp.getSelectText()).$("`]").$();
+                        } catch (SqlException e) {
+                            e.setPosition(e.getPosition() + createTableOp.getSelectTextPosition());
+                            Misc.free(newFactory);
+                            throw e;
                         } catch (Throwable th) {
                             Misc.free(newFactory);
                             throw th;
