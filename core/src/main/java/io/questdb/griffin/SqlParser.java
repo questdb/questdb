@@ -2498,6 +2498,7 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "Cross joins cannot have join clauses");
         }
 
+        boolean onClauseObserved = false;
         switch (joinType) {
             case QueryModel.JOIN_ASOF:
             case QueryModel.JOIN_LT:
@@ -2510,6 +2511,7 @@ public class SqlParser {
             case QueryModel.JOIN_INNER:
             case QueryModel.JOIN_OUTER:
                 expectTok(lexer, tok, "on");
+                onClauseObserved = true;
                 try {
                     expressionParser.parseExpr(lexer, expressionTreeBuilder, sqlParserCallback, decls);
                     ExpressionNode expr;
@@ -2566,8 +2568,18 @@ public class SqlParser {
         if (n.type != ExpressionNode.CONSTANT) {
             throw SqlException.$(lexer.lastTokenPosition(), "ASOF JOIN TOLERANCE must be a constant");
         }
-
         joinModel.setAsOfJoinTolerance(n);
+
+        if (!onClauseObserved) {
+            // no join clauses yet
+            tok = optTok(lexer);
+            if (tok != null && SqlKeywords.isOnKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'ON' clause must precede 'TOLERANCE' clause. " +
+                        "Hint: put the ON condition right after the JOIN, then add TOLERANCE, " +
+                        "e.g. … ASOF JOIN t2 ON t1.ts = t2.ts TOLERANCE 1h");
+            }
+            lexer.unparseLast();
+        }
         return joinModel;
     }
 

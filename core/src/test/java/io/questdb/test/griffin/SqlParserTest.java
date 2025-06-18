@@ -6593,6 +6593,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testJoin_ToleranceAndOnClausesSwitched() throws Exception {
+        assertSyntaxError("select * from tab asof join tab TOLERANCE 1h on sym;",
+                45,
+                "'ON' clause must precede 'TOLERANCE' clause. Hint: put the ON condition right after the JOIN, then add TOLERANCE, e.g. … ASOF JOIN t2 ON t1.ts = t2.ts TOLERANCE 1h",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+    }
+
+    @Test
     public void testLatestByDeprecatedKeepWhereOutside() throws SqlException {
         assertQuery(
                 "select-choose a, b from (select [a, b] from x latest by b where b = 'PEHN' and a < 22 and test_match())",
