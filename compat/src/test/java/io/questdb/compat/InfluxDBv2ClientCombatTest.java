@@ -50,15 +50,15 @@ public class InfluxDBv2ClientCombatTest extends AbstractTest {
 
                 long microTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T04:00:00.000001Z");
                 String record1 = "t1,location=north value=60.0 " + microTime;
-                writeApi.writeRecord("my-bucket","my-org", WritePrecision.US, record1);
+                writeApi.writeRecord("my-bucket", "my-org", WritePrecision.US, record1);
 
                 long milliTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T05:00:00.001001Z") / 1000L;
                 String record2 = "t1,location=north value=60.0 " + milliTime;
-                writeApi.writeRecord("my-bucket","my-org", WritePrecision.MS, record2);
+                writeApi.writeRecord("my-bucket", "my-org", WritePrecision.MS, record2);
 
                 long secondTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T07:00:01") / 1000L / 1000L;
                 String record3 = "t1,location=north value=60.0 " + secondTime;
-                writeApi.writeRecord("my-bucket","my-org", WritePrecision.S, record3);
+                writeApi.writeRecord("my-bucket", "my-org", WritePrecision.S, record3);
             }
 
             serverMain.awaitTable("t1");
