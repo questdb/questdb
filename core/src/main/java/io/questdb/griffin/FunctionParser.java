@@ -406,7 +406,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         SqlException ex = SqlException.position(node.position);
         if (descriptor != null) {
             if (args != null) {
-                if (args.size() != descriptor.getNotVarArgsSigCount()) {
+                if (args.size() != descriptor.getSigArgCount()) {
                     ex.put("wrong number of arguments for function `").put(node.token)
                             .put("`; expected: ").put(descriptor.getSigArgCount())
                             .put(", provided: ").put(args.size());
@@ -443,7 +443,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         final int actualType = args.getQuick(i).getType();
                         final boolean actualConstant = args.getQuick(i).isConstant();
 
-                        if (expectedType != actualType || (expectedConstant && !actualConstant)) {
+                        if ((expectedType != actualType || (expectedConstant && !actualConstant)) && !ColumnType.isAssignableFrom(actualType, expectedType)) {
                             ex.put(" at #").put(i + 1);
                             ex.put(" expected: ").put(ColumnType.nameOf(expectedType));
                             if (expectedType == actualType) {
