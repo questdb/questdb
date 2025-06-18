@@ -103,7 +103,7 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
 
     static void createNonPartitionedTable(String tableName) throws SQLException {
         runSqlViaPG("create table " + tableName + " (ts timestamp, x long) timestamp(ts)");
-        LOG.info().$("created table: ").utf8(tableName).$();
+        LOG.info().$("created table: ").$safe(tableName).$();
     }
 
     static SqlExecutionContext createSqlExecutionContext(CairoEngine engine) {
@@ -118,7 +118,7 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
 
     static void createTable(String tableName, String walMode) throws SQLException {
         runSqlViaPG("create table " + tableName + " (ts timestamp, x long) timestamp(ts) PARTITION BY DAY " + walMode);
-        LOG.info().$("created table: ").utf8(tableName).$();
+        LOG.info().$("created table: ").$safe(tableName).$();
     }
 
     static Path doesConvertFileExist(CairoEngine engine, TableToken token, boolean doesExist) {
@@ -129,12 +129,12 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
 
     static void dropTable(String tableName) throws SQLException {
         runSqlViaPG("drop table " + tableName);
-        LOG.info().$("dropped table: ").utf8(tableName).$();
+        LOG.info().$("dropped table: ").$safe(tableName).$();
     }
 
     static void insertInto(String tableName) throws SQLException {
         runSqlViaPG("insert into " + tableName + " values('2016-01-01T00:00:00.000Z', 1234)");
-        LOG.info().$("inserted 1 row into table: ").utf8(tableName).$();
+        LOG.info().$("inserted 1 row into table: ").$safe(tableName).$();
     }
 
     static void runSqlViaPG(String sql) throws SQLException {
@@ -154,7 +154,7 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
 
     static void setType(String tableName, String walMode) throws SQLException {
         runSqlViaPG("alter table " + tableName + " set type " + walMode);
-        LOG.info().$("scheduled table type conversion for table ").utf8(tableName).$(" to ").$(walMode).$();
+        LOG.info().$("scheduled table type conversion for table ").$safe(tableName).$(" to ").$(walMode).$();
     }
 
     void validateShutdown(String tableName) throws SQLException {

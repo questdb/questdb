@@ -159,14 +159,14 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 } catch (CommitFailedException ex) {
                     if (ex.isTableDropped()) {
                         // table dropped, nothing to worry about
-                        LOG.info().$("closing writer because table has been dropped (2) [table=").utf8(tud.getTableNameUtf16()).I$();
+                        LOG.info().$("closing writer because table has been dropped (2) [table=").$safe(tud.getTableNameUtf16()).I$();
                         tud.setWriterInError();
                         tud.releaseWriter(false);
                     } else {
-                        LOG.critical().$("commit failed [table=").utf8(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
+                        LOG.critical().$("commit failed [table=").$safe(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
                     }
                 } catch (Throwable ex) {
-                    LOG.critical().$("commit failed [table=").utf8(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
+                    LOG.critical().$("commit failed [table=").$safe(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
                 }
             }
         }
@@ -280,7 +280,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                     try {
                         securityContext.checkEntityEnabled();
                     } catch (CairoException e) {
-                        LOG.error().$('[').$(getFd()).$("] ").utf8(e.getFlyweightMessage()).$();
+                        LOG.error().$('[').$(getFd()).$("] ").$safe(e.getFlyweightMessage()).$();
                         return IOContextResult.NEEDS_DISCONNECT;
                     }
 
@@ -379,7 +379,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 LogRecord error = ex.isCritical() ? LOG.critical() : LOG.error();
                 error
                         .$('[').$(getFd()).$("] could not process line data 1 [table=").$safe(parser.getMeasurementName())
-                        .$(", msg=").utf8(ex.getFlyweightMessage())
+                        .$(", msg=").$safe(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 if (disconnectOnError) {

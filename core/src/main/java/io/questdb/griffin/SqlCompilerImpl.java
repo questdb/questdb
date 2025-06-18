@@ -435,7 +435,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         if (retries == maxRecompileAttempts) {
                             throw e;
                         }
-                        LOG.info().utf8(e.getFlyweightMessage()).$();
+                        LOG.info().$safe(e.getFlyweightMessage()).$();
                         // will recompile
                         lexer.restart();
                     }
@@ -1464,7 +1464,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.ofTableResume();
         } catch (CairoException ex) {
             LOG.critical().$("table resume failed [table=").$(tableToken)
-                    .$(", msg=").utf8(ex.getFlyweightMessage())
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             ex.position(tableNamePosition);
@@ -1532,7 +1532,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.ofTableSuspend();
         } catch (CairoException ex) {
             LOG.critical().$("table suspend failed [table=").$(tableToken)
-                    .$(", error=").utf8(ex.getFlyweightMessage())
+                    .$(", error=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             ex.position(tableNamePosition);
@@ -1711,7 +1711,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } catch (CairoException e) {
             LOG.info().$("could not alter materialized view [view=").$(matViewToken.getTableName())
-                    .$(", msg=").utf8(e.getFlyweightMessage())
+                    .$(", msg=").$safe(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
             if (e.getPosition() == 0) {
@@ -1986,7 +1986,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } catch (CairoException e) {
             LOG.info().$("could not alter table [table=").$(tableToken.getTableName())
-                    .$(", msg=").utf8(e.getFlyweightMessage())
+                    .$(", msg=").$safe(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
             if (e.getPosition() == 0) {
@@ -3334,7 +3334,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         } catch (CairoException e) {
                             e.position(position);
                             LogRecord record = LOG.error()
-                                    .$("could not create table as select [message=").utf8(e.getFlyweightMessage());
+                                    .$("could not create table as select [message=").$safe(e.getFlyweightMessage());
                             if (!e.isCancellation()) {
                                 record.$(", errno=").$(e.getErrno());
                             }
@@ -3385,7 +3385,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     } catch (CairoException e) {
                         if (e.isAuthorizationError() || e.isCancellation()) {
                             // No point printing stack trace for authorization or cancellation errors
-                            LOG.error().$("could not create table [error=").utf8(e.getFlyweightMessage()).I$();
+                            LOG.error().$("could not create table [error=").$safe(e.getFlyweightMessage()).I$();
                         } else {
                             LOG.error().$("could not create table [error=").$((Throwable) e).I$();
                         }
@@ -4243,7 +4243,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     break;
                                 } catch (TableReferenceOutOfDateException ex) {
                                     // Sometimes table can be out of data when a DDL is committed concurrently, we need to retry
-                                    LOG.info().$("retrying backup due to concurrent metadata update [table=").utf8(tableName)
+                                    LOG.info().$("retrying backup due to concurrent metadata update [table=").$safe(tableName)
                                             .$(", ex=").$(ex.getFlyweightMessage())
                                             .I$();
                                 }
@@ -4257,14 +4257,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 try {
                     dstPath.trimTo(renameRootLen).concat(tableToken);
                     TableUtils.renameOrFail(ff, auxPath.trimTo(tableRootLen).$(), dstPath.$());
-                    LOG.info().$("backup complete [table=").utf8(tableName).$(", to=").$(dstPath).I$();
+                    LOG.info().$("backup complete [table=").$safe(tableName).$(", to=").$(dstPath).I$();
                 } finally {
                     dstPath.trimTo(renameRootLen).$();
                 }
             } catch (CairoException e) {
                 LOG.info()
-                        .$("could not backup [table=").utf8(tableName)
-                        .$(", msg=").utf8(e.getFlyweightMessage())
+                        .$("could not backup [table=").$safe(tableName)
+                        .$(", msg=").$safe(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .I$();
                 auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();

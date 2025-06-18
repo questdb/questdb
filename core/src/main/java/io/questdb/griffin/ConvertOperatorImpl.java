@@ -243,7 +243,7 @@ public class ConvertOperatorImpl implements Closeable {
                                     dstVarFd = this.varFd;
 
                                     LOG.info().$("converting column [at=").$safe(path.trimTo(pathTrimToLen))
-                                            .$(", column=").utf8(columnName)
+                                            .$(", column=").$safe(columnName)
                                             .$(", from=").$(ColumnType.nameOf(existingType))
                                             .$(", to=").$(ColumnType.nameOf(newType))
                                             .$(", rowCount=").$(rowCount)
@@ -280,7 +280,7 @@ public class ConvertOperatorImpl implements Closeable {
                         }
                     } catch (Throwable th) {
                         LOG.error().$("error converting column [at=").$(tableWriter.getTableToken())
-                                .$(", column=").utf8(columnName).$(", from=").$(ColumnType.nameOf(existingType))
+                                .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                                 .$(", to=").$(ColumnType.nameOf(newType))
                                 .$(", error=").$(th).I$();
                         asyncProcessingErrorCount.incrementAndGet();
@@ -293,7 +293,7 @@ public class ConvertOperatorImpl implements Closeable {
             consumeConversionTasks(messageBus.getColumnTaskQueue(), queueCount, true);
             long elapsed = timer.getTicks() - start;
             LOG.info().$("completed column conversion [at=").$(tableWriter.getTableToken())
-                    .$(", column=").utf8(columnName).$(", from=").$(ColumnType.nameOf(existingType))
+                    .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType))
                     .$(", partitions=").$(partitionUpdated)
                     .$(", rows=").$(totalRows)
@@ -325,7 +325,7 @@ public class ConvertOperatorImpl implements Closeable {
                 if (!ok) {
                     LOG.critical().$("failed to convert column, column is corrupt [at=")
                             .$(tableWriter.getTableToken())
-                            .$(", column=").utf8(columnName).$(", from=").$(ColumnType.nameOf(existingType))
+                            .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                             .$(", to=").$(ColumnType.nameOf(newType)).$(", srcFixFd=").$(srcFixFd)
                             .$(", srcVarFd=").$(srcVarFd).$(", partition ").$ts(partitionTimestamp)
                             .I$();
@@ -336,7 +336,7 @@ public class ConvertOperatorImpl implements Closeable {
             asyncProcessingErrorCount.incrementAndGet();
             LogRecord log = LOG.critical().$("failed to convert column, column is corrupt [at=")
                     .$(tableWriter.getTableToken())
-                    .$(", column=").utf8(columnName).$(", from=").$(ColumnType.nameOf(existingType))
+                    .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType))
                     .$(", srcFixFd=").$(srcFixFd).$(", srcVarFd=")
                     .$(srcVarFd).$(", partition ").$ts(partitionTimestamp);
