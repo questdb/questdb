@@ -54,16 +54,24 @@ public final class TimestampSamplerFactory {
         }
 
         // look for end of digits
+        boolean allZeros = true;
         for (int i = 0; i < len; i++) {
             char c = cs.charAt(i);
             if (c < '0' || c > '9') {
                 k = i;
                 break;
             }
+            if (c != '0') {
+                allZeros = false;
+            }
         }
 
         if (k == 0 && cs.charAt(0) == '-') {
             throw SqlException.$(position, "negative interval is not allowed");
+        }
+
+        if (allZeros) {
+            throw SqlException.$(position, "zero is not a valid interval value");
         }
 
         if (k == -1) {
