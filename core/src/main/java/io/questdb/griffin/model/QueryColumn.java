@@ -111,4 +111,9 @@ public class QueryColumn implements Mutable, Sinkable {
     public void toSink(@NotNull CharSink<?> sink) {
         sink.put(ast).putAscii(" as ").put(alias);
     }
+
+    @Override
+    public String toString() {
+        return ast + " as " + alias;
+    }
 }
