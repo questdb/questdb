@@ -96,6 +96,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected boolean stringToCharCastAllowed;
     protected boolean symbolAsFieldSupported;
     protected long timestampTicks;
+    protected int timestampType = ColumnType.TIMESTAMP_MICRO;
     protected boolean useLegacyString;
     protected WorkerPool workerPool;
 
@@ -201,6 +202,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             @Override
             public short getDefaultColumnTypeForInteger() {
                 return integerDefaultColumnType;
+            }
+
+            @Override
+            public int getDefaultColumnTypeForTimestamp() {
+                return timestampType;
             }
 
             @Override
