@@ -466,7 +466,7 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        LOG.debug().$("create table [name=").utf8(tableDir).I$();
+        LOG.debug().$("create table [name=").$safe(tableDir).I$();
         path.of(root).concat(tableDir).$();
         if (ff.isDirOrSoftLinkDir(path.$())) {
             throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(path).put(']');
@@ -879,8 +879,8 @@ public final class TableUtils {
         // This is temporary solution until we can get multiple version of metadata not overwriting each other
         if (ex.errnoFileCannotRead()) {
             if (millisecondClock.getTicks() < deadline) {
-                LOG.info().$("error reloading metadata [table=").utf8(tableName)
-                        .$(", msg=").utf8(ex.getFlyweightMessage())
+                LOG.info().$("error reloading metadata [table=").$safe(tableName)
+                        .$(", msg=").$safe(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 Os.pause();
@@ -2059,7 +2059,7 @@ public final class TableUtils {
                         // right, cannot open file for some reason?
                         LOG.error()
                                 .$("could not open swap [file=").$(path)
-                                .$(", msg=").utf8(e.getFlyweightMessage())
+                                .$(", msg=").$safe(e.getFlyweightMessage())
                                 .$(", errno=").$(e.getErrno())
                                 .I$();
                     }

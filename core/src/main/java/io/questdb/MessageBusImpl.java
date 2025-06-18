@@ -214,7 +214,7 @@ public class MessageBusImpl implements MessageBus {
             this.queryCacheEventSubSeq = new MCSequence(configuration.getQueryCacheEventQueueCapacity());
             queryCacheEventPubSeq.then(queryCacheEventSubSeq).then(queryCacheEventPubSeq);
 
-            this.queryTraceQueue = new ConcurrentQueue<>(QueryTrace.ITEM_FACTORY);
+            this.queryTraceQueue = ConcurrentQueue.createConcurrentQueue(QueryTrace.ITEM_FACTORY);
         } catch (Throwable th) {
             close();
             throw th;

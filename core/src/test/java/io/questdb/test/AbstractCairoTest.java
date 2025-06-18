@@ -556,7 +556,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     public void tearDown(boolean removeDir) {
-        LOG.info().$("Tearing down test ").utf8(getClass().getSimpleName()).$('#').utf8(testName.getMethodName()).$();
+        LOG.info().$("Tearing down test ").$safe(getClass().getSimpleName()).$('#').$safe(testName.getMethodName()).$();
         forEachNode(node -> node.tearDownCairo(removeDir));
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {

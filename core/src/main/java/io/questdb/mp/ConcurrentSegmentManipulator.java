@@ -22,22 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cliutil;
+package io.questdb.mp;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.RebuildColumnBase;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.std.str.Utf8String;
+public interface ConcurrentSegmentManipulator<T> {
+    T dequeue(ConcurrentQueueSegment.Slot<T>[] slots, int slotsIndex, T item);
 
-public class CmdUtils {
-    static void runColumnRebuild(RebuildColumnCommandArgs params, RebuildColumnBase ri) {
-        final Log log = LogFactory.getLog("recover-var-index");
-        ri.of(new Utf8String(params.tablePath));
-        try {
-            ri.reindex(params.partition, params.column);
-        } catch (CairoException ex) {
-            log.error().$safe(ex.getFlyweightMessage()).$();
-        }
-    }
+    void enqueue(T item, ConcurrentQueueSegment.Slot<T>[] slots, int slotsIndex);
 }
