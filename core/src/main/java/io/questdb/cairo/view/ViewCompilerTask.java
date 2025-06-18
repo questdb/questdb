@@ -29,26 +29,18 @@ import io.questdb.mp.ValueHolder;
 import io.questdb.std.Numbers;
 
 public class ViewCompilerTask implements ValueHolder<ViewCompilerTask> {
-    public static final int COMPILE = 0;
-    public static final int UNDEFINED = -1;
-    public String invalidationReason;
-    public int operation = UNDEFINED;
     public TableToken tableToken;
     public long updateTimestamp = Numbers.LONG_NULL;
 
     @Override
     public void clear() {
-        operation = UNDEFINED;
         tableToken = null;
-        invalidationReason = null;
         updateTimestamp = Numbers.LONG_NULL;
     }
 
     @Override
     public void copyTo(ViewCompilerTask target) {
-        target.operation = operation;
         target.tableToken = tableToken;
-        target.invalidationReason = invalidationReason;
         target.updateTimestamp = updateTimestamp;
     }
 }

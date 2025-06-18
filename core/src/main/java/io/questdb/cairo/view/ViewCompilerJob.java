@@ -132,12 +132,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
 
     private boolean processNotifications() {
         while (stateStore.tryDequeueCompilerTask(compilerTask)) {
-            final int operation = compilerTask.operation;
-            if (operation == ViewCompilerTask.COMPILE) {
-                compile(compilerTask.tableToken, compilerTask.updateTimestamp);
-            } else {
-                throw new RuntimeException("unrecognized operation: " + operation);
-            }
+            compile(compilerTask.tableToken, compilerTask.updateTimestamp);
         }
         return false;
     }

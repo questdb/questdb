@@ -125,8 +125,6 @@ public class ViewStateStoreImpl implements ViewStateStore {
         final ViewCompilerTask task = taskHolder.get();
         //task.clear();
         task.tableToken = tableToken;
-        task.operation = ViewCompilerTask.COMPILE;
-        task.invalidationReason = null;
         task.updateTimestamp = microsecondClock.getTicks();
         taskQueue.enqueue(task);
     }
