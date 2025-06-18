@@ -763,7 +763,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ExpressionNode tolerance = slaveModel.getAsOfJoinTolerance();
         long toleranceInterval = Numbers.LONG_NULL;
         if (tolerance != null) {
-            int k = TimestampSamplerFactory.findIntervalEndIndex(tolerance.token, tolerance.position);
+            int k = TimestampSamplerFactory.findIntervalEndIndex(tolerance.token, tolerance.position, "tolerance");
             assert tolerance.token.length() > k;
             char unit = tolerance.token.charAt(k);
             long multiplier;
@@ -2287,7 +2287,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             int timestampIndex = groupByFactory.getMetadata().getColumnIndexQuiet(alias);
 
-            int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(fillStride.token, fillStride.position);
+            int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(fillStride.token, fillStride.position, "sample");
             long samplingInterval = TimestampSamplerFactory.parseInterval(fillStride.token, samplingIntervalEnd, fillStride.position, "sample", Numbers.INT_NULL, ' ');
             assert samplingInterval > 0;
             assert samplingIntervalEnd < fillStride.token.length();

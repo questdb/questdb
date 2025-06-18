@@ -48,7 +48,7 @@ public class TimestampSamplerFactoryTest {
         assertFindIntervalEndIndexFailure(50, "expected single letter qualifier", "1bar", 49);
         assertFindIntervalEndIndexFailure(100, "negative interval is not allowed", "-", 100);
 
-        Assert.assertEquals(0, TimestampSamplerFactory.findIntervalEndIndex("m", 11));
+        Assert.assertEquals(0, TimestampSamplerFactory.findIntervalEndIndex("m", 11, "sample"));
     }
 
     @Test
@@ -199,7 +199,7 @@ public class TimestampSamplerFactoryTest {
 
     private static void assertFindIntervalEndIndexFailure(int expectedPosition, CharSequence expectedMessage, CharSequence sampleBy, int position) {
         try {
-            TimestampSamplerFactory.findIntervalEndIndex(sampleBy, position);
+            TimestampSamplerFactory.findIntervalEndIndex(sampleBy, position, "sample");
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(expectedPosition, e.getPosition());

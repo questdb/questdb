@@ -38,10 +38,11 @@ public final class TimestampSamplerFactory {
      *
      * @param cs       input string
      * @param position position in SQL text to report error against
+     * @param kind     kind of an interval we are parsing, used for error reporting
      * @return index of the first character after the interval token
      * @throws SqlException when input string is not a valid interval token
      */
-    public static int findIntervalEndIndex(CharSequence cs, int position) throws SqlException {
+    public static int findIntervalEndIndex(CharSequence cs, int position, CharSequence kind) throws SqlException {
         int k = -1;
 
         if (cs == null) {
@@ -73,7 +74,7 @@ public final class TimestampSamplerFactory {
         }
 
         if (allZeros && atLeastOneDigit) {
-            throw SqlException.$(position, "zero is not a valid interval value");
+            throw SqlException.$(position, "zero is not a valid ").put(kind).put(" value");
         }
 
         if (k == -1) {
@@ -141,7 +142,7 @@ public final class TimestampSamplerFactory {
      * @throws SqlException when input string is invalid
      */
     public static TimestampSampler getInstance(CharSequence cs, int position) throws SqlException {
-        int k = findIntervalEndIndex(cs, position);
+        int k = findIntervalEndIndex(cs, position, "sample");
         assert cs.length() > k;
 
         long n = parseInterval(cs, k, position, "sample", Numbers.INT_NULL, '?');
@@ -149,7 +150,7 @@ public final class TimestampSamplerFactory {
     }
 
     /**
-     * Parse interval value from string. Expected to be called after {@link #findIntervalEndIndex(CharSequence, int)}
+     * Parse interval value from string. Expected to be called after {@link #findIntervalEndIndex(CharSequence, int, CharSequence)}
      * has been called and returned a valid index. Behavior is undefined if called with invalid index.
      *
      * @param cs          token to parse interval from

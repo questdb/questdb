@@ -723,10 +723,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(query, 49, "ASOF JOIN TOLERANCE must be positive");
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 0s;";
-            assertExceptionNoLeakCheck(query, 46, "zero is not a valid interval value");
+            assertExceptionNoLeakCheck(query, 46, "zero is not a valid tolerance value");
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 0;";
-            assertExceptionNoLeakCheck(query, 46, "zero is not a valid interval value");
+            assertExceptionNoLeakCheck(query, 46, "zero is not a valid tolerance value");
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1Q;";
             assertExceptionNoLeakCheck(query, 46, "unsupported TOLERANCE unit [unit=Q]");
