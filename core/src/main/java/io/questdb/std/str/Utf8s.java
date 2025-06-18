@@ -267,13 +267,9 @@ public final class Utf8s {
             return false;
         }
         final int lSize = l.size();
-        return lSize == r.size() && l.zeroPaddedSixPrefix() == r.zeroPaddedSixPrefix()
-                && dataEquals(
-                l,
-                r,
-                VARCHAR_INLINED_PREFIX_BYTES,
-                lSize
-        );
+        return lSize == r.size()
+                && l.zeroPaddedSixPrefix() == r.zeroPaddedSixPrefix()
+                && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, lSize);
     }
 
     public static boolean equals(@NotNull Utf8Sequence l, int lLo, int lHi, @NotNull Utf8Sequence r, int rLo, int rHi) {

@@ -731,7 +731,6 @@ public class WalTxnDetails implements QuietCloseable {
             txnList.add(long1);
             txnList.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), txn));
         }
-        // We specify min as 0, so we expect the highest bit to be 0
         Vect.radixSortLongIndexAscChecked(
                 txnList.getAddress(),
                 txn,

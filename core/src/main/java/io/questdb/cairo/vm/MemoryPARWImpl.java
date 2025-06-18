@@ -1175,7 +1175,7 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     protected long allocateNextPage(int page) {
-        LOG.info().$("new page [size=").$(getExtendSegmentSize()).I$();
+        LOG.debug().$("new page [size=").$(getExtendSegmentSize()).I$();
         if (page >= maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
