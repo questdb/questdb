@@ -239,7 +239,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(txnScoreboard);
             Misc.free(path);
             Misc.free(columnVersionReader);
-            LOG.debug().$("closed '").utf8(tableToken.getTableName()).$('\'').$();
+            LOG.debug().$("closed '").$safe(tableToken.getTableName()).$('\'').$();
         }
     }
 
@@ -623,7 +623,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // Scoreboard can be over allocated
                 LOG.critical().$("cannot lock txn in scoreboard [table=").$(tableToken)
                         .$(", txn=").$(txn)
-                        .$(", error=").utf8(ex.getFlyweightMessage())
+                        .$(", error=").$safe(ex.getFlyweightMessage())
                         .I$();
                 throw ex;
             }
@@ -752,7 +752,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
         long newSize = txFile.getPartitionRowCountByTimestamp(partitionTs);
         if (existingPartitionNameTxn != newNameTxn || newSize < 0) {
-            LOG.debug().$("close outdated partition files [table=").utf8(tableToken.getTableName()).$(", ts=").$ts(partitionTs).$(", nameTxn=").$(newNameTxn).$();
+            LOG.debug().$("close outdated partition files [table=").$safe(tableToken.getTableName()).$(", ts=").$ts(partitionTs).$(", nameTxn=").$(newNameTxn).$();
             // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files
             if (getPartitionFormat(partitionIndex) == PartitionFormat.NATIVE) {
                 for (int i = 0; i < columnCount; i++) {
@@ -842,7 +842,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void createNewColumnList(int columnCount, TableReaderMetadataTransitionIndex transitionIndex, int columnCountShl) {
-        LOG.debug().$("resizing columns file list [table=").utf8(tableToken.getTableName()).I$();
+        LOG.debug().$("resizing columns file list [table=").$safe(tableToken.getTableName()).I$();
         int capacity = partitionCount << columnCountShl;
         final ObjList<MemoryCMR> toColumns = new ObjList<>(capacity + 2);
         final LongList toColumnTops = new LongList(capacity / 2);
@@ -1465,7 +1465,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         auxMem = openOrCreateColumnMemory(path, columns, secondaryIndex, auxMem, auxSize, lastPartition);
                         long dataSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), columnRowCount - 1);
                         if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
-                            LOG.critical().$("Invalid var len column size [column=").utf8(name)
+                            LOG.critical().$("Invalid var len column size [column=").$safe(name)
                                     .$(", size=").$(dataSize)
                                     .$(", path=").$(path)
                                     .I$();
@@ -1671,7 +1671,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reshuffleColumns(int columnCount, TableReaderMetadataTransitionIndex transitionIndex) {
-        LOG.debug().$("reshuffling columns file list [table=").utf8(tableToken.getTableName()).I$();
+        LOG.debug().$("reshuffling columns file list [table=").$safe(tableToken.getTableName()).I$();
         int iterateCount = Math.max(columnCount, this.columnCount);
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {

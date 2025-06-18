@@ -183,8 +183,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                     reader.of(path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
                                     viewStateReader.of(reader, viewToken);
                                 } catch (CairoException e) {
-                                    LOG.info().$("could not read materialized view state file [view=").utf8(viewToken.getTableName())
-                                            .$(", msg=").utf8(e.getFlyweightMessage())
+                                    LOG.info().$("could not read materialized view state file [view=").$safe(viewToken.getTableName())
+                                            .$(", msg=").$safe(e.getFlyweightMessage())
                                             .$(", errno=").$(e.getErrno())
                                             .I$();
                                     continue;
