@@ -46,7 +46,7 @@ public class InfluxDBv2ClientCombatTest extends AbstractTest {
                  WriteApi writeApi = client.makeWriteApi()) {
                 long nanoTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T06:00:00.000001") * 1000L;
                 String record = "t1,location=north value=60.0 " + nanoTime;
-                writeApi.writeRecord("my-bucket","my-org", WritePrecision.NS, record);
+                writeApi.writeRecord("my-bucket", "my-org", WritePrecision.NS, record);
 
                 long microTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T04:00:00.000001Z");
                 String record1 = "t1,location=north value=60.0 " + microTime;
