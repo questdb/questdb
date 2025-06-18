@@ -1164,6 +1164,71 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testAsOfToleranceMaximum() throws Exception {
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "U",
+                48,
+                "invalid tolerance value [value=2147483648U, maximum=2147483647U]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // millis
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "T",
+                48,
+                "invalid tolerance value [value=2147483648T, maximum=2147483647T]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // seconds
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "s",
+                48,
+                "invalid tolerance value [value=2147483648s, maximum=2147483647s]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // minutes
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "m",
+                48,
+                "invalid tolerance value [value=2147483648m, maximum=2147483647m]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // hours
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "h",
+                48,
+                "invalid tolerance value [value=2147483648h, maximum=2147483647h]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // days - int overflow
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "d",
+                48,
+                "invalid tolerance value [value=2147483648d, maximum=106751991d]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // days - overflow in micros
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance 106751992d",
+                48,
+                "tolerance value too high for given units [value=106751992d, maximum=106751991d]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // weeks - int overflow
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "w",
+                48,
+                "invalid tolerance value [value=2147483648w, maximum=15250284w]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // weeks - overflow in micros
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance 15250285w",
+                48,
+                "tolerance value too high for given units [value=15250285w, maximum=15250284w]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+    }
+
+    @Test
     public void testAtAsColumnAlias() throws Exception {
         assertQuery(
                 "select-choose l at from (select [l] from testat timestamp (ts))",

@@ -134,7 +134,7 @@ public final class TimestampSamplerFactory {
         int k = findIntervalEndIndex(cs, position);
         assert cs.length() > k;
 
-        long n = parseInterval(cs, k, position, "sample");
+        long n = parseInterval(cs, k, position, "sample", Numbers.INT_NULL, '?');
         return getInstance(n, cs.charAt(k), position + k);
     }
 
@@ -146,10 +146,12 @@ public final class TimestampSamplerFactory {
      * @param intervalEnd end of interval token, exclusive
      * @param position    position in SQL text to report error against
      * @param kind        kind of an interval we are parsing, used for error reporting
+     * @param maxValue    maximum value for the interval, used for error reporting
+     * @param unit        unit qualifier, used for error reporting
      * @return parsed interval value
      * @throws SqlException when input string is invalid
      */
-    public static long parseInterval(CharSequence cs, int intervalEnd, int position, String kind) throws SqlException {
+    public static long parseInterval(CharSequence cs, int intervalEnd, int position, String kind, int maxValue, char unit) throws SqlException {
         if (intervalEnd == 0) {
             // 'SAMPLE BY m' is the same as 'SAMPLE BY 1m' etc.
             return 1;
@@ -159,9 +161,17 @@ public final class TimestampSamplerFactory {
             if (n == 0) {
                 throw SqlException.$(position, "zero is not a valid ").put(kind).put(" value");
             }
+            if (maxValue != Numbers.INT_NULL && n > maxValue) {
+                throw SqlException.$(position, kind).put(" value too high for given units [value=").put(cs).put(", maximum=").put(maxValue).put(unit).put(']');
+            }
             return n;
         } catch (NumericException e) {
-            throw SqlException.$(position, "invalid ").put(kind).put(" value [value=").put(cs).put(']');
+            SqlException ex = SqlException.$(position, "invalid ").put(kind).put(" value [value=").put(cs);
+            if (maxValue != Numbers.INT_NULL) {
+                ex.put(", maximum=").put(maxValue).put(unit);
+            }
+            ex.put(']');
+            throw ex;
         }
     }
 }

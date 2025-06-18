@@ -765,7 +765,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (tolerance != null) {
             int k = TimestampSamplerFactory.findIntervalEndIndex(tolerance.token, tolerance.position);
             assert tolerance.token.length() > k;
-            toleranceInterval = TimestampSamplerFactory.parseInterval(tolerance.token, k, tolerance.position, "tolerance");
             char unit = tolerance.token.charAt(k);
             long multiplier;
             switch (unit) {
@@ -793,6 +792,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 default:
                     throw SqlException.$(tolerance.position, "unsupported TOLERANCE unit [unit=").put(unit).put(']');
             }
+            int maxValue = (int) Math.min(Long.MAX_VALUE / multiplier, Integer.MAX_VALUE);
+            toleranceInterval = TimestampSamplerFactory.parseInterval(tolerance.token, k, tolerance.position, "tolerance", maxValue, unit);
             toleranceInterval *= multiplier;
         }
         return toleranceInterval;
@@ -2287,7 +2288,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int timestampIndex = groupByFactory.getMetadata().getColumnIndexQuiet(alias);
 
             int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(fillStride.token, fillStride.position);
-            long samplingInterval = TimestampSamplerFactory.parseInterval(fillStride.token, samplingIntervalEnd, fillStride.position, "sample");
+            long samplingInterval = TimestampSamplerFactory.parseInterval(fillStride.token, samplingIntervalEnd, fillStride.position, "sample", Numbers.INT_NULL, ' ');
             assert samplingInterval > 0;
             assert samplingIntervalEnd < fillStride.token.length();
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
