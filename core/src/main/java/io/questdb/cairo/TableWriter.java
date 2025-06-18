@@ -138,9 +138,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.tasks.TableWriterTask.*;
@@ -8464,26 +8464,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void rollbackSymbolTables(boolean quiet) {
-        int expectedMapWriters = txWriter.unsafeReadSymbolColumnCount();
-        for (int i = 0; i < expectedMapWriters; i++) {
-            try {
-                denseSymbolMapWriters.get(i).rollback(txWriter.unsafeReadSymbolWriterIndexOffset(i));
-            } catch (Throwable th) {
-                if (quiet) {
-                    distressed = true;
-                    CharSequence columnName = metadata.getColumnName(i);
-                    LOG.error().$("could not rollback symbol table [table=").$(tableToken)
-                            .$(", columnName=").$safe(columnName)
-                            .$(", exception=").$(th)
-                            .I$();
-                } else {
-                    throw th;
-                }
-            }
-        }
-    }
-
     private long readMinTimestamp() {
         other.of(path).trimTo(pathSize); // reset the path to table root
         final long timestamp = txWriter.getPartitionTimestampByIndex(1);
@@ -9350,140 +9330,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
-        if (partitionIndexHi <= partitionIndexLo + Math.max(1, optimalPartitionCount)) {
-            // Nothing to do
-            return;
-        }
-
-        if (checkpointStatus.partitionsLocked()) {
-            LOG.info().$("cannot squash partition [table=").utf8(tableToken.getTableName())
-                    .$("], checkpoint in progress").$();
-            return;
-        }
-
-        assert partitionIndexHi >= 0 && partitionIndexHi <= txWriter.getPartitionCount() && partitionIndexLo >= 0;
-
-        long targetPartition = Long.MIN_VALUE;
-        boolean copyTargetFrame = false;
-
-        // Move targetPartitionIndex to the first unlocked partition in the range
-        int targetPartitionIndex = partitionIndexLo;
-        for (int n = partitionIndexHi - 1; targetPartitionIndex < n; targetPartitionIndex++) {
-            boolean canOverwrite = canSquashOverwritePartitionTail(targetPartitionIndex);
-            if (canOverwrite || force) {
-                targetPartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex);
-                copyTargetFrame = !canOverwrite;
-                break;
-            }
-        }
-        if (targetPartition == Long.MIN_VALUE) {
-            return;
-        }
-
-        boolean lastPartitionSquashed = false;
-        int squashCount = Math.min(partitionIndexHi - targetPartitionIndex - 1, partitionIndexHi - partitionIndexLo - optimalPartitionCount);
-
-        if (squashCount <= 0) {
-            // There are fewer partitions we can squash than optimalPartitionCount
-            return;
-        }
-
-        long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
-        setPathForNativePartition(path, partitionBy, targetPartition, targetPartitionNameTxn);
-        final long originalSize = txWriter.getPartitionRowCountByTimestamp(targetPartition);
-
-        boolean rw = !copyTargetFrame;
-        Frame targetFrame = null;
-        Frame firstPartitionFrame = frameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, originalSize);
-        try {
-            if (copyTargetFrame) {
-                try {
-                    setPathForNativePartition(other, partitionBy, targetPartition, txWriter.txn);
-                    createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
-                    LOG.info().$("copying partition to force squash [from=").$substr(pathRootSize, path).$(", to=").$(other).I$();
-
-                    targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
-                    FrameAlgebra.append(targetFrame, firstPartitionFrame, configuration.getCommitMode());
-                    addPhysicallyWrittenRows(firstPartitionFrame.getRowCount());
-                    txWriter.updatePartitionSizeAndTxnByRawIndex(targetPartitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
-                    partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn);
-                    targetPartitionNameTxn = txWriter.txn;
-                } finally {
-                    Misc.free(firstPartitionFrame);
-                }
-            } else {
-                targetFrame = firstPartitionFrame;
-            }
-
-            engine.getPartitionOverwriteControl().notifyPartitionMutates(
-                    tableToken,
-                    targetPartition,
-                    targetPartitionNameTxn,
-                    targetFrame.getRowCount()
-            );
-            for (int i = 0; i < squashCount; i++) {
-                long sourcePartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex + 1);
-
-                other.trimTo(pathSize);
-                long sourceNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition);
-                setPathForNativePartition(other, partitionBy, sourcePartition, sourceNameTxn);
-                long partitionRowCount = txWriter.getPartitionRowCountByTimestamp(sourcePartition);
-                lastPartitionSquashed = targetPartitionIndex + 2 == txWriter.getPartitionCount();
-                if (lastPartitionSquashed) {
-                    closeActivePartition(false);
-                    partitionRowCount = txWriter.getTransientRowCount() + txWriter.getLagRowCount();
-                }
-
-                assert partitionRowCount > 0;
-
-                LOG.info().$("squashing partitions [table=").$(tableToken)
-                        .$(", target=").$(formatPartitionForTimestamp(targetPartition, targetPartitionNameTxn))
-                        .$(", targetSize=").$(targetFrame.getRowCount())
-                        .$(", source=").$(formatPartitionForTimestamp(sourcePartition, sourceNameTxn))
-                        .$(", sourceSize=").$(partitionRowCount)
-                        .I$();
-
-                try (Frame sourceFrame = frameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionRowCount)) {
-                    FrameAlgebra.append(targetFrame, sourceFrame, configuration.getCommitMode());
-                    addPhysicallyWrittenRows(sourceFrame.getRowCount());
-                } catch (Throwable th) {
-                    LOG.critical().$("partition squashing failed [table=").$(tableToken)
-                            .$(", error=").$(th).I$();
+    private void rollbackSymbolTables(boolean quiet) {
+        int expectedMapWriters = txWriter.unsafeReadSymbolColumnCount();
+        for (int i = 0; i < expectedMapWriters; i++) {
+            try {
+                denseSymbolMapWriters.get(i).rollback(txWriter.unsafeReadSymbolWriterIndexOffset(i));
+            } catch (Throwable th) {
+                if (quiet) {
+                    distressed = true;
+                    CharSequence columnName = metadata.getColumnName(i);
+                    LOG.error().$("could not rollback symbol table [table=").$(tableToken)
+                            .$(", columnName=").$safe(columnName)
+                            .$(", exception=").$(th)
+                            .I$();
+                } else {
                     throw th;
                 }
-
-                txWriter.removeAttachedPartitions(sourcePartition);
-                columnVersionWriter.squashPartition(targetPartition, sourcePartition);
-                partitionRemoveCandidates.add(sourcePartition, sourceNameTxn);
-                if (sourcePartition == minSplitPartitionTimestamp) {
-                    minSplitPartitionTimestamp = getPartitionTimestampOrMax(targetPartitionIndex + 1);
-                }
             }
-
-            txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getRowCount());
-            if (lastPartitionSquashed) {
-                // last partition is squashed, adjust fixed/transient row sizes
-                long newTransientRowCount = targetFrame.getRowCount() - txWriter.getLagRowCount();
-                assert newTransientRowCount >= 0;
-                txWriter.fixedRowCount += txWriter.getTransientRowCount() - newTransientRowCount;
-                assert txWriter.fixedRowCount >= 0;
-                txWriter.transientRowCount = newTransientRowCount;
-            }
-        } finally {
-            Misc.free(targetFrame);
-            path.trimTo(pathSize);
-            other.trimTo(pathSize);
         }
-
-        if (lastPartitionSquashed) {
-            openLastPartition();
-        }
-
-        // Commit the new transaction with the partitions squashed
-        columnVersionWriter.commit();
-        txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.commit(denseSymbolMapWriters);
     }
 
     private void rowAppend(ObjList<Runnable> activeNullSetters) {
@@ -9697,6 +9561,142 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
+        if (partitionIndexHi <= partitionIndexLo + Math.max(1, optimalPartitionCount)) {
+            // Nothing to do
+            return;
+        }
+
+        if (checkpointStatus.partitionsLocked()) {
+            LOG.info().$("cannot squash partition [table=").$safe(tableToken.getTableName())
+                    .$("], checkpoint in progress").$();
+            return;
+        }
+
+        assert partitionIndexHi >= 0 && partitionIndexHi <= txWriter.getPartitionCount() && partitionIndexLo >= 0;
+
+        long targetPartition = Long.MIN_VALUE;
+        boolean copyTargetFrame = false;
+
+        // Move targetPartitionIndex to the first unlocked partition in the range
+        int targetPartitionIndex = partitionIndexLo;
+        for (int n = partitionIndexHi - 1; targetPartitionIndex < n; targetPartitionIndex++) {
+            boolean canOverwrite = canSquashOverwritePartitionTail(targetPartitionIndex);
+            if (canOverwrite || force) {
+                targetPartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex);
+                copyTargetFrame = !canOverwrite;
+                break;
+            }
+        }
+        if (targetPartition == Long.MIN_VALUE) {
+            return;
+        }
+
+        boolean lastPartitionSquashed = false;
+        int squashCount = Math.min(partitionIndexHi - targetPartitionIndex - 1, partitionIndexHi - partitionIndexLo - optimalPartitionCount);
+
+        if (squashCount <= 0) {
+            // There are fewer partitions we can squash than optimalPartitionCount
+            return;
+        }
+
+        long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
+        setPathForNativePartition(path, partitionBy, targetPartition, targetPartitionNameTxn);
+        final long originalSize = txWriter.getPartitionRowCountByTimestamp(targetPartition);
+
+        boolean rw = !copyTargetFrame;
+        Frame targetFrame = null;
+        Frame firstPartitionFrame = frameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, originalSize);
+        try {
+            if (copyTargetFrame) {
+                try {
+                    setPathForNativePartition(other, partitionBy, targetPartition, txWriter.txn);
+                    createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
+                    LOG.info().$("copying partition to force squash [from=").$substr(pathRootSize, path).$(", to=").$(other).I$();
+
+                    targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
+                    FrameAlgebra.append(targetFrame, firstPartitionFrame, configuration.getCommitMode());
+                    addPhysicallyWrittenRows(firstPartitionFrame.getRowCount());
+                    txWriter.updatePartitionSizeAndTxnByRawIndex(targetPartitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
+                    partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn);
+                    targetPartitionNameTxn = txWriter.txn;
+                } finally {
+                    Misc.free(firstPartitionFrame);
+                }
+            } else {
+                targetFrame = firstPartitionFrame;
+            }
+
+            engine.getPartitionOverwriteControl().notifyPartitionMutates(
+                    tableToken,
+                    targetPartition,
+                    targetPartitionNameTxn,
+                    targetFrame.getRowCount()
+            );
+            for (int i = 0; i < squashCount; i++) {
+                long sourcePartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex + 1);
+
+                other.trimTo(pathSize);
+                long sourceNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition);
+                setPathForNativePartition(other, partitionBy, sourcePartition, sourceNameTxn);
+                long partitionRowCount = txWriter.getPartitionRowCountByTimestamp(sourcePartition);
+                lastPartitionSquashed = targetPartitionIndex + 2 == txWriter.getPartitionCount();
+                if (lastPartitionSquashed) {
+                    closeActivePartition(false);
+                    partitionRowCount = txWriter.getTransientRowCount() + txWriter.getLagRowCount();
+                }
+
+                assert partitionRowCount > 0;
+
+                LOG.info().$("squashing partitions [table=").$(tableToken)
+                        .$(", target=").$(formatPartitionForTimestamp(targetPartition, targetPartitionNameTxn))
+                        .$(", targetSize=").$(targetFrame.getRowCount())
+                        .$(", source=").$(formatPartitionForTimestamp(sourcePartition, sourceNameTxn))
+                        .$(", sourceSize=").$(partitionRowCount)
+                        .I$();
+
+                try (Frame sourceFrame = frameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionRowCount)) {
+                    FrameAlgebra.append(targetFrame, sourceFrame, configuration.getCommitMode());
+                    addPhysicallyWrittenRows(sourceFrame.getRowCount());
+                } catch (Throwable th) {
+                    LOG.critical().$("partition squashing failed [table=").$(tableToken)
+                            .$(", error=").$(th).I$();
+                    throw th;
+                }
+
+                txWriter.removeAttachedPartitions(sourcePartition);
+                columnVersionWriter.squashPartition(targetPartition, sourcePartition);
+                partitionRemoveCandidates.add(sourcePartition, sourceNameTxn);
+                if (sourcePartition == minSplitPartitionTimestamp) {
+                    minSplitPartitionTimestamp = getPartitionTimestampOrMax(targetPartitionIndex + 1);
+                }
+            }
+
+            txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getRowCount());
+            if (lastPartitionSquashed) {
+                // last partition is squashed, adjust fixed/transient row sizes
+                long newTransientRowCount = targetFrame.getRowCount() - txWriter.getLagRowCount();
+                assert newTransientRowCount >= 0;
+                txWriter.fixedRowCount += txWriter.getTransientRowCount() - newTransientRowCount;
+                assert txWriter.fixedRowCount >= 0;
+                txWriter.transientRowCount = newTransientRowCount;
+            }
+        } finally {
+            Misc.free(targetFrame);
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+
+        if (lastPartitionSquashed) {
+            openLastPartition();
+        }
+
+        // Commit the new transaction with the partitions squashed
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.commit(denseSymbolMapWriters);
+    }
+
     private int squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(long timestampMax) {
         int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(timestampMax);
         if (partitionIndex < 0) {
@@ -9772,16 +9772,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 m2.sync(async);
             }
         }
-    }
-
-    synchronized Frame openPartitionFrameRO(
-            Path partitionPath,
-            long partitionTimestamp,
-            RecordMetadata metadata,
-            long partitionRowCount
-    ) {
-        // TODO: make frame factory thread safe, including closing it
-        return frameFactory.openRO(partitionPath, partitionTimestamp, metadata, columnVersionWriter, partitionRowCount);
     }
 
     private void throwApplyBlockColumnShuffleFailed(int columnIndex, int columnType, long totalRows, long rowCount) {
@@ -10204,6 +10194,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     void o3CountDownDoneLatch() {
         o3DoneLatch.countDown();
+    }
+
+    synchronized Frame openPartitionFrameRO(
+            Path partitionPath,
+            long partitionTimestamp,
+            RecordMetadata metadata,
+            long partitionRowCount
+    ) {
+        // TODO: make frame factory thread safe, including closing it
+        return frameFactory.openRO(partitionPath, partitionTimestamp, metadata, columnVersionWriter, partitionRowCount);
     }
 
     void purgeUnusedPartitions() {
