@@ -2663,7 +2663,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Assert.assertFalse("function " + factory.getSignature() +
                                         " should serialize to text properly. current text: " +
                                         planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
-                                LOG.info().$(sink).$(planSink.getSink()).$();
+                                LOG.info().$safe(sink).$safe(planSink.getSink()).$();
 
                                 if (function instanceof NegatableBooleanFunction && !((NegatableBooleanFunction) function).isNegated()) {
                                     ((NegatableBooleanFunction) function).setNegated();

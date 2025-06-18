@@ -305,8 +305,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
@@ -864,7 +864,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 return !(loFunc.getLong(null) >= 0 && hiFunc.getLong(null) < 0);
             } catch (SqlException ex) {
-                LOG.error().$("Failed to initialize lo or hi functions [").$("error=").$(ex.getMessage()).I$();
+                LOG.error().$("Failed to initialize lo or hi functions [").$("error=").$safe(ex.getMessage()).I$();
             }
         }
 
@@ -2250,7 +2250,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
 
                     LOG.debug()
-                            .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
+                            .$("JIT enabled for (sub)query [tableName=").$safe(model.getName())
                             .$(", fd=").$(executionContext.getRequestFd())
                             .I$();
                     return new AsyncJitFilteredRecordCursorFactory(
@@ -2275,8 +2275,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } catch (SqlException | LimitOverflowException ex) {
                     Misc.free(compiledFilter);
                     LOG.debug()
-                            .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())
-                            .$(", ex=").$(ex.getFlyweightMessage())
+                            .$("JIT cannot be applied to (sub)query [tableName=").$safe(model.getName())
+                            .$(", ex=").$safe(ex.getFlyweightMessage())
                             .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
                 } finally {
                     jitIRSerializer.clear();

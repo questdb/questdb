@@ -98,7 +98,7 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
 
                 final TableToken tableToken = engine.getTableTokenIfExists(tableName);
                 if (tableToken == null) {
-                    LOG.error().$("table does not exist [table=").$(tableName).I$();
+                    LOG.error().$("table does not exist [table=").$safe(tableName).I$();
                 } else {
                     tableTokens.add(tableToken);
                 }

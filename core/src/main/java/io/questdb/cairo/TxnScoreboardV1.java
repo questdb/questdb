@@ -132,7 +132,7 @@ public class TxnScoreboardV1 implements TxnScoreboard {
             // Schedule async purge and continue
             LOG.critical().$("cannot lock last txn in scoreboard, partition purge will be scheduled [table=")
                     .$(tableToken)
-                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", error=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno()).I$();
             return getMin() < maxTxn;
         }

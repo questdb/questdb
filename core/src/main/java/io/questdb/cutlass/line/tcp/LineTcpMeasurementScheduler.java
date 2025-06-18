@@ -238,7 +238,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             idleTableUpdateDetailsUtf16.put(tableNameUtf16, tud);
                             tud.removeReference(readerWorkerId);
                             pubSeq[writerWorkerId].done(seq);
-                            LOG.info().$("active table going idle [tableName=").$(tableNameUtf16).I$();
+                            LOG.info().$("active table going idle [tableName=").$safe(tableNameUtf16).I$();
                         }
                         return true;
                     } else {
@@ -267,7 +267,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             }
             LOG.info()
                     .$("releasing writer, its been idle since ").$ts(tub.getLastMeasurementMillis() * 1_000)
-                    .$("[tableName=").$(tub.getTableNameUtf16())
+                    .$("[tableName=").$safe(tub.getTableNameUtf16())
                     .I$();
 
             event.releaseWriter();
@@ -318,7 +318,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
         } catch (CairoException ex) {
             // Table could not be created
             LOG.error().$("could not create table [tableName=").$(measurementName)
-                    .$(", msg=").$(ex.getFlyweightMessage())
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             // More details will be logged by catching thread
@@ -445,7 +445,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     if (idleTudKeyIndex < 0) {
                         // TUD is found in global idle cache - this meant it is non-WAL
                         tud = idleTableUpdateDetailsUtf16.valueAt(idleTudKeyIndex);
-                        LOG.info().$("idle table going active [tableName=").$(tud.getTableNameUtf16()).I$();
+                        LOG.info().$("idle table going active [tableName=").$safe(tud.getTableNameUtf16()).I$();
                         if (tud.getWriter() == null) {
                             tud.closeNoLock();
                             // Use actual table name from the "details" to avoid case mismatches in the
@@ -541,7 +541,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 tableNameUtf8
         );
         tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);
-        LOG.info().$("assigned ").$(tableNameUtf16).$(" to thread ").$(threadId).$();
+        LOG.info().$("assigned ").$safe(tableNameUtf16).$(" to thread ").$(threadId).$();
         return tud;
     }
 
@@ -554,7 +554,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             if (stats != null) {
                 loadByWriterThread[stats.getWriterThreadId()] += stats.getEventsProcessedSinceReshuffle();
             } else {
-                LOG.error().$("could not find statistic for table [name=").$(tableName).I$();
+                LOG.error().$("could not find statistic for table [name=").$safe(tableName).I$();
             }
         }
     }

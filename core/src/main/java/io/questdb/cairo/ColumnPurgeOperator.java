@@ -156,9 +156,9 @@ public class ColumnPurgeOperator implements Closeable {
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
-                    .utf8(task.getTableName().getTableName())
+                    .$safe(task.getTableName().getTableName())
                     .$(", txn=").$(updateTxn)
-                    .$(", msg=").$(ex.getFlyweightMessage())
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             return true;
@@ -287,7 +287,7 @@ public class ColumnPurgeOperator implements Closeable {
                         // txReader is either open because scoreboardMode == ScoreboardUseMode.EXTERNAL,
                         // or it was open by openScoreboardAndTxn
                         LOG.info().$("skipping purge of read-only partition [path=").$(path.$())
-                                .$(", column=").utf8(columnName)
+                                .$(", column=").$safe(columnName)
                                 .I$();
                         completedRowIds.add(updateRowId);
                         continue;

@@ -1584,7 +1584,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     }
                     throw SqlException.$(0, ex.getFlyweightMessage());
                 }
-                LOG.info().$(ex.getFlyweightMessage()).$();
+                LOG.info().$safe(ex.getFlyweightMessage()).$();
                 Misc.free(typesAndInsert);
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
@@ -1646,7 +1646,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     }
                     throw SqlException.$(0, e.getFlyweightMessage());
                 }
-                LOG.info().$(e.getFlyweightMessage()).$();
+                LOG.info().$safe(e.getFlyweightMessage()).$();
                 typesAndUpdate = Misc.free(typesAndUpdate);
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
@@ -1799,7 +1799,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     securityContext.checkEntityEnabled();
                     r = authenticator.loginOK();
                 } catch (CairoException e) {
-                    LOG.error().$("failed to authenticate [error=").$(e.getFlyweightMessage()).I$();
+                    LOG.error().$("failed to authenticate [error=").$safe(e.getFlyweightMessage()).I$();
                     r = authenticator.denyAccess(e.getFlyweightMessage());
                 }
             }
@@ -1894,7 +1894,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final int msgLen = getIntUnsafe(address + 1);
         LOG.debug().$("received msg [type=").$((char) type).$(", len=").$(msgLen).I$();
         if (msgLen < 1) {
-            LOG.error().$("invalid message length [type=").$(type).$(", msgLen=").$(msgLen).$(", recvBufferReadOffset=").$(recvBufferReadOffset).$(", recvBufferWriteOffset=").$(recvBufferWriteOffset).$(", totalReceived=").$(totalReceived).I$();
+            LOG.error().$("invalid message length [type=").$(type)
+                    .$(", msgLen=").$(msgLen)
+                    .$(", recvBufferReadOffset=").$(recvBufferReadOffset)
+                    .$(", recvBufferWriteOffset=").$(recvBufferWriteOffset)
+                    .$(", totalReceived=").$(totalReceived).I$();
             throw BadProtocolException.INSTANCE;
         }
 
@@ -2038,9 +2042,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void prepareError(int position, CharSequence message, boolean critical, int errno) {
         prepareErrorResponse(position, message);
         if (critical) {
-            LOG.critical().$("error [msg=`").utf8(message).$("`, errno=").$(errno).I$();
+            LOG.critical().$("error [msg=`").$safe(message).$("`, errno=").$(errno).I$();
         } else {
-            LOG.error().$("error [msg=`").utf8(message).$("`, errno=").$(errno).I$();
+            LOG.error().$("error [msg=`").$safe(message).$("`, errno=").$(errno).I$();
         }
     }
 
@@ -2102,7 +2106,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void prepareNonCriticalError(int position, CharSequence message) {
         prepareErrorResponse(position, message);
-        LOG.error().$("error [pos=").$(position).$(", msg=`").utf8(message).$('`').I$();
+        LOG.error().$("error [pos=").$(position).$(", msg=`").$safe(message).$('`').I$();
     }
 
     private void prepareParameterDescription() {
@@ -2294,7 +2298,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         namedPortalPool.push(namedPortalMap.valueAt(index));
                         namedPortalMap.removeAt(index);
                     } else {
-                        LOG.error().$("invalid portal name [value=").$(portalName).I$();
+                        LOG.error().$("invalid portal name [value=").$safe(portalName).I$();
                         throw BadProtocolException.INSTANCE;
                     }
                 }
@@ -2430,7 +2434,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (p != null) {
                 target = p.statementName;
             } else {
-                LOG.error().$("invalid portal [name=").$(target).I$();
+                LOG.error().$("invalid portal [name=").$safe(target).I$();
                 throw BadProtocolException.INSTANCE;
             }
         }
@@ -2548,7 +2552,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             LOG.debug().$("params [count=").$(this.parsePhaseBindVariableCount).I$();
             setupBindVariables(lo + Short.BYTES, activeBindVariableTypes, this.parsePhaseBindVariableCount);
         } else if (this.parsePhaseBindVariableCount < 0) {
-            LOG.error().$("invalid parameter count [parameterCount=").$(this.parsePhaseBindVariableCount).$(", offset=").$(lo - address).I$();
+            LOG.error().$("invalid parameter count [parameterCount=").$(this.parsePhaseBindVariableCount)
+                    .$(", offset=").$(lo - address)
+                    .I$();
             throw BadProtocolException.INSTANCE;
         }
 
@@ -2869,7 +2875,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     if (retries == maxRecompileAttempts) {
                         throw SqlException.$(0, e.getFlyweightMessage());
                     }
-                    LOG.info().$(e.getFlyweightMessage()).$("setupFactoryAndCursor [retries=").$(retries).I$();
+                    LOG.info().$safe(e.getFlyweightMessage()).$("setupFactoryAndCursor [retries=").$(retries).I$();
                     freeFactory();
                     if (!compileQuery()) {
                         // when we get a query from cache then we don't count it as

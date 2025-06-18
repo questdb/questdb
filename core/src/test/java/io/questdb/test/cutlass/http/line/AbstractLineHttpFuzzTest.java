@@ -328,11 +328,11 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                 TableReader reader = serverMain.getEngine().getReader(tableName);
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
         ) {
-            getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+            getLog().info().$("table.getName(): ").$safe(table.getName()).$(", tableName: ").$safe(tableName)
                     .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
             final TableReaderMetadata metadata = reader.getMetadata();
             final CharSequence expected = table.generateRows(metadata);
-            getLog().info().$(table.getName()).$(" expected:\n").utf8(expected).$();
+            getLog().info().$safe(table.getName()).$(" expected:\n").$safe(expected).$();
 
             // Assert reader min timestamp
             long txnMinTs = reader.getMinTimestamp();
