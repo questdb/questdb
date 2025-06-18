@@ -1297,8 +1297,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            currentMicros = TimestampFormatUtils.parseTimestamp("2002-01-01T08:00:00.000000Z");
-            final long expectedStart = TimestampFormatUtils.parseTimestamp("2002-01-01T00:00:00.000000Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2002-01-01T23:01:00.000000Z");
+            final long expectedStart = TimestampFormatUtils.parseTimestamp("2002-01-02T00:00:00.000000Z");
             final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute(
                     "CREATE MATERIALIZED VIEW test REFRESH EVERY 6h PERIOD (LENGTH 1d TIME ZONE 'Europe/Berlin' DELAY 3h) AS (" +

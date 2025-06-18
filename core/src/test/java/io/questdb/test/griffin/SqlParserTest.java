@@ -2201,6 +2201,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateMatView47() throws Exception {
         assertSyntaxError(
+                "create materialized view myview refresh immediate period (length 8h time zone 'foobar' delay 2h)",
+                78,
+                "invalid timezone: foobar"
+        );
+    }
+
+    @Test
+    public void testCreateMatView48() throws Exception {
+        assertSyntaxError(
                 "create materialized view myview refresh every 1h start",
                 54,
                 "START timestamp expected"
@@ -2208,20 +2217,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateMatView48() throws Exception {
+    public void testCreateMatView49() throws Exception {
         assertSyntaxError(
                 "create materialized view myview refresh every 1h start foobar",
                 55,
                 "invalid START timestamp value"
-        );
-    }
-
-    @Test
-    public void testCreateMatView49() throws Exception {
-        assertSyntaxError(
-                "create materialized view myview refresh every 1h start '2020-09-10T20:00:00.000000'",
-                83,
-                "'time zone' or 'as' expected"
         );
     }
 
@@ -2237,6 +2237,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateMatView50() throws Exception {
         assertSyntaxError(
+                "create materialized view myview refresh every 1h start '2020-09-10T20:00:00.000000'",
+                83,
+                "'time zone' or 'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView51() throws Exception {
+        assertSyntaxError(
                 "create materialized view myview refresh every 1h start '2020-09-10T20:00:00.000000' time",
                 88,
                 "'zone' expected"
@@ -2244,7 +2253,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateMatView51() throws Exception {
+    public void testCreateMatView52() throws Exception {
         assertSyntaxError(
                 "create materialized view myview refresh every 1h start '2020-09-10T20:00:00.000000' time zone",
                 93,
@@ -2253,7 +2262,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateMatView52() throws Exception {
+    public void testCreateMatView53() throws Exception {
         assertSyntaxError(
                 "create materialized view myview refresh every 1h start '2020-09-10T20:00:00.000000' time zone 'Europe/Paris'",
                 108,
@@ -2262,7 +2271,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateMatView53() throws Exception {
+    public void testCreateMatView54() throws Exception {
         assertSyntaxError(
                 "create materialized view myview refresh immediate start '2020-09-10T20:00:00.000000' time zone 'Europe/Paris'",
                 50,
@@ -2271,7 +2280,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateMatView54() throws Exception {
+    public void testCreateMatView55() throws Exception {
         assertSyntaxError(
                 "create materialized view myview refresh every 3d",
                 48,

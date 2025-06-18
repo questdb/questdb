@@ -62,6 +62,8 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -964,14 +966,20 @@ public class SqlParser {
                 final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(length, lengthUnit, lexer.lastTokenPosition());
                 tok = tok(lexer, "'time zone' or 'delay' or ')'");
 
-                String timeZone = null;
+                TimeZoneRules tzRules = null;
+                String tz = null;
                 if (isTimeKeyword(tok)) {
                     expectTok(lexer, "zone");
                     tok = tok(lexer, "TIME ZONE name");
                     if (Chars.equals(tok, ')') || isDelayKeyword(tok)) {
                         throw SqlException.position(lexer.lastTokenPosition()).put("TIME ZONE name expected");
                     }
-                    timeZone = unquote(tok).toString();
+                    tz = unquote(tok).toString();
+                    try {
+                        tzRules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, tz);
+                    } catch (NumericException e) {
+                        throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
+                    }
                     tok = tok(lexer, "'delay' or ')'");
                 }
 
@@ -991,9 +999,10 @@ public class SqlParser {
 
                 // Period timer start is at the boundary of the current period.
                 final long now = configuration.getMicrosecondClock().getTicks();
-                final long start = periodSampler.round(now);
+                final long nowLocal = tzRules != null ? now + tzRules.getOffset(now) : now;
+                final long start = periodSampler.round(nowLocal);
 
-                mvOpBuilder.setTimer(timeZone, start, every, everyUnit);
+                mvOpBuilder.setTimer(tz, start, every, everyUnit);
                 mvOpBuilder.setPeriodLength(length, lengthUnit, delay, delayUnit);
                 tok = tok(lexer, "'as'");
             } else if (!isAsKeyword(tok)) {

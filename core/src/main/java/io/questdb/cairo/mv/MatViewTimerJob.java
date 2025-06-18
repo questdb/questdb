@@ -303,21 +303,21 @@ public class MatViewTimerJob extends SynchronizedJob {
             this.tzRules = tzRules;
             this.delay = delay;
             sampler.setStart(start);
+            final long nowLocal = toLocal(now, tzRules);
             switch (type) {
                 case INCREMENTAL_REFRESH_TYPE:
                     // It's fine if the timer triggers immediately.
-                    deadlineLocal = now > start + startEpsilon ? sampler.nextTimestamp(sampler.round(now - 1)) : start;
-                    deadlineUtc = tzRules != null ? deadlineLocal - tzRules.getOffset(deadlineLocal) : deadlineLocal;
+                    deadlineLocal = nowLocal > start + startEpsilon ? sampler.nextTimestamp(sampler.round(nowLocal - 1)) : start;
                     break;
                 case PERIOD_REFRESH_TYPE:
                     // Unlike with incremental timer views, we want to trigger the timer
                     // for all complete periods, if they exist.
-                    deadlineLocal = now > start + startEpsilon ? sampler.round(now) : start;
-                    deadlineUtc = tzRules != null ? deadlineLocal - tzRules.getOffset(deadlineLocal) : deadlineLocal;
+                    deadlineLocal = nowLocal > start + startEpsilon ? sampler.round(nowLocal) : start;
                     break;
                 default:
                     throw new IllegalStateException("unexpected timer type: " + type);
             }
+            deadlineUtc = toUtc(deadlineLocal, tzRules);
         }
 
         public long getDeadline() {
@@ -345,9 +345,17 @@ public class MatViewTimerJob extends SynchronizedJob {
             this.knownRefreshSeq = knownRefreshSeq;
         }
 
+        private static long toLocal(long utcTime, TimeZoneRules tzRules) {
+            return tzRules != null ? utcTime + tzRules.getOffset(utcTime) : utcTime;
+        }
+
+        private static long toUtc(long localTime, TimeZoneRules tzRules) {
+            return tzRules != null ? localTime - tzRules.getOffset(localTime) : localTime;
+        }
+
         private void nextDeadline() {
             deadlineLocal = sampler.nextTimestamp(deadlineLocal);
-            deadlineUtc = tzRules != null ? deadlineLocal - tzRules.getLocalOffset(deadlineLocal) : deadlineLocal;
+            deadlineUtc = toUtc(deadlineLocal, tzRules);
         }
     }
 }
