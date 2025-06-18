@@ -63,9 +63,6 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         try (TableWriterAPI writer = !operation.isForceWalBypass() ? engine.getTableWriterAPI(tableToken, lockReason) : engine.getWriter(tableToken, FORCE_OPERATION_APPLY_REASON)) {
             final long result = apply(operation, writer);
             isDone = true;
-            if (operation.isStructural()) {
-                engine.enqueueCompileView(operation.getTableToken());
-            }
             return doneFuture.of(result);
         } catch (EntryUnavailableException busyException) {
             if (eventSubSeq == null) {
