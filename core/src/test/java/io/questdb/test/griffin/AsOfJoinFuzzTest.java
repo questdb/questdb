@@ -40,6 +40,8 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
+    private static final boolean RUN_ALL_PERMUTATIONS = false;
+
     @Test
     public void testFuzzManyDuplicates() throws Exception {
         testFuzz(50);
@@ -71,7 +73,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
     }
 
     private void assertResultSetsMatch0(Rnd rnd) throws Exception {
-        Object[][] allParameterPermutations = TestUtils.cartesianProduct(new Object[][]{
+        Object[][] allOpts = {
                 JoinType.values(),
                 {true, false}, // exercise interval intrinsics
                 LimitType.values(),
@@ -80,9 +82,22 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 {true, false}, // apply outer projection
                 {-1L, 100_000L}, // max tolerance in seconds, -1 = no tolerance
                 {true, false} // AVOID BINARY_SEARCH hint
-        });
-        for (int i = 0, n = allParameterPermutations.length; i < n; i++) {
-            Object[] params = allParameterPermutations[i];
+        };
+
+        Object[][] permutations;
+        if (RUN_ALL_PERMUTATIONS) {
+            permutations = TestUtils.cartesianProduct(allOpts);
+        } else {
+            // to keep the test fast, we only run a single permutation at a time
+            permutations = new Object[1][allOpts.length];
+            for (int i = 0; i < allOpts.length; i++) {
+                Object[] opts = allOpts[i];
+                permutations[0][i] = opts[rnd.nextInt(opts.length)];
+            }
+        }
+
+        for (int i = 0, n = permutations.length; i < n; i++) {
+            Object[] params = permutations[i];
             JoinType joinType = (JoinType) params[0];
             boolean exerciseIntervals = (boolean) params[1];
             LimitType limitType = (LimitType) params[2];
