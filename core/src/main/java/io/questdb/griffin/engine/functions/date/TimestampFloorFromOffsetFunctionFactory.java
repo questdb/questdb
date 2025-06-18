@@ -42,9 +42,11 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -90,7 +92,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final CharSequence unitStr = args.getQuick(0).getStrA(null);
-        final int stride = Timestamps.getStrideMultiple(unitStr);
+        final int stride = CommonUtils.getStrideMultiple(unitStr);
         final char unit = Timestamps.getStrideUnit(unitStr, argPositions.getQuick(0));
         final int unitPos = argPositions.getQuick(0);
         final Function timestampFunc = args.getQuick(1);
@@ -110,7 +112,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
         if (offsetFunc.isConstant()) {
             final CharSequence o = offsetFunc.getStrA(null);
             if (o != null) {
-                final long val = Timestamps.parseOffset(o);
+                final long val = Dates.parseOffset(o);
                 if (val == Numbers.LONG_NULL) {
                     // bad value for offset
                     throw SqlException.$(offsetPos, "invalid offset: ").put(o);
@@ -126,11 +128,11 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             TimeZoneRules tzRules = null;
             if (tz != null) {
                 final int hi = tz.length();
-                final long l = Timestamps.parseOffset(tz, 0, hi);
+                final long l = Dates.parseOffset(tz, 0, hi);
                 if (l == Long.MIN_VALUE) {
                     try {
-                        tzRules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                        tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
+                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
                         );
                     } catch (NumericException e) {
                         Misc.free(timestampFunc);
@@ -604,7 +606,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             final CharSequence offsetStr = offsetFunc.getStrA(null);
             long offset;
             if (offsetStr != null) {
-                final long val = Timestamps.parseOffset(offsetStr);
+                final long val = Dates.parseOffset(offsetStr);
                 if (val == Numbers.LONG_NULL) {
                     // bad value for offset
                     throw SqlException.$(offsetPos, "invalid offset: ").put(offsetStr);
@@ -618,11 +620,11 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             final CharSequence tz = timezoneFunc.getStrA(null);
             if (tz != null) {
                 final int hi = tz.length();
-                final long l = Timestamps.parseOffset(tz, 0, hi);
+                final long l = Dates.parseOffset(tz, 0, hi);
                 if (l == Long.MIN_VALUE) {
                     try {
-                        tzRules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                        tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
+                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
                         );
                         tzOffset = 0;
                     } catch (NumericException e) {
@@ -721,11 +723,11 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             final CharSequence tz = timezoneFunc.getStrA(null);
             if (tz != null) {
                 final int hi = tz.length();
-                final long l = Timestamps.parseOffset(tz, 0, hi);
+                final long l = Dates.parseOffset(tz, 0, hi);
                 if (l == Long.MIN_VALUE) {
                     try {
-                        tzRules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                        tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
+                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
                         );
                         tzOffset = 0;
                     } catch (NumericException e) {
@@ -823,7 +825,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             final CharSequence offsetStr = offsetFunc.getStrA(null);
             long offset;
             if (offsetStr != null) {
-                final long val = Timestamps.parseOffset(offsetStr);
+                final long val = Dates.parseOffset(offsetStr);
                 if (val == Numbers.LONG_NULL) {
                     // bad value for offset
                     throw SqlException.$(offsetPos, "invalid offset: ").put(offsetStr);
@@ -913,7 +915,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             final CharSequence offsetStr = offsetFunc.getStrA(null);
             long offset;
             if (offsetStr != null) {
-                final long val = Timestamps.parseOffset(offsetStr);
+                final long val = Dates.parseOffset(offsetStr);
                 if (val == Numbers.LONG_NULL) {
                     // bad value for offset
                     throw SqlException.$(offsetPos, "invalid offset: ").put(offsetStr);
@@ -1011,11 +1013,11 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             final CharSequence tz = timezoneFunc.getStrA(null);
             if (tz != null) {
                 final int hi = tz.length();
-                final long l = Timestamps.parseOffset(tz, 0, hi);
+                final long l = Dates.parseOffset(tz, 0, hi);
                 if (l == Long.MIN_VALUE) {
                     try {
-                        tzRules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                        tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
+                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
                         );
                         tzOffset = 0;
                     } catch (NumericException e) {

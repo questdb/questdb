@@ -22,22 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cutlass.line;
+package io.questdb.std.datetime.nanotime;
 
-import io.questdb.cutlass.line.LineNanoTimestampAdapter;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
-import io.questdb.cutlass.line.tcp.LineTcpParser;
-import org.junit.Assert;
-import org.junit.Test;
-
-public class LineTcpTimestampAdapterTest {
-
-    @Test
-    public void testSmoke() {
-        LineTcpTimestampAdapter adapter = new LineTcpTimestampAdapter(LineNanoTimestampAdapter.INSTANCE);
-        Assert.assertEquals(56799L, adapter.getMicros(56799000, LineTcpParser.ENTITY_UNIT_NONE));
-        Assert.assertEquals(56799L, adapter.getMicros(56799000, LineTcpParser.ENTITY_UNIT_NANO));
-        Assert.assertEquals(5679L, adapter.getMicros(5679, LineTcpParser.ENTITY_UNIT_MICRO));
-        Assert.assertEquals(5679000L, adapter.getMicros(5679, LineTcpParser.ENTITY_UNIT_MILLI));
-    }
+public interface NanosecondClock {
+    long getTicks();
 }

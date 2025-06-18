@@ -24,8 +24,8 @@
 
 package io.questdb.cliutil;
 
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.client.Sender;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -142,7 +142,7 @@ public class Table2IlpCopier {
         long microEpoch;
         if (ts != null) {
             try {
-                microEpoch = IntervalUtils.parseFloorPartialTimestamp(ts);
+                microEpoch = MicrosTimestampDriver.floor(ts);
             } catch (NumericException e) {
                 throw new RuntimeException("Failed to parse designated timestamp: " + ts);
             }

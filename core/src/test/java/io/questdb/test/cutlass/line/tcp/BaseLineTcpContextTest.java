@@ -28,6 +28,8 @@ import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cutlass.auth.AuthUtils;
@@ -59,6 +61,7 @@ import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -86,13 +89,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected short floatDefaultColumnType;
     protected short integerDefaultColumnType;
     protected LineTcpReceiverConfiguration lineTcpConfiguration;
-    protected long microSecondTicks;
     protected int nWriterThreads;
     protected NoNetworkIOJob noNetworkIOJob;
     protected String recvBuffer;
     protected LineTcpMeasurementScheduler scheduler;
     protected boolean stringToCharCastAllowed;
     protected boolean symbolAsFieldSupported;
+    protected long timestampTicks;
     protected boolean useLegacyString;
     protected WorkerPool workerPool;
 
@@ -101,7 +104,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         nWriterThreads = 2;
-        microSecondTicks = -1;
+        timestampTicks = -1;
         recvBuffer = null;
         disconnected = true;
         maxRecvBufferSize.set(512 * 1024);
@@ -222,15 +225,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
             @Override
             public MicrosecondClock getMicrosecondClock() {
-                return new MicrosecondClockImpl() {
-                    @Override
-                    public long getTicks() {
-                        if (microSecondTicks >= 0) {
-                            return microSecondTicks;
-                        }
-                        return super.getTicks();
-                    }
-                };
+                return new MicrosecondClockImplInner();
             }
 
             @Override
@@ -310,6 +305,9 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected void setupContext(UnstableRunnable onCommitNewEvent) {
         disconnected = false;
         recvBuffer = null;
+        ((MicrosTimestampDriver) MicrosTimestampDriver.INSTANCE).setTicker(new MicrosecondClockImplInner());
+        ((NanosTimestampDriver) NanosTimestampDriver.INSTANCE).setTicker(new NanosecondClockImplInner());
+
         scheduler = new LineTcpMeasurementScheduler(
                 lineTcpConfiguration,
                 engine,
@@ -477,6 +475,26 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
         byte[] getBytes(String recvBuffer) {
             return recvBuffer.getBytes(StandardCharsets.UTF_8);
+        }
+    }
+
+    private class MicrosecondClockImplInner extends MicrosecondClockImpl {
+        @Override
+        public long getTicks() {
+            if (timestampTicks >= 0) {
+                return timestampTicks;
+            }
+            return super.getTicks();
+        }
+    }
+
+    private class NanosecondClockImplInner extends NanosecondClockImpl {
+        @Override
+        public long getTicks() {
+            if (timestampTicks >= 0) {
+                return timestampTicks;
+            }
+            return super.getTicks();
         }
     }
 }

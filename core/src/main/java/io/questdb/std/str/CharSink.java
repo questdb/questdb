@@ -24,9 +24,10 @@
 
 package io.questdb.std.str;
 
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -194,7 +195,12 @@ public interface CharSink<T extends CharSink<?>> {
     }
 
     default T putISODate(long value) {
-        TimestampFormatUtils.appendDateTimeUSec(this, value);
+        MicrosTimestampDriver.INSTANCE.append(this, value);
+        return (T) this;
+    }
+
+    default T putISODate(TimestampDriver driver, long value) {
+        driver.append(this, value);
         return (T) this;
     }
 

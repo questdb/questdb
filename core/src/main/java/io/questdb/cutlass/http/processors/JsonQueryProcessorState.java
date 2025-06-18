@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -57,12 +58,12 @@ import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Uuid;
+import io.questdb.std.datetime.nanotime.NanosecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -483,13 +484,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         putStringOrNull(response, rec.getSymA(col));
     }
 
-    private static void putTimestampValue(HttpChunkedResponse response, Record rec, int col) {
+    private static void putTimestampValue(HttpChunkedResponse response, Record rec, int col, TimestampDriver driver) {
         final long t = rec.getTimestamp(col);
         if (t == Long.MIN_VALUE) {
             response.putAscii("null");
             return;
         }
-        response.putAscii('"').putISODate(t).putAscii('"');
+        response.putAscii('"').putISODate(driver, t).putAscii('"');
     }
 
     private static void putUuidValue(HttpChunkedResponse response, Record rec, int col) {
@@ -683,7 +684,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putDateValue(response, record, columnIdx);
                     break;
                 case ColumnType.TIMESTAMP:
-                    putTimestampValue(response, record, columnIdx);
+                    putTimestampValue(response, record, columnIdx, ColumnType.getTimestampDriver(columnType));
                     break;
                 case ColumnType.SHORT:
                     putShortValue(response, record, columnIdx);

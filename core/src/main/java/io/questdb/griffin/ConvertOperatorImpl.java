@@ -136,6 +136,7 @@ public class ConvertOperatorImpl implements Closeable {
             purgingOperator.purge(
                     path.trimTo(rootLen),
                     tableWriter.getTableToken(),
+                    tableWriter.getMetadata().getTimestampType(),
                     tableWriter.getPartitionBy(),
                     tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(),
                     tableWriter.getTruncateVersion(),
@@ -229,7 +230,12 @@ public class ConvertOperatorImpl implements Closeable {
                             if (rowCount > 0) {
                                 path.trimTo(rootLen);
                                 TableUtils.setPathForNativePartition(
-                                        path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+                                        path,
+                                        tableWriter.getMetadata().getTimestampType(),
+                                        tableWriter.getPartitionBy(),
+                                        partitionTimestamp,
+                                        partitionNameTxn
+                                );
                                 int pathTrimToLen = path.size();
 
                                 long srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;
