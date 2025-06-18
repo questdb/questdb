@@ -73,7 +73,7 @@ public class ConcurrentQueue<T> implements Queue<T> {
     /**
      * Initializes a new instance of the ConcurrentQueue class with default initial capacity.
      *
-     * @param factory The factory to use to create new items.
+     * @param factory          The factory to use to create new items.
      * @param queueManipulator The manipulator to use for queue operations.
      */
     public ConcurrentQueue(ObjectFactory<T> factory, ConcurrentSegmentManipulator<T> queueManipulator) {
@@ -83,9 +83,9 @@ public class ConcurrentQueue<T> implements Queue<T> {
     /**
      * Initializes a new instance of the ConcurrentQueue class with the specified initial capacity.
      *
-     * @param factory The factory to use to create new items.
+     * @param factory          The factory to use to create new items.
      * @param queueManipulator The manipulator to use for queue operations.
-     * @param size    The initial capacity of the queue, must be a power of 2.
+     * @param size             The initial capacity of the queue, must be a power of 2.
      */
     public ConcurrentQueue(ObjectFactory<T> factory, ConcurrentSegmentManipulator<T> queueManipulator, int size) {
         assert (size & (size - 1)) == 0; // must be a power of 2
