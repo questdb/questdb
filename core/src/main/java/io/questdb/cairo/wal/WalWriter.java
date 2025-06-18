@@ -2104,7 +2104,7 @@ public class WalWriter implements TableWriterAPI {
                         ddlListener.onColumnAdded(securityContext, metadata.getTableToken(), columnName);
                     }
                     LOG.info().$("added column to WAL [path=").$substr(pathRootSize, path)
-                            .$(", columnName=").utf8(columnName)
+                            .$(", columnName=").$safe(columnName)
                             .$(", type=").$(ColumnType.nameOf(columnType))
                             .I$();
                 } else {
@@ -2114,7 +2114,7 @@ public class WalWriter implements TableWriterAPI {
             } else {
                 if (metadata.getColumnType(columnIndex) == columnType) {
                     LOG.info().$("column has already been added by another WAL [path=").$substr(pathRootSize, path)
-                            .$(", columnName=").utf8(columnName)
+                            .$(", columnName=").$safe(columnName)
                             .I$();
                 } else {
                     throw CairoException.nonCritical().put("column '").put(columnName).put("' already exists");
@@ -2252,7 +2252,7 @@ public class WalWriter implements TableWriterAPI {
                         markColumnRemoved(index, type);
                         path.trimTo(pathSize);
                         LOG.info().$("removed column from WAL [path=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
-                                .$(", columnName=").utf8(columnName).I$();
+                                .$(", columnName=").$safe(columnName).I$();
                     } else {
                         throw CairoException.critical(0)
                                 .put("column was removed, cannot apply commit because of concurrent table definition change")
@@ -2308,8 +2308,8 @@ public class WalWriter implements TableWriterAPI {
                         path.trimTo(pathSize);
                         LOG.info().$("renamed column in WAL [path=")
                                 .$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
-                                .$(", columnName=").utf8(columnName)
-                                .$(", newColumnName=").utf8(newColumnName)
+                                .$(", columnName=").$safe(columnName)
+                                .$(", newColumnName=").$safe(newColumnName)
                                 .I$();
                     } else {
                         throw CairoException.critical(0)

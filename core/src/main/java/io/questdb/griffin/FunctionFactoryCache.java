@@ -102,8 +102,8 @@ public class FunctionFactoryCache {
                     }
                 } catch (SqlException e) {
                     LOG.error().$((Sinkable) e)
-                            .$(" [signature=").utf8(factory.getSignature())
-                            .$(", class=").utf8(factory.getClass().getName())
+                            .$(" [signature=").$safe(factory.getSignature())
+                            .$(", class=").$safe(factory.getClass().getName())
                             .I$();
                 }
             }

@@ -284,7 +284,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     rowGroupBuffers
             );
         } catch (Throwable th) {
-            LOG.error().$("process partition error [table=").utf8(tableWriter.getTableToken().getTableName())
+            LOG.error().$("process partition error [table=").$safe(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(th)
                     .I$();
             // the file is re-opened here because PartitionUpdater owns the file descriptor
@@ -413,7 +413,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     TableUtils.setPathForNativePartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, txn - 1);
                     createDirsOrFail(ff, path.slash(), tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
-                    LOG.error().$("process new partition error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    LOG.error().$("process new partition error [table=").$safe(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
                     tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
@@ -1026,7 +1026,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
             } catch (Throwable e) {
-                LOG.error().$("process existing partition error [table=").utf8(tableWriter.getTableToken().getTableName())
+                LOG.error().$("process existing partition error [table=").$safe(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
                         .I$();
                 O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
@@ -2063,7 +2063,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             srcDataNewPartitionSize -= duplicateCount;
                         }
                         LOG.info()
-                                .$("dedup row reduction [table=").utf8(tableWriter.getTableToken().getTableName())
+                                .$("dedup row reduction [table=").$safe(tableWriter.getTableToken().getTableName())
                                 .$(", partition=").$ts(partitionTimestamp)
                                 .$(", duplicateCount=").$(duplicateCount)
                                 .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
@@ -2087,7 +2087,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
             } catch (Throwable e) {
                 tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                LOG.error().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
+                LOG.error().$("open column error [table=").$safe(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
                         .I$();
                 O3CopyJob.closeColumnIdleQuick(
@@ -2262,7 +2262,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                    LOG.critical().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    LOG.critical().$("open column error [table=").$safe(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
                     columnsInFlight = i + 1;
