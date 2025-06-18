@@ -81,7 +81,6 @@ public class FrameAlgebra {
                 + " partitionColumnTop: " + partitionColumn.getColumnTop()
         );
 
-
         return isColumnReplaceIdentical(
                 columnTypeTag,
                 ColumnType.isVarSize(columnType) ? -1 : ColumnType.sizeOf(columnType),

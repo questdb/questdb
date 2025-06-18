@@ -1495,13 +1495,14 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         int plen = pathToOldPartition.size();
 
         final Path pathToNewPartition = Path.getThreadLocal2(pathToTable);
-        boolean partitionAppend = openColumnMode == OPEN_MID_PARTITION_FOR_APPEND || openColumnMode == OPEN_NEW_PARTITION_FOR_APPEND;
+        boolean partitionAppend = openColumnMode == OPEN_MID_PARTITION_FOR_APPEND || openColumnMode == OPEN_NEW_PARTITION_FOR_APPEND || openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND;
         TableUtils.setPathForNativePartition(pathToNewPartition, tableWriter.getPartitionBy(), partitionTimestamp, partitionAppend ? srcNameTxn : txn);
         int pplen = pathToNewPartition.size();
         final long colTopSinkAddr = columnTopAddress(partitionUpdateSinkAddr, columnIndex);
 
         // append jobs do not set value of part counter, we do it here for those
         switch (openColumnMode) {
+            case OPEN_LAST_PARTITION_FOR_APPEND:
             case OPEN_MID_PARTITION_FOR_APPEND:
                 appendMidPartition(
                         pathToNewPartition,
@@ -1661,6 +1662,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 );
                 break;
             default:
+                assert false;
                 break;
         }
     }

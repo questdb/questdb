@@ -366,7 +366,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     public void testRandomColumnsDedupMultipleKeyColWithRCommits() throws Exception {
         // Replace commits not yet supported with Parquet
         Assume.assumeFalse(convertToParquet);
-        Rnd rnd = generateRandomAndProps(1546398767811666L, 1750173741936L); //1546446936741291L, 1750173790103L
+        Rnd rnd = generateRandomAndProps();
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),

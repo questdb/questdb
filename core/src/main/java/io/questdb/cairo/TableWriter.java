@@ -5990,6 +5990,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final boolean partitionMutates = Numbers.decodeLowInt(flags) != 0;
                 final boolean isLastWrittenPartition = o3PartitionUpdateSink.nextBlockIndex(blockIndex) == -1;
                 final long o3SplitPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 5 * Long.BYTES);
+                if (!partitionMutates && srcDataNewPartitionSize < 0) {
+                    // noop
+                    continue;
+                }
 
                 boolean isMinPartitionUpdate = partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(txWriter.getMinTimestamp())
                         && partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(timestampMin);
@@ -6815,7 +6819,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         partitionRemoveCandidates.clear();
         o3ColumnCounters.clear();
         o3BasketPool.clear();
-        commitRowCount = o3RowCount + o3LagRowCount;
+        commitRowCount = srcOooMax;
 
         // move uncommitted is liable to change max timestamp,
         // however, we need to identify the last partition before max timestamp skips to NULL, for example

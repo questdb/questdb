@@ -1175,29 +1175,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return Long.MAX_VALUE;
     }
 
-    private static long createMergeIndex(
-            long srcDataTimestampAddr,
-            long sortedTimestampsAddr,
-            long mergeDataLo,
-            long mergeDataHi,
-            long mergeOOOLo,
-            long mergeOOOHi,
-            long indexSize
-    ) {
-        // Create "index" for existing timestamp column. When we reshuffle timestamps during merge we will
-        // have to go back and find data rows we need to move accordingly
-        long timestampIndexAddr = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
-        Vect.mergeTwoLongIndexesAsc(
-                srcDataTimestampAddr,
-                mergeDataLo,
-                mergeDataHi - mergeDataLo + 1,
-                sortedTimestampsAddr + mergeOOOLo * 16,
-                mergeOOOHi - mergeOOOLo + 1,
-                timestampIndexAddr
-        );
-        return timestampIndexAddr;
-    }
-
     private static boolean checkAllNonKeyColumnsIdentical(
             long partitionTimestamp,
             long partitionNameTxn,
@@ -1246,6 +1223,29 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             path.trimTo(pathSize);
         }
         return true;
+    }
+
+    private static long createMergeIndex(
+            long srcDataTimestampAddr,
+            long sortedTimestampsAddr,
+            long mergeDataLo,
+            long mergeDataHi,
+            long mergeOOOLo,
+            long mergeOOOHi,
+            long indexSize
+    ) {
+        // Create "index" for existing timestamp column. When we reshuffle timestamps during merge we will
+        // have to go back and find data rows we need to move accordingly
+        long timestampIndexAddr = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
+        Vect.mergeTwoLongIndexesAsc(
+                srcDataTimestampAddr,
+                mergeDataLo,
+                mergeDataHi - mergeDataLo + 1,
+                sortedTimestampsAddr + mergeOOOLo * 16,
+                mergeOOOHi - mergeOOOLo + 1,
+                timestampIndexAddr
+        );
+        return timestampIndexAddr;
     }
 
     private static long getDedupRows(
@@ -2107,7 +2107,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     timestampMergeIndexAddr = Unsafe.realloc(tempIndexAddr, tempIndexSize, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
                     final long duplicateCount = mergeRowCount - dedupRows;
                     if (duplicateCount > 0) {
-                        if (duplicateCount == mergeOOOHi - mergeOOOLo + 1) {
+                        if (duplicateCount == mergeOOOHi - mergeOOOLo + 1 && prefixType != O3_BLOCK_O3) {
+
                             // All the rows are duplicates
                             // check if all non-key rows are dups
                             if (checkAllNonKeyColumnsIdentical(
@@ -2121,29 +2122,65 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     mergeDataHi,
                                     mergeOOOLo,
                                     mergeOOOHi,
-                                    Path.getThreadLocal(pathToTable)
-                            )) {
-                                LOG.info().$("deduplication resulted in noop [table=").$(tableWriter.getTableToken())
-                                        .$(", partition=").$ts(partitionTimestamp)
-                                        .I$();
-                                FilesFacade ff = tableWriter.getFilesFacade();
+                                    Path.getThreadLocal(pathToTable))
+                            ) {
 
-                                // nothing to do, skip the partition
-                                updatePartitionSink(partitionUpdateSinkAddr, oldPartitionTimestamp, Long.MAX_VALUE, srcDataOldPartitionSize, srcDataOldPartitionSize, 0);
+                                if (suffixType != O3_BLOCK_O3) {
+                                    LOG.info().$("deduplication resulted in noop [table=").$(tableWriter.getTableToken())
+                                            .$(", partition=").$ts(partitionTimestamp)
+                                            .I$();
 
-                                O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-                                O3Utils.close(ff, srcTimestampFd);
+                                    // nothing to do, skip the partition
+                                    updatePartition(
+                                            tableWriter.getFilesFacade(),
+                                            srcTimestampAddr,
+                                            srcTimestampSize,
+                                            srcTimestampFd,
+                                            tableWriter,
+                                            partitionUpdateSinkAddr,
+                                            oldPartitionTimestamp,
+                                            Long.MAX_VALUE,
+                                            -1,
+                                            srcDataOldPartitionSize,
+                                            0
+                                    );
+                                    if (timestampMergeIndexAddr != 0) {
+                                        Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+                                        timestampMergeIndexAddr = 0;
+                                    }
+                                    return;
+                                } else {
+                                    // suffixType == O3_BLOCK_O3
+                                    // we don't need to do the merge, but we need to append the suffix
+                                    mergeType = O3_BLOCK_NONE;
+                                    mergeDataHi = -1;
+                                    mergeDataLo = 0;
+                                    mergeOOOHi = -1;
+                                    mergeOOOLo = 0;
+                                    // Append procs may ignore suffixLo when appending using srcOooLo instead.
+                                    // Adjust suffixLo to match the srcOooLo.
+                                    srcOooLo = suffixLo;
 
-                                tableWriter.o3ClockDownPartitionUpdateCount();
-                                tableWriter.o3CountDownDoneLatch();
+                                    // No merge anymore, fee the merge index
+                                    if (timestampMergeIndexAddr != 0) {
+                                        Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+                                        timestampMergeIndexAddr = 0;
+                                    }
 
-                                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-                                return;
-                            } else {
-                                int abc = 0;
+                                    prefixType = O3_BLOCK_DATA;
+                                    prefixLo = 0;
+                                    prefixHi = srcDataMax - 1;
+
+                                    if (openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE) {
+                                        openColumnMode = OPEN_LAST_PARTITION_FOR_APPEND;
+                                    } else if (openColumnMode == OPEN_MID_PARTITION_FOR_MERGE) {
+                                        openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
+                                    } else {
+                                        assert false : "unexpected open column mode: " + openColumnMode;
+                                    }
+                                }
+
                             }
-                        } else {
-                            int abc = 0;
                         }
 
                         // we could be de-duping a split partition
