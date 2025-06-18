@@ -404,7 +404,7 @@ public class WriterPool extends AbstractPool {
             final LogRecord record = ex.isCritical() ? LOG.critical() : LOG.error();
             record.$("could not open [table=").$(tableToken)
                     .$(", thread=").$(e.owner)
-                    .$(", msg=").utf8(ex.getFlyweightMessage())
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             e.ex = ex;
@@ -415,7 +415,7 @@ public class WriterPool extends AbstractPool {
         } catch (CairoError ex) {
             LOG.critical().$("could not open [table=").$(tableToken)
                     .$(", thread=").$(e.owner)
-                    .$(", ex=").utf8(ex.getFlyweightMessage())
+                    .$(", ex=").$safe(ex.getFlyweightMessage())
                     .I$();
             e.ownershipReason = OWNERSHIP_REASON_WRITER_ERROR;
             e.owner = UNALLOCATED;
