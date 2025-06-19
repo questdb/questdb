@@ -194,6 +194,9 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                 sink.putAscii(" EVERY ");
                 sink.put(table.getMatViewTimerInterval());
                 sink.putAscii(table.getMatViewTimerUnit());
+                if (matViewDefinition.isDeferred()) {
+                    sink.putAscii(" DEFERRED");
+                }
                 if (table.getMatViewPeriodLength() == 0) {
                     sink.putAscii(" START '");
                     sink.putISODate(table.getMatViewTimerStart());
@@ -205,8 +208,14 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                 }
             } else if (matViewDefinition.getRefreshType() == MatViewDefinition.IMMEDIATE_REFRESH_TYPE) {
                 sink.putAscii(" IMMEDIATE");
+                if (matViewDefinition.isDeferred()) {
+                    sink.putAscii(" DEFERRED");
+                }
             } else if (matViewDefinition.getRefreshType() == MatViewDefinition.MANUAL_REFRESH_TYPE) {
                 sink.putAscii(" MANUAL");
+                if (matViewDefinition.isDeferred()) {
+                    sink.putAscii(" DEFERRED");
+                }
             }
             if (table.getMatViewPeriodLength() > 0) {
                 sink.putAscii(" PERIOD (LENGTH ");

@@ -47,6 +47,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private String baseTableName;
     private int baseTableNamePosition;
+    private boolean deferred;
     private int refreshType = -1;
     private String timeZone;
     private String timeZoneOffset;
@@ -59,6 +60,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
                 Chars.toString(sqlText),
                 createTableOperation,
                 refreshType,
+                deferred,
                 baseTableName,
                 baseTableNamePosition,
                 timeZone,
@@ -71,6 +73,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     public void clear() {
         createTableOperationBuilder.clear();
         refreshType = -1;
+        deferred = false;
         baseTableName = null;
         baseTableNamePosition = 0;
         timeZone = null;
@@ -103,6 +106,10 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
 
     public void setBaseTableNamePosition(int baseTableNamePosition) {
         this.baseTableNamePosition = baseTableNamePosition;
+    }
+
+    public void setDeferred(boolean deferred) {
+        this.deferred = deferred;
     }
 
     public void setPeriodLength(int length, char lengthUnit, int delay, char delayUnit) {
@@ -144,6 +151,9 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
             sink.putAscii(" every ");
             sink.put(createTableOperationBuilder.getMatViewTimerInterval());
             sink.putAscii(createTableOperationBuilder.getMatViewTimerUnit());
+            if (deferred) {
+                sink.putAscii(" deferred");
+            }
             if (createTableOperationBuilder.getMatViewPeriodLength() == 0) {
                 sink.putAscii(" start '");
                 sink.putISODate(createTableOperationBuilder.getMatViewTimerStart());
@@ -155,8 +165,14 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
             }
         } else if (refreshType == MatViewDefinition.IMMEDIATE_REFRESH_TYPE) {
             sink.putAscii(" immediate");
+            if (deferred) {
+                sink.putAscii(" deferred");
+            }
         } else if (refreshType == MatViewDefinition.MANUAL_REFRESH_TYPE) {
             sink.putAscii(" manual");
+            if (deferred) {
+                sink.putAscii(" deferred");
+            }
         }
         if (createTableOperationBuilder.getMatViewPeriodLength() > 0) {
             sink.putAscii(" period (length ");

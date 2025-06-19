@@ -930,29 +930,36 @@ public class SqlParser {
 
         boolean refreshDefined = false;
         int refreshType = MatViewDefinition.IMMEDIATE_REFRESH_TYPE;
+        boolean deferred = false;
         if (isRefreshKeyword(tok)) {
             refreshDefined = true;
             tok = tok(lexer, "'immediate' or 'manual' or 'period' or 'start' or 'every' or 'as'");
-            // 'incremental' is obsolete, same as 'immediate',
-            // but it also used to be accepted in timer mat views
-            if (isIncrementalKeyword(tok)) {
-                tok = tok(lexer, "'as'");
-            }
-
             int every = 0;
             char everyUnit = 0;
-            if (isImmediateKeyword(tok)) {
-                tok = tok(lexer, "'period' or 'as'");
+            // 'incremental' is obsolete, replaced with 'immediate'
+            if (isIncrementalKeyword(tok)) {
+                tok = tok(lexer, "'as'");
+            } else if (isImmediateKeyword(tok)) {
+                tok = tok(lexer, "'deferred' or 'period' or 'as'");
             } else if (isManualKeyword(tok)) {
                 refreshType = MatViewDefinition.MANUAL_REFRESH_TYPE;
-                tok = tok(lexer, "'period' or 'as'");
+                tok = tok(lexer, "'deferred' or 'period' or 'as'");
             } else if (isEveryKeyword(tok)) {
                 tok = tok(lexer, "interval");
                 every = Timestamps.getStrideMultiple(tok);
                 everyUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
                 refreshType = MatViewDefinition.TIMER_REFRESH_TYPE;
-                tok = tok(lexer, "'start' or 'period' or 'as'");
+                tok = tok(lexer, "'deferred' or 'start' or 'period' or 'as'");
+            }
+
+            if (isDeferredKeyword(tok)) {
+                deferred = true;
+                if (refreshType == MatViewDefinition.TIMER_REFRESH_TYPE) {
+                    tok = tok(lexer, "'start' or 'period' or 'as'");
+                } else {
+                    tok = tok(lexer, "'period' or 'as'");
+                }
             }
 
             if (isPeriodKeyword(tok)) {
@@ -1038,6 +1045,7 @@ public class SqlParser {
             }
         }
         mvOpBuilder.setRefreshType(refreshType);
+        mvOpBuilder.setDeferred(deferred);
 
         boolean enclosedInParentheses;
         if (isAsKeyword(tok)) {

@@ -369,24 +369,25 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         });
     }
 
-    private static void createMatView(String viewSql, String mvName) throws SqlException {
-        execute("create materialized view " + mvName + " as (" + viewSql + ") partition by DAY");
+    private static void createMatView(String viewSql, String mvName, boolean deferred) throws SqlException {
+        execute("create materialized view " + mvName + " refresh immediate " + (deferred ? "deferred" : "") + " as (" + viewSql + ") partition by DAY");
     }
 
-    private static void createPeriodMatView(String viewSql, String mvName, long start, int length, char lengthUnit) throws SqlException {
+    private static void createPeriodMatView(String viewSql, String mvName, long start, int length, char lengthUnit, boolean deferred) throws SqlException {
         currentMicros = start;
-        execute("create materialized view " + mvName + " refresh period (length " + length + lengthUnit + ") as (" + viewSql + ") partition by DAY");
+        execute("create materialized view " + mvName + " refresh immediate " + (deferred ? "deferred" : "") + " period (length " + length + lengthUnit + ") as (" + viewSql + ") partition by DAY");
     }
 
-    private static void createTimerMatView(String viewSql, String mvName, long start, int interval, char intervalUnit) throws SqlException {
+    private static void createTimerMatView(String viewSql, String mvName, long start, int interval, char intervalUnit, boolean deferred) throws SqlException {
         sink.clear();
         TimestampFormatUtils.appendDateTimeUSec(sink, start);
-        execute("create materialized view " + mvName + " refresh every " + interval + intervalUnit + " start '" + sink + "' as (" + viewSql + ") partition by DAY");
+        execute("create materialized view " + mvName + " refresh every " + interval + intervalUnit + " " + (deferred ? "deferred" : "") + " start '" + sink + "' as (" + viewSql + ") partition by DAY");
     }
 
     private ObjList<FuzzTransaction> createTransactionsAndMv(Rnd rnd, String tableNameBase, String matViewName, String viewSql) throws SqlException, NumericException {
         fuzzer.createInitialTableWal(tableNameBase);
-        createMatView(viewSql, matViewName);
+        final boolean deferred = rnd.nextBoolean();
+        createMatView(viewSql, matViewName, deferred);
 
         ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd);
 
@@ -405,7 +406,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             char lengthUnit
     ) throws SqlException {
         fuzzer.createInitialTableWal(tableNameBase);
-        createPeriodMatView(viewSql, matViewName, start, length, lengthUnit);
+        final boolean deferred = rnd.nextBoolean();
+        createPeriodMatView(viewSql, matViewName, start, length, lengthUnit, deferred);
 
         ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd, start);
 
@@ -424,7 +426,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             char intervalUnit
     ) throws SqlException {
         fuzzer.createInitialTableWal(tableNameBase);
-        createTimerMatView(viewSql, matViewName, start, interval, intervalUnit);
+        final boolean deferred = rnd.nextBoolean();
+        createTimerMatView(viewSql, matViewName, start, interval, intervalUnit, deferred);
 
         ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd, start);
 
@@ -802,7 +805,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             for (int i = 0, n = mvNamesAndSqls.length / 2; i < n; i += 2) {
                 final String mvName = mvNamesAndSqls[i];
                 final String mvSql = mvNamesAndSqls[i + 1];
-                createMatView(mvSql, mvName);
+                final boolean deferred = rnd.nextBoolean();
+                createMatView(mvSql, mvName, deferred);
             }
 
             AtomicBoolean stop = new AtomicBoolean();
@@ -810,7 +814,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
             setFuzzParams(rnd, 0);
 
-            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(baseTableName, rnd);
+            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(baseTableName, rnd, start);
             ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
             fuzzTransactions.add(transactions);
             fuzzer.applyManyWalParallel(

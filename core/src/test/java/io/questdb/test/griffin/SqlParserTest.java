@@ -2289,6 +2289,30 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateMatView56() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh every 3d deferred",
+                57,
+                "'start' or 'period' or 'as' expected"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh immediate deferred",
+                58,
+                "'period' or 'as' expected"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh deferred",
+                48,
+                "'period' or 'as' expected"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh manual deferred",
+                55,
+                "'period' or 'as' expected"
+        );
+    }
+
+    @Test
     public void testCreateMatView6() throws Exception {
         assertSyntaxError(
                 "create materialized view 'myview' with refresh",

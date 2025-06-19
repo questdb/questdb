@@ -279,8 +279,6 @@ public interface CairoConfiguration {
 
     int getMatViewRowsPerQueryEstimate();
 
-    long getMatViewTimerStartEpsilon();
-
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();

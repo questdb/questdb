@@ -96,7 +96,6 @@ public class MatViewTimerJob extends SynchronizedJob {
             return;
         }
         try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
-            final long startEpsilon = configuration.getMatViewTimerStartEpsilon();
             long timerStart = matViewMeta.getMatViewTimerStart();
             TimeZoneRules timerTzRules = viewDefinition.getTimerTzRules();
 
@@ -122,7 +121,6 @@ public class MatViewTimerJob extends SynchronizedJob {
                         viewDefinition.getTimerTzRules(),
                         delay,
                         start,
-                        startEpsilon,
                         now
                 );
                 timerQueue.add(periodTimer);
@@ -156,7 +154,6 @@ public class MatViewTimerJob extends SynchronizedJob {
                         timerTzRules,
                         0,
                         timerStart,
-                        startEpsilon,
                         now
                 );
                 timerQueue.add(timer);
@@ -294,7 +291,6 @@ public class MatViewTimerJob extends SynchronizedJob {
                 @Nullable TimeZoneRules tzRules,
                 long delay,
                 long start,
-                long startEpsilon,
                 long now
         ) {
             this.type = type;
@@ -307,12 +303,12 @@ public class MatViewTimerJob extends SynchronizedJob {
             switch (type) {
                 case INCREMENTAL_REFRESH_TYPE:
                     // It's fine if the timer triggers immediately.
-                    deadlineLocal = nowLocal > start + startEpsilon ? sampler.nextTimestamp(sampler.round(nowLocal - 1)) : start;
+                    deadlineLocal = nowLocal > start ? sampler.nextTimestamp(sampler.round(nowLocal - 1)) : start;
                     break;
                 case PERIOD_REFRESH_TYPE:
                     // Unlike with incremental timer views, we want to trigger the timer
                     // for all complete periods, if they exist.
-                    deadlineLocal = nowLocal > start + startEpsilon ? sampler.round(nowLocal) : start;
+                    deadlineLocal = nowLocal > start ? sampler.round(nowLocal) : start;
                     break;
                 default:
                     throw new IllegalStateException("unexpected timer type: " + type);

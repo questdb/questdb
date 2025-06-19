@@ -55,6 +55,7 @@ public class MatViewDefinition implements Mutable {
     public static final int MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
     public static final int TIMER_REFRESH_TYPE = 1;
     private String baseTableName;
+    private boolean deferred;
     // Not persisted, parsed from timeZoneOffset.
     private long fixedOffset;
     private String matViewSql;
@@ -77,13 +78,18 @@ public class MatViewDefinition implements Mutable {
     private TimestampSampler timestampSampler;
 
     public static void append(@NotNull MatViewDefinition matViewDefinition, @NotNull AppendableBlock block) {
-        block.putInt(matViewDefinition.getRefreshType());
-        block.putStr(matViewDefinition.getBaseTableName());
-        block.putLong(matViewDefinition.getSamplingInterval());
-        block.putChar(matViewDefinition.getSamplingIntervalUnit());
-        block.putStr(matViewDefinition.getTimeZone());
-        block.putStr(matViewDefinition.getTimeZoneOffset());
-        block.putStr(matViewDefinition.getMatViewSql());
+        int refreshTypeRaw = matViewDefinition.refreshType;
+        // Keep pre-deferred definitions compatible with the new refresh type format.
+        if (matViewDefinition.deferred) {
+            refreshTypeRaw = -(matViewDefinition.refreshType + 1);
+        }
+        block.putInt(refreshTypeRaw);
+        block.putStr(matViewDefinition.baseTableName);
+        block.putLong(matViewDefinition.samplingInterval);
+        block.putChar(matViewDefinition.samplingIntervalUnit);
+        block.putStr(matViewDefinition.timeZone);
+        block.putStr(matViewDefinition.timeZoneOffset);
+        block.putStr(matViewDefinition.matViewSql);
     }
 
     public static void append(@NotNull MatViewDefinition matViewDefinition, @NotNull BlockFileWriter writer) {
@@ -144,6 +150,7 @@ public class MatViewDefinition implements Mutable {
         timestampSampler = null;
         fixedOffset = 0;
         refreshType = -1;
+        deferred = false;
         samplingInterval = 0;
         samplingIntervalUnit = 0;
         timerTimeZone = null;
@@ -208,6 +215,7 @@ public class MatViewDefinition implements Mutable {
 
     public void init(
             int refreshType,
+            boolean deferred,
             @NotNull TableToken matViewToken,
             @NotNull String matViewSql,
             @NotNull String baseTableName,
@@ -219,6 +227,7 @@ public class MatViewDefinition implements Mutable {
     ) {
         initDefinition(
                 refreshType,
+                deferred,
                 matViewToken,
                 matViewSql,
                 baseTableName,
@@ -228,6 +237,10 @@ public class MatViewDefinition implements Mutable {
                 timeZoneOffset
         );
         initTimerTimeZone(timerTimeZone);
+    }
+
+    public boolean isDeferred() {
+        return deferred;
     }
 
     public void setPeriodSampler(TimestampSampler periodSampler) {
@@ -246,7 +259,10 @@ public class MatViewDefinition implements Mutable {
         assert block.type() == MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE;
 
         long offset = 0;
-        final int refreshType = block.getInt(offset);
+        final int refreshTypeRaw = block.getInt(offset);
+        final boolean deferred = refreshTypeRaw < 0;
+        // Keep pre-deferred definitions compatible with the new refresh type format.
+        final int refreshType = deferred ? Math.abs(refreshTypeRaw + 1) : refreshTypeRaw;
         if (refreshType != IMMEDIATE_REFRESH_TYPE && refreshType != TIMER_REFRESH_TYPE && refreshType != MANUAL_REFRESH_TYPE) {
             throw CairoException.critical(0)
                     .put("unsupported refresh type [view=")
@@ -292,6 +308,7 @@ public class MatViewDefinition implements Mutable {
 
         destDefinition.initDefinition(
                 refreshType,
+                deferred,
                 matViewToken,
                 matViewSqlStr,
                 baseTableNameStr,
@@ -313,6 +330,7 @@ public class MatViewDefinition implements Mutable {
 
     private void initDefinition(
             int refreshType,
+            boolean deferred,
             @NotNull TableToken matViewToken,
             @NotNull String matViewSql,
             @NotNull String baseTableName,
@@ -322,6 +340,7 @@ public class MatViewDefinition implements Mutable {
             @Nullable String timeZoneOffset
     ) {
         this.refreshType = refreshType;
+        this.deferred = deferred;
         this.matViewToken = matViewToken;
         this.matViewSql = matViewSql;
         this.baseTableName = baseTableName;
