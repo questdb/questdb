@@ -49,6 +49,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.HashMap;
 
 import static io.questdb.test.tools.TestUtils.*;
 import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
@@ -359,7 +360,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     }
 
     private static ServerMain createServerMain() {
-        return ServerMain.create(root);
+        return ServerMain.createWithoutWalApplyJob(root, new HashMap<>());
     }
 
     private static void createTable(HttpClient httpClient, String tableName) {

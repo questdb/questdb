@@ -70,7 +70,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
 
     @Override
     public void close() {
-        LOG.info().$("view refresh job closing [workerId=").$(workerId).I$();
+        LOG.info().$("view compiler job closing [workerId=").$(workerId).I$();
         Misc.free(compilerExecutionContext);
     }
 
@@ -149,7 +149,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     private void resetViewState(TableToken viewToken, boolean invalid, CharSequence invalidationReason, long updateTimestamp) {
         final ViewDefinition viewDefinition = viewGraph.getViewDefinition(viewToken);
         if (viewDefinition == null) {
-            LOG.error().$("cannot reset view, probably dropped concurrently [token=").$(viewToken).I$();
+            LOG.error().$("cannot set view state, probably dropped concurrently [token=").$(viewToken).I$();
             return;
         }
 
