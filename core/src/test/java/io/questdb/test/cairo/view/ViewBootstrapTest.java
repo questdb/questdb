@@ -30,6 +30,7 @@ import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
@@ -48,6 +49,7 @@ import io.questdb.test.cutlass.pgwire.BasePGTest;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -240,13 +242,14 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
     @Test
     public void testViewStateAfterRestart() {
+        final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4";
+        final String query2 = "select ts, k2, min(v) as v_min from " + TABLE2 + " where v > 6";
+
         try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
             createTable(httpClient, TABLE1);
             createTable(httpClient, TABLE2);
             drainWalQueue();
 
-            final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4";
-            final String query2 = "select ts, k2, min(v) as v_min from " + TABLE2 + " where v > 6";
             createView(httpClient, VIEW1, query1);
             createView(httpClient, VIEW2, query2);
             drainWalQueue();
@@ -260,6 +263,18 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             assertFalse(state1.isInvalid());
             assertNotNull(state2);
             assertFalse(state2.isInvalid());
+
+            final ViewDefinition definition1 = getViewDefinition(VIEW1);
+            final ViewDefinition definition2 = getViewDefinition(VIEW2);
+
+            assertNotNull(definition1);
+            assertEquals(query1, definition1.getViewSql());
+            Assert.assertEquals(1, definition1.getDependencies().size());
+            assertEquals(TABLE1, definition1.getDependencies().getQuick(0));
+            assertNotNull(definition2);
+            assertEquals(query2, definition2.getViewSql());
+            Assert.assertEquals(1, definition2.getDependencies().size());
+            assertEquals(TABLE2, definition2.getDependencies().getQuick(0));
 
             assertExecRequest(
                     httpClient,
@@ -335,6 +350,18 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             assertTrue(state1.isInvalid());
             assertNotNull(state2);
             assertFalse(state2.isInvalid());
+
+            final ViewDefinition definition1 = getViewDefinition(VIEW1);
+            final ViewDefinition definition2 = getViewDefinition(VIEW2);
+
+            assertNotNull(definition1);
+            assertEquals(query1, definition1.getViewSql());
+            Assert.assertEquals(1, definition1.getDependencies().size());
+            assertEquals(TABLE1, definition1.getDependencies().getQuick(0));
+            assertNotNull(definition2);
+            assertEquals(query2, definition2.getViewSql());
+            Assert.assertEquals(1, definition2.getDependencies().size());
+            assertEquals(TABLE2, definition2.getDependencies().getQuick(0));
 
             assertExecRequest(
                     httpClient,
@@ -561,6 +588,12 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
     private void drainWalQueue() {
         drainWalQueue(questdb.getEngine());
+    }
+
+    private ViewDefinition getViewDefinition(CharSequence viewName) {
+        final CairoEngine engine = questdb.getEngine();
+        final TableToken viewToken = engine.getTableTokenIfExists(viewName);
+        return engine.getViewGraph().getViewDefinition(viewToken);
     }
 
     private ViewState getViewState(CharSequence viewName) {

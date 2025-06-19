@@ -30,6 +30,7 @@ import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.file.ReadableBlock;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -45,6 +46,13 @@ public class ViewDefinition implements Mutable {
 
     public static void append(@NotNull ViewDefinition viewDefinition, @NotNull AppendableBlock block) {
         block.putStr(viewDefinition.getViewSql());
+
+        final ObjList<CharSequence> dependencies = viewDefinition.getDependencies();
+        final int numOfDependencies = dependencies.size();
+        block.putInt(numOfDependencies);
+        for (int i = 0; i < numOfDependencies; i++) {
+            block.putStr(dependencies.getQuick(i));
+        }
     }
 
     public static void append(@NotNull ViewDefinition viewDefinition, @NotNull BlockFileWriter writer) {
@@ -119,7 +127,20 @@ public class ViewDefinition implements Mutable {
                     .put(viewToken.getTableName())
                     .put(']');
         }
+        offset += Vm.getStorageLength(viewSql);
         final String viewSqlStr = Chars.toString(viewSql);
+
+        final ObjList<CharSequence> dependencies = destDefinition.getDependencies();
+        final int numOfDependencies = block.getInt(offset);
+        offset += Integer.BYTES;
+
+        for (int i = 0; i < numOfDependencies; i++) {
+            final CharSequence dependency = block.getStr(offset);
+            offset += Vm.getStorageLength(dependency);
+
+            final String dependencyStr = Chars.toString(dependency);
+            dependencies.add(dependencyStr);
+        }
 
         destDefinition.init(
                 viewToken,
