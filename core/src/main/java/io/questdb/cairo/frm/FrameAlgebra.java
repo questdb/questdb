@@ -72,15 +72,6 @@ public class FrameAlgebra {
         int columnType = partitionColumn.getColumnType();
         short columnTypeTag = ColumnType.tagOf(columnType);
 
-        System.out.println("Checking if column replace is identical for column type: " + columnTypeTag
-                + ", partitionLo: " + partitionLo
-                + ", partitionHi: " + partitionHi
-                + ", commitLo: " + commitLo
-                + ", commitHi: " + commitHi
-                + ", mergeIndexRows: " + mergeIndexRows
-                + " partitionColumnTop: " + partitionColumn.getColumnTop()
-        );
-
         return isColumnReplaceIdentical(
                 columnTypeTag,
                 ColumnType.isVarSize(columnType) ? -1 : ColumnType.sizeOf(columnType),
