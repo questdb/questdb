@@ -87,6 +87,16 @@ public class Utf8StringSink implements MutableUtf8Sink {
     }
 
     @Override
+    public int intAt(int offset) {
+        return Unsafe.byteArrayGetInt(buffer, offset);
+    }
+
+    @Override
+    public int shortAt(int offset) {
+        return Unsafe.byteArrayGetShort(buffer, offset);
+    }
+
+    @Override
     public Utf8StringSink put(@Nullable Utf8Sequence us) {
         if (us != null) {
             ascii &= us.isAscii();

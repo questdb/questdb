@@ -814,7 +814,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         try {
             LOG.info()
                     .$("failed query result cannot be delivered. Kicked out [fd=").$(getFd())
-                    .$(", error=").$(e.getFlyweightMessage())
+                    .$(", error=").$safe(e.getFlyweightMessage())
                     .I$();
             processor.failRequest(this, e);
             throw registerDispatcherDisconnect(reason);
@@ -966,7 +966,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         } catch (ServerDisconnectException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
             throw e;
         } catch (HttpException e) {
-            LOG.error().$("http error [fd=").$(getFd()).$(", e=`").$(e.getFlyweightMessage()).$("`]").$();
+            LOG.error().$("http error [fd=").$(getFd()).$(", e=`").$safe(e.getFlyweightMessage()).$("`]").$();
             throw registerDispatcherDisconnect(DISCONNECT_REASON_PROTOCOL_VIOLATION);
         } catch (Throwable e) {
             LOG.error().$("internal error [fd=").$(getFd()).$(", e=`").$(e).$("`]").$();

@@ -37,13 +37,33 @@ public interface LogRecord extends Utf8Sink {
 
     void $();
 
+    /**
+     * Puts an ASCII char sequence to this record.
+     * <p>
+     * <strong>WARNING:</strong> sequence must be all ASCII chars, but this method doesn't
+     * validate it. It puts only the lower byte of each char to the record, so if this ends
+     * up being a non-ASCII byte, the record's UTF-8 output breaks.
+     * <p>
+     * If the sequence may contain non-ASCII chars, use {@link #$safe(CharSequence)} instead.
+     */
     LogRecord $(@Nullable CharSequence sequence);
 
+    /**
+     * Copies the UTF-8 sequence to the log record.
+     * <p>
+     * <strong>NOTE:</strong> This method doesn't perform any validation of UTF-8. If the byte
+     * sequence is invalid UTF-8, it may break logging.
+     */
     LogRecord $(@Nullable Utf8Sequence sequence);
 
+    /**
+     * Copies the UTF-8 sequence to the log record. Performs no validation of UTF-8.
+     * <p>
+     * <strong>NOTE:</strong> This method doesn't perform any validation of UTF-8. If
+     * you're logging a byte sequence whose contents you don't control, use
+     * {@link #$safe(DirectUtf8Sequence)} instead.
+     */
     LogRecord $(@Nullable DirectUtf8Sequence sequence);
-
-    LogRecord $(@NotNull CharSequence sequence, int lo, int hi);
 
     LogRecord $(int x);
 
@@ -71,13 +91,21 @@ public interface LogRecord extends Utf8Sink {
 
     LogRecord $ip(long ip);
 
+    LogRecord $safe(@NotNull CharSequence sequence, int lo, int hi);
+
+    LogRecord $safe(@Nullable DirectUtf8Sequence sequence);
+
+    LogRecord $safe(@Nullable Utf8Sequence sequence);
+
+    LogRecord $safe(long lo, long hi);
+
+    LogRecord $safe(@Nullable CharSequence sequence);
+
     LogRecord $size(long memoryBytes);
 
     LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence);
 
     LogRecord $ts(long x);
-
-    LogRecord $utf8(long lo, long hi);
 
     LogRecord $uuid(long lo, long hi);
 
@@ -90,6 +118,4 @@ public interface LogRecord extends Utf8Sink {
     LogRecord microTime(long x);
 
     LogRecord ts();
-
-    LogRecord utf8(@Nullable CharSequence sequence);
 }

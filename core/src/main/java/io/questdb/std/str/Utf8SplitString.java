@@ -87,6 +87,16 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
         return Unsafe.getUnsafe().getLong(dataLo + offset);
     }
 
+    @Override
+    public int intAt(int offset) {
+        return Unsafe.getUnsafe().getInt(dataLo + offset);
+    }
+
+    @Override
+    public int shortAt(int offset) {
+        return Unsafe.getUnsafe().getShort(dataLo + offset);
+    }
+
     /**
      * @param prefixLo address of the first UTF-8 byte of the prefix inlined into the auxiliary vector
      * @param dataLo   address of the first UTF-8 byte of the full string value.

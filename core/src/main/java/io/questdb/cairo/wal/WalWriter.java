@@ -173,7 +173,7 @@ public class WalWriter implements TableWriterAPI {
             DdlListener ddlListener,
             WalDirectoryPolicy walDirectoryPolicy
     ) {
-        LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
+        LOG.info().$("open [table=").$(tableToken).I$();
         this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
         this.ddlListener = ddlListener;
@@ -354,7 +354,7 @@ public class WalWriter implements TableWriterAPI {
                 releaseWalLock();
             } finally {
                 Misc.free(path);
-                LOG.info().$("closed '").utf8(tableToken.getTableName()).$('\'').$();
+                LOG.info().$("closed [table=").$(tableToken).I$();
             }
         }
     }
@@ -413,7 +413,7 @@ public class WalWriter implements TableWriterAPI {
             applyMetadataChangeLog(maxStructureVersion);
             return true;
         } catch (CairoException e) {
-            LOG.critical().$("could not apply structure changes, WAL will be closed [table=").$(tableToken.getTableName())
+            LOG.critical().$("could not apply structure changes, WAL will be closed [table=").$(tableToken)
                     .$(", walId=").$(walId)
                     .$(", ex=").$((Throwable) e)
                     .$(", errno=").$(e.getErrno())
@@ -531,8 +531,7 @@ public class WalWriter implements TableWriterAPI {
             final int newSegmentId = segmentId + 1;
             if (newSegmentId > WalUtils.SEG_MAX_ID) {
                 throw CairoException.critical(0)
-                        .put("cannot roll over to new segment due to SEG_MAX_ID overflow ")
-                        .put("[table=").put(tableToken.getTableName())
+                        .put("cannot roll over to new segment due to SEG_MAX_ID overflow [table=").put(tableToken)
                         .put(", walId=").put(walId)
                         .put(", segmentId=").put(newSegmentId).put(']');
             }
@@ -2049,14 +2048,19 @@ public class WalWriter implements TableWriterAPI {
                     if (securityContext != null) {
                         ddlListener.onColumnAdded(securityContext, metadata.getTableToken(), columnName);
                     }
-                    LOG.info().$("added column to WAL [path=").$substr(pathRootSize, path).$(", columnName=").utf8(columnName).$(", type=").$(ColumnType.nameOf(columnType)).I$();
+                    LOG.info().$("added column to WAL [path=").$substr(pathRootSize, path)
+                            .$(", columnName=").$safe(columnName)
+                            .$(", type=").$(ColumnType.nameOf(columnType))
+                            .I$();
                 } else {
                     throw CairoException.critical(0).put("column '").put(columnName)
                             .put("' was added, cannot apply commit because of concurrent table definition change");
                 }
             } else {
                 if (metadata.getColumnType(columnIndex) == columnType) {
-                    LOG.info().$("column has already been added by another WAL [path=").$substr(pathRootSize, path).$(", columnName=").utf8(columnName).I$();
+                    LOG.info().$("column has already been added by another WAL [path=").$substr(pathRootSize, path)
+                            .$(", columnName=").$safe(columnName)
+                            .I$();
                 } else {
                     throw CairoException.nonCritical().put("column '").put(columnName).put("' already exists");
                 }
@@ -2193,14 +2197,15 @@ public class WalWriter implements TableWriterAPI {
                         markColumnRemoved(index, type);
                         path.trimTo(pathSize);
                         LOG.info().$("removed column from WAL [path=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
-                                .$(", columnName=").utf8(columnName).I$();
+                                .$(", columnName=").$safe(columnName).I$();
                     } else {
-                        throw CairoException.critical(0).put("column '").put(columnName)
-                                .put("' was removed, cannot apply commit because of concurrent table definition change");
+                        throw CairoException.critical(0)
+                                .put("column was removed, cannot apply commit because of concurrent table definition change")
+                                .put(" [column=").put(columnName).put(']');
                     }
                 }
             } else {
-                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exist");
+                throw CairoException.nonCritical().put("column does not exist [column=").put(columnNameSeq).put(']');
             }
         }
 
@@ -2246,15 +2251,20 @@ public class WalWriter implements TableWriterAPI {
                         }
 
                         path.trimTo(pathSize);
-                        LOG.info().$("renamed column in WAL [path=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
-                                .$(", columnName=").utf8(columnName).$(", newColumnName=").utf8(newColumnName).I$();
+                        LOG.info().$("renamed column in WAL [path=")
+                                .$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
+                                .$(", columnName=").$safe(columnName)
+                                .$(", newColumnName=").$safe(newColumnName)
+                                .I$();
                     } else {
-                        throw CairoException.critical(0).put("column '").put(columnName)
-                                .put("' was removed, cannot apply commit because of concurrent table definition change");
+                        throw CairoException.critical(0)
+                                .put("column was removed, cannot apply commit because of concurrent table definition change")
+                                .put(" [column=").put(columnName).put(']');
                     }
                 }
             } else {
-                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exist");
+                throw CairoException.nonCritical().put("column does not exist [column=")
+                        .put(columnNameSeq).put(']');
             }
         }
 

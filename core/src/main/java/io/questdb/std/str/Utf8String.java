@@ -86,6 +86,11 @@ public class Utf8String implements Utf8Sequence {
     }
 
     @Override
+    public int shortAt(int index) {
+        return Unsafe.byteArrayGetShort(bytes, index);
+    }
+
+    @Override
     public boolean isAscii() {
         return ascii;
     }
