@@ -1275,8 +1275,8 @@ Java_io_questdb_cairo_frm_FrameAlgebra_isColumnReplaceIdentical(
     auto lo2_pos = __JLONG_REINTERPRET_CAST__(int64_t, lo2);
     auto hi2_pos = __JLONG_REINTERPRET_CAST__(int64_t, hi2);
 
-    auto value_size_bytes = reinterpret_cast<int32_t>(valueSizeBytes);
-    auto column_type = reinterpret_cast<int32_t>(columnType);
+    auto value_size_bytes = (int32_t) valueSizeBytes;
+    auto column_type = (int32_t) columnType;
 
     auto null_long = __JLONG_REINTERPRET_CAST__(int64_t, nullLong);
     auto null_long1 = __JLONG_REINTERPRET_CAST__(int64_t, nullLong1);
