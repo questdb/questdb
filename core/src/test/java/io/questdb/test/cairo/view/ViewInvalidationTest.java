@@ -31,6 +31,8 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
     @Test
     public void testBrokenViewsAreInvalidatedRecursively() throws Exception {
+        setCurrentMicros(1750345200000000L);
+
         String viewQuery1 = "select ts, k, max(v) as value from " + TABLE1 + " where v > 4";
         String viewQuery2 = "select ts, k, min(v) as value from " + TABLE2 + " where v > 6";
         String viewQuery3 = VIEW1 + " union " + VIEW2;
@@ -47,15 +49,11 @@ public class ViewInvalidationTest extends AbstractViewTest {
             createView(VIEW2, viewQuery2);
             createView(VIEW3, viewQuery3);
 
-            compileView(VIEW1);
-            compileView(VIEW2);
-            compileView(VIEW3);
-
             assertQueryAndPlan(
-                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\n" +
-                            "view1\t" + viewQuery1 + "\tview1~3\t\tvalid\n" +
-                            "view2\t" + viewQuery2 + "\tview2~4\t\tvalid\n" +
-                            "view3\t" + viewQuery3 + "\tview3~5\t\tvalid\n",
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
+                            "view1\t" + viewQuery1 + "\tview1~3\t\tvalid\t2025-06-19T15:00:00.000000Z\n" +
+                            "view2\t" + viewQuery2 + "\tview2~4\t\tvalid\t2025-06-19T15:00:00.000000Z\n" +
+                            "view3\t" + viewQuery3 + "\tview3~5\t\tvalid\t2025-06-19T15:00:00.000000Z\n",
                     "views() order by view_name",
                     null,
                     true,
@@ -65,6 +63,13 @@ public class ViewInvalidationTest extends AbstractViewTest {
                             "  keys: [view_name]\n" +
                             "    views()\n"
             );
+
+            compileView(VIEW1);
+            compileView(VIEW2);
+            compileView(VIEW3);
+            drainViewQueue();
+
+            setCurrentMicros(1750345201000000L);
 
             // breaking views by renaming the table
             execute(breakingSql);
@@ -90,15 +95,11 @@ public class ViewInvalidationTest extends AbstractViewTest {
             assertViewDefinitionFile(VIEW3, viewQuery3);
             assertViewStateFile(VIEW3, expectedErrorMessage);
 
-            compileView(VIEW1, expectedErrorMessage);
-            compileView(VIEW2);
-            compileView(VIEW3, expectedErrorMessage);
-
             assertQueryAndPlan(
-                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\n" +
-                            "view1\tselect ts, k, max(v) as value from table1 where v > 4\tview1~3\ttable does not exist [table=table1]\tinvalid\n" +
-                            "view2\tselect ts, k, min(v) as value from table2 where v > 6\tview2~4\t\tvalid\n" +
-                            "view3\tview1 union view2\tview3~5\ttable does not exist [table=table1]\tinvalid\n",
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
+                            "view1\tselect ts, k, max(v) as value from table1 where v > 4\tview1~3\ttable does not exist [table=table1]\tinvalid\t2025-06-19T15:00:01.000000Z\n" +
+                            "view2\tselect ts, k, min(v) as value from table2 where v > 6\tview2~4\t\tvalid\t2025-06-19T15:00:00.000000Z\n" +
+                            "view3\tview1 union view2\tview3~5\ttable does not exist [table=table1]\tinvalid\t2025-06-19T15:00:01.000000Z\n",
                     "views() order by view_name",
                     null,
                     true,
@@ -108,6 +109,13 @@ public class ViewInvalidationTest extends AbstractViewTest {
                             "  keys: [view_name]\n" +
                             "    views()\n"
             );
+
+            compileView(VIEW1, expectedErrorMessage);
+            compileView(VIEW2);
+            compileView(VIEW3, expectedErrorMessage);
+            drainViewQueue();
+
+            setCurrentMicros(1750345205000000L);
 
             // fixing views by rename the table back to the original name
             execute(fixingSql);
@@ -133,15 +141,11 @@ public class ViewInvalidationTest extends AbstractViewTest {
             assertViewDefinitionFile(VIEW3, viewQuery3);
             assertViewStateFile(VIEW3);
 
-            compileView(VIEW1);
-            compileView(VIEW2);
-            compileView(VIEW3);
-
             assertQueryAndPlan(
-                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\n" +
-                            "view1\tselect ts, k, max(v) as value from table1 where v > 4\tview1~3\t\tvalid\n" +
-                            "view2\tselect ts, k, min(v) as value from table2 where v > 6\tview2~4\t\tvalid\n" +
-                            "view3\tview1 union view2\tview3~5\t\tvalid\n",
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
+                            "view1\tselect ts, k, max(v) as value from table1 where v > 4\tview1~3\t\tvalid\t2025-06-19T15:00:05.000000Z\n" +
+                            "view2\tselect ts, k, min(v) as value from table2 where v > 6\tview2~4\t\tvalid\t2025-06-19T15:00:00.000000Z\n" +
+                            "view3\tview1 union view2\tview3~5\t\tvalid\t2025-06-19T15:00:05.000000Z\n",
                     "views() order by view_name",
                     null,
                     true,
@@ -151,6 +155,10 @@ public class ViewInvalidationTest extends AbstractViewTest {
                             "  keys: [view_name]\n" +
                             "    views()\n"
             );
+
+            compileView(VIEW1);
+            compileView(VIEW2);
+            compileView(VIEW3);
         });
     }
 
@@ -238,6 +246,8 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
     private void testViewInvalidated(String viewQuery, String breakingSql, String fixingSql, String expectedErrorMessage) throws Exception {
         assertMemoryLeak(() -> {
+            setCurrentMicros(1750327200000000L);
+
             createTable(TABLE1);
             createTable(TABLE2);
 
@@ -245,8 +255,8 @@ public class ViewInvalidationTest extends AbstractViewTest {
             createView(VIEW1, viewQuery);
 
             assertQueryAndPlan(
-                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\n" +
-                            "view1\t" + viewQuery + "\tview1~3\t\tvalid\n",
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
+                            "view1\t" + viewQuery + "\tview1~3\t\tvalid\t2025-06-19T10:00:00.000000Z\n",
                     "views()",
                     null,
                     false,
@@ -270,8 +280,8 @@ public class ViewInvalidationTest extends AbstractViewTest {
             assertViewStateFile(VIEW1, expectedErrorMessage);
 
             assertQueryAndPlan(
-                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\n" +
-                            "view1\t" + viewQuery + "\tview1~3\t" + expectedErrorMessage + "\tinvalid\n",
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
+                            "view1\t" + viewQuery + "\tview1~3\t" + expectedErrorMessage + "\tinvalid\t2025-06-19T10:00:00.000000Z\n",
                     "views()",
                     null,
                     false,
@@ -295,8 +305,8 @@ public class ViewInvalidationTest extends AbstractViewTest {
             assertViewStateFile(VIEW1);
 
             assertQueryAndPlan(
-                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\n" +
-                            "view1\t" + viewQuery + "\tview1~3\t\tvalid\n",
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
+                            "view1\t" + viewQuery + "\tview1~3\t\tvalid\t2025-06-19T10:00:00.000000Z\n",
                     "views()",
                     null,
                     false,

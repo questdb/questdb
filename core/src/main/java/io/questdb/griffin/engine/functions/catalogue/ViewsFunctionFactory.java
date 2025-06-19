@@ -85,6 +85,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_TABLE_DIR_NAME = COLUMN_VIEW_SQL + 1;
         private static final int COLUMN_INVALIDATION_REASON = COLUMN_TABLE_DIR_NAME + 1;
         private static final int COLUMN_VIEW_STATUS = COLUMN_INVALIDATION_REASON + 1;
+        private static final int COLUMN_VIEW_STATUS_UPDATE_TIME = COLUMN_VIEW_STATUS + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor = new ViewsListCursor();
 
@@ -161,6 +162,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
                             record.of(
                                     viewDefinition,
+                                    viewStateReader.getUpdateTimestamp(),
                                     viewStateReader.getInvalidationReason(),
                                     viewStateReader.isInvalid()
                             );
@@ -192,7 +194,13 @@ public class ViewsFunctionFactory implements FunctionFactory {
             private static class ViewsRecord implements Record {
                 private final StringSink invalidationReason = new StringSink();
                 private boolean invalid;
+                private long updateTimestamp;
                 private ViewDefinition viewDefinition;
+
+                @Override
+                public long getLong(int col) {
+                    return col == COLUMN_VIEW_STATUS_UPDATE_TIME ? updateTimestamp : 0;
+                }
 
                 @Override
                 public CharSequence getStrA(int col) {
@@ -224,6 +232,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
                 public void of(
                         ViewDefinition viewDefinition,
+                        long updateTimestamp,
                         CharSequence invalidationReason,
                         boolean invalid
                 ) {
@@ -231,6 +240,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
                     this.invalidationReason.clear();
                     this.invalidationReason.put(invalidationReason);
                     this.invalid = invalid;
+                    this.updateTimestamp = updateTimestamp;
                 }
 
                 private CharSequence getViewStatus() {
@@ -246,6 +256,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("view_table_dir_name", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("invalidation_reason", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("view_status", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("view_status_update_time", ColumnType.TIMESTAMP));
             METADATA = metadata;
         }
     }

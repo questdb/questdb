@@ -158,9 +158,13 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             LOG.error().$("view state is missing [token=").$(viewToken).I$();
             return;
         }
+        if (state.isInvalid() == invalid) {
+            // there is no state change, just return
+            return;
+        }
         state.setInvalidFlag(invalid);
 
-        LOG.info().$("updating view state [viewToken=").$(viewToken).$(", invalid=").$(invalid).I$();
+        LOG.info().$("updating view state [viewToken=").$(viewToken).$(", invalid=").$(invalid).$(", updateTimestamp=").$(updateTimestamp).I$();
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             walWriter.resetViewState(updateTimestamp, invalid, invalidationReason);
         }

@@ -38,12 +38,14 @@ import io.questdb.cutlass.http.client.Response;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.cutlass.pgwire.BasePGTest;
+import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Before;
@@ -270,12 +272,13 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "{\"name\":\"view_sql\",\"type\":\"STRING\"}," +
                             "{\"name\":\"view_table_dir_name\",\"type\":\"STRING\"}," +
                             "{\"name\":\"invalidation_reason\",\"type\":\"STRING\"}," +
-                            "{\"name\":\"view_status\",\"type\":\"STRING\"}" +
+                            "{\"name\":\"view_status\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"view_status_update_time\",\"type\":\"TIMESTAMP\"}" +
                             "]," +
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
-                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",null,\"valid\"]" +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"
@@ -307,12 +310,13 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "{\"name\":\"view_sql\",\"type\":\"STRING\"}," +
                             "{\"name\":\"view_table_dir_name\",\"type\":\"STRING\"}," +
                             "{\"name\":\"invalidation_reason\",\"type\":\"STRING\"}," +
-                            "{\"name\":\"view_status\",\"type\":\"STRING\"}" +
+                            "{\"name\":\"view_status\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"view_status_update_time\",\"type\":\"TIMESTAMP\"}" +
                             "]," +
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
-                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"Invalid column: k\",\"invalid\"]" +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"
@@ -343,12 +347,13 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "{\"name\":\"view_sql\",\"type\":\"STRING\"}," +
                             "{\"name\":\"view_table_dir_name\",\"type\":\"STRING\"}," +
                             "{\"name\":\"invalidation_reason\",\"type\":\"STRING\"}," +
-                            "{\"name\":\"view_status\",\"type\":\"STRING\"}" +
+                            "{\"name\":\"view_status\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"view_status_update_time\",\"type\":\"TIMESTAMP\"}" +
                             "]," +
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
-                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"Invalid column: k\",\"invalid\"]" +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"
@@ -485,7 +490,12 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     }
 
     private static ServerMain createServerMain() {
-        return new ServerMain(Bootstrap.getServerMainArgs(root)) {
+        return new ServerMain(new Bootstrap(Bootstrap.getServerMainArgs(root)) {
+            @Override
+            public MicrosecondClock getMicrosecondClock() {
+                return new TestMicroClock(1750345200000000L, 0L);
+            }
+        }) {
             @Override
             protected void setupViewJobs(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
             }
