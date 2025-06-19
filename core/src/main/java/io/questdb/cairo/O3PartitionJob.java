@@ -2003,12 +2003,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // Number of rows to insert from the O3 segment into this partition.
         final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
 
-        tableWriter.addPhysicallyWrittenRows(
-                isOpenColumnModeForAppend(openColumnMode)
-                        ? srcOooBatchRowSize
-                        : o3SplitPartitionSize == 0 ? srcDataNewPartitionSize : o3SplitPartitionSize
-        );
-
         long timestampMergeIndexAddr = 0;
         long timestampMergeIndexSize = 0;
         final TableRecordMetadata metadata = tableWriter.getMetadata();
@@ -2095,12 +2089,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
                                         timestampMergeIndexAddr = 0;
                                     }
+
+                                    // Remove empty partition dir
+                                    Path path = Path.getThreadLocal(pathToTable);
+                                    setPathForNativePartition(path, tableWriter.getPartitionBy(), partitionTimestamp, txn);
+                                    tableWriter.getConfiguration().getFilesFacade().rmdir(path, false);
+
                                     return;
                                 } else {
                                     // suffixType == O3_BLOCK_O3
                                     // we don't need to do the merge, but we need to append the suffix
                                     appendOnly = true;
                                 }
+
 
                             }
                         }
@@ -2206,6 +2207,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 throw e;
             }
         }
+
+        tableWriter.addPhysicallyWrittenRows(
+                isOpenColumnModeForAppend(openColumnMode)
+                        ? srcOooBatchRowSize
+                        : o3SplitPartitionSize == 0 ? srcDataNewPartitionSize : o3SplitPartitionSize
+        );
 
         final int columnCount = metadata.getColumnCount();
         columnCounter.set(compressColumnCount(metadata));
