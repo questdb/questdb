@@ -45,12 +45,13 @@ public class ViewState {
     }
 
     public static void append(
+            long updateTimestamp,
             boolean invalid,
             @Nullable CharSequence invalidationReason,
             @NotNull BlockFileWriter writer
     ) {
         final AppendableBlock block = writer.append();
-        appendState(invalid, invalidationReason, block);
+        appendState(updateTimestamp, invalid, invalidationReason, block);
         block.commit(VIEW_STATE_FORMAT_MSG_TYPE);
         writer.commit();
     }
@@ -83,10 +84,12 @@ public class ViewState {
     }
 
     private static void appendState(
+            long updateTimestamp,
             boolean invalid,
             @Nullable CharSequence invalidationReason,
             @NotNull AppendableBlock block
     ) {
+        block.putLong(updateTimestamp);
         block.putBool(invalid);
         block.putStr(invalidationReason);
     }

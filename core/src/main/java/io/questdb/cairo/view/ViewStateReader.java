@@ -30,6 +30,7 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -40,9 +41,11 @@ import org.jetbrains.annotations.Nullable;
 public class ViewStateReader implements Mutable {
     private final StringSink invalidationReason = new StringSink();
     private boolean invalid;
+    private long updateTimestamp = Numbers.LONG_NULL;
 
     @Override
     public void clear() {
+        updateTimestamp = Numbers.LONG_NULL;
         invalid = false;
         invalidationReason.clear();
     }
@@ -52,11 +55,16 @@ public class ViewStateReader implements Mutable {
         return invalidationReason.length() > 0 ? invalidationReason : null;
     }
 
+    public long getUpdateTimestamp() {
+        return updateTimestamp;
+    }
+
     public boolean isInvalid() {
         return invalid;
     }
 
-    public ViewStateReader of(@NotNull WalEventCursor.ViewInvalidationInfo info) {
+    public ViewStateReader of(@NotNull WalEventCursor.ViewStatusUpdateInfo info) {
+        updateTimestamp = info.getUpdateTimestamp();
         invalid = info.isInvalid();
         invalidationReason.clear();
         invalidationReason.put(info.getInvalidationReason());
@@ -68,9 +76,10 @@ public class ViewStateReader implements Mutable {
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
             if (block.type() == ViewState.VIEW_STATE_FORMAT_MSG_TYPE) {
-                invalid = block.getBool(0);
+                updateTimestamp = block.getLong(0);
+                invalid = block.getBool(Long.BYTES);
                 invalidationReason.clear();
-                invalidationReason.put(block.getStr(Byte.BYTES));
+                invalidationReason.put(block.getStr(Long.BYTES + Byte.BYTES));
                 return this;
             }
         }

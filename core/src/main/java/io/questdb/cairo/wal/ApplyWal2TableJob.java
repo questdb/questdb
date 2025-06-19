@@ -611,7 +611,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                 mvRefreshTask.invalidationReason = "truncate operation";
                 return 1;
-            case VIEW_INVALIDATE:
+            case VIEW_STATUS_UPDATE:
                 try (WalEventReader eventReader = walEventReader) {
                     final Path path = Path.PATH2.get();
                     final TableToken token = writer.getTableToken();
@@ -619,9 +619,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     int tablePathLen = path.size();
                     path.slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                     final WalEventCursor walEventCursor = eventReader.of(path, segmentTxn);
-                    final WalEventCursor.ViewInvalidationInfo info = walEventCursor.getViewInvalidationInfo();
+                    final WalEventCursor.ViewStatusUpdateInfo info = walEventCursor.getViewStatusUpdateInfo();
                     updateViewState(
                             path.trimTo(tablePathLen),
+                            info.getUpdateTimestamp(),
                             info.isInvalid(),
                             info.getInvalidationReason()
                     );
@@ -787,6 +788,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
     private void updateViewState(
             Path tablePath,
+            long updateTimestamp,
             boolean invalid,
             @Nullable CharSequence invalidationReason
     ) {
@@ -794,6 +796,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             stateWriter.of(tablePath.concat(ViewState.VIEW_STATE_FILE_NAME).$());
 
             ViewState.append(
+                    updateTimestamp,
                     invalid,
                     invalidationReason,
                     stateWriter

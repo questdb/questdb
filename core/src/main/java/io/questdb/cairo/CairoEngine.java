@@ -1766,7 +1766,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
                         if (tableToken.isView()) {
                             try (WalWriter walWriter = walWriterPool.get(tableToken)) {
-                                walWriter.resetViewState(false, null);
+                                walWriter.resetViewState(configuration.getMicrosecondClock().getTicks(), false, null);
                             }
                         }
 

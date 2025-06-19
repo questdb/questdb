@@ -516,11 +516,12 @@ public class WalWriter implements TableWriterAPI {
 
     // Marks the view as invalid or resets its invalidation status, depending on the input values.
     public void resetViewState(
+            long updateTimestamp,
             boolean invalid,
             @Nullable CharSequence invalidationReason
     ) {
         try {
-            lastSegmentTxn = events.appendViewInvalidate(invalid, invalidationReason);
+            lastSegmentTxn = events.appendViewStatusUpdate(updateTimestamp, invalid, invalidationReason);
             getSequencerTxn();
         } catch (Throwable th) {
             rollback();

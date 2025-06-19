@@ -54,7 +54,7 @@ public class WalEventCursor {
     private final MatViewDataInfo mvDataInfo = new MatViewDataInfo();
     private final MatViewInvalidationInfo mvInvalidationInfo = new MatViewInvalidationInfo();
     private final SqlInfo sqlInfo = new SqlInfo();
-    private final ViewInvalidationInfo viewInvalidationInfo = new ViewInvalidationInfo();
+    private final ViewStatusUpdateInfo viewStatusUpdateInfo = new ViewStatusUpdateInfo();
     private long memSize;
     private long nextOffset = Integer.BYTES;
     private long offset = Integer.BYTES; // skip wal meta version
@@ -122,11 +122,11 @@ public class WalEventCursor {
         return type;
     }
 
-    public ViewInvalidationInfo getViewInvalidationInfo() {
-        if (type != VIEW_INVALIDATE) {
-            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not VIEW_INVALIDATION, type=").put(type);
+    public ViewStatusUpdateInfo getViewStatusUpdateInfo() {
+        if (type != VIEW_STATUS_UPDATE) {
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not VIEW_STATUS_UPDATE, type=").put(type);
         }
-        return viewInvalidationInfo;
+        return viewStatusUpdateInfo;
     }
 
     public boolean hasNext() {
@@ -248,8 +248,8 @@ public class WalEventCursor {
                 break;
             case TRUNCATE:
                 break;
-            case VIEW_INVALIDATE:
-                viewInvalidationInfo.read();
+            case VIEW_STATUS_UPDATE:
+                viewStatusUpdateInfo.read();
                 break;
             case MAT_VIEW_INVALIDATE:
                 mvInvalidationInfo.read();
@@ -661,12 +661,17 @@ public class WalEventCursor {
         }
     }
 
-    public class ViewInvalidationInfo {
+    public class ViewStatusUpdateInfo {
         private final StringSink error = new StringSink();
         private boolean invalid;
+        private long updateTimestamp;
 
         public CharSequence getInvalidationReason() {
             return error;
+        }
+
+        public long getUpdateTimestamp() {
+            return updateTimestamp;
         }
 
         public boolean isInvalid() {
@@ -674,6 +679,7 @@ public class WalEventCursor {
         }
 
         private void read() {
+            updateTimestamp = readLong();
             invalid = readBool();
             error.clear();
             error.put(readStr());

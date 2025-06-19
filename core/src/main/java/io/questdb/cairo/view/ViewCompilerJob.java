@@ -162,8 +162,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
 
         LOG.info().$("updating view state [viewToken=").$(viewToken).$(", invalid=").$(invalid).I$();
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
-            // todo: add the timestamp to the WAL event
-            walWriter.resetViewState(invalid, invalidationReason);
+            walWriter.resetViewState(updateTimestamp, invalid, invalidationReason);
         }
     }
 }

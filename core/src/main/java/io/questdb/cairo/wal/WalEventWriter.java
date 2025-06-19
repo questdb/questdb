@@ -372,10 +372,11 @@ class WalEventWriter implements Closeable {
         return txn++;
     }
 
-    int appendViewInvalidate(boolean invalid, @Nullable CharSequence invalidationReason) {
+    int appendViewStatusUpdate(long updateTimestamp, boolean invalid, @Nullable CharSequence invalidationReason) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
-        eventMem.putByte(WalTxnType.VIEW_INVALIDATE);
+        eventMem.putByte(WalTxnType.VIEW_STATUS_UPDATE);
+        eventMem.putLong(updateTimestamp);
         eventMem.putBool(invalid);
         eventMem.putStr(invalidationReason);
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
