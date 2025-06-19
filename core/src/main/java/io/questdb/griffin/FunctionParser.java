@@ -443,7 +443,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         final int actualType = args.getQuick(i).getType();
                         final boolean actualConstant = args.getQuick(i).isConstant();
 
-                        if ((expectedType != actualType || (expectedConstant && !actualConstant))) {
+                        if (expectedType != actualType || (expectedConstant && !actualConstant)) {
                             ex.put(" at #").put(i + 1);
                             ex.put(" expected: ").put(ColumnType.nameOf(expectedType));
                             if (expectedType == actualType) {

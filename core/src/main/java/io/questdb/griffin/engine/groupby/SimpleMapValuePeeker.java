@@ -33,7 +33,6 @@ public class SimpleMapValuePeeker {
     private boolean nextHasNext = false;
     private long nextLocalEpoch = -1;
 
-
     SimpleMapValuePeeker(SimpleMapValue currentRecord, SimpleMapValue nextRecord) {
         this.currentRecord = currentRecord;
         this.nextRecord = nextRecord;
