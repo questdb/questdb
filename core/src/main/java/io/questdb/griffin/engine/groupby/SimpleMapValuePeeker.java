@@ -33,9 +33,17 @@ public class SimpleMapValuePeeker {
     private boolean nextHasNext = false;
     private long nextLocalEpoch = -1;
 
+
     SimpleMapValuePeeker(SimpleMapValue currentRecord, SimpleMapValue nextRecord) {
         this.currentRecord = currentRecord;
         this.nextRecord = nextRecord;
+    }
+
+    public void clear() {
+        currentRecord.clear();
+        nextRecord.clear();
+        nextHasNext = false;
+        nextLocalEpoch = -1;
     }
 
     Record peek() {

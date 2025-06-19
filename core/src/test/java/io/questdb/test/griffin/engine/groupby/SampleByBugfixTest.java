@@ -43,19 +43,21 @@ public class SampleByBugfixTest extends AbstractCairoTest {
                 " from long_sequence(100_000)");
 
         // todo: return values for "prev" function are incorrect. This is a bug.
+        // [nwoolmer] I think I've fixed this now, dirty state in SimpleMapValuePeeker
         assertQueryNoLeakCheck(
                 "created\tavg\tlatency\n" +
-                        "2025-01-20T13:56:52.000000Z\t0.0\t0.26648957155568953\n" +
-                        "2025-01-20T13:56:54.000000Z\t0.0\t0.26648957155568953\n" +
-                        "2025-01-20T13:56:56.000000Z\t0.0\t0.26648957155568953\n" +
-                        "2025-01-20T13:56:58.000000Z\t0.0\t0.26648957155568953\n" +
-                        "2025-01-20T13:57:00.000000Z\t0.0\t0.26648957155568953\n" +
-                        "2025-01-20T13:57:02.000000Z\t0.0\t0.26648957155568953\n" +
-                        "2025-01-20T13:57:04.000000Z\t0.0\t0.26648957155568953\n" +
-                        "2025-01-20T13:57:06.000000Z\t0.0\t0.26648957155568953\n" +
-                        "2025-01-20T13:57:08.000000Z\t0.0\t0.26648957155568953\n" +
-                        "2025-01-20T13:57:10.000000Z\t0.0\t0.26648957155568953\n" +
-                        "2025-01-20T13:57:12.000000Z\t0.0\t0.26648957155568953\n" +
+                        "2025-01-20T13:56:50.000000Z\t0.0\t0.0\n" +
+                        "2025-01-20T13:56:52.000000Z\t0.0\t0.0\n" +
+                        "2025-01-20T13:56:54.000000Z\t0.0\t0.0\n" +
+                        "2025-01-20T13:56:56.000000Z\t0.0\t0.0\n" +
+                        "2025-01-20T13:56:58.000000Z\t0.0\t0.0\n" +
+                        "2025-01-20T13:57:00.000000Z\t0.0\t0.0\n" +
+                        "2025-01-20T13:57:02.000000Z\t0.0\t0.0\n" +
+                        "2025-01-20T13:57:04.000000Z\t0.0\t0.0\n" +
+                        "2025-01-20T13:57:06.000000Z\t0.0\t0.0\n" +
+                        "2025-01-20T13:57:08.000000Z\t0.0\t0.0\n" +
+                        "2025-01-20T13:57:10.000000Z\t0.0\t0.0\n" +
+                        "2025-01-20T13:57:12.000000Z\t0.0\t0.0\n" +
                         "2025-01-20T13:57:14.000000Z\t0.4851638802935891\t0.4846019644078461\n" +
                         "2025-01-20T13:57:16.000000Z\t0.5040684715238979\t0.0014510055926236776\n" +
                         "2025-01-20T13:57:18.000000Z\t0.4855058436740148\t0.760595244599882\n" +
@@ -210,15 +212,17 @@ public class SampleByBugfixTest extends AbstractCairoTest {
         execute("create table telem (created timestamp, event_type int, table_id int, latency double) timestamp(created) partition by DAY");
 
         execute("insert into telem " +
-                "select" +
-                " timestamp_sequence('2025-01-20T13:57:14.000000Z'::timestamp, 2500)," +
+                "select " +
+                "generate_series as created," +
+//                "timestamp_sequence('2025-01-20T13:57:14.000000Z'::timestamp, 2500)," +
                 " rnd_int() % 4," +
                 " rnd_int() % 100," +
                 " abs(rnd_double())" +
-                " from long_sequence(100_000)");
+                " from generate_series('2025-01-20T13:57:14.000000Z', dateadd('u', 2500 * 100_000, '2025-01-20T13:57:14.000000Z') - 1, 2500)");
 
         assertQueryNoLeakCheck(
                 "created\tlatency\n" +
+                        "2025-01-20T13:56:50.000000Z\t0.0\n" +
                         "2025-01-20T13:56:52.000000Z\t0.0\n" +
                         "2025-01-20T13:56:54.000000Z\t0.0\n" +
                         "2025-01-20T13:56:56.000000Z\t0.0\n" +

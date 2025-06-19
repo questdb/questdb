@@ -83,6 +83,12 @@ public class SimpleMapValue implements MapValue {
         values[4 * index] += value;
     }
 
+    public void clear() {
+        for (int i = 0, n = values.length; i < n; i++) {
+            values[i] = 0;
+        }
+    }
+
     public void copy(SimpleMapValue srcValue) {
         assert values.length >= srcValue.values.length;
         System.arraycopy(srcValue.values, 0, values, 0, srcValue.values.length);
