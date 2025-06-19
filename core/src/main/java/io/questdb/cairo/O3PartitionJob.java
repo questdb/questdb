@@ -2060,16 +2060,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             // All the rows are duplicates
                             // check if all non-key rows are dups
-                            if (tableWriter.checkAllValueColumnsIdentical(
+                            if (tableWriter.checkCommitValueColumnsIdenticalToPartition(
                                     oldPartitionTimestamp,
                                     srcNameTxn,
                                     srcDataOldPartitionSize,
-                                    timestampMergeIndexAddr,
-                                    dedupRows,
                                     mergeDataLo,
                                     mergeDataHi,
                                     mergeOOOLo,
-                                    mergeOOOHi
+                                    mergeOOOHi,
+                                    timestampMergeIndexAddr,
+                                    dedupRows
                             )) {
 
                                 if (suffixType != O3_BLOCK_O3) {
@@ -2105,9 +2105,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             }
                         }
                     } else {
-                        // No duplicates
-                        // Maybe it's append only, if the OOO data "touches" the partition data.
-                        appendOnly = oooTimestampMin == Unsafe.getUnsafe().getLong(srcTimestampAddr + mergeDataHi * Long.BYTES);
+                        // No duplicates.
+                        // Maybe it's append only, if the OOO data "touches" the partition data then we
+                        // do not need to merge, append is good enough
+                        long dataMergeMaxTimestamp = Unsafe.getUnsafe().getLong(srcTimestampAddr + mergeDataHi * Long.BYTES);
+                        appendOnly = oooTimestampMin >= dataMergeMaxTimestamp;
                     }
 
                     if (appendOnly) {

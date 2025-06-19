@@ -9559,24 +9559,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    boolean checkAllValueColumnsIdentical(
+    boolean checkCommitValueColumnsIdenticalToPartition(
             long partitionTimestamp,
             long partitionNameTxn,
-            long oldPartitionSize,
+            long partitionRowCount,
+            long partitionLo,
+            long partitionHi,
+            long commitLo,
+            long commitHi,
             long mergeIndexAddr,
-            long mergeIndexRows,
-            long mergeDataLo,
-            long mergeDataHi,
-            long mergeOOOLo,
-            long mergeOOOHi
+            long mergeIndexRows
     ) {
         LOG.info().$("checking dedup insert results in noop [table=").$(getTableToken()).I$();
-        int pathSize = path.size();
 
-
+        // This code is thread safe, e.g. can be triggered from multiple partition merge tasks
         TableRecordMetadata metadata = getMetadata();
-        FrameFactory fmft = engine.getFrameFactory();
-        try (Frame partitionFrame = fmft.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, oldPartitionSize)) {
+        FrameFactory frameFactory = engine.getFrameFactory();
+        try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount)) {
             try (Frame commitFrame = openCommitFrame()) {
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
                     int columnType = metadata.getColumnType(i);
@@ -9584,11 +9583,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         if (!FrameAlgebra.isColumnReplaceIdentical(
                                 i,
                                 partitionFrame,
-                                mergeDataLo,
-                                mergeDataHi + 1,
+                                partitionLo,
+                                partitionHi + 1,
                                 commitFrame,
-                                mergeOOOLo,
-                                mergeOOOHi + 1,
+                                commitLo,
+                                commitHi + 1,
                                 mergeIndexAddr,
                                 mergeIndexRows
                         )) {
@@ -9597,8 +9596,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
             }
-        } finally {
-            path.trimTo(pathSize);
         }
         return true;
     }

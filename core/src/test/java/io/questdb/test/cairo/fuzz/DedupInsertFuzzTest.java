@@ -525,6 +525,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 }
 
                 if (newTxnList.size() > 0) {
+                    shuffle(newTxnList, rnd);
                     transactions.insert(i + 1, 1, duplicateTrans);
                     i++;
                 }
