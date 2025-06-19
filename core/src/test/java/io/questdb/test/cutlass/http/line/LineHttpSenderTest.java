@@ -42,6 +42,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.StringSink;
@@ -1016,14 +1017,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .address("localhost:" + port)
                         .build()
                 ) {
-                    long max = Long.MAX_VALUE;
+                    long max = NanosTimestampDriver.floor("2262-01-31 23:59:59.999999999");
                     sender.table("tab")
                             .timestampColumn("ts2", max, ChronoUnit.NANOS)
                             .at(max, ChronoUnit.NANOS);
                     flushAndAssertError(
                             sender,
                             "Could not flush buffer",
-                            "designated timestamp can't be 9223372036854775807"
+                            "designated timestamp overflow, max[9214646399999999999]"
                     );
                 }
             }
@@ -1043,14 +1044,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .address("localhost:" + port)
                         .build()
                 ) {
-                    long max = Long.MAX_VALUE - 1;
+                    long max = CommonUtils.MAX_TIMESTAMP;
                     sender.table("tab")
                             .timestampColumn("ts2", max, ChronoUnit.NANOS)
                             .at(max, ChronoUnit.NANOS);
                     sender.flush();
                     serverMain.awaitTable("tab");
                     serverMain.assertSql("SELECT * FROM tab", "ts\tts2\n" +
-                            "2262-04-11T23:47:16.854775806Z\t2262-04-11T23:47:16.854775806Z\n");
+                            "2261-12-31T23:59:59.999999999Z\t2261-12-31T23:59:59.999999999Z\n");
 
                     Instant nonDsInstant = Instant.ofEpochSecond(max / 1_000_000_000, max % 1_000_000_000);
                     Instant dsInstant = Instant.ofEpochSecond(max / 1_000_000_000, max % 1_000_000_000);
@@ -1061,8 +1062,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     serverMain.awaitTable("tab");
                     serverMain.assertSql("SELECT * FROM tab", "ts\tts2\n" +
-                            "2262-04-11T23:47:16.854775806Z\t2262-04-11T23:47:16.854775806Z\n" +
-                            "2262-04-11T23:47:16.854775806Z\t2262-04-11T23:47:16.854775806Z\n");
+                            "2261-12-31T23:59:59.999999999Z\t2261-12-31T23:59:59.999999999Z\n" +
+                            "2261-12-31T23:59:59.999999999Z\t2261-12-31T23:59:59.999999999Z\n");
                 }
             }
         });

@@ -112,8 +112,8 @@ public class LineWalAppender {
                 throw LineProtocolException.designatedTimestampMustBePositive(tud.getTableNameUtf16(), timestamp);
             }
             timestamp = tud.getTimestampDriver().from(timestamp, getOverloadTimestampUnit(parser.getTimestampUnit()));
-            if (timestamp == Long.MAX_VALUE) {
-                throw LineProtocolException.designatedTimestampLessThanMaxValue(tud.getTableNameUtf16(), timestamp);
+            if (timestamp > CommonUtils.MAX_TIMESTAMP) {
+                throw LineProtocolException.designatedTimestampValueOverflow(tud.getTableNameUtf16(), timestamp);
             }
         } else {
             timestamp = tud.getTimestampDriver().getTicks();

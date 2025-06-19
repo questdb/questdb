@@ -172,53 +172,44 @@ public final class Nanos {
     }
 
     public static long ceilHH(long nanos) {
-        long n = floorHH(nanos) + HOUR_NANOS;
-        // consider maxvalue overflowx
-        return n >= 0 || n == Numbers.LONG_NULL ? n : Long.MAX_VALUE;
+        return floorHH(nanos) + HOUR_NANOS;
     }
 
     public static long ceilMI(long nanos) {
-        long n = floorMI(nanos) + MINUTE_NANOS;
-        return n >= 0 || n == Numbers.LONG_NULL ? n : Long.MAX_VALUE;
+        return floorMI(nanos) + MINUTE_NANOS;
     }
 
     public static long ceilMM(long nanos) {
         int y = getYear(nanos);
         boolean l = isLeapYear(y);
         int m = getMonthOfYear(nanos, y, l);
-        long n = yearNanos(y, l)
+        return yearNanos(y, l)
                 + monthOfYearNanos(m, l)
                 + (CommonUtils.getDaysPerMonth(m, l)) * DAY_NANOS;
-        return n >= 0 || n == Numbers.LONG_NULL ? n : Long.MAX_VALUE;
     }
 
     public static long ceilMS(long nanos) {
-        long n = floorMS(nanos) + MILLI_NANOS;
-        return n >= 0 || n == Numbers.LONG_NULL ? n : Long.MAX_VALUE;
+        return floorMS(nanos) + MILLI_NANOS;
     }
 
     public static long ceilSS(long nanos) {
-        long n = floorSS(nanos) + SECOND_NANOS;
-        return n >= 0 || n == Numbers.LONG_NULL ? n : Long.MAX_VALUE;
+        return floorSS(nanos) + SECOND_NANOS;
     }
 
     public static long ceilWW(long nanos) {
-        long n = floorWW(nanos) + WEEK_NANOS;
-        return n >= 0 || n == Numbers.LONG_NULL ? n : Long.MAX_VALUE;
+        return floorWW(nanos) + WEEK_NANOS;
     }
 
     public static long ceilYYYY(long nanos) {
         int y = getYear(nanos);
         boolean l = isLeapYear(y);
-        long n = yearNanos(y, l)
+        return yearNanos(y, l)
                 + monthOfYearNanos(12, l)
                 + (CommonUtils.getDaysPerMonth(11, false) + 1) * DAY_NANOS;
-        return n >= 0 || n == Numbers.LONG_NULL ? n : Long.MAX_VALUE;
     }
 
     public static long endOfYear(int year) {
-        long n = toNanos(year, 12, 31, 23, 59) + 59 * SECOND_NANOS + 999_999_999L;
-        return n > 0 ? n : Long.MAX_VALUE;
+        return toNanos(year, 12, 31, 23, 59) + 59 * SECOND_NANOS + 999_999_999L;
     }
 
     /**

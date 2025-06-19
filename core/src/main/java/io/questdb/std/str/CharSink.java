@@ -195,8 +195,7 @@ public interface CharSink<T extends CharSink<?>> {
     }
 
     default T putISODate(long value) {
-        MicrosTimestampDriver.INSTANCE.append(this, value);
-        return (T) this;
+        return putISODate(MicrosTimestampDriver.INSTANCE, value);
     }
 
     default T putISODate(TimestampDriver driver, long value) {

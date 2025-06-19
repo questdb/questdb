@@ -43,19 +43,19 @@ public class CommonUtils {
     public static final int HOUR_MINUTES = 60;
     public static final String HOUR_PATTERN = "yyyy-MM-ddTHH";
     public static final int HOUR_PM = 1;
+    // "2261-12-31 23:59:59.999999999" for nano timestamp
+    public static final long MAX_TIMESTAMP = 9214646399999999999L;
     public static final long MINUTE_SECONDS = 60;
     public static final String MONTH_PATTERN = "yyyy-MM";
     public static final String NSEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz";
     public static final String PG_TIMESTAMP_MILLI_TIME_Z_PATTERN = "y-MM-dd HH:mm:ss.SSSz";
     public static final String SEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ssz";
-
     public static final byte TIMESTAMP_UNIT_NANOS = 1;
     public static final byte TIMESTAMP_UNIT_MICROS = TIMESTAMP_UNIT_NANOS + 1;
     public static final byte TIMESTAMP_UNIT_MILLIS = TIMESTAMP_UNIT_MICROS + 1;
     public static final byte TIMESTAMP_UNIT_SECONDS = TIMESTAMP_UNIT_MILLIS + 1;
     public static final byte TIMESTAMP_UNIT_MINUTES = TIMESTAMP_UNIT_SECONDS + 1;
     public static final byte TIMESTAMP_UNIT_HOURS = TIMESTAMP_UNIT_MINUTES + 1;
-
     public static final String USEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUz";
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     public static final String WEEK_PATTERN = "YYYY-Www";

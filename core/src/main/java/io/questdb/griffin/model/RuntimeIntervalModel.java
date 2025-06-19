@@ -107,9 +107,9 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         sink.val(',');
                     }
                     sink.val("(\"");
-                    valTs(sink, intervals.getQuick(i));
+                    valTs(sink, timestampDriver, intervals.getQuick(i));
                     sink.val("\",\"");
-                    valTs(sink, intervals.getQuick(i + 1));
+                    valTs(sink, timestampDriver, intervals.getQuick(i + 1));
                     sink.val("\")");
                 }
             } catch (SqlException e) {
@@ -119,13 +119,13 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         }
     }
 
-    private static void valTs(PlanSink sink, long l) {
+    private static void valTs(PlanSink sink, TimestampDriver driver, long l) {
         if (l == Numbers.LONG_NULL) {
             sink.val("MIN");
         } else if (l == Long.MAX_VALUE) {
             sink.val("MAX");
         } else {
-            sink.valISODate(l);
+            sink.valISODate(driver, l);
         }
     }
 
