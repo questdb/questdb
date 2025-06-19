@@ -656,9 +656,13 @@ public class MemoryPARWImpl implements MemoryARW {
             Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, hi);
             appendPointer += 16;
         } else {
-            putLong(lo);
-            putLong(hi);
+            putLong128Slow(lo, hi);
         }
+    }
+
+    private void putLong128Slow(long lo, long hi) {
+        putLong(lo);
+        putLong(hi);
     }
 
     @Override
@@ -696,10 +700,8 @@ public class MemoryPARWImpl implements MemoryARW {
             Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 3, l3);
             appendPointer += Long256.BYTES;
         } else {
-            putLong(l0);
-            putLong(l1);
-            putLong(l2);
-            putLong(l3);
+            putLong128Slow(l0, l1);
+            putLong128Slow(l2, l3);
         }
     }
 
@@ -1357,19 +1359,15 @@ public class MemoryPARWImpl implements MemoryARW {
     private class StraddlingPageLong256FromCharSequenceDecoder extends Long256FromCharSequenceDecoder {
         @Override
         public void setAll(long l0, long l1, long l2, long l3) {
-            putLong(l0);
-            putLong(l1);
-            putLong(l2);
-            putLong(l3);
+            putLong128Slow(l0, l1);
+            putLong128Slow(l2, l3);
         }
 
         private void putLong256(@Nullable CharSequence hexString) {
             final int len;
             if (hexString == null || (len = hexString.length()) == 0) {
-                putLong(Long256Impl.NULL_LONG256.getLong0());
-                putLong(Long256Impl.NULL_LONG256.getLong1());
-                putLong(Long256Impl.NULL_LONG256.getLong2());
-                putLong(Long256Impl.NULL_LONG256.getLong3());
+                putLong128Slow(Long256Impl.NULL_LONG256.getLong0(), Long256Impl.NULL_LONG256.getLong1());
+                putLong128Slow(Long256Impl.NULL_LONG256.getLong2(), Long256Impl.NULL_LONG256.getLong3());
             } else {
                 putLong256(hexString, 2, len);
             }
@@ -1382,10 +1380,8 @@ public class MemoryPARWImpl implements MemoryARW {
         private void putLong256(@Nullable Utf8Sequence hexString) {
             final int size;
             if (hexString == null || (size = hexString.size()) == 0) {
-                putLong(Long256Impl.NULL_LONG256.getLong0());
-                putLong(Long256Impl.NULL_LONG256.getLong1());
-                putLong(Long256Impl.NULL_LONG256.getLong2());
-                putLong(Long256Impl.NULL_LONG256.getLong3());
+                putLong128Slow(Long256Impl.NULL_LONG256.getLong0(), Long256Impl.NULL_LONG256.getLong1());
+                putLong128Slow(Long256Impl.NULL_LONG256.getLong2(), Long256Impl.NULL_LONG256.getLong3());
             } else {
                 putLong256(hexString.asAsciiCharSequence(), 2, size);
             }
