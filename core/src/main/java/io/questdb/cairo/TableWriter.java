@@ -33,9 +33,9 @@ import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
@@ -9559,6 +9559,50 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    boolean checkAllValueColumnsIdentical(
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long oldPartitionSize,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            long mergeDataLo,
+            long mergeDataHi,
+            long mergeOOOLo,
+            long mergeOOOHi
+    ) {
+        LOG.info().$("checking dedup insert results in noop [table=").$(getTableToken()).I$();
+        int pathSize = path.size();
+
+
+        TableRecordMetadata metadata = getMetadata();
+        FrameFactory fmft = engine.getFrameFactory();
+        try (Frame partitionFrame = fmft.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, oldPartitionSize)) {
+            try (Frame commitFrame = openCommitFrame()) {
+                for (int i = 0; i < metadata.getColumnCount(); i++) {
+                    int columnType = metadata.getColumnType(i);
+                    if (columnType > 0 && !metadata.isDedupKey(i) && i != metadata.getTimestampIndex()) {
+                        if (!FrameAlgebra.isColumnReplaceIdentical(
+                                i,
+                                partitionFrame,
+                                mergeDataLo,
+                                mergeDataHi + 1,
+                                commitFrame,
+                                mergeOOOLo,
+                                mergeOOOHi + 1,
+                                mergeIndexAddr,
+                                mergeIndexRows
+                        )) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        } finally {
+            path.trimTo(pathSize);
+        }
+        return true;
+    }
+
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
         if (partitionIndexHi <= partitionIndexLo + Math.max(1, optimalPartitionCount)) {
             // Nothing to do
@@ -10193,16 +10237,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     void o3CountDownDoneLatch() {
         o3DoneLatch.countDown();
-    }
-
-    Frame openPartitionFrameRO(
-            Path partitionPath,
-            long partitionTimestamp,
-            RecordMetadata metadata,
-            long partitionRowCount
-    ) {
-        // TODO: make frame factory thread safe, including closing it
-        return engine.getFrameFactory().openRO(partitionPath, partitionTimestamp, metadata, columnVersionWriter, partitionRowCount);
     }
 
     void purgeUnusedPartitions() {

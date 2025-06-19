@@ -442,7 +442,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     public void testRandomDedupRepeat() throws Exception {
         // TODO(eugene): update the parquet partition with a missed column (e.g. column top) is not yet implemented
         Assume.assumeFalse(convertToParquet);
-        Rnd rnd = generateRandomAndProps(1546447589871500L, 1750173790756L);
+        Rnd rnd = generateRandomAndProps();
         setFuzzProbabilities(
                 0,
                 rnd.nextDouble(),

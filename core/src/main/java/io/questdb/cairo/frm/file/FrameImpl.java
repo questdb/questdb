@@ -38,8 +38,10 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.Misc;
 import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 
+import static io.questdb.cairo.TableUtils.setSinkForNativePartition;
 import static io.questdb.cairo.frm.FrameColumn.COLUMN_CONTIGUOUS_FILE;
 import static io.questdb.cairo.frm.FrameColumn.COLUMN_MEMORY;
 
@@ -135,7 +137,32 @@ public class FrameImpl implements Frame {
         this.frameType = COLUMN_CONTIGUOUS_FILE;
     }
 
-    public void openRW(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionWriter cvw, long size) {
+    public void openRO(
+            @Transient Path tablePath,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            int partitionBy,
+            RecordMetadata metadata,
+            ColumnVersionReader cvr,
+            long partitionRowCount
+    ) {
+        this.metadata = metadata;
+        this.crv = cvr;
+        this.rowCount = partitionRowCount;
+        this.partitionTimestamp = partitionTimestamp;
+        this.partitionPath.of(tablePath);
+        setSinkForNativePartition(
+                this.partitionPath.slash(),
+                partitionBy,
+                partitionTimestamp,
+                partitionNameTxn
+        );
+        this.canWrite = false;
+        this.create = false;
+        this.frameType = COLUMN_CONTIGUOUS_FILE;
+    }
+
+    public void openRW(@Transient Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionWriter cvw, long size) {
         this.metadata = metadata;
         this.crv = cvw;
         this.rowCount = size;

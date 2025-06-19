@@ -35,6 +35,7 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.mp.ConcurrentPool;
 import io.questdb.std.Misc;
 import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -129,6 +130,32 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     /**
      * Opens a frame for reading. This method is thread safe.
      *
+     * @param tablePath          the path to the table directory
+     * @param partitionTimestamp the timestamp of the partition
+     * @param partitionNameTxn   the transaction ID of the partition name
+     * @param partitionBy        the partition by value
+     * @param metadata           the metadata for the frame
+     * @param cvr                the column version reader
+     * @param partitionRowCount  the number of rows in the partition
+     * @return a new frame ready for reading
+     */
+    public Frame openRO(
+            @Transient Path tablePath,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            int partitionBy,
+            RecordMetadata metadata,
+            ColumnVersionReader cvr,
+            long partitionRowCount
+    ) {
+        FrameImpl frame = getOrCreate();
+        frame.openRO(tablePath, partitionTimestamp, partitionNameTxn, partitionBy, metadata, cvr, partitionRowCount);
+        return frame;
+    }
+
+    /**
+     * Opens a frame for reading. This method is thread safe.
+     *
      * @param partitionPath      the path to the partition directory
      * @param partitionTimestamp the timestamp of the partition
      * @param metadata           the metadata for the frame
@@ -137,7 +164,7 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
      * @return a new frame ready for reading
      */
     public Frame openRO(
-            Path partitionPath,
+            @Transient Path partitionPath,
             long partitionTimestamp,
             RecordMetadata metadata,
             ColumnVersionReader cvr,
