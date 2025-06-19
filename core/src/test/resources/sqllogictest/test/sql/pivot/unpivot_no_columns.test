@@ -1,0 +1,7 @@
+#statement ok
+#create table integers(i integer);
+#
+#statement error
+#unpivot integers on columns(* exclude (i));
+#----
+#UNPIVOT clause must unpivot on at least one column

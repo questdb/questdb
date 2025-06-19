@@ -61,6 +61,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private CharSequence statementName;
     private short type;
     private UpdateOperation updateOp;
+    private boolean cacheable;
 
     public CompiledQueryImpl(CairoEngine engine) {
         updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution") {
@@ -311,9 +312,15 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
-    public void ofSelect(RecordCursorFactory recordCursorFactory) {
+    public void ofSelect(RecordCursorFactory recordCursorFactory, boolean cacheable) {
         of(SELECT, recordCursorFactory);
         this.isExecutedAtParseTime = false;
+        this.cacheable = cacheable;
+    }
+
+    @Override
+    public boolean isCacheable() {
+        return cacheable;
     }
 
     public void ofSet() {
@@ -370,6 +377,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.sqlStatement = sqlText;
     }
 
+    @SuppressWarnings("UnusedReturnValue")
     private CompiledQuery of(short type) {
         return of(type, null);
     }
