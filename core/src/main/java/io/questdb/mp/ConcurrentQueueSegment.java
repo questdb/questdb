@@ -114,7 +114,7 @@ final class ConcurrentQueueSegment<T> {
      * Attempts to dequeue an element from the queue.
      *
      * @param container The item holder to dequeue into.
-     * @return instace of an element was dequeued; otherwise, null.
+     * @return instance of an element was dequeued; otherwise, null.
      */
     public T tryDequeue(T container) {
         Slot<T>[] slots = this.slots;
