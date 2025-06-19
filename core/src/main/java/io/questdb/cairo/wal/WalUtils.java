@@ -73,6 +73,7 @@ public class WalUtils {
     public static final int WALE_HEADER_SIZE = Integer.BYTES + Integer.BYTES;
     public static final long WALE_MAX_TXN_OFFSET_32 = 0L;
     public static final short WALE_MESSAGE_V1 = 0;
+    // For now, V2 is only used in combination with WALE_MAT_VIEW_FORMAT_VERSION.
     public static final short WALE_MESSAGE_V2 = 1;
     // DEFAULT DEDUP mode means following the table definition. If the table has dedup enabled, then
     // the commit will deduplicate the data, otherwise it will not.

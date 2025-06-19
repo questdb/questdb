@@ -61,7 +61,7 @@ class WalEventWriter implements Closeable {
     private AtomicIntList initialSymbolCounts;
     // used for WAL-E backwards compatibility testing;
     // must not be changed in the middle of writing a WAL-E file
-    private short msgVersion = WALE_MESSAGE_V2;
+    private short matViewMsgVersion = WALE_MESSAGE_V2;
     private long startOffset = 0;
     private BoolList symbolMapNullFlags;
     private int txn = 0;
@@ -83,8 +83,8 @@ class WalEventWriter implements Closeable {
     }
 
     @TestOnly
-    public void setMsgVersion(short msgVersion) {
-        this.msgVersion = msgVersion;
+    public void setMatViewMsgVersion(short matViewMsgVersion) {
+        this.matViewMsgVersion = matViewMsgVersion;
     }
 
     /**
@@ -308,7 +308,7 @@ class WalEventWriter implements Closeable {
             eventMem.putLong(replaceRangeHiTs);
             eventMem.putByte(dedupMode);
         }
-        if (msgVersion == WALE_MESSAGE_V2 && txnType == WalTxnType.MAT_VIEW_DATA) {
+        if (matViewMsgVersion == WALE_MESSAGE_V2 && txnType == WalTxnType.MAT_VIEW_DATA) {
             eventMem.putLong(lastPeriodHi);
         }
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
@@ -317,7 +317,7 @@ class WalEventWriter implements Closeable {
         appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
         if (txnType == WalTxnType.MAT_VIEW_DATA) {
-            eventMem.putInt(WAL_FORMAT_OFFSET_32, Numbers.encodeLowHighShorts(WALE_MAT_VIEW_FORMAT_VERSION, msgVersion));
+            eventMem.putInt(WAL_FORMAT_OFFSET_32, Numbers.encodeLowHighShorts(WALE_MAT_VIEW_FORMAT_VERSION, matViewMsgVersion));
         }
         return txn++;
     }
@@ -336,7 +336,7 @@ class WalEventWriter implements Closeable {
         eventMem.putLong(lastRefreshTimestamp);
         eventMem.putBool(invalid);
         eventMem.putStr(invalidationReason);
-        if (msgVersion == WALE_MESSAGE_V2) {
+        if (matViewMsgVersion == WALE_MESSAGE_V2) {
             eventMem.putLong(lastPeriodHi);
         }
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
@@ -344,7 +344,7 @@ class WalEventWriter implements Closeable {
 
         appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
-        eventMem.putInt(WAL_FORMAT_OFFSET_32, Numbers.encodeLowHighShorts(WALE_MAT_VIEW_FORMAT_VERSION, msgVersion));
+        eventMem.putInt(WAL_FORMAT_OFFSET_32, Numbers.encodeLowHighShorts(WALE_MAT_VIEW_FORMAT_VERSION, matViewMsgVersion));
         return txn++;
     }
 
