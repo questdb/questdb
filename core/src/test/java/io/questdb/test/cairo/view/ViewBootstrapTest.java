@@ -232,6 +232,105 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testViewStateAfterRestart() {
+        try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+            createTable(httpClient, TABLE1);
+            createTable(httpClient, TABLE2);
+            drainWalQueue();
+
+            final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4";
+            final String query2 = "select ts, k2, min(v) as v_min from " + TABLE2 + " where v > 6";
+            createView(httpClient, VIEW1, query1);
+            createView(httpClient, VIEW2, query2);
+            drainWalQueue();
+            drainViewQueue();
+            drainWalQueue();
+
+            assertExecRequest(
+                    httpClient,
+                    "views()",
+                    HTTP_OK,
+                    "{" +
+                            "\"query\":\"views()\"," +
+                            "\"columns\":[" +
+                            "{\"name\":\"view_name\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"view_sql\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"view_table_dir_name\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"invalidation_reason\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"view_status\",\"type\":\"STRING\"}" +
+                            "]," +
+                            "\"timestamp\":-1," +
+                            "\"dataset\":[" +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\"]," +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",null,\"valid\"]" +
+                            "]," +
+                            "\"count\":2" +
+                            "}"
+            );
+
+            assertExecRequest(
+                    httpClient,
+                    "drop table " + TABLE1,
+                    HTTP_OK,
+                    "{\"ddl\":\"OK\"}"
+            );
+            drainWalQueue();
+            drainViewQueue();
+            drainWalQueue();
+
+            assertExecRequest(
+                    httpClient,
+                    "views()",
+                    HTTP_OK,
+                    "{" +
+                            "\"query\":\"views()\"," +
+                            "\"columns\":[" +
+                            "{\"name\":\"view_name\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"view_sql\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"view_table_dir_name\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"invalidation_reason\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"view_status\",\"type\":\"STRING\"}" +
+                            "]," +
+                            "\"timestamp\":-1," +
+                            "\"dataset\":[" +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\"]," +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"table does not exist [table=table1]\",\"invalid\"]" +
+                            "]," +
+                            "\"count\":2" +
+                            "}"
+            );
+        }
+
+        // restart, and assert that view state is the same
+        stopQuestDB();
+        startQuestDB();
+
+        try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+            assertExecRequest(
+                    httpClient,
+                    "views()",
+                    HTTP_OK,
+                    "{" +
+                            "\"query\":\"views()\"," +
+                            "\"columns\":[" +
+                            "{\"name\":\"view_name\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"view_sql\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"view_table_dir_name\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"invalidation_reason\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"view_status\",\"type\":\"STRING\"}" +
+                            "]," +
+                            "\"timestamp\":-1," +
+                            "\"dataset\":[" +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\"]," +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"table does not exist [table=table1]\",\"invalid\"]" +
+                            "]," +
+                            "\"count\":2" +
+                            "}"
+            );
+        }
+    }
+
+    @Test
     public void testViewsAreDisabled() throws SQLException {
         try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
             createTable(httpClient, TABLE1);
@@ -410,6 +509,10 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                 executeViaPG(connection, sql);
             }
         }
+    }
+
+    private void drainViewQueue() {
+        drainViewQueue(questdb.getEngine());
     }
 
     private void drainWalQueue() {

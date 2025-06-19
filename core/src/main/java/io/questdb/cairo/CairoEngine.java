@@ -353,8 +353,8 @@ public class CairoEngine implements Closeable, WriterSource {
         ) {
             path.of(configuration.getDbRoot());
             final int pathLen = path.size();
-            ViewStateReader viewStateReader = new ViewStateReader();
-            MatViewStateReader matViewStateReader = new MatViewStateReader();
+            final ViewStateReader viewStateReader = new ViewStateReader();
+            final MatViewStateReader matViewStateReader = new MatViewStateReader();
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);
                 if (tableToken.isView() && TableUtils.isViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
@@ -379,12 +379,29 @@ public class CairoEngine implements Closeable, WriterSource {
                         // The no-op graph does nothing on view creation and other operations
                         // and is used when views are disabled.
                         if (state != null) {
-                            path.trimTo(pathLen).concat(tableToken);
-                            if (!WalUtils.readViewState(path, tableToken, configuration, txnMem, walEventReader, reader, viewStateReader)) {
-                                LOG.info().$("could not find view state, [view=").$(tableToken).I$();
-                                continue;
+                            state.markAsValid();
+                            // For mat views we read state from WAL, for views this is not necessary.
+                            // First, mat views are likely to be refreshed often, for views we might not find a
+                            // state update for a long time, and we can read WAL forever slowing down startup.
+                            // Second, state for views are not that critical for operation. If, for some reason,
+                            // the state of the view is valid, while the view's SELECT is broken, the view
+                            // will be invalidated as soon as it is queried.
+                            viewStateReader.clear();
+                            final boolean viewStateExists = TableUtils.isViewStateFileExists(configuration, path, tableToken.getDirName());
+                            if (viewStateExists) {
+                                try {
+                                    reader.of(path.trimTo(pathLen).concat(tableToken.getDirName()).concat(ViewState.VIEW_STATE_FILE_NAME).$());
+                                    viewStateReader.of(reader, tableToken);
+                                    state.initFromReader(viewStateReader);
+                                } catch (CairoException e) {
+                                    LOG.info().$("could not read view state file, assuming view is valid [view=").$(tableToken)
+                                            .$(", msg=").$(e.getFlyweightMessage())
+                                            .$(", errno=").$(e.getErrno())
+                                            .I$();
+                                }
+                            } else {
+                                LOG.info().$("view state file is missing, assuming view is valid [view=").$(tableToken).I$();
                             }
-                            state.initFromReader(viewStateReader);
                         }
                     } catch (Throwable th) {
                         final LogRecord rec = LOG.error().$("could not load view [view=").$(tableToken);
