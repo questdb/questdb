@@ -2104,7 +2104,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             }
                         }
-                    } else {
+                    } else if (suffixType != O3_BLOCK_DATA) {
                         // No duplicates.
                         // Maybe it's append only, if the OOO data "touches" the partition data then we
                         // do not need to merge, append is good enough
@@ -2118,9 +2118,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         mergeDataLo = 0;
                         mergeOOOHi = -1;
                         mergeOOOLo = 0;
-                        // Append procs may ignore suffixLo when appending using srcOooLo instead.
-                        // Adjust suffixLo to match the srcOooLo.
-                        srcOooLo = suffixLo;
+
+                        if (duplicateCount > 0) {
+                            // Append procs may ignore suffixLo when appending using srcOooLo instead.
+                            // Adjust suffixLo to match the srcOooLo.
+                            srcOooLo = suffixLo;
+                        } else {
+                            suffixType = O3_BLOCK_O3;
+                            suffixLo = srcOooLo;
+                            suffixHi = srcOooHi;
+                        }
 
                         if (o3SplitPartitionSize > 0) {
                             LOG.info().$("dedup resulted in no merge, undo partition split [table=")
