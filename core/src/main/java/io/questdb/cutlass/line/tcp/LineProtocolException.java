@@ -63,6 +63,15 @@ public class LineProtocolException extends CairoException {
         return instance;
     }
 
+    public static LineProtocolException designatedTimestampLessThanMaxValue(String tableNameUtf16, long timestamp) {
+        return instance()
+                .put("table: ").put(tableNameUtf16)
+                .put(", timestamp: ").put(timestamp)
+                .put("; designated timestamp can't be ")
+                .put(Long.MAX_VALUE)
+                .put("(Long.MAX_VALUE)");
+    }
+
     public static LineProtocolException designatedTimestampMustBePositive(String tableNameUtf16, long timestamp) {
         return instance()
                 .put("table: ").put(tableNameUtf16)

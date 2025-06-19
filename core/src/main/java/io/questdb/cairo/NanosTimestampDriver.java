@@ -84,7 +84,7 @@ public class NanosTimestampDriver implements TimestampDriver {
     private static final PartitionFloorMethod FLOOR_MM = Nanos::floorMM;
     private static final PartitionFloorMethod FLOOR_WW = Nanos::floorWW;
     private static final PartitionFloorMethod FLOOR_YYYY = Nanos::floorYYYY;
-    private static final String MAX_NANO_TIMESTAMP = "2262-04-11 23:47:16.854775807";
+    private static final String MAX_NANO_TIMESTAMP = "2262-04-11 23:47:16.854775806";
     private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(FLOOR_DD, DAY_FORMAT);
     private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(FLOOR_HH, HOUR_FORMAT);
     private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(FLOOR_MM, MONTH_FORMAT);
@@ -884,7 +884,9 @@ public class NanosTimestampDriver implements TimestampDriver {
         if (timestamp == Long.MIN_VALUE) {
             throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
         }
-        if (timestamp < TableWriter.TIMESTAMP_EPOCH) {
+        // Long.MaxValue is used in many places to represent a special meaning.
+        // Therefore, the maximum nano timestamp is restricted here to Long.MaxValue - 1.
+        if (timestamp < TableWriter.TIMESTAMP_EPOCH || timestamp == Long.MAX_VALUE) {
             throw CairoException.nonCritical().put("designated timestamp_ns before 1970-01-01 and beyond ").put(MAX_NANO_TIMESTAMP).put(" is not allowed");
         }
     }

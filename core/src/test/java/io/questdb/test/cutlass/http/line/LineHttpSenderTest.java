@@ -29,6 +29,7 @@ import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
@@ -973,6 +974,96 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.awaitTable("table with space");
                 serverMain.assertSql("select count() from 'table with space'", "count\n" +
                         totalCount + "\n");
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampNSAutoCreateTable() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.LINE_TIMESTAMP_DEFAULT_COLUMN_TYPE.getEnvVarName(), "timestamp_ns"
+            )) {
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+                    long ns = NanosTimestampDriver.floor("2025-11-19T10:55:24.834129081Z");
+                    long ns1 = NanosTimestampDriver.floor("2025-11-20T10:55:24.834129082Z");
+                    sender.table("tab")
+                            .timestampColumn("ts1", ns, ChronoUnit.NANOS)
+                            .at(ns1, ChronoUnit.NANOS);
+                    sender.flush();
+                    serverMain.awaitTable("tab");
+                    serverMain.assertSql("SELECT * FROM tab", "ts1\ttimestamp\n" +
+                            "2025-11-19T10:55:24.834129081Z\t2025-11-20T10:55:24.834129082Z\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampNSOverflow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.ddl("create table tab (ts timestamp_ns, ts2 timestamp_ns) timestamp(ts) partition by DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+                    long max = Long.MAX_VALUE;
+                    sender.table("tab")
+                            .timestampColumn("ts2", max, ChronoUnit.NANOS)
+                            .at(max, ChronoUnit.NANOS);
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "designated timestamp can't be 9223372036854775807"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampNSUpperBounds() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.ddl("create table tab (ts timestamp_ns, ts2 timestamp_ns) timestamp(ts) partition by DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+                    long max = Long.MAX_VALUE - 1;
+                    sender.table("tab")
+                            .timestampColumn("ts2", max, ChronoUnit.NANOS)
+                            .at(max, ChronoUnit.NANOS);
+                    sender.flush();
+                    serverMain.awaitTable("tab");
+                    serverMain.assertSql("SELECT * FROM tab", "ts\tts2\n" +
+                            "2262-04-11T23:47:16.854775806Z\t2262-04-11T23:47:16.854775806Z\n");
+
+                    Instant nonDsInstant = Instant.ofEpochSecond(max / 1_000_000_000, max % 1_000_000_000);
+                    Instant dsInstant = Instant.ofEpochSecond(max / 1_000_000_000, max % 1_000_000_000);
+                    sender.table("tab")
+                            .timestampColumn("ts2", nonDsInstant)
+                            .at(dsInstant);
+                    sender.flush();
+
+                    serverMain.awaitTable("tab");
+                    serverMain.assertSql("SELECT * FROM tab", "ts\tts2\n" +
+                            "2262-04-11T23:47:16.854775806Z\t2262-04-11T23:47:16.854775806Z\n" +
+                            "2262-04-11T23:47:16.854775806Z\t2262-04-11T23:47:16.854775806Z\n");
+                }
             }
         });
     }

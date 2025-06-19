@@ -3850,7 +3850,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // the last partition in the attached partition list.
                     if (reconcileOptimisticPartitions()) {
                         this.lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-                        this.partitionTimestampHi = txWriter.getNextPartitionTimestamp(txWriter.getMaxTimestamp()) - 1;
+                        this.partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(txWriter.getMaxTimestamp());
                         openLastPartition();
                     }
                 }
@@ -3905,7 +3905,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (this.txWriter.getMaxTimestamp() > Long.MIN_VALUE || !partitioned) {
             initLastPartition(this.txWriter.getMaxTimestamp());
             if (partitioned) {
-                partitionTimestampHi = txWriter.getNextPartitionTimestamp(txWriter.getMaxTimestamp()) - 1;
+                partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(txWriter.getMaxTimestamp());
                 rowAction = ROW_ACTION_OPEN_PARTITION;
                 timestampSetter = appendTimestampSetter;
             } else {
@@ -5714,7 +5714,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lastPartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi);
         // we will check new partitionTimestampHi value against the limit to see if the writer
         // will have to switch partition internally
-        long partitionTimestampHiLimit = txWriter.getNextPartitionTimestamp(partitionTimestampHi) - 1;
+        long partitionTimestampHiLimit = txWriter.getCurrentPartitionMaxTimestamp(partitionTimestampHi);
         try {
             o3RowCount += o3MoveUncommitted();
 
@@ -6619,7 +6619,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             timestamp = txWriter.getPartitionTimestampByTimestamp(timestamp);
             lastOpenPartitionTxnName = setStateForTimestamp(path, timestamp);
-            partitionTimestampHi = txWriter.getNextPartitionTimestamp(timestamp) - 1;
+            partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(timestamp);
             int plen = path.size();
             if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("cannot create directory: ").put(path);
@@ -6888,7 +6888,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     final long srcOooHi;
                     // keep ceil inclusive in the interval
-                    final long srcOooTimestampCeil = txWriter.getNextPartitionTimestamp(o3Timestamp) - 1;
+                    final long srcOooTimestampCeil = txWriter.getCurrentPartitionMaxTimestamp(o3Timestamp);
                     if (srcOooTimestampCeil < o3TimestampMax) {
                         srcOooHi = Vect.boundedBinarySearchIndexT(
                                 sortedTimestampsAddr,
@@ -7123,7 +7123,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
                             o3TimestampLo = (partitionTimestamp == minO3PartitionTimestamp) ? o3TimestampMin : partitionTimestamp;
                             o3TimestampHi = (partitionTimestamp == maxO3PartitionTimestamp) ? o3TimestampMax :
-                                    txWriter.getNextPartitionTimestamp(partitionTimestamp) - 1;
+                                    txWriter.getCurrentPartitionMaxTimestamp(partitionTimestamp);
                         } else {
                             o3TimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
                             o3TimestampHi = getTimestampIndexValue(sortedTimestampsAddr, srcOooHi);
@@ -7165,7 +7165,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } // end while(srcOoo < srcOooMax)
 
             // at this point we should know the last partition row count
-            partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getNextPartitionTimestamp(o3TimestampMax) - 1);
+            partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
 
             if (!isCommitReplaceMode()) {
                 txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));

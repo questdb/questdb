@@ -164,51 +164,61 @@ public final class Nanos {
         int y = getYear(nanos);
         boolean l = isLeapYear(y);
         int m = getMonthOfYear(nanos, y, l);
-        return yearNanos(y, l)
+        long n = yearNanos(y, l)
                 + monthOfYearNanos(m, l)
                 + (getDayOfMonth(nanos, y, m, l)) * DAY_NANOS;
+        // todo consider maxvalue overflow, need to Math.multiplyExact replace.
+        return n >= 0 || n == Numbers.LONG_NULL ? n : Long.MAX_VALUE;
     }
 
     public static long ceilHH(long nanos) {
-        return floorHH(nanos) + HOUR_NANOS;
+        long n = floorHH(nanos) + HOUR_NANOS;
+        // consider maxvalue overflowx
+        return n >= 0 || n == Numbers.LONG_NULL ? n : Long.MAX_VALUE;
     }
 
     public static long ceilMI(long nanos) {
-        return floorMI(nanos) + MINUTE_NANOS;
+        long n = floorMI(nanos) + MINUTE_NANOS;
+        return n >= 0 || n == Numbers.LONG_NULL ? n : Long.MAX_VALUE;
     }
 
     public static long ceilMM(long nanos) {
         int y = getYear(nanos);
         boolean l = isLeapYear(y);
         int m = getMonthOfYear(nanos, y, l);
-        return yearNanos(y, l)
+        long n = yearNanos(y, l)
                 + monthOfYearNanos(m, l)
                 + (CommonUtils.getDaysPerMonth(m, l)) * DAY_NANOS;
+        return n >= 0 || n == Numbers.LONG_NULL ? n : Long.MAX_VALUE;
     }
 
     public static long ceilMS(long nanos) {
-        return floorMS(nanos) + MILLI_NANOS;
+        long n = floorMS(nanos) + MILLI_NANOS;
+        return n >= 0 || n == Numbers.LONG_NULL ? n : Long.MAX_VALUE;
     }
 
     public static long ceilSS(long nanos) {
-        return floorSS(nanos) + SECOND_NANOS;
+        long n = floorSS(nanos) + SECOND_NANOS;
+        return n >= 0 || n == Numbers.LONG_NULL ? n : Long.MAX_VALUE;
     }
 
     public static long ceilWW(long nanos) {
-        return floorWW(nanos) + WEEK_NANOS;
+        long n = floorWW(nanos) + WEEK_NANOS;
+        return n >= 0 || n == Numbers.LONG_NULL ? n : Long.MAX_VALUE;
     }
 
     public static long ceilYYYY(long nanos) {
         int y = getYear(nanos);
         boolean l = isLeapYear(y);
-        return yearNanos(y, l)
+        long n = yearNanos(y, l)
                 + monthOfYearNanos(12, l)
                 + (CommonUtils.getDaysPerMonth(11, false) + 1) * DAY_NANOS;
-
+        return n >= 0 || n == Numbers.LONG_NULL ? n : Long.MAX_VALUE;
     }
 
     public static long endOfYear(int year) {
-        return toNanos(year, 12, 31, 23, 59) + 59 * SECOND_NANOS + 999_999_999L;
+        long n = toNanos(year, 12, 31, 23, 59) + 59 * SECOND_NANOS + 999_999_999L;
+        return n > 0 ? n : Long.MAX_VALUE;
     }
 
     /**
