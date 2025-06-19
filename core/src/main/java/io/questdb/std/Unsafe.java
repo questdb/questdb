@@ -112,6 +112,11 @@ public final class Unsafe {
         return Unsafe.getUnsafe().getInt(array, BYTE_OFFSET + index);
     }
 
+    public static int byteArrayGetShort(byte[] array, int index) {
+        assert index > -1 && index < array.length - 1;
+        return Unsafe.getUnsafe().getShort(array, BYTE_OFFSET + index);
+    }
+
     public static long byteArrayGetLong(byte[] array, int index) {
         assert index > -1 && index < array.length - 7;
         return Unsafe.getUnsafe().getLong(array, BYTE_OFFSET + index);
