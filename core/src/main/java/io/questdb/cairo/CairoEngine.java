@@ -148,7 +148,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
-    private final FrameFactory frameFactory;
     private final MatViewGraph matViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
@@ -177,6 +176,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WriterPool writerPool;
     private @NotNull ConfigReloader configReloader = () -> false; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
+    private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
@@ -1392,6 +1392,12 @@ public class CairoEngine implements Closeable, WriterSource {
             LOG.error().$("cannot rename, table does not exist [table=").$safe(fromTableName).I$();
             throw CairoException.nonCritical().put("cannot rename, table does not exist [table=").put(fromTableName).put(']');
         }
+    }
+
+    @TestOnly
+    public void resetFrameFactory() {
+        frameFactory.close();
+        frameFactory = new FrameFactory(configuration);
     }
 
     @TestOnly

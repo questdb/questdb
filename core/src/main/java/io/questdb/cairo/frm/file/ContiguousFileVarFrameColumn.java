@@ -393,7 +393,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             throw new UnsupportedOperationException("Cannot map writable column");
         }
 
-        long newAuxMemSize = columnTypeDriver.getAuxVectorSize(rowHi);
+        long newAuxMemSize = columnTypeDriver.getAuxVectorSize(rowHi - columnTop);
         if (auxMapSize > 0) {
             if (auxMapSize <= newAuxMemSize) {
                 // Already mapped to same or bigger size
