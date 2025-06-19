@@ -26,7 +26,6 @@ package io.questdb.cairo.view;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.std.Mutable;
-import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -34,7 +33,7 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * The actual implementation may be no-op in case of disabled views or read-only replica.
  */
-public interface ViewStateStore extends QuietCloseable, Mutable {
+public interface ViewStateStore extends Mutable {
 
     // Only creates the view state, no telemetry event logged.
     ViewState addViewState(ViewDefinition viewDefinition);

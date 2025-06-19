@@ -117,7 +117,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     private void invalidate(TableToken tableToken, CharSequence invalidationReason, long updateTimestamp) {
         invalidateDependentViews(tableToken, invalidationReason, updateTimestamp);
         if (tableToken.isView()) {
-            resetViewState(tableToken, true, invalidationReason, updateTimestamp);
+            updateViewState(tableToken, true, invalidationReason, updateTimestamp);
         }
     }
 
@@ -126,7 +126,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         viewGraph.getDependentViews(tableToken, invalidateViewsSink);
         for (int i = 0, n = invalidateViewsSink.size(); i < n; i++) {
             final TableToken viewToken = invalidateViewsSink.get(i);
-            resetViewState(viewToken, true, invalidationReason, updateTimestamp);
+            updateViewState(viewToken, true, invalidationReason, updateTimestamp);
         }
     }
 
@@ -139,20 +139,28 @@ public class ViewCompilerJob implements Job, QuietCloseable {
 
     private void reset(TableToken tableToken, long updateTimestamp) {
         if (tableToken == null || !tableToken.isView()) {
-            LOG.error().$("cannot reset view, not a view token [token=").$(tableToken).I$();
+            LOG.error().$("cannot reset view state, not a view token [token=").$(tableToken).I$();
             return;
         }
 
-        resetViewState(tableToken, false, null, updateTimestamp);
+        updateViewState(tableToken, false, null, updateTimestamp);
     }
 
-    private void resetViewState(TableToken viewToken, boolean invalid, CharSequence invalidationReason, long updateTimestamp) {
+    private void updateViewState(TableToken viewToken, boolean invalid, CharSequence invalidationReason, long updateTimestamp) {
         final ViewDefinition viewDefinition = viewGraph.getViewDefinition(viewToken);
         if (viewDefinition == null) {
-            LOG.error().$("cannot set view state, probably dropped concurrently [token=").$(viewToken).I$();
+            LOG.error().$("view definition is missing, probably dropped concurrently [token=").$(viewToken).I$();
             return;
         }
 
+        final ViewState state = stateStore.getViewState(viewToken);
+        if (state == null) {
+            LOG.error().$("view state is missing [token=").$(viewToken).I$();
+            return;
+        }
+        state.setInvalidFlag(invalid);
+
+        LOG.info().$("updating view state [viewToken=").$(viewToken).$(", invalid=").$(invalid).I$();
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             // todo: add the timestamp to the WAL event
             walWriter.resetViewState(invalid, invalidationReason);

@@ -24,13 +24,18 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.Bootstrap;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.view.ViewState;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
@@ -49,12 +54,12 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.HashMap;
 
+import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
 import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 import static java.net.HttpURLConnection.HTTP_OK;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 
 public class ViewBootstrapTest extends AbstractBootstrapTest {
     private static final String TABLE1 = "table1";
@@ -246,6 +251,14 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             drainViewQueue();
             drainWalQueue();
 
+            final ViewState state1 = getViewState(VIEW1);
+            final ViewState state2 = getViewState(VIEW2);
+
+            assertNotNull(state1);
+            assertFalse(state1.isInvalid());
+            assertNotNull(state2);
+            assertFalse(state2.isInvalid());
+
             assertExecRequest(
                     httpClient,
                     "views()",
@@ -270,13 +283,18 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
             assertExecRequest(
                     httpClient,
-                    "drop table " + TABLE1,
+                    "alter table " + TABLE1 + " drop column k",
                     HTTP_OK,
                     "{\"ddl\":\"OK\"}"
             );
             drainWalQueue();
             drainViewQueue();
             drainWalQueue();
+
+            assertNotNull(state1);
+            assertTrue(state1.isInvalid());
+            assertNotNull(state2);
+            assertFalse(state2.isInvalid());
 
             assertExecRequest(
                     httpClient,
@@ -294,7 +312,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
                             "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"table does not exist [table=table1]\",\"invalid\"]" +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"Invalid column: k\",\"invalid\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"
@@ -306,6 +324,14 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
         startQuestDB();
 
         try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+            final ViewState state1 = getViewState(VIEW1);
+            final ViewState state2 = getViewState(VIEW2);
+
+            assertNotNull(state1);
+            assertTrue(state1.isInvalid());
+            assertNotNull(state2);
+            assertFalse(state2.isInvalid());
+
             assertExecRequest(
                     httpClient,
                     "views()",
@@ -322,7 +348,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
                             "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"table does not exist [table=table1]\",\"invalid\"]" +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"Invalid column: k\",\"invalid\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"
@@ -459,7 +485,15 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     }
 
     private static ServerMain createServerMain() {
-        return ServerMain.createWithoutWalApplyJob(root, new HashMap<>());
+        return new ServerMain(Bootstrap.getServerMainArgs(root)) {
+            @Override
+            protected void setupViewJobs(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
+            }
+
+            @Override
+            protected void setupWalApplyJob(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
+            }
+        };
     }
 
     private static void createTable(HttpClient httpClient, String tableName) {
@@ -517,6 +551,12 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
     private void drainWalQueue() {
         drainWalQueue(questdb.getEngine());
+    }
+
+    private ViewState getViewState(CharSequence viewName) {
+        final CairoEngine engine = questdb.getEngine();
+        final TableToken viewToken = engine.getTableTokenIfExists(viewName);
+        return engine.getViewStateStore().getViewState(viewToken);
     }
 
     private void startQuestDB() {

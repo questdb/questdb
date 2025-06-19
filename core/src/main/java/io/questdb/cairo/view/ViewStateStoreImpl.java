@@ -30,7 +30,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Queue;
 import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.Misc;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import org.jetbrains.annotations.NotNull;
@@ -62,7 +61,6 @@ public class ViewStateStoreImpl implements ViewStateStore {
 
         final ViewState prevState = stateByTableDirName.putIfAbsent(viewToken.getDirName(), state);
         if (prevState != null) {
-            Misc.free(state);
             throw CairoException.critical(0).put("view state already exists [dir=").put(viewToken.getDirName());
         }
         return state;
@@ -71,15 +69,7 @@ public class ViewStateStoreImpl implements ViewStateStore {
     @TestOnly
     @Override
     public void clear() {
-        close();
         stateByTableDirName.clear();
-    }
-
-    @Override
-    public void close() {
-        for (ViewState state : stateByTableDirName.values()) {
-            Misc.free(state);
-        }
     }
 
     @Override
@@ -110,7 +100,6 @@ public class ViewStateStoreImpl implements ViewStateStore {
         final ViewState state = stateByTableDirName.remove(viewToken.getDirName());
         if (state != null) {
             state.markAsDropped();
-            state.tryCloseIfDropped();
         }
     }
 
@@ -119,11 +108,8 @@ public class ViewStateStoreImpl implements ViewStateStore {
         return taskQueue.tryDequeue(task);
     }
 
-    private void enqueueViewTask(
-            @NotNull TableToken tableToken
-    ) {
+    private void enqueueViewTask(@NotNull TableToken tableToken) {
         final ViewCompilerTask task = taskHolder.get();
-        //task.clear();
         task.tableToken = tableToken;
         task.updateTimestamp = microsecondClock.getTicks();
         taskQueue.enqueue(task);

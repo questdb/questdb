@@ -379,7 +379,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         // The no-op graph does nothing on view creation and other operations
                         // and is used when views are disabled.
                         if (state != null) {
-                            state.markAsValid();
+                            state.setInvalidFlag(false);
                             // For mat views we read state from WAL, for views this is not necessary.
                             // First, mat views are likely to be refreshed often, for views we might not find a
                             // state update for a long time, and we can read WAL forever slowing down startup.
@@ -554,7 +554,6 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(checkpointAgent);
         Misc.free(metadataCache);
         Misc.free(scoreboardPool);
-        Misc.free(viewStateStore);
         Misc.free(matViewStateStore);
         Misc.free(settingsStore);
     }

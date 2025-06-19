@@ -41,10 +41,6 @@ public class NoOpViewStateStore implements ViewStateStore {
     }
 
     @Override
-    public void close() {
-    }
-
-    @Override
     public void createViewState(ViewDefinition viewDefinition) {
     }
 

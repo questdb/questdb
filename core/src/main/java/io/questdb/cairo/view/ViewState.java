@@ -26,20 +26,16 @@ package io.questdb.cairo.view;
 
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
-import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * View state serves the purpose of keeping track of invalidated views.
  */
-public class ViewState implements QuietCloseable {
+public class ViewState {
     public static final String VIEW_STATE_FILE_NAME = "_view.s";
     public static final int VIEW_STATE_FORMAT_MSG_TYPE = 0;
-    // used to avoid concurrent updates
-    private final AtomicBoolean latch = new AtomicBoolean(false);
+
     private final ViewDefinition viewDefinition;
     private volatile boolean dropped;
     private volatile boolean invalid;
@@ -59,26 +55,6 @@ public class ViewState implements QuietCloseable {
         writer.commit();
     }
 
-    public static void append(@Nullable ViewStateReader viewStateReader, @NotNull BlockFileWriter writer) {
-        if (viewStateReader != null) {
-            append(
-                    viewStateReader.isInvalid(),
-                    viewStateReader.getInvalidationReason(),
-                    writer
-            );
-        } else {
-            append(
-                    false,
-                    null,
-                    writer
-            );
-        }
-    }
-
-    @Override
-    public void close() {
-    }
-
     public @NotNull ViewDefinition getViewDefinition() {
         return viewDefinition;
     }
@@ -87,7 +63,7 @@ public class ViewState implements QuietCloseable {
     }
 
     public void initFromReader(ViewStateReader reader) {
-        this.invalid = reader.isInvalid();
+        setInvalidFlag(reader.isInvalid());
     }
 
     public boolean isDropped() {
@@ -98,40 +74,12 @@ public class ViewState implements QuietCloseable {
         return invalid;
     }
 
-    public boolean isLocked() {
-        return latch.get();
-    }
-
     public void markAsDropped() {
         dropped = true;
     }
 
-    public void markAsInvalid() {
-        invalid = true;
-    }
-
-    public void markAsValid() {
-        invalid = false;
-    }
-
-    public void tryCloseIfDropped() {
-        if (dropped && tryLock()) {
-            try {
-                close();
-            } finally {
-                unlock();
-            }
-        }
-    }
-
-    public boolean tryLock() {
-        return latch.compareAndSet(false, true);
-    }
-
-    public void unlock() {
-        if (!latch.compareAndSet(true, false)) {
-            throw new IllegalStateException("cannot unlock, not locked");
-        }
+    public void setInvalidFlag(boolean invalid) {
+        this.invalid = invalid;
     }
 
     private static void appendState(
