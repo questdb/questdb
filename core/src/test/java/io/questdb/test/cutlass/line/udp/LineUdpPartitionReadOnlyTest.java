@@ -215,7 +215,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         .col("i", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL).symbolCapacity(32)
                         .timestamp("ts");
-                tableToken = engine.lockTableName(tableName, 1, false, false);
+                tableToken = engine.lockTableName(tableName, 1, false, false, false);
                 Assert.assertNotNull(tableToken);
                 createTable(tableModel, cairoConfig, ColumnType.VERSION, 1, tableToken);
                 engine.registerTableToken(tableToken);

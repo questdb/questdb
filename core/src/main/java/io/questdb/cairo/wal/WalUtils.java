@@ -82,10 +82,11 @@ public class WalUtils {
     // REPLACE_RANGE mode means to replacing the existing range of data with the new data.
     public static final byte WAL_DEDUP_MODE_REPLACE_RANGE = WAL_DEDUP_MODE_UPSERT_NEW + 1;
     public static final byte WAL_DEDUP_MODE_MAX = WAL_DEDUP_MODE_REPLACE_RANGE;
+    public static final int WAL_FORMAT_OFFSET_32 = Integer.BYTES;
     public static final short WAL_FORMAT_VERSION = 0;
     public static final short WALE_FORMAT_VERSION = WAL_FORMAT_VERSION;
     public static final short WALE_MAT_VIEW_FORMAT_VERSION = WALE_FORMAT_VERSION + 1;
-    public static final int WAL_FORMAT_OFFSET_32 = Integer.BYTES;
+    public static final short WALE_VIEW_FORMAT_VERSION = WALE_MAT_VIEW_FORMAT_VERSION + 1;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String WAL_NAME_BASE = "wal";
     public static final String WAL_PENDING_FS_MARKER = ".pending";

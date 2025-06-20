@@ -213,7 +213,9 @@ public class WalWriter implements TableWriterAPI {
 
             configureColumns();
             openNewSegment();
-            configureSymbolTable();
+            if (!tableToken.isView()) {
+                configureSymbolTable();
+            }
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -505,6 +507,21 @@ public class WalWriter implements TableWriterAPI {
     ) {
         try {
             lastSegmentTxn = events.appendMatViewInvalidate(lastRefreshBaseTxn, lastRefreshTimestamp, invalid, invalidationReason);
+            getSequencerTxn();
+        } catch (Throwable th) {
+            rollback();
+            throw th;
+        }
+    }
+
+    // Marks the view as invalid or resets its invalidation status, depending on the input values.
+    public void resetViewState(
+            long updateTimestamp,
+            boolean invalid,
+            @Nullable CharSequence invalidationReason
+    ) {
+        try {
+            lastSegmentTxn = events.appendViewStatusUpdate(updateTimestamp, invalid, invalidationReason);
             getSequencerTxn();
         } catch (Throwable th) {
             rollback();
