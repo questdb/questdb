@@ -1802,7 +1802,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     // used in ent
     protected Queue<MatViewTimerTask> createMatViewTimerQueue() {
-        return configuration.isMatViewEnabled() ? new ConcurrentQueue<>(MatViewTimerTask.ITEM_FACTORY) : new NoOpQueue<>();
+        return configuration.isMatViewEnabled() ? ConcurrentQueue.createConcurrentQueue(MatViewTimerTask.ITEM_FACTORY) : new NoOpQueue<>();
     }
 
     protected SqlExecutionContext createRootExecutionContext() {
