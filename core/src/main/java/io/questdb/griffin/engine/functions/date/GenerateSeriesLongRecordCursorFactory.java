@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
@@ -52,8 +53,8 @@ public class GenerateSeriesLongRecordCursorFactory extends AbstractGenerateSerie
     }
 
     private static class GenerateSeriesLongRecordCursor extends AbstractGenerateSeriesRecordCursor {
-        private final GenerateSeriesLongRecord record = new GenerateSeriesLongRecord();
-        private long curr;
+        private final GenerateSeriesLongRecord recordA = new GenerateSeriesLongRecord();
+        private final GenerateSeriesLongRecord recordB = new GenerateSeriesLongRecord();
         private long end;
         private long start;
         private long step;
@@ -64,19 +65,21 @@ public class GenerateSeriesLongRecordCursorFactory extends AbstractGenerateSerie
 
         @Override
         public Record getRecord() {
-            return record;
+            return recordA;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return recordB;
         }
 
         @Override
         public boolean hasNext() {
-            curr += step;
-            if (curr == Long.MIN_VALUE) {
-                return false;
-            }
+            recordA.curr += step;
             if (step >= 0) {
-                return curr <= end;
+                return recordA.curr <= end;
             } else {
-                return curr >= end;
+                return recordA.curr >= end;
             }
         }
 
@@ -97,16 +100,32 @@ public class GenerateSeriesLongRecordCursorFactory extends AbstractGenerateSerie
         }
 
         @Override
+        public void recordAt(Record record, long atRowId) {
+            ((GenerateSeriesLongRecord) record).curr = start + step * atRowId;
+        }
+
+        @Override
         public long size() {
             return (Math.abs(end - start) / Math.abs(step)) + 1;
         }
 
         @Override
+        public void skipRows(Counter rowCount) throws DataUnavailableException {
+            long newRowId = recordA.getRowId() + rowCount.get()
+                    - 1 // one-indexed
+                    - 1 // we increment at the start of hasNext()
+                    ;
+            recordAt(recordA, newRowId);
+        }
+
+        @Override
         public void toTop() {
-            curr = start - step;
+            recordA.of(start - step);
         }
 
         private class GenerateSeriesLongRecord implements Record {
+            private long curr;
+
             @Override
             public long getLong(int col) {
                 return curr;
@@ -115,6 +134,10 @@ public class GenerateSeriesLongRecordCursorFactory extends AbstractGenerateSerie
             @Override
             public long getRowId() {
                 return Math.abs(start - curr) / Math.abs(step);
+            }
+
+            public void of(long value) {
+                curr = value;
             }
         }
     }

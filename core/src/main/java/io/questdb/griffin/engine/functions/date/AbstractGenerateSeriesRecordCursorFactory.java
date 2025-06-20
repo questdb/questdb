@@ -58,7 +58,7 @@ public abstract class AbstractGenerateSeriesRecordCursorFactory extends Abstract
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return false;
+        return true;
     }
 
     @Override

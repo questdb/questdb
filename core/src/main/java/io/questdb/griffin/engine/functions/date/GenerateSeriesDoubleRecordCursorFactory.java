@@ -52,6 +52,11 @@ public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGener
         return cursor;
     }
 
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
+    }
+
     private static class GenerateSeriesDoubleRecordCursor extends AbstractGenerateSeriesRecordCursor {
         private final GenerateSeriesDoubleRecord record = new GenerateSeriesDoubleRecord();
         private double curr;
@@ -111,11 +116,6 @@ public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGener
             @Override
             public double getDouble(int col) {
                 return curr;
-            }
-
-            @Override
-            public long getRowId() {
-                return (long) (Math.abs(start - curr) / Math.abs(step));
             }
         }
     }

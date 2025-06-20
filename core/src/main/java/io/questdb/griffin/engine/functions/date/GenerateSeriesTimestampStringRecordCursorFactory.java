@@ -55,6 +55,21 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         return cursor;
     }
 
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        if (cursor == null) {
+            return false;
+        } else {
+            switch (cursor.unit) {
+                case 'M':
+                case 'y':
+                    return false;
+                default:
+                    return true;
+            }
+        }
+    }
+
     private static class GenerateSeriesTimestampStringRecordCursor extends AbstractGenerateSeriesRecordCursor {
         private final GenerateSeriesTimestampStringRecord record = new GenerateSeriesTimestampStringRecord();
         public int stride;
