@@ -1484,10 +1484,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    // method to make debugging easier
-    // not using toString name to prevent debugger from trying to use it on all model variables (because toSink0 can fail).
-    @SuppressWarnings("unused")
-    public String toString0() {
+    @Override
+    public String toString() {
         StringSink sink = Misc.getThreadLocalSink();
         this.toSink0(sink, true, true);
         return sink.toString();
@@ -1728,10 +1726,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
             if (tableNameExpr != null) {
                 tableNameExpr.toSink(sink);
-            } else {
+            } else if (nestedModel != null) {
                 sink.putAscii('(');
                 nestedModel.toSink0(sink, false, showOrderBy);
                 sink.putAscii(')');
+            } else {
+                sink.putAscii("null");
             }
             if (alias != null) {
                 aliasToSink(alias.token, sink);

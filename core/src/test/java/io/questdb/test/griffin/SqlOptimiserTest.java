@@ -75,7 +75,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int );");
             final String query = "select x1, sum(x1) from (select x x1 from y)";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by x1, sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
+            TestUtils.assertEquals("select-group-by x1, sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))", model.toString());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
             assertPlanNoLeakCheck(
@@ -98,7 +98,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final QueryModel model = compileModel(query);
             TestUtils.assertEquals(
                     "select-group-by concat(lpad(cast(x1,string),5)) concat, x1, sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))",
-                    model.toString0()
+                    model.toString()
             );
             assertPlanNoLeakCheck(
                     query,
@@ -119,7 +119,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int );");
             final String query = "select concat(lpad(cast(x1 as string), 5)), x1 from (select x x1 from y) group by x1";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-virtual concat(lpad(cast(x1,string),5)) concat, x1 from (select-group-by [x1] x1 from (select-choose [x x1] x x1 from (select [x] from y)))", model.toString0());
+            TestUtils.assertEquals("select-virtual concat(lpad(cast(x1,string),5)) concat, x1 from (select-group-by [x1] x1 from (select-choose [x x1] x x1 from (select [x] from y)))", model.toString());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
             assertPlanNoLeakCheck(
@@ -143,7 +143,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int );");
             final String query = "select x1, sum(x1), max(X1) from (select x X1 from y)";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by x1, sum(x1) sum, max(x1) max from (select-choose [x X1] x X1 from (select [x] from y))", model.toString0());
+            TestUtils.assertEquals("select-group-by x1, sum(x1) sum, max(x1) max from (select-choose [x X1] x X1 from (select [x] from y))", model.toString());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
             assertPlanNoLeakCheck(
@@ -165,7 +165,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int );");
             final String query = "select sum(x1) from (select x x1 from y)";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
+            TestUtils.assertEquals("select-group-by sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))", model.toString());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
             assertPlanNoLeakCheck(
@@ -186,7 +186,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int );");
             final String query = "select x1 from (select x x1 from y)";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose x1 from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
+            TestUtils.assertEquals("select-choose x1 from (select-choose [x x1] x x1 from (select [x] from y))", model.toString());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert !aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
             assertPlanNoLeakCheck(
@@ -204,7 +204,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) as ts1 from y";
             final QueryModel model = compileModel(query);
-            assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -222,7 +222,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) as ts1 from y";
             final QueryModel model = compileModel(query);
-            assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
+            assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -240,7 +240,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) as ts1 from y";
             final QueryModel model = compileModel(query);
-            assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
+            assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -258,7 +258,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) as ts1 from y";
             final QueryModel model = compileModel(query);
-            assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -391,7 +391,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y";
             final QueryModel model = compileModel(query);
-            assertEquals("select-choose ts FIRST from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            assertEquals("select-choose ts FIRST from (select [ts] from y timestamp (ts)) limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -409,7 +409,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(x) from y";
             final QueryModel model = compileModel(query);
-            assertEquals("select-group-by FIRST(x) FIRST from (select [x] from y timestamp (ts))", model.toString0());
+            assertEquals("select-group-by FIRST(x) FIRST from (select [x] from y timestamp (ts))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Async Group By workers: 1\n" +
@@ -446,7 +446,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "left join select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from " +
                             "(select-choose [ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc " +
                             "limit 1) y2 on y2.LAST = y1.ts)",
-                    model.toString0()
+                    model.toString()
             );
             // TODO: there's a forward scan on y2 whereas it should be a backward scan;
             //       it could have something to do with SqlOptimiser.optimiseOrderBy()
@@ -492,11 +492,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "(select [x] from y1 timestamp (ts) where null != x))) y1 on y1.c = y.x)";
             assertEquals(
                     expectedModel,
-                    compileModel(queryA).toString0()
+                    compileModel(queryA).toString()
             );
             assertEquals(
                     expectedModel,
-                    compileModel(queryB).toString0()
+                    compileModel(queryB).toString()
             );
 
             String expectedPlan = "SelectedRecord\n" +
@@ -530,7 +530,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from y";
             final QueryModel model = compileModel(query);
-            assertEquals("select-choose ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1", model.toString0());
+            assertEquals("select-choose ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -548,7 +548,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(x) from y";
             final QueryModel model = compileModel(query);
-            assertEquals("select-group-by LAST(x) LAST from (select [x] from y timestamp (ts))", model.toString0());
+            assertEquals("select-group-by LAST(x) LAST from (select [x] from y timestamp (ts))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Async Group By workers: 1\n" +
@@ -567,7 +567,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select max(ts) from y";
             final QueryModel model = compileModel(query);
-            assertEquals("select-choose ts max from (select [ts] from y timestamp (ts)) order by max desc limit 1", model.toString0());
+            assertEquals("select-choose ts max from (select [ts] from y timestamp (ts)) order by max desc limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -585,7 +585,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(x) from y";
             final QueryModel model = compileModel(query);
-            assertEquals("select-group-by MAX(x) MAX from (select [x] from y timestamp (ts))", model.toString0());
+            assertEquals("select-group-by MAX(x) MAX from (select [x] from y timestamp (ts))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: true workers: 1\n" +
@@ -603,7 +603,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select min(ts) from y";
             final QueryModel model = compileModel(query);
-            assertEquals("select-choose ts min from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            assertEquals("select-choose ts min from (select [ts] from y timestamp (ts)) limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -621,7 +621,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(x) from y";
             final QueryModel model = compileModel(query);
-            assertEquals("select-group-by MIN(x) MIN from (select [x] from y timestamp (ts))", model.toString0());
+            assertEquals("select-group-by MIN(x) MIN from (select [x] from y timestamp (ts))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: true workers: 1\n" +
@@ -639,7 +639,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select FIRST(ts) from y)";
             final QueryModel model = compileModel(query);
-            assertEquals("select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
+            assertEquals("select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts)) limit 1)", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -660,7 +660,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals(
                     "select-choose LAST from " +
                             "(select-choose [ts LAST] ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1)",
-                    model.toString0()
+                    model.toString()
             );
             assertPlanNoLeakCheck(
                     query,
@@ -682,7 +682,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals(
                     "select-choose MAX from " +
                             "(select-choose [ts MAX] ts MAX from (select [ts] from y timestamp (ts)) order by MAX desc limit 1)",
-                    model.toString0()
+                    model.toString()
             );
             assertPlanNoLeakCheck(
                     query,
@@ -701,7 +701,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select MIN(ts) from y)";
             final QueryModel model = compileModel(query);
-            assertEquals("select-choose MIN from (select-choose [ts MIN] ts MIN from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
+            assertEquals("select-choose MIN from (select-choose [ts MIN] ts MIN from (select [ts] from y timestamp (ts)) limit 1)", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -726,7 +726,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "[ts] from y timestamp (ts)) order by LAST desc limit 1 union select-choose [ts min] ts min " +
                             "from (select [ts] from y timestamp (ts)) limit 1 union select-choose [ts max] ts max from " +
                             "(select [ts] from y timestamp (ts)) order by max desc limit 1)",
-                    model.toString0()
+                    model.toString()
             );
             assertPlanNoLeakCheck(
                     query,
@@ -2061,7 +2061,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts FIRST from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            TestUtils.assertEquals("select-choose ts FIRST from (select [ts] from y timestamp (ts)) limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -2078,7 +2078,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(x) from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by FIRST(x) FIRST from (select [x] from y timestamp (ts))", model.toString0());
+            TestUtils.assertEquals("select-group-by FIRST(x) FIRST from (select [x] from y timestamp (ts))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Async Group By workers: 1\n" +
@@ -2113,7 +2113,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     " y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) " +
                     "left join select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from " +
                     "(select-choose [ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc " +
-                    "limit 1) y2 on y2.LAST = y1.ts)", model.toString0());
+                    "limit 1) y2 on y2.LAST = y1.ts)", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "SelectedRecord\n" +
@@ -2145,7 +2145,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1", model.toString0());
+            TestUtils.assertEquals("select-choose ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -2162,7 +2162,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(x) from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by LAST(x) LAST from (select [x] from y timestamp (ts))", model.toString0());
+            TestUtils.assertEquals("select-group-by LAST(x) LAST from (select [x] from y timestamp (ts))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Async Group By workers: 1\n" +
@@ -2181,7 +2181,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select max(ts) from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts max from (select [ts] from y timestamp (ts)) order by max desc limit 1", model.toString0());
+            TestUtils.assertEquals("select-choose ts max from (select [ts] from y timestamp (ts)) order by max desc limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -2198,7 +2198,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(x) from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by MAX(x) MAX from (select [x] from y timestamp (ts))", model.toString0());
+            TestUtils.assertEquals("select-group-by MAX(x) MAX from (select [x] from y timestamp (ts))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: true workers: 1\n" +
@@ -2216,7 +2216,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select min(ts) from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts min from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            TestUtils.assertEquals("select-choose ts min from (select [ts] from y timestamp (ts)) limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -2233,7 +2233,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(x) from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by MIN(x) MIN from (select [x] from y timestamp (ts))", model.toString0());
+            TestUtils.assertEquals("select-group-by MIN(x) MIN from (select [x] from y timestamp (ts))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: true workers: 1\n" +
@@ -2251,7 +2251,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select FIRST(ts) from y)";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
+            TestUtils.assertEquals("select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts)) limit 1)", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -2268,7 +2268,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select LAST(ts) from y)";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose LAST from (select-choose [ts LAST] ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1)", model.toString0());
+            TestUtils.assertEquals("select-choose LAST from (select-choose [ts LAST] ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1)", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -2285,7 +2285,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select MAX(ts) from y)";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose MAX from (select-choose [ts MAX] ts MAX from (select [ts] from y timestamp (ts)) order by MAX desc limit 1)", model.toString0());
+            TestUtils.assertEquals("select-choose MAX from (select-choose [ts MAX] ts MAX from (select [ts] from y timestamp (ts)) order by MAX desc limit 1)", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -2302,7 +2302,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select MIN(ts) from y)";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose MIN from (select-choose [ts MIN] ts MIN from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
+            TestUtils.assertEquals("select-choose MIN from (select-choose [ts MIN] ts MIN from (select [ts] from y timestamp (ts)) limit 1)", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -2324,7 +2324,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     " [ts] from y timestamp (ts)) limit 1 union select-choose [ts LAST] ts LAST from (select " +
                     "[ts] from y timestamp (ts)) order by LAST desc limit 1 union select-choose [ts min] ts min " +
                     "from (select [ts] from y timestamp (ts)) limit 1 union select-choose [ts max] ts max from " +
-                    "(select [ts] from y timestamp (ts)) order by max desc limit 1)", model.toString0());
+                    "(select [ts] from y timestamp (ts)) order by max desc limit 1)", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Union\n" +
@@ -2359,7 +2359,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, FIRST(ts) from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by x, FIRST(ts) FIRST from (select [x, ts] from y timestamp (ts))", model.toString0());
+            TestUtils.assertEquals("select-group-by x, FIRST(ts) FIRST from (select [x, ts] from y timestamp (ts))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Async Group By workers: 1\n" +
@@ -2379,7 +2379,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, LAST(ts) from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by x, LAST(ts) LAST from (select [x, ts] from y timestamp (ts))", model.toString0());
+            TestUtils.assertEquals("select-group-by x, LAST(ts) LAST from (select [x, ts] from y timestamp (ts))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Async Group By workers: 1\n" +
@@ -2399,7 +2399,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, MAX(ts) from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by x, MAX(ts) MAX from (select [x, ts] from y timestamp (ts))", model.toString0());
+            TestUtils.assertEquals("select-group-by x, MAX(ts) MAX from (select [x, ts] from y timestamp (ts))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: true workers: 1\n" +
@@ -2418,7 +2418,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, MIN(ts) from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by x, MIN(ts) MIN from (select [x, ts] from y timestamp (ts))", model.toString0());
+            TestUtils.assertEquals("select-group-by x, MIN(ts) MIN from (select [x, ts] from y timestamp (ts))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: true workers: 1\n" +
@@ -2441,7 +2441,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     " limit 1 union select-choose [ts LAST] ts LAST from (select [ts] from y timestamp (ts)) order by " +
                     "LAST desc limit 1 union select-choose [ts min] ts min from (select [ts] from y timestamp (ts)) " +
                     "limit 1 union select-choose [ts max] ts max from (select [ts] from y timestamp (ts)) order by" +
-                    " max desc limit 1", model.toString0());
+                    " max desc limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Union\n" +
@@ -2478,7 +2478,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select FIRST(ts) from (select * from y where x = 3)";
             final QueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by FIRST(ts) FIRST from (select-choose [ts] x, ts from " +
-                    "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString0());
+                    "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: false\n" +
@@ -2499,7 +2499,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select LAST(ts) from (select * from y where x = 3)";
             final QueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by LAST(ts) LAST from (select-choose [ts] x, ts from " +
-                    "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString0());
+                    "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: false\n" +
@@ -2520,7 +2520,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select MAX(ts) from (select * from y where x = 3)";
             final QueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by MAX(ts) MAX from (select-choose [ts] x, ts from " +
-                    "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString0());
+                    "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: false\n" +
@@ -2541,7 +2541,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select MIN(ts) from (select * from y where x = 3)";
             final QueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by MIN(ts) MIN from (select-choose [ts] x, ts from " +
-                    "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString0());
+                    "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: false\n" +
@@ -2562,7 +2562,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select FIRST(ts) from y where x = 3";
             final QueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts FIRST from " +
-                    "(select [ts, x] from y timestamp (ts) where x = 3) limit 1", model.toString0());
+                    "(select [ts, x] from y timestamp (ts) where x = 3) limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "SelectedRecord\n" +
@@ -2583,7 +2583,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final QueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts LAST from " +
                     "(select [ts, x] from y timestamp (ts) where x = 3) order " +
-                    "by LAST desc limit 1", model.toString0());
+                    "by LAST desc limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "SelectedRecord\n" +
@@ -2604,7 +2604,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final QueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts MAX from " +
                     "(select [ts, x] from y timestamp (ts) where x = 3) order " +
-                    "by MAX desc limit 1", model.toString0());
+                    "by MAX desc limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "SelectedRecord\n" +
@@ -2624,7 +2624,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select MIN(ts) from y where x = 3";
             final QueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts MIN from " +
-                    "(select [ts, x] from y timestamp (ts) where x = 3) limit 1", model.toString0());
+                    "(select [ts, x] from y timestamp (ts) where x = 3) limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "SelectedRecord\n" +
@@ -2643,7 +2643,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) as ts1 from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -2660,7 +2660,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) as ts1 from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
+            TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -2677,7 +2677,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) as ts1 from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
+            TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -2694,7 +2694,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) as ts1 from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
@@ -4099,7 +4099,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, LAST(ts) from y";
             final QueryModel model = compileModel(query);
-            assertEquals("select-group-by x, LAST(ts) LAST from (select [x, ts] from y timestamp (ts))", model.toString0());
+            assertEquals("select-group-by x, LAST(ts) LAST from (select [x, ts] from y timestamp (ts))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Async Group By workers: 1\n" +
@@ -4119,7 +4119,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, MAX(ts) from y";
             final QueryModel model = compileModel(query);
-            assertEquals("select-group-by x, MAX(ts) MAX from (select [x, ts] from y timestamp (ts))", model.toString0());
+            assertEquals("select-group-by x, MAX(ts) MAX from (select [x, ts] from y timestamp (ts))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: true workers: 1\n" +
@@ -4138,7 +4138,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, MIN(ts) from y";
             final QueryModel model = compileModel(query);
-            assertEquals("select-group-by x, MIN(ts) MIN from (select [x, ts] from y timestamp (ts))", model.toString0());
+            assertEquals("select-group-by x, MIN(ts) MIN from (select [x, ts] from y timestamp (ts))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: true workers: 1\n" +
@@ -4157,7 +4157,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, FIRST(ts) from y";
             final QueryModel model = compileModel(query);
-            assertEquals("select-group-by x, FIRST(ts) FIRST from (select [x, ts] from y timestamp (ts))", model.toString0());
+            assertEquals("select-group-by x, FIRST(ts) FIRST from (select [x, ts] from y timestamp (ts))", model.toString());
             assertPlanNoLeakCheck(
                     query,
                     "Async Group By workers: 1\n" +
@@ -4180,7 +4180,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             String expectedModel = "select-group-by count() count_distinct from (select-group-by x from (select [x] from y timestamp (ts) where null != x))";
             assertEquals(
                     expectedModel,
-                    compileModel(queryA).toString0()
+                    compileModel(queryA).toString()
             );
             String expectedPlan = "Count\n" +
                     "    Async JIT Group By workers: 1\n" +
@@ -4212,7 +4212,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "LAST desc limit 1 union select-choose [ts min] ts min from (select [ts] from y timestamp (ts)) " +
                             "limit 1 union select-choose [ts max] ts max from (select [ts] from y timestamp (ts)) order by" +
                             " max desc limit 1",
-                    model.toString0()
+                    model.toString()
             );
             assertPlanNoLeakCheck(
                     query,
@@ -4254,11 +4254,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "select-group-by [count() count_distinct] count() count_distinct from (select-group-by z from (select [z] from y where null != z))";
             assertEquals(
                     expectedModel,
-                    compileModel(queryA).toString0()
+                    compileModel(queryA).toString()
             );
             assertEquals(
                     expectedModel,
-                    compileModel(queryB).toString0()
+                    compileModel(queryB).toString()
             );
             String expectedPlan = "Union\n" +
                     "    Count\n" +
@@ -4295,7 +4295,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals(
                     "select-group-by FIRST(ts) FIRST from (select-choose [ts] x, ts from " +
                             "(select [ts, x] from y timestamp (ts) where x = 3))",
-                    model.toString0()
+                    model.toString()
             );
             assertPlanNoLeakCheck(
                     query,
@@ -4320,7 +4320,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals(
                     "select-group-by LAST(ts) LAST from (select-choose [ts] x, ts from " +
                             "(select [ts, x] from y timestamp (ts) where x = 3))",
-                    model.toString0()
+                    model.toString()
             );
             assertPlanNoLeakCheck(
                     query,
@@ -4345,7 +4345,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals(
                     "select-group-by MAX(ts) MAX from (select-choose [ts] x, ts from " +
                             "(select [ts, x] from y timestamp (ts) where x = 3))",
-                    model.toString0()
+                    model.toString()
             );
             assertPlanNoLeakCheck(
                     query,
@@ -4370,7 +4370,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals(
                     "select-group-by MIN(ts) MIN from (select-choose [ts] x, ts from " +
                             "(select [ts, x] from y timestamp (ts) where x = 3))",
-                    model.toString0()
+                    model.toString()
             );
             assertPlanNoLeakCheck(
                     query,
@@ -4395,7 +4395,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals(
                     "select-choose ts FIRST from " +
                             "(select [ts, x] from y timestamp (ts) where x = 3) limit 1",
-                    model.toString0()
+                    model.toString()
             );
             assertPlanNoLeakCheck(
                     query,
@@ -4420,7 +4420,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "select-choose ts LAST from " +
                             "(select [ts, x] from y timestamp (ts) where x = 3) order " +
                             "by LAST desc limit 1",
-                    model.toString0()
+                    model.toString()
             );
             assertPlanNoLeakCheck(
                     query,
@@ -4445,7 +4445,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "select-choose ts MAX from " +
                             "(select [ts, x] from y timestamp (ts) where x = 3) order " +
                             "by MAX desc limit 1",
-                    model.toString0()
+                    model.toString()
             );
             assertPlanNoLeakCheck(
                     query,
@@ -4469,7 +4469,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals(
                     "select-choose ts MIN from " +
                             "(select [ts, x] from y timestamp (ts) where x = 3) limit 1",
-                    model.toString0()
+                    model.toString()
             );
             assertPlanNoLeakCheck(
                     query,
