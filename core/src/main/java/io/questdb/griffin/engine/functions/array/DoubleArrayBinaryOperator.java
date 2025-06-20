@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -112,9 +111,7 @@ public abstract class DoubleArrayBinaryOperator extends ArrayFunction implements
         arrayOut.copyShapeFrom(left);
         arrayOut.applyShape();
         if (left.isVanilla() && right.isVanilla()) {
-            FlatArrayView flatViewLeft = left.flatView();
-            FlatArrayView flatViewRight = right.flatView();
-            bulkApplyOperation(flatViewLeft, flatViewRight);
+            bulkApplyOperation(left, right);
         } else {
             applyRecursive(0, left, 0, right, 0, arrayOut.startMemoryA());
         }
@@ -177,5 +174,5 @@ public abstract class DoubleArrayBinaryOperator extends ArrayFunction implements
 
     protected abstract double applyOperation(double leftVal, double rightVal);
 
-    protected abstract void bulkApplyOperation(FlatArrayView leftFlatView, FlatArrayView rightFlatView);
+    protected abstract void bulkApplyOperation(ArrayView leftFlatView, ArrayView rightFlatView);
 }

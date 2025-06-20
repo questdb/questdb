@@ -87,7 +87,6 @@ public class DerivedArrayView extends ArrayView {
         } else {
             dimToFlattenInto = getStride(dim - 1) < getStride(dim + 1) ? dim - 1 : dim + 1;
         }
-        isVanilla = false;
         shape.set(dimToFlattenInto, shape.get(dimToFlattenInto) * shape.get(dim));
         removeDim(dim);
     }
@@ -109,7 +108,6 @@ public class DerivedArrayView extends ArrayView {
 
     public void removeDim(int dim) {
         assert dim >= 0 && dim < shape.size() : "dim out of range: " + dim;
-        isVanilla = false;
         shape.removeIndex(dim);
         strides.removeIndex(dim);
         type = ColumnType.encodeArrayType(getElemType(), getDimCount() - 1);
@@ -139,12 +137,23 @@ public class DerivedArrayView extends ArrayView {
         if (lo == 0 && hi == dimLen) {
             return;
         }
-        isVanilla = false;
+
+        if (this.isVanilla) {
+            for (int i = 0; i < dim; i++) {
+                if (shape.getQuick(i) > 1) {
+                    this.isVanilla = false;
+                }
+            }
+        }
+
         if (lo < hi) {
             flatViewOffset += lo * getStride(dim);
+            this.flatViewLength = this.flatViewLength / shape.getQuick(dim) * (hi - lo);
             shape.set(dim, hi - lo);
         } else {
             shape.set(dim, 0);
+            isVanilla = true;
+            this.flatViewLength = 0;
         }
     }
 
@@ -158,7 +167,9 @@ public class DerivedArrayView extends ArrayView {
     }
 
     public void transpose() {
-        isVanilla = false;
+        if (isVanilla && getDimCount() > 1) {
+            isVanilla = false;
+        }
         strides.reverse();
         shape.reverse();
     }

@@ -150,6 +150,8 @@ public abstract class ArrayView implements QuietCloseable {
     protected FlatArrayView flatView;
     protected int flatViewLength;
     protected int flatViewOffset;
+
+    // indicates whether the array elements are contiguous in memory.
     protected boolean isVanilla = true;
     protected int type = ColumnType.UNDEFINED;
 
@@ -161,7 +163,7 @@ public abstract class ArrayView implements QuietCloseable {
             return;
         }
         if (isVanilla) {
-            flatView.appendToMemFlat(mem);
+            flatView.appendToMemFlat(mem, flatViewOffset, flatViewLength);
         } else {
             appendToMemRecursive(0, 0, mem);
         }
@@ -186,21 +188,22 @@ public abstract class ArrayView implements QuietCloseable {
         if (isVanilla && other.isVanilla) {
             FlatArrayView flatViewLeft = flatView;
             FlatArrayView flatViewRight = other.flatView;
-            int length = flatViewLeft.length();
-            if (length != flatViewRight.length()) {
+
+            int length = flatViewLength;
+            if (length != other.flatViewLength) {
                 return false;
             }
             switch (getElemType()) {
                 case ColumnType.DOUBLE:
                     for (int i = 0; i < length; i++) {
-                        if (!Numbers.equals(flatViewLeft.getDoubleAtAbsIndex(i), flatViewRight.getDoubleAtAbsIndex(i))) {
+                        if (!Numbers.equals(flatViewLeft.getDoubleAtAbsIndex(flatViewOffset + i), flatViewRight.getDoubleAtAbsIndex(other.flatViewOffset + i))) {
                             return false;
                         }
                     }
                     break;
                 case ColumnType.LONG:
                     for (int i = 0; i < length; i++) {
-                        if (flatViewLeft.getLongAtAbsIndex(i) != flatViewRight.getLongAtAbsIndex(i)) {
+                        if (flatViewLeft.getLongAtAbsIndex(flatViewOffset + i) != flatViewRight.getLongAtAbsIndex(other.flatViewOffset + i)) {
                             return false;
                         }
                     }
@@ -211,6 +214,54 @@ public abstract class ArrayView implements QuietCloseable {
             return true;
         }
         return arrayEqualsRecursive(0, 0, other, 0);
+    }
+
+    /**
+     * Performs binary search for a specified double value in a 1D array view.
+     *
+     * <p><b>Important Requirements:</b>
+     * <ul>
+     *   <li>The array <b>must be sorted</b> in either ascending or descending order</li>
+     *   <li>The array <b>must not contain null values</b></li>
+     * </ul>
+     *
+     * <p>The method automatically detects sort direction by comparing the first and last elements.
+     */
+    public final int binarySearchDoubleValue1DArray(double value) {
+        if (isNull() || isEmpty()) {
+            return 0;
+        }
+
+        int low = flatViewOffset;
+        int high = flatViewOffset + getDimLen(0) - 1;
+        // empty array
+        if (low > high) return 0;
+
+        // determine sort direction
+        double first = flatView.getDoubleAtAbsIndex(low);
+        double last = flatView.getDoubleAtAbsIndex(high);
+        boolean ascending = first <= last;
+        while (low <= high) {
+            int mid = low + (high - low) / 2;
+            double midVal = flatView.getDoubleAtAbsIndex(mid);
+            if (Math.abs(midVal - value) <= Numbers.DOUBLE_TOLERANCE) {
+                return mid - flatViewOffset + 1;
+            }
+            if (ascending) {
+                if (midVal < value) {
+                    low = mid + 1;
+                } else {
+                    high = mid - 1;
+                }
+            } else {
+                if (midVal > value) {
+                    low = mid + 1;
+                } else {
+                    high = mid - 1;
+                }
+            }
+        }
+        return 0;
     }
 
     /**
@@ -369,13 +420,13 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     /**
-     * Tells whether this array is a "vanilla array". A vanilla array's shape and
-     * strides directly describe the physical layout of the underlying flat array. The
+     * Tells whether this array is a "vanilla array". A vanilla array's shape
+     * directly describe the physical layout of the underlying flat array. The
      * main reason to know this is when you're about to iterate over all the array
-     * elements. For a vanilla array, you can go through the flat indices from zero to
-     * {@link #getFlatViewLength()} and you'll iterate over the whole array in
-     * row-major order. You can also use {@link FlatArrayView#getDoubleAtAbsIndex},
-     * avoiding the slight overhead of adding zero offset in {@link #getDouble}.
+     * elements. For a vanilla array, you can go through the flat indices from
+     * zero + {@link #getFlatViewOffset}} to {@link #getFlatViewLength} + {@link #getFlatViewOffset}
+     * and you'll iterate over the whole array in row-major order. You are not discourage
+     * use {@link FlatArrayView#getDoubleAtAbsIndex} directly.
      * <p>
      * On a non-vanilla array, you must calculate each element's flat index from its
      * coordinates, applying the array's strides. A non-vanilla array arises when you
@@ -396,6 +447,30 @@ public abstract class ArrayView implements QuietCloseable {
      */
     public boolean isVanilla() {
         return isVanilla;
+    }
+
+    public final int linearSearchDoubleNull1DArray() {
+        if (isNull() || isEmpty()) {
+            return 0;
+        }
+        for (int i = flatViewOffset, dimLen = getDimLen(0) + flatViewOffset; i < dimLen; i++) {
+            if (Numbers.isNull(flatView.getDoubleAtAbsIndex(i))) {
+                return i - flatViewOffset + 1;
+            }
+        }
+        return 0;
+    }
+
+    public final int linearSearchDoubleValue1DArray(double value) {
+        if (isNull() || isEmpty()) {
+            return 0;
+        }
+        for (int i = flatViewOffset, dimLen = getDimLen(0) + flatViewOffset; i < dimLen; i++) {
+            if (Math.abs(value - flatView.getDoubleAtAbsIndex(i)) <= Numbers.DOUBLE_TOLERANCE) {
+                return i - flatViewOffset + 1;
+            }
+        }
+        return 0;
     }
 
     /**

@@ -42,7 +42,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class ArrayDimLengthFunctionFactory implements FunctionFactory {
-    public static final String FUNCTION_NAME = "dim_length";
+    private static final String FUNCTION_NAME = "dim_length";
 
     @Override
     public String getSignature() {

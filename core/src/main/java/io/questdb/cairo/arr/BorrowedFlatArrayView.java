@@ -27,6 +27,7 @@ package io.questdb.cairo.arr;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 /**
  * Immutable view over the backing native memory of an array. Does not own the memory.
@@ -40,9 +41,9 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     private int size;
 
     @Override
-    public void appendToMemFlat(MemoryA mem) {
+    public void appendToMemFlat(MemoryA mem, int flatViewOffset, int flatViewLength) {
         assert ptr != 0;
-        mem.putBlockOfBytes(ptr, size);
+        mem.putBlockOfBytes(ptr + (long) flatViewOffset * Double.BYTES, (long) flatViewLength * Double.BYTES);
     }
 
     @Override
@@ -101,5 +102,10 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
 
     public int size() {
         return this.size;
+    }
+
+    @Override
+    public double sumDouble(int flatViewOffset, int flatViewLength) {
+        return Vect.sumDouble(this.ptr + (long) flatViewOffset * Double.BYTES, flatViewLength);
     }
 }
