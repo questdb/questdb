@@ -5614,7 +5614,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testInvalidColumnInSelect() throws Exception {
         assertSyntaxError(
-                "select good, bad from tango", 1, "Invalid column",
+                "select good, bad from tango", 13, "Invalid column",
                 modelOf("tango").col("good", ColumnType.INT)
         );
     }
