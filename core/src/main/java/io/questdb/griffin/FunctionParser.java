@@ -370,6 +370,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 case ExpressionNode.QUERY:
                     functionStack.push(createCursorFunction(node));
                     break;
+                case ExpressionNode.FUNCTION:
+                    if (node.token.equals("x")) {
+                        functionStack.push(DoubleColumn.newInstance(-1));
+                        break;
+                    }
+                    // fall through for other functions
                 default:
                     // lookup zero arg function from symbol table
                     functionStack.push(createFunction(node, null, null));
