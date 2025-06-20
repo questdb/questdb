@@ -29,6 +29,59 @@ import org.junit.Test;
 public class ViewQueryTest extends AbstractViewTest {
 
     @Test
+    public void testCreateViewAndSelectWithDeclare() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query1 = "DECLARE @x := k, @z := 'hohoho' select ts, @x, @z as red, max(v) as v_max from " + TABLE1 + " where v > 5";
+            createView(VIEW1, query1, TABLE1);
+
+            String query = VIEW1;
+            assertQueryAndPlan(
+                    "ts\tk\tred\tv_max\n" +
+                            "1970-01-01T00:01:00.000000Z\tk6\thohoho\t6\n" +
+                            "1970-01-01T00:01:10.000000Z\tk7\thohoho\t7\n" +
+                            "1970-01-01T00:01:20.000000Z\tk8\thohoho\t8\n",
+                    query,
+                    "QUERY PLAN\n" +
+                            "VirtualRecord\n" +
+                            "  functions: [ts,k,'hohoho',v_max]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts,k]\n" +
+                            "      values: [max(v)]\n" +
+                            "      filter: 5<v\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: table1\n"
+            );
+
+            query = "DECLARE @x := 1, @y := 2 select ts, @x as one, @y * v_max from " + VIEW1 + " where v_max > 6";
+            assertQueryAndPlan(
+                    "ts\tone\tcolumn\n" +
+                            "1970-01-01T00:01:10.000000Z\t1\t14\n" +
+                            "1970-01-01T00:01:20.000000Z\t1\t16\n",
+                    query,
+                    null,
+                    true,
+                    false,
+                    "QUERY PLAN\n" +
+                            "VirtualRecord\n" +
+                            "  functions: [ts,1,2*v_max]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [ts,v_max]\n" +
+                            "        Filter filter: 6<v_max\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts,k]\n" +
+                            "              values: [max(v)]\n" +
+                            "              filter: 5<v\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: table1\n"
+            );
+        });
+    }
+
+    @Test
     public void testSelectViewFields() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -69,6 +122,55 @@ public class ViewQueryTest extends AbstractViewTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: table1\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSelectWithDeclare() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 5";
+            createView(VIEW1, query1, TABLE1);
+
+            String query = VIEW1;
+            assertQueryAndPlan(
+                    "ts\tk\tv_max\n" +
+                            "1970-01-01T00:01:00.000000Z\tk6\t6\n" +
+                            "1970-01-01T00:01:10.000000Z\tk7\t7\n" +
+                            "1970-01-01T00:01:20.000000Z\tk8\t8\n",
+                    query,
+                    "QUERY PLAN\n" +
+                            "Async Group By workers: 1\n" +
+                            "  keys: [ts,k]\n" +
+                            "  values: [max(v)]\n" +
+                            "  filter: 5<v\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: table1\n"
+            );
+
+            query = "DECLARE @x := 1, @y := 2 select ts, @x as one, @y * v_max from " + VIEW1 + " where v_max > 6";
+            assertQueryAndPlan(
+                    "ts\tone\tcolumn\n" +
+                            "1970-01-01T00:01:10.000000Z\t1\t14\n" +
+                            "1970-01-01T00:01:20.000000Z\t1\t16\n",
+                    query,
+                    null,
+                    true,
+                    false,
+                    "QUERY PLAN\n" +
+                            "VirtualRecord\n" +
+                            "  functions: [ts,1,2*v_max]\n" +
+                            "    Filter filter: 6<v_max\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [ts,k]\n" +
+                            "          values: [max(v)]\n" +
+                            "          filter: 5<v\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: table1\n"
             );
         });
     }
