@@ -58,8 +58,9 @@ public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGener
     }
 
     private static class GenerateSeriesDoubleRecordCursor extends AbstractGenerateSeriesRecordCursor {
-        private final GenerateSeriesDoubleRecord record = new GenerateSeriesDoubleRecord();
-        private double curr;
+        private final GenerateSeriesDoubleRecord recordA = new GenerateSeriesDoubleRecord();
+        private final GenerateSeriesDoubleRecord recordB = new GenerateSeriesDoubleRecord();
+
         private double end;
         private double start;
         private double step;
@@ -70,19 +71,25 @@ public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGener
 
         @Override
         public Record getRecord() {
-            return record;
+            return recordA;
         }
 
         @Override
+        public Record getRecordB() {
+            return recordB;
+        }
+
+
+        @Override
         public boolean hasNext() {
-            curr += step;
-            if (Numbers.isNull(curr)) {
+            recordA.kahanInc(step);
+            if (Numbers.isNull(recordA.curr)) {
                 return false;
             }
             if (step >= 0) {
-                return curr <= end;
+                return recordA.curr <= end;
             } else {
-                return curr >= end;
+                return recordA.curr >= end;
             }
         }
 
@@ -109,13 +116,26 @@ public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGener
 
         @Override
         public void toTop() {
-            curr = start - step;
+            recordA.curr = start;
+            recordA.compensation = 0.0;
+            recordA.kahanInc(-step);
         }
 
-        private class GenerateSeriesDoubleRecord implements Record {
+        private static class GenerateSeriesDoubleRecord implements Record {
+            private double compensation;
+            private double curr;
+
             @Override
             public double getDouble(int col) {
                 return curr;
+            }
+
+            // Kahan summation
+            public void kahanInc(double step) {
+                final double y = step - compensation;
+                final double t = curr + y;
+                compensation = t - curr - y;
+                curr = t;
             }
         }
     }
