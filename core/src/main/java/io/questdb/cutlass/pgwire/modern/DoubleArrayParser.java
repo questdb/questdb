@@ -46,9 +46,9 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
     }
 
     @Override
-    public void appendToMemFlat(MemoryA mem) {
-        for (int i = 0, n = values.size(); i < n; i++) {
-            mem.putDouble(values.getQuick(i));
+    public void appendToMemFlat(MemoryA mem, int flatViewOffset, int flatViewLength) {
+        for (int i = 0, n = Math.min(values.size(), flatViewLength); i < n; i++) {
+            mem.putDouble(values.getQuick(i + flatViewOffset));
         }
     }
 

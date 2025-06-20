@@ -41,9 +41,9 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     private int size;
 
     @Override
-    public void appendToMemFlat(MemoryA mem) {
+    public void appendToMemFlat(MemoryA mem, int flatViewOffset, int flatViewLength) {
         assert ptr != 0;
-        mem.putBlockOfBytes(ptr, size);
+        mem.putBlockOfBytes(ptr + (long) flatViewOffset * Double.BYTES, (long) flatViewLength * Double.BYTES);
     }
 
     @Override
@@ -105,7 +105,7 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     }
 
     @Override
-    public double sumDouble() {
-        return Vect.sumDouble(this.ptr, length);
+    public double sumDouble(int flatViewOffset, int flatViewLength) {
+        return Vect.sumDouble(this.ptr + (long) flatViewOffset * Double.BYTES, flatViewLength);
     }
 }

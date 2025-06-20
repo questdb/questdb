@@ -68,13 +68,13 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
         public double getDouble(Record rec) {
             ArrayView view = arrayArg.getArray(rec);
             if (view.isNull() || view.isEmpty()) {
-                return 0;
+                return 0d;
             }
             if (view.isVanilla()) {
-                double res = view.flatView().sumDouble();
+                double res = view.flatView().sumDouble(view.getFlatViewOffset(), view.getFlatViewLength());
                 return Numbers.isNull(res) ? 0 : res;
             } else {
-                return sumDouble(view, 0, 0, 0);
+                return sumDouble(view, 0, 0, 0d);
             }
         }
 

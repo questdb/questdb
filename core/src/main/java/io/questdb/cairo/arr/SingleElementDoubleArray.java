@@ -47,8 +47,10 @@ public final class SingleElementDoubleArray extends ArrayView {
     private class SingleElementFlatArrayView implements FlatArrayView {
 
         @Override
-        public void appendToMemFlat(MemoryA mem) {
-            mem.putDouble(value);
+        public void appendToMemFlat(MemoryA mem, int flatViewOffset, int flatViewLength) {
+            if (flatViewLength == 1) {
+                mem.putDouble(value);
+            }
         }
 
         @Override
@@ -67,8 +69,8 @@ public final class SingleElementDoubleArray extends ArrayView {
         }
 
         @Override
-        public double sumDouble() {
-            return value;
+        public double sumDouble(int flatViewOffset, int flatViewLength) {
+            return flatViewLength == 0 ? 0d : value;
         }
     }
 }

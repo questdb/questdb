@@ -31,7 +31,7 @@ public interface FlatArrayView {
     /**
      * Appends the contents of this flat array to the supplied memory block.
      */
-    void appendToMemFlat(MemoryA mem);
+    void appendToMemFlat(MemoryA mem, int flatViewOffset, int flatViewLength);
 
     double getDoubleAtAbsIndex(int elemIndex);
 
@@ -42,10 +42,10 @@ public interface FlatArrayView {
      */
     int length();
 
-    default double sumDouble() {
-        double sum = 0;
-        for (int i = 0, n = length(); i < n; i++) {
-            double v = getDoubleAtAbsIndex(i);
+    default double sumDouble(int flatViewOffset, int flatViewLength) {
+        double sum = 0d;
+        for (int i = 0; i < flatViewLength; i++) {
+            double v = getDoubleAtAbsIndex(i + flatViewOffset);
             if (Numbers.isFinite(v)) {
                 sum += v;
             }
