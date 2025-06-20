@@ -385,11 +385,16 @@ public class SqlOptimiser implements Mutable {
         if (validatingModel != null) {
             QueryModel nestedValidatingModel = validatingModel.getNestedModel();
             final CharSequence refColumn = column.getAst().token;
+            int refColumnPos = column.getAst().position;
             final int dot = Chars.indexOfLastUnquoted(refColumn, '.');
-            try {
-                validateColumnAndGetModelIndex(validatingModel, refColumn, dot, column.getAst().position);
-            } catch (SqlException e) {
-                validateColumnAndGetModelIndex(nestedValidatingModel, refColumn, dot, column.getAst().position);
+            if (!refColumn.equals(column.getAlias())) {
+                try {
+                    validateColumnAndGetModelIndex(validatingModel, refColumn, dot, refColumnPos);
+                } catch (SqlException e) {
+                    validateColumnAndGetModelIndex(nestedValidatingModel, refColumn, dot, refColumnPos);
+                }
+            } else {
+                validateColumnAndGetModelIndex(nestedValidatingModel, refColumn, dot, refColumnPos);
             }
             // when we have only one model, e.g. this is not a join,
             // and there is a table alias to lookup column;
