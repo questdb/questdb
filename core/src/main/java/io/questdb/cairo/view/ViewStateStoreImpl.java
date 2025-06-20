@@ -39,7 +39,7 @@ public class ViewStateStoreImpl implements ViewStateStore {
     private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<ViewState> stateByTableDirName = new ConcurrentHashMap<>();
     private final ThreadLocal<ViewCompilerTask> taskHolder = new ThreadLocal<>(ViewCompilerTask::new);
-    private final Queue<ViewCompilerTask> taskQueue = new ConcurrentQueue<>(ViewCompilerTask::new);
+    private final Queue<ViewCompilerTask> taskQueue = ConcurrentQueue.createConcurrentQueue(ViewCompilerTask::new);
 
     // todo: add telemetry
     //private final Telemetry<TelemetryViewTask> telemetry;
