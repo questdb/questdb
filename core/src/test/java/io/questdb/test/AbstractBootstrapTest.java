@@ -56,18 +56,18 @@ import static io.questdb.PropertyKey.*;
 
 public abstract class AbstractBootstrapTest extends AbstractTest {
     protected static final String CHARSET = "UTF8";
-    protected static int randomPortOffset =(int) (Os.currentTimeMicros() % 100);
-    protected static final int HTTP_MIN_PORT = 9011 + randomPortOffset;
-    protected static final int HTTP_PORT = 9010 + randomPortOffset;
     protected static final int ILP_BUFFER_SIZE = 4 * 1024;
-    protected static final int ILP_PORT = 9009 + randomPortOffset;
     protected static final Properties PG_CONNECTION_PROPERTIES = new Properties();
-    protected static final int PG_PORT = 8822 + randomPortOffset;
-    protected static final String PG_CONNECTION_URI = getPgConnectionUri(PG_PORT);
     protected static int ILP_WORKER_COUNT = 1;
     protected static Path auxPath;
     protected static Path dbPath;
     protected static int dbPathLen;
+    protected static int randomPortOffset = (int) (Os.currentTimeMicros() % 100);
+    protected static final int HTTP_MIN_PORT = 9011 + randomPortOffset;
+    protected static final int HTTP_PORT = 9010 + randomPortOffset;
+    protected static final int ILP_PORT = 9009 + randomPortOffset;
+    protected static final int PG_PORT = 8822 + randomPortOffset;
+    protected static final String PG_CONNECTION_URI = getPgConnectionUri(PG_PORT);
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
