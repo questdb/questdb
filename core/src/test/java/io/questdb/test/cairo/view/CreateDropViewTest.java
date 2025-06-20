@@ -39,6 +39,18 @@ import static org.junit.Assert.assertNull;
 public class CreateDropViewTest extends AbstractViewTest {
 
     @Test
+    public void testCreateConstantView() throws Exception {
+        final String query1 = "select 42 as col";
+        createView(VIEW1, query1);
+
+        assertQueryNoLeakCheck(
+                "col\n" +
+                        "42\n",
+                VIEW1
+        );
+    }
+
+    @Test
     public void testCreateDropConcurrent() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -258,6 +270,23 @@ public class CreateDropViewTest extends AbstractViewTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: table1\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDeclareCreateView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE VIEW foo AS (DECLARE @x := 1, @y := 2 SELECT @x + @y)");
+            assertSql(
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
+                            "foo\tDECLARE @x := 1, @y := 2 SELECT @x + @y\tfoo~1\t\tvalid\t\n",
+                    "views()"
+            );
+            assertSql(
+                    "column\n" +
+                            "3\n",
+                    "foo"
             );
         });
     }

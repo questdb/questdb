@@ -24,8 +24,10 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.griffin.model.ExecutionModel;
+import org.junit.Before;
 import org.junit.Test;
 
 public class DeclareTest extends AbstractSqlParserTest {
@@ -214,6 +216,13 @@ public class DeclareTest extends AbstractSqlParserTest {
             "  timestamp TIMESTAMP\n" +
             ") timestamp (timestamp) PARTITION BY DAY WAL;";
 
+    @Before
+    public void setUp() {
+        // enable views
+        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
+        super.setUp();
+    }
+
     @Test
     public void testDeclareCreateAsSelect() throws Exception {
         assertMemoryLeak(() -> {
@@ -222,6 +231,14 @@ public class DeclareTest extends AbstractSqlParserTest {
             assertModel("create batch 1000000 table foo as (select-virtual 1 + 2 column from (long_sequence(1)))",
                     "CREATE TABLE foo AS (DECLARE @x := 1, @y := 2 SELECT @x + @y)", ExecutionModel.CREATE_TABLE);
         });
+    }
+
+    @Test
+    public void testDeclareCreateView() throws Exception {
+        assertMemoryLeak(() ->
+                assertModel("create view foo as (select-virtual 1 + 2 column from (long_sequence(1)))",
+                        "CREATE VIEW foo AS (DECLARE @x := 1, @y := 2 SELECT @x + @y)", ExecutionModel.CREATE_VIEW)
+        );
     }
 
     @Test
