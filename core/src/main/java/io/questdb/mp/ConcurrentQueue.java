@@ -121,9 +121,13 @@ public class ConcurrentQueue<T> implements Queue<T> {
     }
 
     /**
-     * Gets the number of items in the queue.
+     * Appends the item to the tail of the queue. Depending on the {@linkplain
+     * ConcurrentSegmentManipulator segment manipulator} in use, it will either retain
+     * the supplied object, or only copy its state to its internal instance of {@code T}.
+     * If the queue wasn't constructed with an explicit instance of the manipulator, the
+     * default behavior is to copy the state and not retain the supplied object.
      *
-     * @param item The object to add to the end of the "ConcurrentQueue".
+     * @param item the item to enqueue
      */
     public void enqueue(T item) {
         // Try to enqueue to the current tail.
@@ -135,24 +139,48 @@ public class ConcurrentQueue<T> implements Queue<T> {
     }
 
     /**
-     * Attempts to remove and return the object at the beginning of the ConcurrentQueue.
+     * Attempts to remove the item at the head of this queue and copy it into the supplied
+     * target holder.
+     * <p>
+     * <strong>NOTE:</strong> use this method only on a queue that was constructed without
+     * a custom {@linkplain ConcurrentSegmentManipulator segment manipulator}. The built-in
+     * manipulator copies the state of the item in the queue to the supplied target, whereas
+     * using a custom manipulator indicates some other behavior, such as removing the object
+     * itself from the queue. Since this method doesn't return that object, it will be lost.
+     * If this is the case, use {@link #tryDequeueValue}.
      *
-     * @param result When this method returns, if the operation was successful, param "result"
-     *               contains the object removed. If no object was available to be removed, the value is unspecified.
-     * @return true if an element was removed and returned from the beginning of the ConcurrentQueue successfully;
-     * otherwise, false.
+     * @param target When this method returns true, this object contains the removed item.
+     *               If the method returns false, the state of the target is unspecified.
+     * @return true if an element was removed from the head of the queue and placed into
+     * the target holder; false otherwise.
      */
-    public boolean tryDequeue(T result) {
-        T val = tryDequeueValue(result);
+    public boolean tryDequeue(T target) {
+        T val = tryDequeueValue(target);
         return val != null;
     }
 
-    public T tryDequeueValue(T container) {
+    /**
+     * Attempts to remove the item at the head of the queue and return it. If there was no
+     * item to remove, it returns {@code null}. If it returns a non-null value, the
+     * returned object may or may not be the supplied {@code maybeTarget}:
+     * <ul>
+     *     <li>if it's the supplied {@code maybeTarget}, the queue still holds the removed
+     *     object, and it only copied its state to the target.</li>
+     *     <li>if not, the returned object itself was in the queue, and the queue no longer
+     *     holds it.</li>
+     * </ul>
+     * <p>
+     * This behavior depends on the {@linkplain ConcurrentSegmentManipulator segment manipulator}
+     * the queue was constructed with. If the queue wasn't constructed with an explicit
+     * instance of the manipulator, the default behavior is to copy the state into the target
+     * and return it.
+     */
+    public T tryDequeueValue(T maybeTarget) {
         // Get the current head
         ConcurrentQueueSegment<T> head = this.head;
 
         // Try to take. If we're successful, we're done.
-        T val = head.tryDequeue(container);
+        T val = head.tryDequeue(maybeTarget);
         if (val != null) {
             return val;
         }
@@ -165,7 +193,7 @@ public class ConcurrentQueue<T> implements Queue<T> {
         }
 
         // slow path that needs to fix up segments
-        return tryDequeueSlow(container);
+        return tryDequeueSlow(maybeTarget);
     }
 
     // Adds to the end of the queue, adding a new segment if necessary.
@@ -240,9 +268,9 @@ public class ConcurrentQueue<T> implements Queue<T> {
 
     private static class ValueHolderManipulator<T extends ValueHolder<T>> implements ConcurrentSegmentManipulator<T> {
         @Override
-        public T dequeue(ConcurrentQueueSegment.Slot<T>[] slots, int slotsIndex, T item) {
-            slots[slotsIndex].item.copyTo(item);
-            return item;
+        public T dequeue(ConcurrentQueueSegment.Slot<T>[] slots, int slotsIndex, T target) {
+            slots[slotsIndex].item.copyTo(target);
+            return target;
         }
 
         @Override

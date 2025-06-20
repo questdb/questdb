@@ -113,10 +113,10 @@ final class ConcurrentQueueSegment<T> {
     /**
      * Attempts to dequeue an element from the queue.
      *
-     * @param container The item holder to dequeue into.
-     * @return instace of an element was dequeued; otherwise, null.
+     * @param target the item holder to dequeue into
+     * @return the element that was dequeued, or null if no element was dequeued.
      */
-    public T tryDequeue(T container) {
+    public T tryDequeue(T target) {
         Slot<T>[] slots = this.slots;
 
         // Loop in case of contention...
@@ -139,7 +139,7 @@ final class ConcurrentQueueSegment<T> {
                 if (HEAD.compareAndSet(headAndTail, currentHead, currentHead + 1)) {
                     // Successfully reserved the slot. Note that after the above compareAndSet, other threads
                     // trying to dequeue from this slot will end up spinning until we do the subsequent write.
-                    T val = queueManipulator.dequeue(slots, slotsIndex, container);
+                    T val = queueManipulator.dequeue(slots, slotsIndex, target);
                     slots[slotsIndex].sequenceNumber = currentHead + slots.length;
                     return val;
                 }
