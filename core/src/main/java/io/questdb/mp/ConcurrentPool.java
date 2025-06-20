@@ -29,10 +29,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class ConcurrentPool<T> {
     @SuppressWarnings("rawtypes")
-    public final static ConcurrentSegmentManipulator POOL_MANIPULATOR = new ConcurrentSegmentManipulator() {
+    public static final ConcurrentSegmentManipulator POOL_MANIPULATOR = new ConcurrentSegmentManipulator() {
 
         @Override
-        public Object dequeue(ConcurrentQueueSegment.Slot[] slots, int slotsIndex, Object item) {
+        public Object dequeue(ConcurrentQueueSegment.Slot[] slots, int slotsIndex, Object unused) {
             var val = slots[slotsIndex].item;
             slots[slotsIndex].item = null;
             return val;
