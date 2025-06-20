@@ -38,6 +38,13 @@ public class SimpleMapValuePeeker {
         this.nextRecord = nextRecord;
     }
 
+    public void clear() {
+        currentRecord.clear();
+        nextRecord.clear();
+        nextHasNext = false;
+        nextLocalEpoch = -1;
+    }
+
     Record peek() {
         final long localEpochTemp = cursor.localEpoch;
         nextHasNext = cursor.notKeyedLoop(nextRecord);

@@ -30,6 +30,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 
 public class DoubleConstant extends DoubleFunction implements ConstantFunction {
     public static final DoubleConstant NULL = new DoubleConstant(Double.NaN);
+    public static final DoubleConstant ONE = new DoubleConstant(1.0);
 
     private final double value;
 
@@ -37,6 +38,7 @@ public class DoubleConstant extends DoubleFunction implements ConstantFunction {
         this.value = value;
     }
 
+    @SuppressWarnings("ExpressionComparedToItself")
     public static DoubleConstant newInstance(double value) {
         return value == value ? new DoubleConstant(value) : DoubleConstant.NULL;
     }
@@ -46,6 +48,7 @@ public class DoubleConstant extends DoubleFunction implements ConstantFunction {
         return value;
     }
 
+    @SuppressWarnings("ExpressionComparedToItself")
     @Override
     public boolean isNullConstant() {
         // NaN is used as a marker for NULL

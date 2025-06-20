@@ -208,6 +208,11 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return false;
     }
 
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
+    default boolean isConstantOrRuntimeConstant() {
+        return isConstant() || isRuntimeConstant();
+    }
+
     default boolean isNonDeterministic() {
         return false;
     }
