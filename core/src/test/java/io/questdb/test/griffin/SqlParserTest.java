@@ -4600,6 +4600,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testFunctionAlias() throws SqlException {
+        assertQuery("select-virtual a + 1 column, rnd_int() a from (long_sequence(1))",
+                "select a + 1, rnd_int() a from long_sequence(1)"
+        );
+    }
+
+    @Test
     public void testFunctionWithoutAlias() throws SqlException {
         assertQuery(
                 "select-virtual f(x) f, x from (select [x] from x where x > 1)",
@@ -5601,6 +5608,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 11,
                 "Invalid column",
                 modelOf("tab").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testInvalidColumnInSelect() throws Exception {
+        assertSyntaxError(
+                "select good, bad from tango", 1, "Invalid column",
+                modelOf("tango").col("good", ColumnType.INT)
         );
     }
 
