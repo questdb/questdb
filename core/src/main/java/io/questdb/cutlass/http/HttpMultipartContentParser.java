@@ -95,8 +95,8 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
      * @param boundary boundary value
      */
     public void of(DirectUtf8Sequence boundary) {
-        if (boundary.startsWith("\"") && boundary.endsWith("\"")) {
-            boundary = boundary.substring(1, boundary.length() - 1);
+        if (boundary.byteAt(0) == '"' && boundary.byteAt(boundary.size() - 1) == '"') {
+            boundary = boundary.subSequence(1, boundary.size() - 1);
         }
         this.boundary = boundary;
         this.boundaryLen = boundary.size();
