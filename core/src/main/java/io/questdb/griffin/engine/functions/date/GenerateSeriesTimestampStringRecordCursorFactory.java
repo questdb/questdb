@@ -56,25 +56,27 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
     }
 
     @Override
+    public int getScanDirection() {
+        if (cursor != null && cursor.stride != 0) {
+            return cursor.stride > 0 ? SCAN_DIRECTION_FORWARD : SCAN_DIRECTION_BACKWARD;
+        }
+        return SCAN_DIRECTION_FORWARD;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         if (cursor == null) {
             return false;
         } else {
-            switch (cursor.unit) {
-                case 'M':
-                case 'y':
-                    return false;
-                default:
-                    return true;
-            }
+            return cursor.supportsRandomAccess();
         }
     }
 
     private static class GenerateSeriesTimestampStringRecordCursor extends AbstractGenerateSeriesRecordCursor {
-        private final GenerateSeriesTimestampStringRecord record = new GenerateSeriesTimestampStringRecord();
+        private final GenerateSeriesTimestampStringRecord recordA = new GenerateSeriesTimestampStringRecord();
+        private final GenerateSeriesTimestampStringRecord recordB = new GenerateSeriesTimestampStringRecord();
         public int stride;
         private TimestampAddFunctionFactory.LongAddIntFunction adder;
-        private long curr;
         private long end;
         private long start;
         private char unit;
@@ -93,19 +95,24 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
 
         @Override
         public Record getRecord() {
-            return record;
+            return recordA;
+        }
+
+        @Override
+        public Record getRecordB() {
+            if (supportsRandomAccess()) {
+                return recordB;
+            }
+            throw new UnsupportedOperationException();
         }
 
         @Override
         public boolean hasNext() {
-            curr = adder.add(curr, stride);
-            if (curr == Long.MIN_VALUE) {
-                return false;
-            }
+            recordA.of(adder.add(recordA.curr, stride));
             if (stride >= 0) {
-                return curr <= end;
+                return recordA.curr <= end;
             } else {
-                return curr >= end;
+                return recordA.curr >= end;
             }
         }
 
@@ -153,6 +160,16 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         }
 
         @Override
+        public void recordAt(Record record, long atRowId) {
+            if (supportsRandomAccess()) {
+                long micros = adjustStride();
+                ((GenerateSeriesTimestampStringRecord) record).of(start + micros * (atRowId - 1));
+                return;
+            }
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public long size() {
             long micros = stride;
             switch (unit) {
@@ -183,19 +200,78 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         }
 
         @Override
+        public void skipRows(Counter rowCount) {
+            if (supportsRandomAccess()) {
+                long newRowId = recordA.getRowId() + rowCount.get()
+                        - 1 // one-indexed
+                        - 1 // we increment at the start of hasNext()
+                        ;
+                recordAt(recordA, newRowId);
+            } else {
+                super.skipRows(rowCount);
+            }
+        }
+
+        public boolean supportsRandomAccess() {
+            switch (unit) {
+                case 'M':
+                case 'y':
+                    return false;
+                default:
+                    return true;
+            }
+        }
+
+        @Override
         public void toTop() {
-            curr = adder.add(start, -stride);
+            recordA.of(adder.add(start, -stride));
+        }
+
+        private long adjustStride() {
+            switch (unit) {
+                case 'w':
+                    return stride * Timestamps.WEEK_MICROS;
+                case 'd':
+                    return stride * Timestamps.DAY_MICROS;
+                case 'h':
+                    return stride * Timestamps.HOUR_MICROS;
+                case 'm':
+                    return stride * Timestamps.MINUTE_MICROS;
+                case 's':
+                    return stride * Timestamps.SECOND_MICROS;
+                case 'T':
+                    return stride * Timestamps.MILLI_MICROS;
+                case 'u':
+                    return stride;
+                default:
+                    throw new UnsupportedOperationException();
+            }
         }
 
         private class GenerateSeriesTimestampStringRecord implements Record {
+
+            private long curr;
+
+            @Override
+            public long getLong(int col) {
+                return curr;
+            }
+
             @Override
             public long getRowId() {
-                return Math.abs(start - curr) / Math.abs(stride);
+                if (supportsRandomAccess()) {
+                    return Math.abs(start - curr) / Math.abs(adjustStride()) + 1;
+                }
+                throw new UnsupportedOperationException();
             }
 
             @Override
             public long getTimestamp(int col) {
                 return curr;
+            }
+
+            public void of(long value) {
+                curr = value;
             }
         }
     }

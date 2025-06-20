@@ -59,7 +59,6 @@ public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGener
 
     private static class GenerateSeriesDoubleRecordCursor extends AbstractGenerateSeriesRecordCursor {
         private final GenerateSeriesDoubleRecord recordA = new GenerateSeriesDoubleRecord();
-        private final GenerateSeriesDoubleRecord recordB = new GenerateSeriesDoubleRecord();
 
         private double end;
         private double start;
@@ -72,11 +71,6 @@ public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGener
         @Override
         public Record getRecord() {
             return recordA;
-        }
-
-        @Override
-        public Record getRecordB() {
-            return recordB;
         }
 
 

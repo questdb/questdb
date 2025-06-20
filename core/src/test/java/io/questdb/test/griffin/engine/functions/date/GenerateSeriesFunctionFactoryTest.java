@@ -47,17 +47,17 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
         assertQuery("generate_series\n" +
                         "-5.2\n" +
                         "-3.9000000000000004\n" +
-                        "-2.6000000000000005\n" +
-                        "-1.3000000000000005\n" +
-                        "-4.440892098500626E-16\n" +
-                        "1.2999999999999996\n" +
-                        "2.5999999999999996\n" +
-                        "3.8999999999999995\n" +
-                        "5.199999999999999\n",
+                        "-2.6\n" +
+                        "-1.3\n" +
+                        "0.0\n" +
+                        "1.3\n" +
+                        "2.6\n" +
+                        "3.9000000000000004\n" +
+                        "5.2\n",
                 "generate_series(:d1, :d2, :d3);",
                 null,
                 false,
-                true);
+                false);
 
         bindVariableService.setDouble("d3", 2.8);
 
@@ -69,7 +69,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                 "generate_series(:d1, :d2, :d3);",
                 null,
                 false,
-                true);
+                false);
     }
 
     @Test
@@ -89,7 +89,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                 "generate_series(-5.0, 5.0);",
                 null,
                 false,
-                true);
+                false);
     }
 
     @Test
@@ -115,7 +115,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                 "generate_series(-5.0, 5.0, -2.0);",
                 null,
                 false,
-                true);
+                false);
     }
 
     @Test
@@ -130,7 +130,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                 "generate_series(-5.0, 5.0, -2.0);",
                 null,
                 false,
-                true);
+                false);
     }
 
     @Test
@@ -144,7 +144,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                 "generate_series(-5, 5, -2.4);",
                 null,
                 false,
-                true);
+                false);
     }
 
     @Test
@@ -154,7 +154,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                 "generate_series(2.0, 2.0, 3.0);",
                 null,
                 false,
-                true);
+                false);
     }
 
     @Test
@@ -169,7 +169,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                 "generate_series(-5.0, 5.0, 2.0);",
                 null,
                 false,
-                true);
+                false);
     }
 
     @Test
@@ -184,7 +184,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                 "generate_series(5.0, -5.0, 2.0);",
                 null,
                 false,
-                true);
+                false);
     }
 
     @Test
@@ -198,7 +198,63 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                 "generate_series(-5.0, 5.0, 2.4);",
                 null,
                 false,
+                false);
+    }
+
+    @Test
+    public void testDoubleWithLimit() throws Exception {
+        assertQuery("generate_series\n" +
+                        "1.0\n",
+                "generate_series(1d, 10000000d) LIMIT 1",
+                null,
+                false,
                 true);
+        assertQuery("generate_series\n" +
+                        "1.0E7\n",
+                "generate_series(1d, 10000000d) LIMIT -1",
+                null,
+                false,
+                true);
+    }
+
+    @Test
+    public void testDoubleWithOrdering() throws Exception {
+        assertQuery(
+                "generate_series\n" +
+                        "5.0\n" +
+                        "4.0\n" +
+                        "3.0\n" +
+                        "2.0\n" +
+                        "1.0\n" +
+                        "0.0\n" +
+                        "-1.0\n" +
+                        "-2.0\n" +
+                        "-3.0\n" +
+                        "-4.0\n" +
+                        "-5.0\n",
+                "generate_series(-5.0d, 5.0d, 1.0d) ORDER BY generate_series DESC;",
+                null,
+                true,
+                false
+        );
+        assertQuery(
+                "generate_series\n" +
+                        "5.0\n" +
+                        "4.0\n" +
+                        "3.0\n" +
+                        "2.0\n" +
+                        "1.0\n" +
+                        "0.0\n" +
+                        "-1.0\n" +
+                        "-2.0\n" +
+                        "-3.0\n" +
+                        "-4.0\n" +
+                        "-5.0\n",
+                "generate_series(-5.0d, 5.0d, -1.0d)",
+                null,
+                false,
+                false
+        );
     }
 
     @Test
@@ -221,7 +277,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "5\n",
                 "generate_series(:l1, :l2, :l3);",
                 null,
-                false,
+                true,
                 true);
 
         bindVariableService.setLong("l3", 3);
@@ -233,7 +289,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "4\n",
                 "generate_series(:l1, :l2, :l3);",
                 null,
-                false,
+                true,
                 true);
     }
 
@@ -253,7 +309,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "5\n",
                 "generate_series(-5, 5);",
                 null,
-                false,
+                true,
                 true);
     }
 
@@ -279,7 +335,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "-5\n",
                 "generate_series(-5, 5, -2);",
                 null,
-                false,
+                true,
                 true);
     }
 
@@ -294,7 +350,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "-5\n",
                 "generate_series(5, -5, -2);",
                 null,
-                false,
+                true,
                 true);
     }
 
@@ -307,7 +363,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "-4\n",
                 "generate_series(-5, 5, -3);",
                 null,
-                false,
+                true,
                 true);
     }
 
@@ -317,7 +373,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "2\n",
                 "generate_series(2, 2, 3);",
                 null,
-                false,
+                true,
                 true);
     }
 
@@ -332,7 +388,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "5\n",
                 "generate_series(-5, 5, 2);",
                 null,
-                false,
+                true,
                 true);
     }
 
@@ -347,7 +403,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "5\n",
                 "generate_series(5, -5, 2);",
                 null,
-                false,
+                true,
                 true);
     }
 
@@ -360,8 +416,64 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "4\n",
                 "generate_series(-5, 5, 3);",
                 null,
-                false,
+                true,
                 true);
+    }
+
+    @Test
+    public void testLongWithLimit() throws Exception {
+        assertQuery("generate_series\n" +
+                        "1\n",
+                "generate_series(1L, 10000000L) LIMIT 1",
+                null,
+                true,
+                true);
+        assertQuery("generate_series\n" +
+                        "10000000\n",
+                "generate_series(1L, 10000000L) LIMIT -1",
+                null,
+                true,
+                true);
+    }
+
+    @Test
+    public void testLongWithOrdering() throws Exception {
+        assertQuery(
+                "generate_series\n" +
+                        "5\n" +
+                        "4\n" +
+                        "3\n" +
+                        "2\n" +
+                        "1\n" +
+                        "0\n" +
+                        "-1\n" +
+                        "-2\n" +
+                        "-3\n" +
+                        "-4\n" +
+                        "-5\n",
+                "generate_series(-5, 5, 1) ORDER BY generate_series DESC;",
+                null,
+                true,
+                true
+        );
+        assertQuery(
+                "generate_series\n" +
+                        "5\n" +
+                        "4\n" +
+                        "3\n" +
+                        "2\n" +
+                        "1\n" +
+                        "0\n" +
+                        "-1\n" +
+                        "-2\n" +
+                        "-3\n" +
+                        "-4\n" +
+                        "-5\n",
+                "generate_series(-5, 5, -1)",
+                null,
+                true,
+                true
+        );
     }
 
     @Test
@@ -384,7 +496,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1970-01-01T00:00:00.000005Z\n",
                 "generate_series(:t1, :t2, :t3);",
                 "generate_series",
-                false,
+                true,
                 true);
 
         bindVariableService.setLong("t3", 3);
@@ -396,7 +508,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1970-01-01T00:00:00.000004Z\n",
                 "generate_series(:t1, :t2, :t3);",
                 "generate_series",
-                false,
+                true,
                 true);
     }
 
@@ -422,7 +534,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1969-12-31T23:59:59.999995Z\n",
                 "generate_series((-5)::timestamp, 5::timestamp, (-2)::timestamp);",
                 "generate_series###DESC",
-                false,
+                true,
                 true);
     }
 
@@ -437,7 +549,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1969-12-31T23:59:59.999995Z\n",
                 "generate_series(5::timestamp, (-5)::timestamp, (-2)::timestamp);",
                 "generate_series###DESC",
-                false,
+                true,
                 true);
     }
 
@@ -450,7 +562,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1969-12-31T23:59:59.999996Z\n",
                 "generate_series((-5)::timestamp, 5::timestamp, (-3)::timestamp);",
                 "generate_series###DESC",
-                false,
+                true,
                 true);
     }
 
@@ -460,7 +572,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1970-01-01T00:00:00.000002Z\n",
                 "generate_series(2::timestamp, 2::timestamp, 3::timestamp);",
                 "generate_series",
-                false,
+                true,
                 true);
     }
 
@@ -475,7 +587,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1970-01-01T00:00:00.000005Z\n",
                 "generate_series((-5)::timestamp, 5::timestamp, 2::timestamp);",
                 "generate_series",
-                false,
+                true,
                 true);
     }
 
@@ -490,7 +602,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1970-01-01T00:00:00.000005Z\n",
                 "generate_series(5::timestamp, (-5)::timestamp, 2::timestamp);",
                 "generate_series",
-                false,
+                true,
                 true);
     }
 
@@ -503,7 +615,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1970-01-01T00:00:00.000004Z\n",
                 "generate_series((-5)::timestamp, 5::timestamp, 3::timestamp);",
                 "generate_series",
-                false,
+                true,
                 true);
     }
 
@@ -523,7 +635,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "2025-01-31T00:00:00.000000Z\n",
                 "generate_series(:t1, :t2, :t3);",
                 "generate_series",
-                false,
+                true,
                 true);
 
         bindVariableService.setStr("t3", "1w");
@@ -536,10 +648,9 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "2025-01-29T00:00:00.000000Z\n",
                 "generate_series(:t1, :t2, :t3);",
                 "generate_series",
-                false,
+                true,
                 true);
     }
-
 
     @Test
     public void testTimestampStringGenerationNulls() throws Exception {
@@ -563,7 +674,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1969-12-31T23:59:59.999995Z\n",
                 "generate_series((-5)::timestamp, 5::timestamp, (-2)::timestamp);",
                 "generate_series###DESC",
-                false,
+                true,
                 true);
     }
 
@@ -578,7 +689,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1969-12-31T23:59:59.999995Z\n",
                 "generate_series(5::timestamp, (-5)::timestamp, (-2)::timestamp);",
                 "generate_series###DESC",
-                false,
+                true,
                 true);
     }
 
@@ -591,7 +702,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1969-12-31T23:59:59.999996Z\n",
                 "generate_series((-5)::timestamp, 5::timestamp, (-3)::timestamp);",
                 "generate_series###DESC",
-                false,
+                true,
                 true);
     }
 
@@ -601,7 +712,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1970-01-01T00:00:00.000002Z\n",
                 "generate_series(2::timestamp, 2::timestamp, '1u');",
                 "generate_series",
-                false,
+                true,
                 true);
     }
 
@@ -667,7 +778,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "2025-02-01T00:00:00.000000Z\n",
                 "generate_series('2025-01-01', '2025-02-01', '1d');",
                 "generate_series",
-                false,
+                true,
                 true);
     }
 
@@ -683,7 +794,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "2025-01-31T00:00:00.000000Z\n",
                 "generate_series('2025-02-01', '2025-01-01', '5d');",
                 "generate_series",
-                false,
+                true,
                 true);
     }
 
@@ -699,7 +810,101 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "2025-01-31T00:00:00.000000Z\n",
                 "generate_series('2025-01-01', '2025-02-01', '5d');",
                 "generate_series",
-                false,
+                true,
                 true);
+    }
+
+    @Test
+    public void testTimestampStringWithLimit() throws Exception {
+        assertQuery("generate_series\n" +
+                        "1970-01-01T00:00:00.000001Z\n",
+                "generate_series(1::timestamp, 10000000::timestamp, '1u') LIMIT 1",
+                "generate_series",
+                true,
+                true);
+        assertQuery("generate_series\n" +
+                        "1970-01-01T00:00:10.000000Z\n",
+                "generate_series(1::timestamp, 10000000::timestamp, '1u') LIMIT -1",
+                "generate_series",
+                true,
+                true);
+    }
+
+    @Test
+    public void testTimestampStringWithOrdering() throws Exception {
+        assertQuery(
+                "generate_series\n" +
+                        "1970-01-01T00:00:00.000005Z\n" +
+                        "1970-01-01T00:00:00.000004Z\n" +
+                        "1970-01-01T00:00:00.000003Z\n" +
+                        "1970-01-01T00:00:00.000002Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1969-12-31T23:59:59.999999Z\n" +
+                        "1969-12-31T23:59:59.999998Z\n" +
+                        "1969-12-31T23:59:59.999997Z\n" +
+                        "1969-12-31T23:59:59.999996Z\n" +
+                        "1969-12-31T23:59:59.999995Z\n",
+                "generate_series((-5)::timestamp, 5::timestamp, '1u') ORDER BY generate_series DESC;",
+                "generate_series###DESC",
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampWithLimit() throws Exception {
+        assertQuery("generate_series\n" +
+                        "1970-01-01T00:00:00.000001Z\n",
+                "generate_series(1::timestamp, 10000000::timestamp, 1) LIMIT 1",
+                "generate_series",
+                true,
+                true);
+        assertQuery("generate_series\n" +
+                        "1970-01-01T00:00:10.000000Z\n",
+                "generate_series(1::timestamp, 10000000::timestamp, 1) LIMIT -1",
+                "generate_series",
+                true,
+                true);
+    }
+
+    @Test
+    public void testTimestampWithOrdering() throws Exception {
+        assertQuery(
+                "generate_series\n" +
+                        "1970-01-01T00:00:00.000005Z\n" +
+                        "1970-01-01T00:00:00.000004Z\n" +
+                        "1970-01-01T00:00:00.000003Z\n" +
+                        "1970-01-01T00:00:00.000002Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1969-12-31T23:59:59.999999Z\n" +
+                        "1969-12-31T23:59:59.999998Z\n" +
+                        "1969-12-31T23:59:59.999997Z\n" +
+                        "1969-12-31T23:59:59.999996Z\n" +
+                        "1969-12-31T23:59:59.999995Z\n",
+                "generate_series((-5)::timestamp, 5::timestamp, 1::timestamp) ORDER BY generate_series DESC;",
+                "generate_series###DESC",
+                true,
+                true
+        );
+        assertQuery(
+                "generate_series\n" +
+                        "1970-01-01T00:00:00.000005Z\n" +
+                        "1970-01-01T00:00:00.000004Z\n" +
+                        "1970-01-01T00:00:00.000003Z\n" +
+                        "1970-01-01T00:00:00.000002Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1969-12-31T23:59:59.999999Z\n" +
+                        "1969-12-31T23:59:59.999998Z\n" +
+                        "1969-12-31T23:59:59.999997Z\n" +
+                        "1969-12-31T23:59:59.999996Z\n" +
+                        "1969-12-31T23:59:59.999995Z\n",
+                "generate_series((-5)::timestamp, (5)::timestamp, -1::timestamp)",
+                "generate_series###DESC",
+                true,
+                true
+        );
     }
 }

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
@@ -60,8 +61,8 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
     }
 
     private static class GenerateSeriesTimestampRecordCursor extends AbstractGenerateSeriesRecordCursor {
-        private final GenerateSeriesTimestampRecord record = new GenerateSeriesTimestampRecord();
-        private long curr;
+        private final GenerateSeriesTimestampRecord recordA = new GenerateSeriesTimestampRecord();
+        private final GenerateSeriesTimestampRecord recordB = new GenerateSeriesTimestampRecord();
         private long end;
         private long start;
         private long step;
@@ -72,19 +73,22 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
 
         @Override
         public Record getRecord() {
-            return record;
+            return recordA;
         }
 
         @Override
+        public Record getRecordB() {
+            return recordB;
+        }
+
+
+        @Override
         public boolean hasNext() {
-            curr += step;
-            if (curr == Long.MIN_VALUE) {
-                return false;
-            }
+            recordA.curr += step;
             if (step >= 0) {
-                return curr <= end;
+                return recordA.curr <= end;
             } else {
-                return curr >= end;
+                return recordA.curr >= end;
             }
         }
 
@@ -105,24 +109,50 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
         }
 
         @Override
+        public void recordAt(Record record, long atRowId) {
+            ((GenerateSeriesTimestampRecord) record).curr = start + step * (atRowId - 1);
+        }
+
+        @Override
         public long size() {
             return (Math.abs(end - start) / Math.abs(step)) + 1;
         }
 
+
+        @Override
+        public void skipRows(Counter rowCount) throws DataUnavailableException {
+            long newRowId = recordA.getRowId() + rowCount.get()
+                    - 1 // one-indexed
+                    - 1 // we increment at the start of hasNext()
+                    ;
+            recordAt(recordA, newRowId);
+        }
+
         @Override
         public void toTop() {
-            curr = start - step;
+            recordA.of(start - step);
         }
 
         private class GenerateSeriesTimestampRecord implements Record {
+            private long curr;
+
+            @Override
+            public long getLong(int col) {
+                return curr;
+            }
+
             @Override
             public long getRowId() {
-                return Math.abs(start - curr) / Math.abs(step);
+                return Math.abs(start - curr) / Math.abs(step) + 1;
             }
 
             @Override
             public long getTimestamp(int col) {
                 return curr;
+            }
+
+            public void of(long value) {
+                curr = value;
             }
         }
     }

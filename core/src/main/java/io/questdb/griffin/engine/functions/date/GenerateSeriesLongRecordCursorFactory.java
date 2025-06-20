@@ -101,7 +101,7 @@ public class GenerateSeriesLongRecordCursorFactory extends AbstractGenerateSerie
 
         @Override
         public void recordAt(Record record, long atRowId) {
-            ((GenerateSeriesLongRecord) record).curr = start + step * atRowId;
+            ((GenerateSeriesLongRecord) record).curr = start + step * (atRowId - 1);
         }
 
         @Override
@@ -133,7 +133,7 @@ public class GenerateSeriesLongRecordCursorFactory extends AbstractGenerateSerie
 
             @Override
             public long getRowId() {
-                return Math.abs(start - curr) / Math.abs(step);
+                return Math.abs(start - curr) / Math.abs(step) + 1;
             }
 
             public void of(long value) {
