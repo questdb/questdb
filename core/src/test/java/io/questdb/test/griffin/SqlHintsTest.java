@@ -34,24 +34,24 @@ import org.junit.Test;
 public class SqlHintsTest extends AbstractTest {
 
     @Test
-    public void testAsOfJoinBinarySearchHint() throws Exception {
+    public void testAsOfJoinAvoidBinarySearchHint() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             QueryModel model = new QueryModel.QueryModelFactory().newInstance();
-            Assert.assertFalse(SqlHints.hasAsOfJoinBinarySearchHint(model, "tableA", "tableB"));
+            Assert.assertFalse(SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, "tableA", "tableB"));
 
-            model.addHint(SqlHints.ASOF_JOIN_BINARY_SEARCH_HINT, "tableA tableB");
-            Assert.assertTrue(SqlHints.hasAsOfJoinBinarySearchHint(model, "tableA", "tableB"));
+            model.addHint(SqlHints.ASOF_JOIN_AVOID_BINARY_SEARCH_HINT, "tableA tableB");
+            Assert.assertTrue(SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, "tableA", "tableB"));
 
             // case insensitive
-            Assert.assertTrue(SqlHints.hasAsOfJoinBinarySearchHint(model, "tablea", "tableb"));
-            Assert.assertTrue(SqlHints.hasAsOfJoinBinarySearchHint(model, "TABLEA", "TABLEB"));
+            Assert.assertTrue(SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, "tablea", "tableb"));
+            Assert.assertTrue(SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, "TABLEA", "TABLEB"));
 
             // different order
-            Assert.assertTrue(SqlHints.hasAsOfJoinBinarySearchHint(model, "tableB", "tableA"));
-            Assert.assertTrue(SqlHints.hasAsOfJoinBinarySearchHint(model, "TABLEB", "TABLEA"));
+            Assert.assertTrue(SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, "tableB", "tableA"));
+            Assert.assertTrue(SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, "TABLEB", "TABLEA"));
 
             model.clear();
-            Assert.assertFalse(SqlHints.hasAsOfJoinBinarySearchHint(model, "tableA", "tableB"));
+            Assert.assertFalse(SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, "tableA", "tableB"));
         });
     }
 }

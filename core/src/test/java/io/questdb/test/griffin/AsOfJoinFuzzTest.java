@@ -24,15 +24,24 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
+    private static final boolean RUN_ALL_PERMUTATIONS = false;
+
     @Test
     public void testFuzzManyDuplicates() throws Exception {
         testFuzz(50);
@@ -64,24 +73,41 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
     }
 
     private void assertResultSetsMatch0(Rnd rnd) throws Exception {
-        Object[][] allParameterPermutations = TestUtils.cartesianProduct(new Object[][]{
+        Object[][] allOpts = {
                 JoinType.values(),
                 {true, false}, // exercise interval intrinsics
                 LimitType.values(),
                 {true, false}, // exercise filters
                 ProjectionType.values(),
-                {true, false} // apply outer projection
-        });
-        for (int i = 0, n = allParameterPermutations.length; i < n; i++) {
-            Object[] params = allParameterPermutations[i];
+                {true, false}, // apply outer projection
+                {-1L, 100_000L}, // max tolerance in seconds, -1 = no tolerance
+                {true, false} // AVOID BINARY_SEARCH hint
+        };
+
+        Object[][] permutations;
+        if (RUN_ALL_PERMUTATIONS) {
+            permutations = TestUtils.cartesianProduct(allOpts);
+        } else {
+            // to keep the test fast, we only run a single permutation at a time
+            permutations = new Object[1][allOpts.length];
+            for (int i = 0; i < allOpts.length; i++) {
+                Object[] opts = allOpts[i];
+                permutations[0][i] = opts[rnd.nextInt(opts.length)];
+            }
+        }
+
+        for (int i = 0, n = permutations.length; i < n; i++) {
+            Object[] params = permutations[i];
             JoinType joinType = (JoinType) params[0];
             boolean exerciseIntervals = (boolean) params[1];
             LimitType limitType = (LimitType) params[2];
             boolean exerciseFilters = (boolean) params[3];
             ProjectionType projectionType = (ProjectionType) params[4];
             boolean applyOuterProjection = (boolean) params[5];
+            long maxTolerance = (long) params[6];
+            boolean avoidBinarySearchHint = (boolean) params[7];
             try {
-                assertResultSetsMatch0(joinType, exerciseIntervals, limitType, exerciseFilters, projectionType, applyOuterProjection, rnd);
+                assertResultSetsMatch0(joinType, exerciseIntervals, limitType, exerciseFilters, projectionType, applyOuterProjection, maxTolerance, avoidBinarySearchHint, rnd);
             } catch (AssertionError e) {
                 throw new AssertionError("Failed with parameters: " +
                         "joinType=" + joinType +
@@ -89,13 +115,25 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                         ", limitType=" + limitType +
                         ", exerciseFilters=" + exerciseFilters +
                         ", projectionType=" + projectionType +
-                        ", applyOuterProjection = " + applyOuterProjection,
+                        ", applyOuterProjection = " + applyOuterProjection +
+                        ", maxTolerance=" + maxTolerance +
+                        ", avoidBinarySearchHint=" + avoidBinarySearchHint,
                         e);
             }
         }
     }
 
-    private void assertResultSetsMatch0(JoinType joinType, boolean exerciseIntervals, LimitType limitType, boolean exerciseFilters, ProjectionType projectionType, boolean applyOuterProjection, Rnd rnd) throws Exception {
+    private void assertResultSetsMatch0(
+            JoinType joinType,
+            boolean exerciseIntervals,
+            LimitType limitType,
+            boolean exerciseFilters,
+            ProjectionType projectionType,
+            boolean applyOuterProjection,
+            long maxTolerance,
+            boolean avoidBinarySearchHint,
+            Rnd rnd
+    ) throws Exception {
         String join;
         String onSuffix = "";
         switch (joinType) {
@@ -109,8 +147,18 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             case LT_NONKEYD:
                 join = " LT";
                 break;
+            case LT:
+                join = " LT";
+                onSuffix = (projectionType == ProjectionType.RENAME_COLUMN) ? " on t1.s = t2.s2 " : " on s ";
+                break;
             default:
                 throw new IllegalArgumentException("Unexpected join type: " + joinType);
+        }
+
+        long toleranceSeconds = 0;
+        if (maxTolerance != -1) {
+            toleranceSeconds = rnd.nextLong(maxTolerance) + 1;
+            onSuffix += " tolerance " + toleranceSeconds + "s ";
         }
 
         StringSink filter = new StringSink();
@@ -151,6 +199,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
 
         String projection = "";
         // (ts TIMESTAMP, i INT, s SYMBOL)
+        String slaveTimestampColumnName = "ts1";
         switch (projectionType) {
             case NONE:
                 projection = "*";
@@ -160,27 +209,51 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 break;
             case RENAME_COLUMN:
                 projection = "s as s2, ts as ts2, i as i2";
+                slaveTimestampColumnName = "ts2";
                 break;
             case ADD_COLUMN:
                 projection = "*, i as i2";
                 break;
             case REMOVE_SYMBOL_COLUMN:
-                if (joinType == JoinType.ASOF) {
-//                     key-ed ASOF join can't remove symbol column since it is used as a JOIN key
+                if (joinType == JoinType.ASOF || joinType == JoinType.LT) {
+                    //  key-ed joins can't remove symbol column since it is used as a JOIN key
                     return;
                 }
                 projection = "ts, i, ts";
                 break;
+            case REMOVE_TIMESTAMP_COLUMN:
+                projection = "i, s";
+                slaveTimestampColumnName = null;
+                break;
+            default:
+                throw new IllegalArgumentException("Unexpected projection type: " + projectionType);
         }
 
         String outerProjection = "*";
         if (applyOuterProjection) {
             char mainProjectionSuffix = projectionType == ProjectionType.RENAME_COLUMN ? '2' : ' ';
             outerProjection = "t1.ts, t2.i" + mainProjectionSuffix;
+            slaveTimestampColumnName = null;
         }
 
-        // we can always hint to use BINARY_SEARCH, it's ignored in cases where it doesn't apply
-        String query = "select /*+ USE_ASOF_BINARY_SEARCH(t1 t2) */ " + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
+        String hint = "";
+        if (avoidBinarySearchHint) {
+            switch (joinType) {
+                case ASOF:
+                    // intentional fallthrough
+                case ASOF_NONKEYD:
+                    hint = " /*+ AVOID_ASOF_BINARY_SEARCH(t1 t2) */ ";
+                    break;
+                case LT:
+                    // intentional fallthrough
+                case LT_NONKEYD:
+                    hint = " /*+ AVOID_LT_BINARY_SEARCH(t1 t2) */ ";
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unexpected join type: " + joinType);
+            }
+        }
+        String query = "select " + hint + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
         int limit;
         switch (limitType) {
             case POSITIVE_LIMIT:
@@ -200,10 +273,12 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         printSql(query, true);
         expectedSink.put(sink);
 
-        // sanity check: make sure non-keyd ASOF join use the Fast-path
-        if (joinType == JoinType.ASOF_NONKEYD) {
-            sink.clear();
-            printSql("EXPLAIN " + query, false);
+        sink.clear();
+        printSql("EXPLAIN " + query, false);
+        if (avoidBinarySearchHint) {
+            TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
+            TestUtils.assertNotContains(sink, "Lt Join Fast Scan");
+        } else if (joinType == JoinType.ASOF_NONKEYD || (joinType == JoinType.ASOF && projectionType == ProjectionType.NONE && !exerciseFilters && !exerciseIntervals)) {
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
         }
 
@@ -212,10 +287,33 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         printSql(query, false);
         actualSink.put(sink);
         TestUtils.assertEquals(expectedSink, actualSink);
+
+        if (slaveTimestampColumnName != null) {
+            try (RecordCursorFactory factory = select(query);
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                RecordMetadata metadata = factory.getMetadata();
+                int masterColIndex = metadata.getColumnIndex("ts");
+                int slaveColIndex = metadata.getColumnIndex(slaveTimestampColumnName);
+                while (cursor.hasNext()) {
+                    long masterTimestamp = record.getTimestamp(masterColIndex);
+                    long slaveTimestamp = record.getTimestamp(slaveColIndex);
+                    Assert.assertTrue(slaveTimestamp <= masterTimestamp);
+
+                    if (maxTolerance != -1 && slaveTimestamp != Numbers.LONG_NULL) {
+                        long minSlaveTimestamp = masterTimestamp - (toleranceSeconds * Timestamps.SECOND_MICROS);
+                        Assert.assertTrue("Slave timestamp " + Timestamps.toString(slaveTimestamp) + " is less than minimum allowed " + Timestamps.toString(masterTimestamp),
+                                slaveTimestamp >= minSlaveTimestamp);
+                    }
+                }
+            }
+        }
     }
 
     private void testFuzz(int tsDuplicatePercentage) throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, String.valueOf(rnd.nextInt(10) + 1));
+
         assertMemoryLeak(() -> {
             final int table1Size = rnd.nextPositiveInt() % 1000;
             final int table2Size = rnd.nextPositiveInt() % 1000;
@@ -279,7 +377,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
     }
 
     private enum JoinType {
-        ASOF, ASOF_NONKEYD, LT_NONKEYD
+        ASOF, ASOF_NONKEYD, LT_NONKEYD, LT
     }
 
     private enum LimitType {
@@ -293,6 +391,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         CROSS_COLUMN,
         RENAME_COLUMN,
         ADD_COLUMN,
-        REMOVE_SYMBOL_COLUMN
+        REMOVE_SYMBOL_COLUMN,
+        REMOVE_TIMESTAMP_COLUMN
     }
 }

@@ -34,6 +34,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 
 public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinFastRecordCursor cursor;
@@ -43,7 +44,8 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
-            int columnSplit
+            int columnSplit,
+            long toleranceInterval
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
@@ -52,7 +54,8 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
                 slaveFactory.getMetadata().getTimestampIndex(),
-                configuration.getSqlAsOfJoinLookAhead()
+                configuration.getSqlAsOfJoinLookAhead(),
+                toleranceInterval
         );
     }
 
@@ -102,14 +105,19 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
 
     private static class AsOfJoinFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
 
+        private final long toleranceInterval;
+        private long slaveTimestamp = Numbers.LONG_NULL;
+
         public AsOfJoinFastRecordCursor(
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
-                int lookahead
+                int lookahead,
+                long toleranceInterval
         ) {
             super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, lookahead);
+            this.toleranceInterval = toleranceInterval;
         }
 
         @Override
@@ -121,14 +129,27 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
             if (masterHasNext) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
                 if (masterTimestamp < lookaheadTimestamp) {
+                    if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
+                        record.hasSlave(false);
+                    }
                     isMasterHasNextPending = true;
                     return true;
                 }
                 nextSlave(masterTimestamp);
+                if (toleranceInterval != Numbers.LONG_NULL && record.hasSlave()) {
+                    slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                    record.hasSlave(slaveTimestamp >= masterTimestamp - toleranceInterval);
+                }
                 isMasterHasNextPending = true;
                 return true;
             }
             return false;
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            slaveTimestamp = Numbers.LONG_NULL;
         }
     }
 }
