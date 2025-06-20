@@ -163,6 +163,11 @@ public class PGWireServer implements IPGWireServer {
     }
 
     @Override
+    public boolean isListening() {
+        return dispatcher.isListening();
+    }
+
+    @Override
     public void resetQueryCache() {
         if (typesAndSelectCache != null) {
             typesAndSelectCache.clear();
