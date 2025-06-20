@@ -214,6 +214,54 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     /**
+     * Performs binary search for a specified double value in a 1D array view.
+     *
+     * <p><b>Important Requirements:</b>
+     * <ul>
+     *   <li>The array <b>must be sorted</b> in either ascending or descending order</li>
+     *   <li>The array <b>must not contain null values</b></li>
+     * </ul>
+     *
+     * <p>The method automatically detects sort direction by comparing the first and last elements.
+     */
+    public final int binarySearchDoubleValue1DArray(double value) {
+        if (isNull() || isEmpty()) {
+            return 0;
+        }
+
+        int low = flatViewOffset;
+        int high = flatViewOffset + getDimLen(0) - 1;
+        // empty array
+        if (low > high) return 0;
+
+        // determine sort direction
+        double first = flatView.getDoubleAtAbsIndex(low);
+        double last = flatView.getDoubleAtAbsIndex(high);
+        boolean ascending = first <= last;
+        while (low <= high) {
+            int mid = low + (high - low) / 2;
+            double midVal = flatView.getDoubleAtAbsIndex(mid);
+            if (Math.abs(midVal - value) <= Numbers.DOUBLE_TOLERANCE) {
+                return mid - flatViewOffset + 1;
+            }
+            if (ascending) {
+                if (midVal < value) {
+                    low = mid + 1;
+                } else {
+                    high = mid - 1;
+                }
+            } else {
+                if (midVal > value) {
+                    low = mid + 1;
+                } else {
+                    high = mid - 1;
+                }
+            }
+        }
+        return 0;
+    }
+
+    /**
      * Convenience that downcasts {@link #flatView()} into {@link BorrowedFlatArrayView}.
      * If called on the wrong implementation, this call will fail with a cast exception.
      */
@@ -396,6 +444,30 @@ public abstract class ArrayView implements QuietCloseable {
      */
     public boolean isVanilla() {
         return isVanilla;
+    }
+
+    public final int linearSearchDoubleNull1DArray() {
+        if (isNull() || isEmpty()) {
+            return 0;
+        }
+        for (int i = flatViewOffset, dimLen = getDimLen(0) + flatViewOffset; i < dimLen; i++) {
+            if (Numbers.isNull(flatView.getDoubleAtAbsIndex(i))) {
+                return i - flatViewOffset + 1;
+            }
+        }
+        return 0;
+    }
+
+    public final int linearSearchDoubleValue1DArray(double value) {
+        if (isNull() || isEmpty()) {
+            return 0;
+        }
+        for (int i = flatViewOffset, dimLen = getDimLen(0) + flatViewOffset; i < dimLen; i++) {
+            if (Math.abs(value - flatView.getDoubleAtAbsIndex(i)) <= Numbers.DOUBLE_TOLERANCE) {
+                return i - flatViewOffset + 1;
+            }
+        }
+        return 0;
     }
 
     /**

@@ -65,5 +65,10 @@ public final class SingleElementDoubleArray extends ArrayView {
         public int length() {
             return 1;
         }
+
+        @Override
+        public double sumDouble() {
+            return value;
+        }
     }
 }

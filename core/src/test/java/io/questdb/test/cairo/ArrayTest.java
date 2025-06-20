@@ -227,6 +227,29 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArraySum() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[1.0, 9, 10, 12, 8, null, 20, 12], ARRAY[[1.0, 9, 10, 12, 8, null, 20, 12]]), " +
+                    "(ARRAY[null], ARRAY[[null]])," +
+                    "(null, null)"
+            );
+            assertSql("arraySum\tarraySum1\tarraySum2\n" +
+                            "72.0\t71.0\t10.0\n" +
+                            "0.0\t0.0\t0.0\n" +
+                            "0.0\t0.0\t0.0\n",
+                    "SELECT arraySum(arr1), arraySum(arr1[2:]), arraySum(arr1[1:3]) FROM tango");
+
+            assertSql("arraySum\tarraySum1\tarraySum2\tarraySum3\tarraySum4\n" +
+                            "72.0\t72.0\t72.0\t72.0\t0.0\n" +
+                            "0.0\t0.0\t0.0\t0.0\t0.0\n" +
+                            "0.0\t0.0\t0.0\t0.0\t0.0\n",
+                    "SELECT arraySum(arr2), arraySum(transpose(arr2)), arraySum(arr2[1]), arraySum(arr2[1:]), arraySum(arr2[2:]) FROM tango");
+        });
+    }
+
+    @Test
     public void testAutoCastToDouble() throws Exception {
         assertMemoryLeak(() -> {
             assertSql("arr\n[1.0,2.0]\n", "SELECT ARRAY[1, 2] arr FROM long_sequence(1)");
@@ -854,6 +877,70 @@ public class ArrayTest extends AbstractCairoTest {
                             "from tango\n",
                     true);
 
+        });
+    }
+
+    @Test
+    public void testIndexOf() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[1.0, 9, 10, 12, 8, null, 20, 12], ARRAY[[1.0, 9, 10, 12, 8, null, 20, 12]]), " +
+                    "(ARRAY[null], ARRAY[[null]])," +
+                    "(null, null)"
+            );
+            assertSql("indexOf\tindexOf1\tindexOf2\tindexOf3\n" +
+                            "5\t6\t0\t1\n" +
+                            "0\t1\t0\t0\n" +
+                            "0\t0\t0\t0\n",
+                    "SELECT indexOf(arr1, 8), indexOf(arr1, null), indexOf(arr1, 11), indexOf(arr1[2:], 9)  FROM tango");
+
+            assertSql("indexOf\tindexOf1\tindexOf2\tindexOf3\n" +
+                            "5\t6\t0\t1\n" +
+                            "0\t1\t0\t0\n" +
+                            "0\t0\t0\t0\n",
+                    "SELECT indexOf(arr2[1], 8), indexOf(arr2[1], null), indexOf(arr2[1], 11), indexOf(arr2[1][2:], 9)  FROM tango");
+
+            assertSql("indexOf\tindexOf1\tindexOf2\tindexOf3\n" +
+                            "1\t2\t3\t1\n" +
+                            "1\t1\t1\t0\n" +
+                            "0\t0\t0\t0\n",
+                    "SELECT indexOf(arr1, arr1[1]), indexOf(arr1, arr1[2]), indexOf(arr1, arr1[3]), indexOf(arr1[2:], arr1[2])  FROM tango");
+            assertExceptionNoLeakCheck("SELECT indexOf(arr2, 0) len FROM tango",
+                    21, "array is not one-dimensional");
+        });
+    }
+
+    @Test
+    public void testIndexOfAssumeSorted() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[9.0, 10, 12, 20, 22, 100, 1000], ARRAY[[9.0, 10, 12, 20, 22, 100, 1000]]), " +
+                    "(ARRAY[1000.0, 100, 22, 20, 12, 10, 9], ARRAY[[1000.0, 100, 22, 20, 12, 10, 9]])," +
+                    "(null, null)"
+            );
+            assertSql("indexOfAssumeSorted\tindexOfAssumeSorted1\tindexOfAssumeSorted2\tindexOfAssumeSorted3\tindexOfAssumeSorted4\tindexOfAssumeSorted5\tindexOfAssumeSorted6\n" +
+                            "0\t0\t5\t7\t0\t0\t4\n" +
+                            "0\t0\t3\t1\t0\t0\t0\n" +
+                            "0\t0\t0\t0\t0\t0\t0\n",
+                    "SELECT indexOfAssumeSorted(arr1, 8), indexOfAssumeSorted(arr1, null), indexOfAssumeSorted(arr1, 22), indexOfAssumeSorted(arr1, 1000), " +
+                            "indexOfAssumeSorted(arr1, 1001), indexOfAssumeSorted(arr1[3:4], 1000), indexOfAssumeSorted(arr1[3:], 100)  FROM tango");
+
+            assertSql("indexOfAssumeSorted\tindexOfAssumeSorted1\tindexOfAssumeSorted2\tindexOfAssumeSorted3\tindexOfAssumeSorted4\tindexOfAssumeSorted5\tindexOfAssumeSorted6\n" +
+                            "0\t0\t5\t7\t0\t0\t4\n" +
+                            "0\t0\t3\t1\t0\t0\t0\n" +
+                            "0\t0\t0\t0\t0\t0\t0\n",
+                    "SELECT indexOfAssumeSorted(arr2[1], 8), indexOfAssumeSorted(arr2[1], null), indexOfAssumeSorted(arr2[1], 22), indexOfAssumeSorted(arr2[1], 1000), " +
+                            "indexOfAssumeSorted(arr2[1], 1001), indexOfAssumeSorted(arr2[1][3:4], 1000), indexOfAssumeSorted(arr2[1][3:], 100)  FROM tango");
+
+            assertSql("indexOfAssumeSorted\tindexOfAssumeSorted1\tindexOfAssumeSorted2\tindexOfAssumeSorted3\n" +
+                            "1\t2\t3\t1\n" +
+                            "1\t2\t3\t1\n" +
+                            "0\t0\t0\t0\n",
+                    "SELECT indexOfAssumeSorted(arr1, arr1[1]), indexOfAssumeSorted(arr1, arr1[2]), indexOfAssumeSorted(arr1, arr1[3]), indexOfAssumeSorted(arr1[2:], arr1[2])  FROM tango");
+            assertExceptionNoLeakCheck("SELECT indexOfAssumeSorted(arr2, 0) len FROM tango",
+                    33, "array is not one-dimensional");
         });
     }
 

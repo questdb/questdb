@@ -27,6 +27,7 @@ package io.questdb.cairo.arr;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 /**
  * Immutable view over the backing native memory of an array. Does not own the memory.
@@ -101,5 +102,10 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
 
     public int size() {
         return this.size;
+    }
+
+    @Override
+    public double sumDouble() {
+        return Vect.sumDouble(this.ptr, length);
     }
 }

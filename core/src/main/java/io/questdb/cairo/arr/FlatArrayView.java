@@ -25,6 +25,7 @@
 package io.questdb.cairo.arr;
 
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Numbers;
 
 public interface FlatArrayView {
     /**
@@ -40,4 +41,17 @@ public interface FlatArrayView {
      * Returns the number of elements stored in this flat array.
      */
     int length();
+
+    default double sumDouble() {
+        double sum = 0;
+        for (int i = 0, n = length(); i < n; i++) {
+            double v = getDoubleAtAbsIndex(i);
+            if (Numbers.isFinite(v)) {
+                sum += v;
+            }
+        }
+        return sum;
+    }
+
+    ;
 }
