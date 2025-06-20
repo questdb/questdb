@@ -471,6 +471,9 @@ public abstract class BasePGTest extends AbstractCairoTest {
                         WorkerPool workerPool = server.getWorkerPool()
                 ) {
                     workerPool.start(LOG);
+                    while (!server.isListening()) {
+                        Os.sleep(1);
+                    }
                     try (final Connection connection = getConnection(mode, server.getPort(), binary, prepareThreshold)) {
                         runnable.run(connection, binary, mode, server.getPort());
                     }
