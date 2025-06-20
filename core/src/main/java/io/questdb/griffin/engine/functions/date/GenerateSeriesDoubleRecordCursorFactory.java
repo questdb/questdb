@@ -99,7 +99,7 @@ public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGener
 
         @Override
         public long size() {
-            return (long) (Math.abs(end - start) / Math.abs(step)) + 1;
+            return -1;
         }
 
         @Override
