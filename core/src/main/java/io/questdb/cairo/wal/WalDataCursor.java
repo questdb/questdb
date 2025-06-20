@@ -68,6 +68,11 @@ public class WalDataCursor implements RecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return 0;
+    }
+
+    @Override
     public void recordAt(Record record, long rowId) {
         throw new UnsupportedOperationException();
     }

@@ -25,8 +25,11 @@
 package io.questdb.griffin.engine.union;
 
 import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 
@@ -59,6 +62,11 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     @Override
     public boolean hasNext() {
         return nextMethod.next();
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return cursorA.preComputedStateSize() + cursorB.preComputedStateSize();
     }
 
     @Override

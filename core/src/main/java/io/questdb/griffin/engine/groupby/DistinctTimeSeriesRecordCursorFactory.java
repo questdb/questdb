@@ -222,6 +222,12 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         }
 
         @Override
+        public long preComputedStateSize() {
+            // no pre-computed state
+            return 0;
+        }
+
+        @Override
         public long size() {
             return -1;
         }

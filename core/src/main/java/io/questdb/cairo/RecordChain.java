@@ -358,6 +358,12 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     }
 
     @Override
+    public long preComputedStateSize() {
+        // chain just streams rows from the cache
+        return 0;
+    }
+
+    @Override
     public void toTop() {
         if (mem.getAppendOffset() == 0) {
             nextRecordOffset = -1L;

@@ -26,11 +26,18 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
 
 class LongSortedLightRecordCursor implements DelegatingRecordCursor {
     private static final RecordAdapter getIPv4AsLongRef = LongSortedLightRecordCursor::getIPv4AsLong;
@@ -137,6 +144,11 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
         }
         circuitBreaker = executionContext.getCircuitBreaker();
         areValuesSorted = false;
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return areValuesSorted ? 1 : 0;
     }
 
     @Override

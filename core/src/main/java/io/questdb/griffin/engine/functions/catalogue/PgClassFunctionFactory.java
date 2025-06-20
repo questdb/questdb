@@ -241,6 +241,11 @@ public class PgClassFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             return -1;
         }

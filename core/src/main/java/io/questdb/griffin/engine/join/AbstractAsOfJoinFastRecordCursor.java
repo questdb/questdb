@@ -117,6 +117,11 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     }
 
     @Override
+    public long preComputedStateSize() {
+        return 0;
+    }
+
+    @Override
     public long size() {
         return masterCursor.size();
     }
@@ -139,6 +144,57 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         isMasterHasNextPending = true;
         isSlaveOpenPending = false;
         isSlaveForwardScan = true;
+    }
+
+    private long binarySearchScanDown(long v, long low, long high) {
+        for (long i = high - 1; i >= low; i--) {
+            slaveCursor.recordAtRowIndex(slaveRecA, i);
+            long that = slaveRecA.getTimestamp(slaveTimestampIndex);
+            // Here the code differs from the original C code:
+            // We want to find the last row with value less *or equal* to v
+            // while the original code find the first row with value greater than v.
+            if (that <= v) {
+                return i;
+            }
+        }
+        // all values are greater than v, return low - 1
+        return low - 1;
+    }
+
+    private long binarySearchScrollDown(long low, long high, long value) {
+        long data;
+        do {
+            if (low < high) {
+                low++;
+            } else {
+                return low;
+            }
+            slaveCursor.recordAtRowIndex(slaveRecA, low);
+            data = slaveRecA.getTimestamp(slaveTimestampIndex);
+        } while (data == value);
+        return low - 1;
+    }
+
+    /**
+     * Returns true if the slave cursor has been advanced to a row with timestamp greater than the master timestamp.
+     * This means we do not have to scan the slave cursor further, e.g. by binary search.
+     *
+     * @param masterTimestamp master timestamp
+     * @return true if the slave cursor has been advanced to a row with timestamp greater than the master timestamp, false otherwise
+     */
+    private boolean linearScan(long masterTimestamp) {
+        final long scanHi = Math.min(slaveFrameRow + lookahead, slaveTimeFrame.getRowHi());
+        while (slaveFrameRow < scanHi || (lookaheadTimestamp == masterTimestamp && slaveFrameRow < slaveTimeFrame.getRowHi())) {
+            slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
+            lookaheadTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
+            if (lookaheadTimestamp > masterTimestamp) {
+                return true;
+            }
+            record.hasSlave(true);
+            slaveCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
+            slaveFrameRow++;
+        }
+        return false;
     }
 
     private boolean openSlaveFrame(long masterTimestamp) {
@@ -198,35 +254,6 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         }
     }
 
-    private long binarySearchScanDown(long v, long low, long high) {
-        for (long i = high - 1; i >= low; i--) {
-            slaveCursor.recordAtRowIndex(slaveRecA, i);
-            long that = slaveRecA.getTimestamp(slaveTimestampIndex);
-            // Here the code differs from the original C code:
-            // We want to find the last row with value less *or equal* to v
-            // while the original code find the first row with value greater than v.
-            if (that <= v) {
-                return i;
-            }
-        }
-        // all values are greater than v, return low - 1
-        return low - 1;
-    }
-
-    private long binarySearchScrollDown(long low, long high, long value) {
-        long data;
-        do {
-            if (low < high) {
-                low++;
-            } else {
-                return low;
-            }
-            slaveCursor.recordAtRowIndex(slaveRecA, low);
-            data = slaveRecA.getTimestamp(slaveTimestampIndex);
-        } while (data == value);
-        return low - 1;
-    }
-
     // Finds the last value less or equal to the master timestamp.
     // Both rowLo and rowHi are inclusive.
     // When multiple rows have the same matching timestamp, the last one is returned.
@@ -264,28 +291,6 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         }
 
         return binarySearchScanDown(value, low, high + 1);
-    }
-
-    /**
-     * Returns true if the slave cursor has been advanced to a row with timestamp greater than the master timestamp.
-     * This means we do not have to scan the slave cursor further, e.g. by binary search.
-     *
-     * @param masterTimestamp master timestamp
-     * @return true if the slave cursor has been advanced to a row with timestamp greater than the master timestamp, false otherwise
-     */
-    private boolean linearScan(long masterTimestamp) {
-        final long scanHi = Math.min(slaveFrameRow + lookahead, slaveTimeFrame.getRowHi());
-        while (slaveFrameRow < scanHi || (lookaheadTimestamp == masterTimestamp && slaveFrameRow < slaveTimeFrame.getRowHi())) {
-            slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
-            lookaheadTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
-            if (lookaheadTimestamp > masterTimestamp) {
-                return true;
-            }
-            record.hasSlave(true);
-            slaveCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
-            slaveFrameRow++;
-        }
-        return false;
     }
 
     protected void nextSlave(long masterTimestamp) {

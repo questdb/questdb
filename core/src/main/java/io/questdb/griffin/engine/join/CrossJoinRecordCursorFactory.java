@@ -189,6 +189,11 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             long sizeA = masterCursor.size();
             long sizeB = slaveCursor.size();

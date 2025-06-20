@@ -110,6 +110,11 @@ class LongTopKRecordCursor implements RecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return RecordCursor.fromBool(initialized) + baseCursor.preComputedStateSize();
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         baseCursor.recordAt(record, atRowId);
     }
