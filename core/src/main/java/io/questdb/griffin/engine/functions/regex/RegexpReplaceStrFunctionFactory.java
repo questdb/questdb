@@ -43,7 +43,6 @@ import org.jetbrains.annotations.NotNull;
 import java.util.regex.Matcher;
 
 public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
-
     private static final String SIGNATURE = "regexp_replace(SSS)";
 
     @Override
@@ -182,12 +181,12 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isThreadSafe() {
+        public boolean isRuntimeConstant() {
             return false;
         }
 
         @Override
-        public boolean isRuntimeConstant() {
+        public boolean isThreadSafe() {
             return false;
         }
 
@@ -198,11 +197,7 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
     }
 
     private static class StringBuilderSink implements CharSequence {
-        //#if jdk.version==8
-//$        private final StringBuffer buffer = new StringBuffer();
-//#else
         private final StringBuilder buffer = new StringBuilder();
-//#endif
 
         @Override
         public char charAt(int index) {

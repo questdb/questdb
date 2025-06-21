@@ -398,7 +398,6 @@ public final class Unsafe {
      * Based on {@code MethodHandles.Lookup#defineHiddenClass}.
      */
     static class MethodHandlesClassDefiner implements AnonymousClassDefiner {
-
         private static Method defineMethod;
         private static Object hiddenClassOptions;
         private static Object lookupBase;

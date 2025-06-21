@@ -83,12 +83,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String baseTableName;
     private final int baseTableNamePosition;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final boolean deferred;
     private final MatViewDefinition matViewDefinition = new MatViewDefinition();
     private final int refreshType;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final String sqlText;
     private final String timeZone;
     private final String timeZoneOffset;
+    private final String timerTimeZone;
     private final IntList tmpColumnIndexes = new IntList();
     private final LowerCaseCharSequenceHashSet tmpLiterals = new LowerCaseCharSequenceHashSet();
     private CreateTableOperationImpl createTableOperation;
@@ -99,18 +101,22 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             @NotNull String sqlText,
             @NotNull CreateTableOperationImpl createTableOperation,
             int refreshType,
+            boolean deferred,
             @NotNull String baseTableName,
             int baseTableNamePosition,
             @Nullable String timeZone,
-            @Nullable String timeZoneOffset
+            @Nullable String timeZoneOffset,
+            @Nullable String timerTimeZone
     ) {
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
         this.refreshType = refreshType;
+        this.deferred = deferred;
         this.baseTableName = baseTableName;
         this.baseTableNamePosition = baseTableNamePosition;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
+        this.timerTimeZone = timerTimeZone;
     }
 
     @Override
@@ -162,18 +168,38 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public int getMatViewPeriodDelay() {
+        return createTableOperation.getMatViewPeriodDelay();
+    }
+
+    @Override
+    public char getMatViewPeriodDelayUnit() {
+        return createTableOperation.getMatViewPeriodDelayUnit();
+    }
+
+    @Override
+    public int getMatViewPeriodLength() {
+        return createTableOperation.getMatViewPeriodLength();
+    }
+
+    @Override
+    public char getMatViewPeriodLengthUnit() {
+        return createTableOperation.getMatViewPeriodLengthUnit();
+    }
+
+    @Override
     public int getMatViewTimerInterval() {
         return createTableOperation.getMatViewTimerInterval();
     }
 
     @Override
-    public char getMatViewTimerIntervalUnit() {
-        return createTableOperation.getMatViewTimerIntervalUnit();
+    public long getMatViewTimerStart() {
+        return createTableOperation.getMatViewTimerStart();
     }
 
     @Override
-    public long getMatViewTimerStart() {
-        return createTableOperation.getMatViewTimerStart();
+    public char getMatViewTimerUnit() {
+        return createTableOperation.getMatViewTimerUnit();
     }
 
     @Override
@@ -260,19 +286,26 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     public void init(TableToken matViewToken) {
         matViewDefinition.init(
                 refreshType,
+                deferred,
                 matViewToken,
                 Chars.toString(createTableOperation.getSelectText()),
                 baseTableName,
                 samplingInterval,
                 samplingIntervalUnit,
                 timeZone,
-                timeZoneOffset
+                timeZoneOffset,
+                timerTimeZone
         );
     }
 
     @Override
     public boolean isDedupKey(int index) {
         return createTableOperation.isDedupKey(index);
+    }
+
+    @Override
+    public boolean isDeferred() {
+        return deferred;
     }
 
     @Override
