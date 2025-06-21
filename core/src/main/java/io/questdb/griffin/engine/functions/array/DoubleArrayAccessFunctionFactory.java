@@ -29,7 +29,9 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DerivedArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.ArrayFunction;
+import io.questdb.cairo.sql.DelegatingRecord;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -159,7 +161,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         for (int i = 1, n = args.size(); i < n; i++) {
             Function arg = args.getQuick(i);
             int argType = arg.getType();
-            if (!isIndexArg(argType) && !ColumnType.isInterval(argType)) {
+            if (!isIndexArg(argType) && !ColumnType.isInterval(argType) && !ColumnType.isBoolean(argType)) {
                 throw SqlException.position(argPositions.get(i))
                         .put("invalid type for array access [type=").put(argType).put(']');
             }
@@ -287,17 +289,38 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class RecordWithArrayElement extends DelegatingRecord {
+        double element;
+
+        @Override
+        public double getDouble(int col) {
+            return col == -1 ? element : base.getDouble(col);
+        }
+    }
+
     private static class SliceDoubleArrayFunction extends ArrayFunction implements MultiArgFunction {
         private final IntList allArgPositions;
         private final ObjList<Function> allArgs; // holds [arrayArg, rangeArgs...]
         private final Function arrayArg;
         private final DerivedArrayView derivedArray = new DerivedArrayView();
+        private final RecordWithArrayElement recWithElem = new RecordWithArrayElement();
+        private DirectArray arrayOut;
 
         public SliceDoubleArrayFunction(Function arrayArg, int resultNDims, ObjList<Function> allArgs, IntList allArgPositions) {
             this.arrayArg = arrayArg;
             this.allArgs = allArgs;
             this.allArgPositions = allArgPositions;
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, resultNDims);
+            if (allArgs.size() == 2 && resultNDims == 1) {
+                this.arrayOut = new DirectArray();
+                arrayOut.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+            }
+        }
+
+        @Override
+        public void close() {
+            MultiArgFunction.super.close();
+            arrayOut = Misc.free(arrayOut);
         }
 
         @Override
@@ -314,10 +337,11 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             }
             int dim = 0;
             for (int i = 1, n = allArgs.size(); i < n; i++) {
-                final Function rangeFn = allArgs.getQuick(i);
+                final Function arg = allArgs.getQuick(i);
+                int argType = arg.getType();
                 final int argPos = allArgPositions.get(i);
-                if (ColumnType.isInterval(rangeFn.getType())) {
-                    Interval range = rangeFn.getInterval(rec);
+                if (ColumnType.isInterval(argType)) {
+                    Interval range = arg.getInterval(rec);
                     long loLong = range.getLo();
                     long hiLong = range.getHi();
                     int lo = (int) loLong;
@@ -333,9 +357,32 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     // Decrement the index in the argument because Postgres uses 1-based array indexing
                     lo--;
                     derivedArray.slice(dim++, lo, hi, argPos);
+                } else if (ColumnType.isBoolean(argType)) {
+                    if (array.getDimCount() != 1) {
+                        throw CairoException.nonCritical().position(argPos)
+                                .put("array filtering works only for 1D array");
+                    }
+                    recWithElem.of(rec);
+                    int outIndex = 0;
+                    for (int j = 0, m = array.getCardinality(); j < m; j++) {
+                        recWithElem.element = array.getDouble(j);
+                        if (arg.getBool(recWithElem)) {
+                            outIndex++;
+                        }
+                    }
+                    arrayOut.setDimLen(0, outIndex);
+                    arrayOut.applyShape();
+                    outIndex = 0;
+                    for (int j = 0, m = array.getCardinality(); j < m; j++) {
+                        recWithElem.element = array.getDouble(j);
+                        if (arg.getBool(recWithElem)) {
+                            arrayOut.putDouble(outIndex++, recWithElem.element);
+                        }
+                    }
+                    return arrayOut;
                 } else {
                     // Decrement the index in the argument because Postgres uses 1-based array indexing
-                    int index = rangeFn.getInt(rec) - 1;
+                    int index = arg.getInt(rec) - 1;
                     int dimLen = derivedArray.getDimLen(dim);
                     if (index < 0) {
                         throw CairoException.nonCritical()
