@@ -24,8 +24,27 @@
 
 package io.questdb.cairo.frm;
 
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.str.Path;
 
 public interface FrameColumnTypePool {
-    FrameColumn create(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, int indexBlockCapacity, long columnTop, int columnIndex, boolean init);
+    FrameColumn create(
+            Path partitionPath,
+            CharSequence columnName,
+            long columnTxn,
+            int columnType,
+            int indexBlockCapacity,
+            long columnTop,
+            int columnIndex,
+            boolean init,
+            boolean canWrite
+    );
+
+    FrameColumn createFromMemoryColumn(
+            int columnIndex,
+            int columnType,
+            long rowCount,
+            MemoryCR columnMemoryPrimary,
+            MemoryCR columnMemorySecondary
+    );
 }

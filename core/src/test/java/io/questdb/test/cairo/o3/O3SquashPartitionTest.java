@@ -538,6 +538,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             // 4kb prefix split threshold
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+            engine.resetFrameFactory();
 
             execute(
                     "create table x as (" +

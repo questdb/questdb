@@ -103,7 +103,7 @@ public final class ColumnType {
     public static final short LONG128 = GEOHASH + 1;            // = 24  Limited support, few tests only
     public static final short IPv4 = LONG128 + 1;               // = 25
     public static final short VARCHAR = IPv4 + 1;               // = 26
-    public static final short ARRAY = VARCHAR + 1;           // = 27
+    public static final short ARRAY = VARCHAR + 1;              // = 27
     // PG specific types to work with 3rd party software
     // with canned catalogue queries:
     // REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER

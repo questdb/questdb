@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
@@ -137,9 +138,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.tasks.TableWriterTask.*;
@@ -198,7 +199,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final int fileOperationRetryCount;
-    private final FrameFactory frameFactory;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
     private final ObjList<ColumnIndexer> indexers;
@@ -263,6 +263,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
     private int columnCount;
+    private long commitRowCount;
     private long committedMasterRef;
     private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
@@ -371,7 +372,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.configuration = configuration;
         this.ddlListener = ddlListener;
         this.checkpointStatus = checkpointStatus;
-        this.frameFactory = new FrameFactory(configuration);
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
         this.metrics = configuration.getMetrics();
         this.ownMessageBus = ownMessageBus;
@@ -2548,6 +2548,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (oom) {
             o3oomObserved = true;
         }
+    }
+
+    public Frame openCommitFrame() {
+        return engine.getFrameFactory().openFromMemoryColumns(o3Columns, metadata, commitRowCount);
     }
 
     public void openLastPartition() {
@@ -5028,7 +5032,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         noOpRowCount = 0L;
         lastOpenPartitionTs = Long.MIN_VALUE;
         lastOpenPartitionIsReadOnly = false;
-        Misc.free(frameFactory);
         assert !truncate || distressed || assertColumnPositionIncludeWalLag();
         freeColumns(truncate & !distressed);
         try {
@@ -5984,6 +5987,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final boolean partitionMutates = Numbers.decodeLowInt(flags) != 0;
                 final boolean isLastWrittenPartition = o3PartitionUpdateSink.nextBlockIndex(blockIndex) == -1;
                 final long o3SplitPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 5 * Long.BYTES);
+                if (!partitionMutates && srcDataNewPartitionSize < 0) {
+                    // noop
+                    continue;
+                }
 
                 boolean isMinPartitionUpdate = partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(txWriter.getMinTimestamp())
                         && partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(timestampMin);
@@ -6298,6 +6305,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$();
 
                         int insertPartitionIndex = i;
+                        FrameFactory frameFactory = engine.getFrameFactory();
                         try (Frame sourceFrame = frameFactory.openRO(path, prevPartitionTimestamp, metadata, columnVersionWriter, prevPartitionSize)) {
                             // Create the source frame and then manipulate partitions in txWriter
                             // When newSplitPartitionTimestamp == partitionTimestamp it is the only way
@@ -6809,6 +6817,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         partitionRemoveCandidates.clear();
         o3ColumnCounters.clear();
         o3BasketPool.clear();
+        commitRowCount = srcOooMax;
 
         // move uncommitted is liable to change max timestamp,
         // however, we need to identify the last partition before max timestamp skips to NULL, for example
@@ -9550,6 +9559,47 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    boolean checkCommitValueColumnsIdenticalToPartition(
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long partitionRowCount,
+            long partitionLo,
+            long partitionHi,
+            long commitLo,
+            long commitHi,
+            long mergeIndexAddr,
+            long mergeIndexRows
+    ) {
+        LOG.info().$("checking dedup insert results in noop [table=").$(getTableToken()).I$();
+
+        // This code is thread safe, e.g. can be triggered from multiple partition merge tasks
+        TableRecordMetadata metadata = getMetadata();
+        FrameFactory frameFactory = engine.getFrameFactory();
+        try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount)) {
+            try (Frame commitFrame = openCommitFrame()) {
+                for (int i = 0; i < metadata.getColumnCount(); i++) {
+                    int columnType = metadata.getColumnType(i);
+                    if (columnType > 0 && !metadata.isDedupKey(i) && i != metadata.getTimestampIndex()) {
+                        if (!FrameAlgebra.isColumnReplaceIdentical(
+                                i,
+                                partitionFrame,
+                                partitionLo,
+                                partitionHi + 1,
+                                commitFrame,
+                                commitLo,
+                                commitHi + 1,
+                                mergeIndexAddr,
+                                mergeIndexRows
+                        )) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
         if (partitionIndexHi <= partitionIndexLo + Math.max(1, optimalPartitionCount)) {
             // Nothing to do
@@ -9595,6 +9645,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         boolean rw = !copyTargetFrame;
         Frame targetFrame = null;
+        FrameFactory frameFactory = engine.getFrameFactory();
         Frame firstPartitionFrame = frameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, originalSize);
         try {
             if (copyTargetFrame) {

@@ -24,10 +24,13 @@
 
 package io.questdb.cairo.frm;
 
+import io.questdb.cairo.frm.file.RecycleBin;
+
 import java.io.Closeable;
 
 public interface FrameColumn extends Closeable {
     int COLUMN_CONTIGUOUS_FILE = 0;
+    int COLUMN_MEMORY = 1;
 
     void addTop(long value);
 
@@ -52,9 +55,15 @@ public interface FrameColumn extends Closeable {
 
     int getColumnType();
 
+    long getContiguousAuxAddr(long rowHi);
+
+    long getContiguousDataAddr(long rowHi);
+
     long getPrimaryFd();
 
     long getSecondaryFd();
 
     int getStorageType();
+
+    void recycle(RecycleBin<FrameColumn> pool);
 }
