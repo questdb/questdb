@@ -39,7 +39,7 @@ import java.util.concurrent.atomic.AtomicLongFieldUpdater;
  * enqueues fail and return false. When the queue is empty, dequeues fail and return null.
  * These segments are linked together to form the unbounded "ConcurrentQueue".
  */
-final class ConcurrentQueueSegment<T extends ValueHolder<T>> {
+final class ConcurrentQueueSegment<T> {
     // Segment design is inspired by the algorithm outlined at:
     // http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue
 
@@ -47,11 +47,13 @@ final class ConcurrentQueueSegment<T extends ValueHolder<T>> {
             AtomicLongFieldUpdater.newUpdater(PaddedHeadAndTail.class, "head");
     private static final AtomicLongFieldUpdater<PaddedHeadAndTail> TAIL =
             AtomicLongFieldUpdater.newUpdater(PaddedHeadAndTail.class, "tail");
+    private final ObjectFactory<T> factory;
 
     private final int freezeOffset;
     // The head and tail positions, with padding to help avoid false sharing contention.
     // Dequeuing happens from the head, enqueuing happens at the tail.
     private final PaddedHeadAndTail headAndTail = new PaddedHeadAndTail();
+    private final ConcurrentSegmentManipulator<T> queueManipulator;
     // The array of items in this queue. Each slot contains the item in that slot and its "sequence number".
     private final Slot<T>[] slots;
     // Mask for quickly accessing a position within the queue's array.
@@ -68,7 +70,8 @@ final class ConcurrentQueueSegment<T extends ValueHolder<T>> {
      * @param boundedLength The maximum number of elements the segment can contain. Must be a power of 2.
      */
     @SuppressWarnings("unchecked")
-    ConcurrentQueueSegment(ObjectFactory<T> factory, int boundedLength) {
+    ConcurrentQueueSegment(ObjectFactory<T> factory, ConcurrentSegmentManipulator<T> queueManipulator, int boundedLength) {
+        this.queueManipulator = queueManipulator;
         // Initialize the slots and the mask. The mask is used as a way of quickly doing "% slots.Length",
         // instead letting us do "& slotsMask".
         slots = new Slot[boundedLength];
@@ -89,9 +92,11 @@ final class ConcurrentQueueSegment<T extends ValueHolder<T>> {
         // subsequent slots, and to have the first enqueuer take longer, so that the slots for 1, 2, 3, etc.
         // may have values, but the 0th slot may still be being filled... in that case, TryDequeue will
         // return false.)
+
+        this.factory = factory;
         for (int i = 0; i < slots.length; i++) {
             slots[i] = new Slot<>();
-            slots[i].item = factory.newInstance();
+            slots[i].item = createSlotItem();
             slots[i].sequenceNumber = i;
         }
     }
@@ -108,10 +113,10 @@ final class ConcurrentQueueSegment<T extends ValueHolder<T>> {
     /**
      * Attempts to dequeue an element from the queue.
      *
-     * @param item The item holder to dequeue into.
-     * @return true if an element was dequeued; otherwise, false.
+     * @param target the item holder to dequeue into
+     * @return the element that was dequeued, or null if no element was dequeued.
      */
-    public boolean tryDequeue(T item) {
+    public T tryDequeue(T target) {
         Slot<T>[] slots = this.slots;
 
         // Loop in case of contention...
@@ -134,9 +139,9 @@ final class ConcurrentQueueSegment<T extends ValueHolder<T>> {
                 if (HEAD.compareAndSet(headAndTail, currentHead, currentHead + 1)) {
                     // Successfully reserved the slot. Note that after the above compareAndSet, other threads
                     // trying to dequeue from this slot will end up spinning until we do the subsequent write.
-                    slots[slotsIndex].item.copyTo(item);
+                    T val = queueManipulator.dequeue(slots, slotsIndex, target);
                     slots[slotsIndex].sequenceNumber = currentHead + slots.length;
-                    return true;
+                    return val;
                 }
                 // The head was already advanced by another thread. A newer head has already been observed and the next
                 // iteration would make forward progress, so there's no need to spin-wait before trying again.
@@ -152,7 +157,7 @@ final class ConcurrentQueueSegment<T extends ValueHolder<T>> {
                 boolean frozen = frozenForEnqueues;
                 long currentTail = headAndTail.tail;
                 if (currentTail - currentHead <= 0 || (frozen && (currentTail - freezeOffset - currentHead <= 0))) {
-                    return false;
+                    return null;
                 }
                 // It's possible it could have become frozen after we checked frozenForEnqueues
                 // and before reading the tail. That's ok: in that rare race condition, we just
@@ -202,7 +207,8 @@ final class ConcurrentQueueSegment<T extends ValueHolder<T>> {
                 if (TAIL.compareAndSet(headAndTail, currentTail, currentTail + 1)) {
                     // Successfully reserved the slot. Note that after the above CompareExchange, other threads
                     // trying to return will end up spinning until we do the subsequent Write.
-                    item.copyTo(slots[slotsIndex].item);
+                    // Copy the item to the slot item and return it.
+                    queueManipulator.enqueue(item, slots, slotsIndex);
                     slots[slotsIndex].sequenceNumber = currentTail + 1;
                     return true;
                 }
@@ -222,6 +228,10 @@ final class ConcurrentQueueSegment<T extends ValueHolder<T>> {
             // is guaranteed to see a new tail. Since this is an always-forward-progressing situation, there's no need
             // to spin-wait before trying again.
         }
+    }
+
+    private T createSlotItem() {
+        return factory.newInstance();
     }
 
     /**
@@ -252,7 +262,7 @@ final class ConcurrentQueueSegment<T extends ValueHolder<T>> {
     }
 
     // Represents a slot in the queue.
-    private static class Slot<T extends ValueHolder<T>> {
+    public static class Slot<T> {
         // The item.
         public T item;
         public volatile long sequenceNumber;
