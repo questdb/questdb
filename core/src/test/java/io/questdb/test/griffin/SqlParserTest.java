@@ -826,6 +826,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testProjectionCanReferenceOwnFunctions() throws SqlException {
+        assertQuery(
+                "",
+                "select rnd_double_array(2, 0, 0, 2, 10) a, a[0][0] from long_sequence(100);"
+        );
+    }
+
+    @Test
+    public void testProjectionCanReferenceOwnFunctions2() throws SqlException {
+        assertQuery(
+                "",
+                "select rnd_double_array(2, 0, 0, 2, 10) a from long_sequence(100);"
+        );
+    }
+
+    @Test
     public void testACWrongFrameTypeUsed() throws Exception {
         assertSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts rangez ) from xyz",
