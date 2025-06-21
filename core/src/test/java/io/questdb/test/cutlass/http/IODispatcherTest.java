@@ -40,6 +40,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxnScoreboardPoolFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -53,9 +54,10 @@ import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.http.HttpRequestProcessorFactory;
 import io.questdb.cutlass.http.HttpRequestProcessorSelector;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.RescheduleContext;
@@ -120,7 +122,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -161,7 +162,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 import static io.questdb.test.cutlass.http.HttpUtils.urlEncodeQuery;
-import static io.questdb.test.tools.TestUtils.*;
+import static io.questdb.test.tools.TestUtils.assertEventually;
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.assertTrue;
 
 public class IODispatcherTest extends AbstractTest {
@@ -202,6 +204,7 @@ public class IODispatcherTest extends AbstractTest {
             "\r\n";
     private static final RescheduleContext emptyRescheduleContext = (retry) -> {
     };
+    private static CairoConfiguration configuration;
     private static TestHttpClient testHttpClient;
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -218,6 +221,7 @@ public class IODispatcherTest extends AbstractTest {
         // we have some synthetic re-runs
         testHttpClient = Misc.free(testHttpClient);
         testHttpClient = new TestHttpClient();
+        configuration = new DefaultCairoConfiguration(root);
     }
 
     @AfterClass
@@ -361,7 +365,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testCannotSetNonBlocking() throws Exception {
         assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration serverConfiguration = new DefaultHttpServerConfiguration();
+            final HttpFullFatServerConfiguration serverConfiguration = new DefaultHttpServerConfiguration(configuration);
             final NetworkFacade nf = new NetworkFacadeImpl() {
                 long theFd;
 
@@ -447,7 +451,7 @@ public class IODispatcherTest extends AbstractTest {
         LOG.info().$("started testConnectDisconnect").$();
 
         assertMemoryLeak(() -> {
-            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(configuration);
 
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
@@ -486,7 +490,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(DirectUtf8String url) {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
                 };
@@ -656,7 +660,8 @@ public class IODispatcherTest extends AbstractTest {
                                 "\"timestamp\":-1," +
                                 "\"dataset\":[" + sink + "]," +
                                 "\"count\":" + (numOfRows + 1) + "," +
-                                "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
+                                "\"error\":\"simulated cairo exception\", " +
+                                "\"errorPos\":222" +
                                 "}",
                         "select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")"
                 )
@@ -680,7 +685,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[[]]," +
                             "\"count\":1," +
-                            "\"error\":\"HTTP 403 (Forbidden), simulated authorization exception\"" +
+                            "\"error\":\"simulated authorization exception\", " +
+                            "\"errorPos\":0" +
                             "}",
                     "select simulate_crash('A') from long_sequence(5)"
             );
@@ -1142,17 +1148,19 @@ public class IODispatcherTest extends AbstractTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = root;
-        final HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
-            @Override
-            public MillisecondClock getMillisecondClock() {
-                return StationaryMillisClock.INSTANCE;
-            }
+        final HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(
+                configuration,
+                new DefaultHttpContextConfiguration() {
+                    @Override
+                    public MillisecondClock getMillisecondClock() {
+                        return StationaryMillisClock.INSTANCE;
+                    }
 
-            @Override
-            public NanosecondClock getNanosecondClock() {
-                return StationaryNanosClock.INSTANCE;
-            }
-        });
+                    @Override
+                    public NanosecondClock getNanosecondClock() {
+                        return StationaryNanosClock.INSTANCE;
+                    }
+                });
 
         final ServerConfiguration serverConfiguration = new DefaultServerConfiguration(baseDir) {
             @Override
@@ -1222,17 +1230,19 @@ public class IODispatcherTest extends AbstractTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = root;
-        final HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
-            @Override
-            public MillisecondClock getMillisecondClock() {
-                return StationaryMillisClock.INSTANCE;
-            }
+        final HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(
+                configuration,
+                new DefaultHttpContextConfiguration() {
+                    @Override
+                    public MillisecondClock getMillisecondClock() {
+                        return StationaryMillisClock.INSTANCE;
+                    }
 
-            @Override
-            public NanosecondClock getNanosecondClock() {
-                return StationaryNanosClock.INSTANCE;
-            }
-        });
+                    @Override
+                    public NanosecondClock getNanosecondClock() {
+                        return StationaryNanosClock.INSTANCE;
+                    }
+                });
         final ServerConfiguration serverConfiguration = new DefaultServerConfiguration(baseDir) {
             @Override
             public HttpFullFatServerConfiguration getHttpServerConfiguration() {
@@ -1653,7 +1663,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportBadRequestGet() throws Exception {
         testImport(
-                "HTTP/1.1 404 Not Found\r\n" +
+                "HTTP/1.1 405 Method Not Allowed\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -2550,21 +2560,21 @@ public class IODispatcherTest extends AbstractTest {
     public void testImportMultipleOnSameConnectionSlow() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
             final WorkerPool workerPool = new TestWorkerPool(3, httpConfiguration.getMetrics());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjList<String> getUrls() {
                         return new ObjList<>("/upload");
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
                     }
                 });
@@ -3000,6 +3010,18 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testInsertNoMemLeak() throws Exception {
+        getSimpleTester().run((engine, sqlExecutionContext) -> {
+            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE test(id LONG);");
+            testHttpClient.assertGet("{\"dml\":\"OK\"}", "INSERT INTO test values(alloc(42));");
+            testHttpClient.assertGet(
+                    "{\"query\":\"test;\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[42]],\"count\":1}",
+                    "test;"
+            );
+        });
+    }
+
+    @Test
     public void testInterval() throws Exception {
         testJsonQuery(
                 0,
@@ -3053,8 +3075,8 @@ public class IODispatcherTest extends AbstractTest {
                                     "Transfer-Encoding: chunked\r\n" +
                                     "Content-Type: text/plain; charset=utf-8\r\n" +
                                     "\r\n" +
-                                    "16\r\n" +
-                                    "Method not supported\r\n" +
+                                    "23\r\n" +
+                                    "Method is not set in HTTP request\r\n" +
                                     "\r\n" +
                                     "00\r\n"
                     );
@@ -3172,7 +3194,7 @@ public class IODispatcherTest extends AbstractTest {
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, baseDir, 256, false, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
@@ -4148,7 +4170,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testJsonQueryLimitColumnsBadUtf8() throws Exception {
         testJsonQuery(
                 20,
-                "GET /query?query=select+%27oops%27+%D1%80%D0%B5%D0%BA%D0%BE%D1%80%D0%B4%D0%BD%D0%BE+from+long_sequence(10)%0A&count=false&cols=�������&src=vis HTTP/1.1\r\n" +
+                "GET /query?query=select+%27oops%27+%D1%80%D0%B5%D0%BA%D0%BE%D1%80%D0%B4%D0%BD%D0%BE+from+long_sequence(10)%0A&count=false&cols=a�������\t&src=vis HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Accept: */*\r\n" +
@@ -5104,7 +5126,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testJsonQuerySyntaxError() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(1);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
@@ -5157,7 +5179,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryTimeoutResetOnEachQuery() throws Exception {
-        final int timeout = 200;
+        final int timeout = 500;
         final int iterations = 3;
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
@@ -5319,7 +5341,7 @@ public class IODispatcherTest extends AbstractTest {
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, baseDir, 256, false, true);
             final WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
@@ -5366,7 +5388,7 @@ public class IODispatcherTest extends AbstractTest {
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, baseDir, 4096, false, true);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
@@ -5417,6 +5439,13 @@ public class IODispatcherTest extends AbstractTest {
             final String baseDir = root;
             final int tableRowCount = 3_000_000;
 
+            CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir) {
+                @Override
+                public int getSqlPageFrameMaxRows() {
+                    // this is necessary to sufficiently fragmented paged filter execution
+                    return 10_000;
+                }
+            };
             DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withNetwork(nf)
                     .withBaseDir(baseDir)
@@ -5425,17 +5454,11 @@ public class IODispatcherTest extends AbstractTest {
                     .withAllowDeflateBeforeSend(false)
                     .withServerKeepAlive(true)
                     .withHttpProtocolVersion("HTTP/1.1 ")
-                    .build();
+                    .build(cairoConfiguration);
 
             WorkerPool workerPool = new TestWorkerPool(1);
 
-            try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir) {
-                @Override
-                public int getSqlPageFrameMaxRows() {
-                    // this is necessary to sufficiently fragmented paged filter execution
-                    return 10_000;
-                }
-            });
+            try (CairoEngine engine = new CairoEngine(cairoConfiguration);
                  HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
@@ -5692,7 +5715,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testMaxConnections() throws Exception {
         LOG.info().$("started maxConnections").$();
         assertMemoryLeak(() -> {
-            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(configuration);
 
             // change to 400 to trigger lockup
             // excess connection take a while to return (because it's N TCP retransmissions + timeout under the hood
@@ -5742,7 +5765,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(DirectUtf8String url) {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
                 }) {
@@ -5948,7 +5971,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testNetworkErrorCouldNotBindSocket() throws Exception {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
-            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(configuration);
             try (IODispatcher<HttpConnectionContext> ignored1 = IODispatchers.create(
                     DefaultIODispatcherConfiguration.INSTANCE,
                     (fd, d) -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE)
@@ -6055,14 +6078,14 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testPostRequestToGetProcessor() throws Exception {
         testImport(
-                "HTTP/1.1 404 Not Found\r\n" +
+                "HTTP/1.1 405 Method Not Allowed\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "27\r\n" +
-                        "Method (multipart POST) not supported\r\n" +
+                        "1b\r\n" +
+                        "Method POST not supported\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",
@@ -6289,7 +6312,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testSCPConnectDownloadDisconnect() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
@@ -6407,7 +6430,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testSCPFullDownload() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
@@ -6420,8 +6443,6 @@ public class IODispatcherTest extends AbstractTest {
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt")) {
                     try {
                         Rnd rnd = new Rnd();
-                        final int diskBufferLen = 1024 * 1024;
-
                         writeRandomFile(path, rnd, 122299092L);
 
                         long fd = Net.socketTcp(true);
@@ -6434,18 +6455,6 @@ public class IODispatcherTest extends AbstractTest {
                                 long buffer = Unsafe.calloc(netBufferLen, MemoryTag.NATIVE_DEFAULT);
                                 try {
 
-                                    // send request to server to download file we just created
-                                    final String request = "GET /questdb-temp.txt HTTP/1.1\r\n" +
-                                            "Host: localhost:9000\r\n" +
-                                            "Connection: keep-alive\r\n" +
-                                            "Cache-Control: max-age=0\r\n" +
-                                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
-                                            "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
-                                            "Accept-Encoding: gzip,deflate,sdch\r\n" +
-                                            "Accept-Language: en-US,en;q=0.8\r\n" +
-                                            "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
-                                            "\r\n";
-
                                     String expectedResponseHeader = "HTTP/1.1 200 OK\r\n" +
                                             "Server: questDB/1.0\r\n" +
                                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -6455,8 +6464,8 @@ public class IODispatcherTest extends AbstractTest {
                                             "\r\n";
 
                                     for (int j = 0; j < 10; j++) {
-                                        sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971667);
+                                        sendRequest(fd, buffer);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, expectedResponseHeader);
                                     }
 
                                     // send few requests to receive 304
@@ -6483,8 +6492,8 @@ public class IODispatcherTest extends AbstractTest {
 
                                     // couple more full downloads after 304
                                     for (int j = 0; j < 2; j++) {
-                                        sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971667);
+                                        sendRequest(fd, buffer);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, expectedResponseHeader);
                                     }
 
                                     // get a 404 now
@@ -6540,6 +6549,7 @@ public class IODispatcherTest extends AbstractTest {
             final String baseDir = root;
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(
+                    configuration,
                     nf,
                     baseDir,
                     16 * 1024,
@@ -6696,7 +6706,7 @@ public class IODispatcherTest extends AbstractTest {
                 "\r\n";
 
         assertMemoryLeak(() -> {
-            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(configuration);
 
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
@@ -6737,7 +6747,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(DirectUtf8String url) {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
                             public void onHeadersReady(HttpConnectionContext context) {
@@ -6858,6 +6868,7 @@ public class IODispatcherTest extends AbstractTest {
 
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(
+                    configuration,
                     new DefaultHttpContextConfiguration() {
                         @Override
                         public MillisecondClock getMillisecondClock() {
@@ -6928,7 +6939,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(DirectUtf8String url) {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
                 };
@@ -7023,7 +7034,7 @@ public class IODispatcherTest extends AbstractTest {
                 "\r\n";
 
         assertMemoryLeak(() -> {
-            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(configuration);
 
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
@@ -7083,7 +7094,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(DirectUtf8String url) {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
                 };
@@ -7152,10 +7163,25 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextExportDisconnectOnDataUnavailableEventNeverFired() throws Exception {
-        testDisconnectOnDataUnavailableEventNeverFired(
-                "GET /exp?query=" + urlEncodeQuery("select * from test_data_unavailable(1, 10)") + "&count=true HTTP/1.1\r\n"
-                        + SendAndReceiveRequestBuilder.RequestHeaders
-        );
+        getSimpleTester()
+                .withWorkerCount(2)
+                .withQueryTimeout(100)
+                .run((engine, sqlExecutionContext) -> {
+                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+                    try {
+                        testHttpClient.assertGetRegexp(
+                                "/query",
+                                ".*timeout, query aborted.*",
+                                "select * from test_data_unavailable(1, 10)",
+                                null,
+                                null,
+                                "400"
+                        );
+                    } finally {
+                        Misc.free(eventRef.get());
+                    }
+                });
     }
 
     @Test
@@ -8089,7 +8115,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[[]]," +
                             "\"count\":1," +
-                            "\"error\":\"HTTP 500 (Internal server error), simulated cairo error\"" +
+                            "\"error\":\"simulated cairo error\", " +
+                            "\"errorPos\":0" +
                             "}",
                     "select simulate_crash('E')"
             );
@@ -8107,7 +8134,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[[]]," +
                             "\"count\":1," +
-                            "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
+                            "\"error\":\"simulated cairo exception\", " +
+                            "\"errorPos\":222" +
                             "}",
                     "select simulate_crash('0')"
             );
@@ -8125,7 +8153,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[[]]," +
                             "\"count\":1," +
-                            "\"error\":\"HTTP 500 (Internal server error)\"" +
+                            "\"error\":\"Internal server error\", " +
+                            "\"errorPos\":0" +
                             "}",
                     "select npe()"
             );
@@ -8165,7 +8194,7 @@ public class IODispatcherTest extends AbstractTest {
         final int senderCount = 2;
 
         assertMemoryLeak(() -> {
-            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(configuration);
 
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final AtomicInteger requestsReceived = new AtomicInteger();
@@ -8248,7 +8277,7 @@ public class IODispatcherTest extends AbstractTest {
                                 }
 
                                 @Override
-                                public HttpRequestProcessor select(DirectUtf8String url) {
+                                public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                                     return null;
                                 }
                             }) {
@@ -8388,7 +8417,7 @@ public class IODispatcherTest extends AbstractTest {
                                 () -> {
                                     started.countDown();
 
-                                    try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                                    try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
                                         while (queryError.get() == null) {
                                             walApplyJob.drain(0);
                                             new CheckWalTransactionsJob(engine).run(0);
@@ -8464,19 +8493,7 @@ public class IODispatcherTest extends AbstractTest {
             SOCountDownLatch stopped = new SOCountDownLatch(1);
             AtomicReference<Throwable> queryError = new AtomicReference<>();
 
-            DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
-                    .withNetwork(NetworkFacadeImpl.INSTANCE)
-                    .withBaseDir(root)
-                    .withSendBufferSize(256)
-                    .withDumpingTraffic(false)
-                    .withAllowDeflateBeforeSend(false)
-                    .withServerKeepAlive(true)
-                    .withHttpProtocolVersion("HTTP/1.1 ")
-                    .build();
-
-            WorkerPool workerPool = new TestWorkerPool(1);
-
-            try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(root) {
+            CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                     return new DefaultSqlExecutionCircuitBreakerConfiguration() {
@@ -8486,7 +8503,20 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     };
                 }
-            });
+            };
+            DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
+                    .withNetwork(NetworkFacadeImpl.INSTANCE)
+                    .withBaseDir(root)
+                    .withSendBufferSize(256)
+                    .withDumpingTraffic(false)
+                    .withAllowDeflateBeforeSend(false)
+                    .withServerKeepAlive(true)
+                    .withHttpProtocolVersion("HTTP/1.1 ")
+                    .build(cairoConfiguration);
+
+            WorkerPool workerPool = new TestWorkerPool(1);
+
+            try (CairoEngine engine = new CairoEngine(cairoConfiguration);
                  HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
                  SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
@@ -8533,7 +8563,7 @@ public class IODispatcherTest extends AbstractTest {
                             () -> {
                                 started.countDown();
 
-                                try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                                try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
                                     while (queryError.get() == null) {
                                         walApplyJob.drain(0);
                                         new CheckWalTransactionsJob(engine).run(0);
@@ -8635,15 +8665,13 @@ public class IODispatcherTest extends AbstractTest {
             Rnd rnd,
             long buffer,
             int len,
-            int nonRepeatedContentLength,
-            String expectedResponseHeader,
-            long expectedResponseLen
+            String expectedResponseHeader
     ) {
         int expectedHeaderLen = expectedResponseHeader.length();
         int headerCheckRemaining = expectedResponseHeader.length();
         long downloadedSoFar = 0;
         int contentRemaining = 0;
-        while (downloadedSoFar < expectedResponseLen) {
+        while (downloadedSoFar < 20971667) {
             int contentOffset = 0;
             int n = Net.recv(fd, buffer, len);
             assertTrue(n > -1);
@@ -8661,7 +8689,7 @@ public class IODispatcherTest extends AbstractTest {
                 if (headerCheckRemaining == 0) {
                     for (int i = contentOffset; i < n; i++) {
                         if (contentRemaining == 0) {
-                            contentRemaining = nonRepeatedContentLength;
+                            contentRemaining = 1048576;
                             rnd.reset();
                         }
                         Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
@@ -8783,7 +8811,17 @@ public class IODispatcherTest extends AbstractTest {
                 .execute(request, response);
     }
 
-    private static void sendRequest(String request, long fd, long buffer) {
+    private static void sendRequest(long fd, long buffer) {
+        final String request = "GET /questdb-temp.txt HTTP/1.1\r\n" +
+                "Host: localhost:9000\r\n" +
+                "Connection: keep-alive\r\n" +
+                "Cache-Control: max-age=0\r\n" +
+                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                "Accept-Encoding: gzip,deflate,sdch\r\n" +
+                "Accept-Language: en-US,en;q=0.8\r\n" +
+                "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                "\r\n";
         final int requestLen = request.length();
         Utf8s.strCpyAscii(request, requestLen, buffer);
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
@@ -8839,7 +8877,7 @@ public class IODispatcherTest extends AbstractTest {
         String dirName = TableUtils.getTableDir(mangleTableDirNames, tableName, 1, false);
         TableToken tableToken = new TableToken(tableName, dirName, 1, false, false, false);
         try (
-                TableReader reader = new TableReader(configuration, tableToken);
+                TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, tableToken, TxnScoreboardPoolFactory.createPool(configuration));
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
         ) {
             cursor.of(reader);
@@ -8859,7 +8897,7 @@ public class IODispatcherTest extends AbstractTest {
         String telemetry = TelemetryTask.TABLE_NAME;
         TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false, false, true);
         try (
-                TableReader reader = new TableReader(configuration, telemetryTableName);
+                TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, telemetryTableName, TxnScoreboardPoolFactory.createPool(configuration));
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
         ) {
             cursor.of(reader);
@@ -8876,10 +8914,12 @@ public class IODispatcherTest extends AbstractTest {
 
     @NotNull
     private DefaultHttpServerConfiguration createHttpServerConfiguration(
+            CairoConfiguration cairoConfiguration,
             String baseDir,
             @SuppressWarnings("SameParameterValue") boolean dumpTraffic
     ) {
         return createHttpServerConfiguration(
+                cairoConfiguration,
                 NetworkFacadeImpl.INSTANCE,
                 baseDir,
                 1024 * 1024,
@@ -8890,6 +8930,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @NotNull
     private DefaultHttpServerConfiguration createHttpServerConfiguration(
+            CairoConfiguration cairoConfiguration,
             NetworkFacade nf,
             String baseDir,
             int sendBufferSize,
@@ -8897,6 +8938,7 @@ public class IODispatcherTest extends AbstractTest {
             boolean allowDeflateBeforeSend
     ) {
         return createHttpServerConfiguration(
+                cairoConfiguration,
                 nf,
                 baseDir,
                 sendBufferSize,
@@ -8909,6 +8951,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @NotNull
     private DefaultHttpServerConfiguration createHttpServerConfiguration(
+            CairoConfiguration cairoConfiguration,
             NetworkFacade nf,
             String baseDir,
             int sendBufferSize,
@@ -8925,15 +8968,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withAllowDeflateBeforeSend(allowDeflateBeforeSend)
                 .withServerKeepAlive(serverKeepAlive)
                 .withHttpProtocolVersion(httpProtocolVersion)
-                .build();
-    }
-
-    private HttpQueryTestBuilder getSimpleTester() {
-        return new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false);
+                .build(cairoConfiguration);
     }
 
     private boolean handleClientOperation(
@@ -9172,49 +9207,6 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
-    private void testDisconnectOnDataUnavailableEventNeverFired(String request) throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(2)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .withQueryTimeout(100)
-                .run((engine, sqlExecutionContext) -> {
-                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-
-                    final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-                    long fd = nf.socketTcp(true);
-                    try {
-                        long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
-                        assert sockAddrInfo != -1;
-                        try {
-                            TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
-                            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-                            nf.configureNonBlocking(fd);
-
-                            long bufLen = request.length();
-                            long ptr = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
-                            try {
-                                new SendAndReceiveRequestBuilder()
-                                        .withNetworkFacade(nf)
-                                        .withPauseBetweenSendAndReceive(0)
-                                        .withPrintOnly(false)
-                                        .executeUntilDisconnect(request, fd, 400, ptr, null);
-                            } finally {
-                                Unsafe.free(ptr, bufLen, MemoryTag.NATIVE_DEFAULT);
-                            }
-                        } finally {
-                            nf.freeAddrInfo(sockAddrInfo);
-                        }
-                    } finally {
-                        nf.close(fd);
-                        // Make sure to close the event on the producer side.
-                        Misc.free(eventRef.get());
-                    }
-                });
-    }
-
     private void testExceptionAfterHeader(int numOfRows, String rows) throws Exception {
         getSimpleTester().run((engine, sqlExecutionContext) -> {
             testHttpClient.assertGet(
@@ -9224,7 +9216,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"timestamp\":-1," +
                             "\"dataset\":[" + rows + "]," +
                             "\"count\":" + (numOfRows + 1) + "," +
-                            "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
+                            "\"error\":\"simulated cairo exception\", " +
+                            "\"errorPos\":222" +
                             "}",
                     "select simulate_crash('" + numOfRows + "') from long_sequence(5)"
             );
@@ -9964,7 +9957,7 @@ public class IODispatcherTest extends AbstractTest {
         boolean valid;
     }
 
-    private static class TestJsonQueryProcessorFactory implements HttpRequestProcessorFactory {
+    private static class TestJsonQueryProcessorFactory implements HttpRequestHandlerFactory {
         private final CairoEngine engine;
         private final HttpFullFatServerConfiguration httpConfiguration;
         private final int workerCount;
@@ -9981,7 +9974,7 @@ public class IODispatcherTest extends AbstractTest {
         }
 
         @Override
-        public HttpRequestProcessor newInstance() {
+        public HttpRequestHandler newInstance() {
             return new JsonQueryProcessor(
                     httpConfiguration.getJsonQueryProcessorConfiguration(),
                     engine,

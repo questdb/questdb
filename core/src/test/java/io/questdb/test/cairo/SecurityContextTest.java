@@ -144,7 +144,7 @@ public class SecurityContextTest {
                     switch (parameters.length) {
                         case 0:
                             method.invoke(sc, NO_PARAM_ARGS);
-                            if (name.startsWith("authorizeSystemAdmin") || name.equals("authorizeSqlEngineAdmin")
+                            if (name.startsWith("authorizeSystemAdmin") || name.equals("authorizeSqlEngineAdmin") || name.equals("authorizeSettings")
                                     || name.equals("authorizeHttp") || name.equals("authorizePGWire") || name.equals("authorizeLineTcp")) {
                                 continue;
                             }

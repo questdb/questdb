@@ -933,11 +933,6 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
-            return this;
-        }
-
-        @Override
         public LogRecord $(int x) {
             return this;
         }
@@ -1003,6 +998,31 @@ public class LogFactory implements Closeable {
         }
 
         @Override
+        public LogRecord $safe(@NotNull CharSequence sequence, int lo, int hi) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $safe(@Nullable DirectUtf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $safe(@Nullable Utf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $safe(long lo, long hi) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $safe(@Nullable CharSequence sequence) {
+            return this;
+        }
+
+        @Override
         public LogRecord $size(long memoryBytes) {
             return this;
         }
@@ -1014,11 +1034,6 @@ public class LogFactory implements Closeable {
 
         @Override
         public LogRecord $ts(long x) {
-            return this;
-        }
-
-        @Override
-        public LogRecord $utf8(long lo, long hi) {
             return this;
         }
 
@@ -1059,11 +1074,6 @@ public class LogFactory implements Closeable {
 
         @Override
         public LogRecord ts() {
-            return this;
-        }
-
-        @Override
-        public LogRecord utf8(@Nullable CharSequence sequence) {
             return this;
         }
     }

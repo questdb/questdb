@@ -136,7 +136,10 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createMatView("2024-10-24T17:00:15.000000Z", telemetryJob);
 
                 try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-                    execute("2024-10-24T17:00:25.000000Z", refreshJob, telemetryJob,
+                    execute(
+                            "2024-10-24T17:00:25.000000Z",
+                            refreshJob,
+                            telemetryJob,
                             "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
                                     ",('gbpusd', 1.323, '2024-09-10T12:02')" +
                                     ",('jpyusd', 103.21, '2024-09-10T12:02')" +
@@ -161,7 +164,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                         "created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n" +
                                 "2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0\n" +
                                 "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0\n" +
-                                "2024-10-24T17:00:33.000000Z\t202\t6\tnull\t[-105]: table does not exist [table=base_price]\t0.0\n" +
+                                "2024-10-24T17:00:33.000000Z\t202\t6\tnull\tbase table is dropped or renamed\t0.0\n" +
                                 "2024-10-24T17:00:33.000000Z\t203\t6\tnull\t[-105]: table does not exist [table=base_price]\t0.0\n",
                         "sys.telemetry_mat_view"
                 );
@@ -177,7 +180,10 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createMatView("2024-10-24T17:00:20.000000Z", telemetryJob);
 
                 try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-                    execute("2024-10-24T17:01:00.000000Z", refreshJob, telemetryJob,
+                    execute(
+                            "2024-10-24T17:01:00.000000Z",
+                            refreshJob,
+                            telemetryJob,
                             "insert into base_price " +
                                     "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
                                     "from long_sequence(24 * 20 * 5)"
@@ -250,7 +256,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
         }
         drainWalQueue();
         currentMicros = parseFloorPartialTimestamp(currentTime);
-        refreshJob.run(0);
+        drainMatViewQueue(refreshJob);
         drainWalQueue();
         telemetryJob.runSerially();
     }

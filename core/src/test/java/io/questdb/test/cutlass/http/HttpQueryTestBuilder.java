@@ -34,8 +34,8 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
-import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.http.HttpRequestProcessorFactory;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
@@ -111,7 +111,7 @@ public class HttpQueryTestBuilder {
                     .withStaticContentAuthRequired(httpStaticContentAuthType)
                     .withHealthCheckAuthRequired(httpHealthCheckAuthType)
                     .withNanosClock(nanosecondClock)
-                    .build();
+                    .build(configuration);
             final WorkerPool workerPool = new TestWorkerPool(workerCount, httpConfiguration.getMetrics());
 
             CairoConfiguration cairoConfiguration = configuration;
@@ -187,14 +187,14 @@ public class HttpQueryTestBuilder {
 
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
 
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjList<String> getUrls() {
                         return new ObjList<>("/upload");
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return textImportProcessor != null ? textImportProcessor.create(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
@@ -205,14 +205,14 @@ public class HttpQueryTestBuilder {
 
                 this.sqlExecutionContexts = new ObjList<>();
 
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjList<String> getUrls() {
                         return new ObjList<>("/query");
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         SqlExecutionContextImpl newContext = new SqlExecutionContextImpl(engine, workerCount) {
                             @Override
                             public QueryFutureUpdateListener getQueryFutureUpdateListener() {
@@ -230,14 +230,14 @@ public class HttpQueryTestBuilder {
                     }
                 });
 
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjList<String> getUrls() {
                         return httpConfiguration.getContextPathExport();
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return new TextQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
@@ -246,38 +246,38 @@ public class HttpQueryTestBuilder {
                     }
                 });
 
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjList<String> getUrls() {
                         return httpConfiguration.getContextPathTableStatus();
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return new TableStatusCheckProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
                     }
                 });
 
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjList<String> getUrls() {
                         return httpConfiguration.getContextPathExec();
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine, 1);
                     }
                 });
 
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjList<String> getUrls() {
                         return new ObjList<>("/status");
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return new HealthCheckProcessor(httpConfiguration);
                     }
                 });
@@ -389,7 +389,7 @@ public class HttpQueryTestBuilder {
 
     @FunctionalInterface
     public interface HttpRequestProcessorBuilder {
-        HttpRequestProcessor create(
+        HttpRequestHandler create(
                 JsonQueryProcessorConfiguration configuration,
                 CairoEngine engine,
                 int workerCount

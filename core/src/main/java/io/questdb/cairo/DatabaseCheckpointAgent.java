@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -46,6 +47,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -79,11 +81,15 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
+    private final boolean lightweightCheckpointSupported;
     private final ReentrantLock lock = new ReentrantLock();
+    private final MessageBus messageBus;
     private final WalWriterMetadata metadata; // protected with #lock
     private final MicrosecondClock microClock;
     private final StringSink nameSink = new StringSink(); // protected with #lock
     private final Path path = new Path(); // protected with #lock
+    private final LongList scoreboardTxns = new LongList();
+    private final ObjList<TxnScoreboard> scoreboards = new ObjList<>();
     private final AtomicLong startedAtTimestamp = new AtomicLong(Numbers.LONG_NULL); // Numbers.LONG_NULL means no ongoing checkpoint
     private final SymbolMapUtil symbolMapUtil = new SymbolMapUtil();
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
@@ -100,10 +106,12 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     DatabaseCheckpointAgent(CairoEngine engine) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
+        this.messageBus = engine.getMessageBus();
         this.microClock = configuration.getMicrosecondClock();
         this.ff = configuration.getFilesFacade();
         this.metadata = new WalWriterMetadata(ff);
         this.tableNameRegistryStore = new GrowOnlyTableNameRegistryStore(ff);
+        this.lightweightCheckpointSupported = configuration.getScoreboardFormat() > 1;
     }
 
     @TestOnly
@@ -126,6 +134,12 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         } finally {
             lock.unlock();
         }
+    }
+
+    @Override
+    public boolean partitionsLocked() {
+        // With new version of scoreboard there is no need to pause partition clean jobs
+        return !lightweightCheckpointSupported && isInProgress();
     }
 
     public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
@@ -236,10 +250,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
                                 // For mat views, copy view definition and state before copying the underlying table.
                                 // This way, the state copy will never hold a txn number that is newer than what's
-                                // in the table copy (otherwise, such situation may lead to lost view refresh data).
+                                // in the table copy (otherwise, such a situation may lead to lost view refresh data).
                                 if (tableToken.isMatView()) {
-                                    final MatViewGraph graph = engine.getMatViewGraph();
-                                    final MatViewDefinition matViewDefinition = graph.getViewDefinition(tableToken);
+                                    final MatViewGraph matViewGraph = engine.getMatViewGraph();
+                                    final MatViewDefinition matViewDefinition = matViewGraph.getViewDefinition(tableToken);
                                     if (matViewDefinition != null) {
                                         matViewFileWriter.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                                         MatViewDefinition.append(matViewDefinition, matViewFileWriter);
@@ -307,6 +321,17 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     reader.getColumnVersionReader().dumpTo(mem);
                                     mem.close(false);
 
+                                    if (lightweightCheckpointSupported) {
+                                        long txn = reader.getTxn();
+                                        TxnScoreboard scoreboard = engine.getTxnScoreboard(tableToken);
+                                        if (!scoreboard.incrementTxn(TxnScoreboard.CHECKPOINT_ID, txn)) {
+                                            throw CairoException.nonCritical().put("cannot lock table for checkpoint [table=").put(tableToken).put(']');
+                                        }
+                                        scoreboardTxns.add(txn);
+                                        scoreboardTxns.add(reader.getMetadata().getPartitionBy());
+                                        scoreboards.add(scoreboard);
+                                    }
+
                                     if (isWalTable) {
                                         // Add entry to table name registry copy.
                                         tableNameRegistryStore.logAddTable(tableToken);
@@ -355,6 +380,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 }
             } catch (Throwable e) {
                 startedAtTimestamp.set(Numbers.LONG_NULL);
+                releaseScoreboardTxns(false);
                 throw e;
             }
         } finally {
@@ -370,7 +396,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 final int cleanSymbolCount = txWriter.getSymbolValueCount(tableMetadata.getDenseSymbolIndex(i));
                 final String columnName = tableMetadata.getColumnName(i);
                 LOG.info().$("rebuilding symbol files [table=").$(tablePath)
-                        .$(", column=").utf8(columnName)
+                        .$(", column=").$safe(columnName)
                         .$(", count=").$(cleanSymbolCount)
                         .I$();
 
@@ -409,7 +435,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath.$());
             columnVersionReader.readUnsafe();
 
-            // Symbols are not append only data structures, they can be corrupt
+            // Symbols are not append-only data structures, they can be corrupt
             // when symbol files are copied while written to. We need to rebuild them.
             rebuildSymbolFiles(tablePath, recoveredSymbolFiles, pathTableLen);
 
@@ -417,7 +443,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 LOG.info().$("resetting WAL lag [table=").$(tablePath)
                         .$(", walLagRowCount=").$(txWriter.getLagRowCount())
                         .I$();
-                // WAL Lag values is not strictly append only data structures, it can be overwritten
+                // WAL Lag values is not strictly append-only data structures, it can be overwritten
                 // while the snapshot was copied. Resetting it will re-apply data from copied WAL files
                 txWriter.resetLagAppliedRows();
             }
@@ -432,6 +458,22 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         } finally {
             tablePath.trimTo(pathTableLen);
         }
+    }
+
+    private void releaseScoreboardTxns(boolean schedulePartitionPurge) {
+        for (int i = 0, n = scoreboards.size(); i < n; i++) {
+            long txn = scoreboardTxns.get(2 * i);
+            TxnScoreboard scoreboard = scoreboards.getQuick(i);
+            scoreboard.releaseTxn(TxnScoreboard.CHECKPOINT_ID, txn);
+
+            if (schedulePartitionPurge && scoreboard.isOutdated(txn)) {
+                int partitionBy = (int) scoreboardTxns.getQuick(2 * i + 1);
+                TableUtils.schedulePurgeO3Partitions(messageBus, scoreboard.getTableToken(), partitionBy);
+            }
+        }
+        scoreboardTxns.clear();
+        Misc.freeObjList(scoreboards);
+        scoreboards.clear();
     }
 
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
@@ -511,6 +553,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             throw SqlException.position(0).put("Another checkpoint command is in progress");
         }
         try {
+            releaseScoreboardTxns(true);
+
             // Delete checkpoint's "db" directory.
             path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).$();
             ff.rmdir(path); // it's fine to ignore errors here
@@ -529,7 +573,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 }
             }
 
-            // reset checkpoint in-flight flag.
+            // reset checkpoint-in-flight flag.
             startedAtTimestamp.set(Numbers.LONG_NULL);
         } finally {
             lock.unlock();
@@ -559,7 +603,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             if (!ff.exists(srcPath.$())) {
                 srcPath.of(legacyCheckpointRoot);
 
-                // check if legacy path exists, in case it doesn't
+                // check if a legacy path exists, in case it doesn't,
                 // we should report errors against the current checkpoint root
                 if (!ff.exists(srcPath.$())) {
                     srcPath.of(checkpointRoot);
@@ -585,7 +629,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             srcPath.trimTo(checkpointRootLen).concat(TableUtils.CHECKPOINT_LEGACY_META_FILE_NAME);
 
             if (!ff.exists(srcPath.$())) {
-                // now current metadata file
+                // now the current metadata file
                 srcPath.trimTo(checkpointRootLen).concat(TableUtils.CHECKPOINT_META_FILE_NAME);
             }
 

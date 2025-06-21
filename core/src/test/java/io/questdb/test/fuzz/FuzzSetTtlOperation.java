@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.std.Chars;
+import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 
 public class FuzzSetTtlOperation implements FuzzTransactionOperation {
@@ -45,7 +46,7 @@ public class FuzzSetTtlOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex) {
+    public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex, LongList excludedTsIntervals) {
         try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1);
              SqlCompiler sqlCompiler = engine.getSqlCompiler()
         ) {

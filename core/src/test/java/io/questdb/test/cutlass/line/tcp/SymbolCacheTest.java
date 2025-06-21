@@ -142,7 +142,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                         newColsAdded = columnsAdded.get();
                         rdr.reload();
                         for (int col = colAdded; col < newColsAdded; col++) {
-                            SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration());
+                            SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration(configuration));
                             symbolCache.of(
                                     engine.getConfiguration(),
                                     new TestTableWriterAPI(),
@@ -201,9 +201,9 @@ public class SymbolCacheTest extends AbstractCairoTest {
         final String tableName = "tb1";
         final FilesFacade ff = new TestFilesFacadeImpl();
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (Path path = new Path();
-                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
+                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration(configuration) {
                      @Override
                      public long getSymbolCacheWaitBeforeReload() {
                          return 0;
@@ -283,7 +283,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
             execute("create table x(a symbol, c int, b symbol capacity 10000000, ts timestamp) timestamp(ts) partition by DAY");
             TableToken tableToken = engine.verifyTableName("x");
             try (
-                    SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration());
+                    SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration(configuration));
                     Path path = new Path();
                     TxReader txReader = new TxReader(ff).ofRO(
                             path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
@@ -382,9 +382,9 @@ public class SymbolCacheTest extends AbstractCairoTest {
         final String symbolPrefix = "аз_съм_грут";
         final FilesFacade ff = new FilesFacadeImpl();
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (Path path = new Path();
-                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
+                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration(configuration) {
                      @Override
                      public long getSymbolCacheWaitBeforeReload() {
                          return 0;
@@ -445,9 +445,9 @@ public class SymbolCacheTest extends AbstractCairoTest {
     public void testSimpleInteraction() throws Exception {
         String tableName = "tb1";
         FilesFacade ff = new TestFilesFacadeImpl();
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (Path path = new Path();
-                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
+                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration(configuration) {
                      @Override
                      public long getSymbolCacheWaitBeforeReload() {
                          return 0;
@@ -605,9 +605,9 @@ public class SymbolCacheTest extends AbstractCairoTest {
     public void testSymbolCountNonZeroWatermark() throws Exception {
         String tableName = "tb1";
         FilesFacade ff = new TestFilesFacadeImpl();
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (Path path = new Path();
-                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
+                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration(configuration) {
                      @Override
                      public long getSymbolCacheWaitBeforeReload() {
                          return 0;
@@ -688,9 +688,9 @@ public class SymbolCacheTest extends AbstractCairoTest {
     public void testSymbolCountZeroWatermark() throws Exception {
         String tableName = "tb1";
         FilesFacade ff = new TestFilesFacadeImpl();
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (Path path = new Path();
-                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
+                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration(configuration) {
                      @Override
                      public long getSymbolCacheWaitBeforeReload() {
                          return 0;
@@ -779,6 +779,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
     private static class TestTableWriterAPI implements TableWriterAPI {
 
+        private final static TableToken emptyTableToken = new TableToken("", "", 0, false, false, false);
         private final int watermark;
 
         public TestTableWriterAPI() {
@@ -831,8 +832,8 @@ public class SymbolCacheTest extends AbstractCairoTest {
         }
 
         @Override
-        public TableToken getTableToken() {
-            return null;
+        public @NotNull TableToken getTableToken() {
+            return emptyTableToken;
         }
 
         @Override

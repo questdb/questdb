@@ -42,6 +42,7 @@ import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.CharSink;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -58,11 +59,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final IntStack timestampRequiredStack = new IntStack();
     private final WindowContextImpl windowContext = new WindowContextImpl();
     private final int workerCount;
-    private BindVariableService bindVariableService;
-    private boolean cacheHit = false;
+    protected BindVariableService bindVariableService;
+    protected SecurityContext securityContext;
+    private boolean allowNonDeterministicFunction = true;
+    private boolean cacheHit;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private MicrosecondClock clock;
-    private boolean cloneSymbolTables = false;
+    private boolean cloneSymbolTables;
     private boolean columnPreTouchEnabled = true;
     private boolean columnPreTouchEnabledOverride = true;
     private boolean containsSecret;
@@ -74,7 +77,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelReadParquetEnabled;
     private Rnd random;
     private long requestFd = -1;
-    private SecurityContext securityContext;
     private boolean useSimpleCircuitBreaker;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
@@ -100,6 +102,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
         this(cairoEngine, workerCount, workerCount);
+    }
+
+    @Override
+    public boolean allowNonDeterministicFunctions() {
+        return allowNonDeterministicFunction;
     }
 
     @Override
@@ -298,6 +305,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cacheHit = false;
         this.columnPreTouchEnabled = true;
         this.columnPreTouchEnabledOverride = true;
+        this.allowNonDeterministicFunction = true;
+    }
+
+    @Override
+    public void setAllowNonDeterministicFunction(boolean value) {
+        this.allowNonDeterministicFunction = value;
     }
 
     @Override
@@ -365,6 +378,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void storeTelemetry(short event, short origin) {
         telemetryFacade.store(event, origin);
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.putAscii("principal=").put(securityContext.getPrincipal()).putAscii(", cache=").put(isCacheHit());
     }
 
     public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext, @Nullable BindVariableService bindVariableService, @Nullable Rnd rnd) {

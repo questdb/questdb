@@ -29,11 +29,10 @@ import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -57,17 +56,18 @@ import static io.questdb.PropertyKey.*;
 
 public abstract class AbstractBootstrapTest extends AbstractTest {
     protected static final String CHARSET = "UTF8";
-    protected static final int HTTP_MIN_PORT = 9011;
-    protected static final int HTTP_PORT = 9010;
     protected static final int ILP_BUFFER_SIZE = 4 * 1024;
-    protected static final int ILP_PORT = 9009;
     protected static final Properties PG_CONNECTION_PROPERTIES = new Properties();
-    protected static final int PG_PORT = 8822;
-    protected static final String PG_CONNECTION_URI = getPgConnectionUri(PG_PORT);
     protected static int ILP_WORKER_COUNT = 1;
     protected static Path auxPath;
     protected static Path dbPath;
     protected static int dbPathLen;
+    protected static int randomPortOffset = (int) (Os.currentTimeMicros() % 100);
+    protected static final int HTTP_MIN_PORT = 9011 + randomPortOffset;
+    protected static final int HTTP_PORT = 9010 + randomPortOffset;
+    protected static final int ILP_PORT = 9009 + randomPortOffset;
+    protected static final int PG_PORT = 8822 + randomPortOffset;
+    protected static final String PG_CONNECTION_URI = getPgConnectionUri(PG_PORT);
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -109,20 +109,11 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         AbstractTest.tearDownStatic();
     }
 
-    @NotNull
-    protected static Bootstrap newBootstrapWithEnvVariables(Map<String, String> envs) {
-        Map<String, String> env = new HashMap<>(System.getenv());
-
-        env.putAll(envs);
-        return new Bootstrap(
-                new PropBootstrapConfiguration() {
-                    @Override
-                    public Map<String, String> getEnv() {
-                        return env;
-                    }
-                },
-                getServerMainArgs()
-        );
+    protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            code.run();
+            CLOSEABLES.forEach(Misc::free);
+        });
     }
 
     protected static void assertQueryFails(
@@ -250,15 +241,6 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         }
     }
 
-    protected static void drainWalQueue(CairoEngine engine) {
-        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
-            walApplyJob.drain(0);
-            new CheckWalTransactionsJob(engine).run(0);
-            // run once again as there might be notifications to handle now
-            walApplyJob.drain(0);
-        }
-    }
-
     static void dropTable(SqlExecutionContext context, TableToken tableToken) throws Exception {
         CairoEngine cairoEngine = context.getCairoEngine();
         CharSequence dropSql = "DROP TABLE '" + tableToken.getTableName() + '\'';
@@ -288,6 +270,21 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
 
     protected static String getPgConnectionUri(int pgPort) {
         return "jdbc:postgresql://127.0.0.1:" + pgPort + "/qdb";
+    }
+
+    @NotNull
+    protected static Bootstrap newBootstrapWithEnvVariables(Map<String, String> envs) {
+        Map<String, String> env = new HashMap<>(System.getenv());
+        env.putAll(envs);
+        return new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public Map<String, String> getEnv() {
+                        return env;
+                    }
+                },
+                getServerMainArgs()
+        );
     }
 
     void assertFail(String message, String... args) {

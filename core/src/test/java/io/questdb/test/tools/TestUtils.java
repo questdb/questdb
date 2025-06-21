@@ -43,6 +43,7 @@ import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -53,6 +54,9 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cutlass.http.client.Fragment;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.Response;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -116,10 +120,15 @@ import java.io.InputStream;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Paths;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -191,6 +200,21 @@ public final class TestUtils {
 
     public static void assertContains(CharSequence sequence, CharSequence term) {
         assertContains(null, sequence, term);
+    }
+
+    public static void assertContainsEither(CharSequence sequence, CharSequence term1, CharSequence term2) {
+        // Assume that "" is contained in any string.
+        if (term1.length() == 0 || term2.length() == 0) {
+            return;
+        }
+
+        if (Chars.contains(sequence, term1)) {
+            return;
+        }
+        if (Chars.contains(sequence, term2)) {
+            return;
+        }
+        Assert.fail("'" + sequence + "' does not contain either: " + term1 + " or " + term2);
     }
 
     public static void assertCursor(
@@ -568,6 +592,26 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEquals(ArrayView expected, ArrayView actual) {
+        if (expected == null) {
+            Assert.assertNull("expected NULL array", actual);
+            return;
+        }
+        Assert.assertNotNull("expected NON-NULL array", actual);
+        // Check that the number of dimensions matches
+        final int expectedDimCount = expected.getDimCount();
+        Assert.assertEquals("Array dimensionality mismatch", expectedDimCount, actual.getDimCount());
+        if (expectedDimCount == 0) {
+            return;
+        }
+        // Check if each dimension has the same length
+        for (int i = 0; i < expectedDimCount; i++) {
+            Assert.assertEquals(expected.getDimLen(i), actual.getDimLen(i));
+        }
+        // Compare elements using flat indexing
+        assertEqualsRecursive(expected, actual, 0, 0, 0);
+    }
+
     public static void assertEqualsExactOrder(
             RecordCursor cursorExpected, RecordMetadata metadataExpected,
             RecordCursor cursorActual, RecordMetadata metadataActual, boolean genericStringMatch
@@ -748,6 +792,25 @@ public final class TestUtils {
         }
     }
 
+    public static void assertResponse(HttpClient.Request request, int expectedStatusCode, String expectedHttpResponse) {
+        try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
+            responseHeaders.await();
+
+            assertEquals(String.valueOf(expectedStatusCode), responseHeaders.getStatusCode());
+
+            final Utf8StringSink sink = new Utf8StringSink();
+
+            Fragment fragment;
+            final Response response = responseHeaders.getResponse();
+            while ((fragment = response.recv()) != null) {
+                Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
+            }
+
+            assertEquals(expectedHttpResponse, sink);
+            sink.clear();
+        }
+    }
+
     public static void assertSql(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
@@ -922,6 +985,19 @@ public final class TestUtils {
         }
     }
 
+    // Useful for debugging
+    @SuppressWarnings("unused")
+    public static long beHexToLong(String hex) {
+        return Long.parseLong(reverseBeHex(hex), 16);
+    }
+
+    // Useful for debugging
+    @SuppressWarnings("unused")
+    public static String beHexToTs(String hex) {
+        long l = beHexToLong(hex);
+        return Timestamps.toUSecString(l);
+    }
+
     /**
      * Generates a cartesian product from multiple sets of values.
      * <p>
@@ -954,6 +1030,10 @@ public final class TestUtils {
 
     public static int connect(long fd, long sockAddr) {
         Assert.assertTrue(fd > -1);
+        // clients may run out of ephemeral ports, that are still lingering
+        // enable port reuse to avoid WSAEADDRINUSE(10048)
+        Net.setReusePort(fd);
+        Net.setReuseAddress(fd);
         return Net.connect(fd, sockAddr);
     }
 
@@ -1214,9 +1294,13 @@ public final class TestUtils {
     }
 
     public static void drainPurgeJob(CairoEngine engine) {
+        drainPurgeJob(engine, engine.getConfiguration().getFilesFacade());
+    }
+
+    public static void drainPurgeJob(CairoEngine engine, FilesFacade filesFacade) {
         try (WalPurgeJob job = new WalPurgeJob(
                 engine,
-                engine.getConfiguration().getFilesFacade(),
+                filesFacade,
                 engine.getConfiguration().getMicrosecondClock()
         )) {
             engine.setWalPurgeJobRunLock(job.getRunLock());
@@ -1298,6 +1382,23 @@ public final class TestUtils {
         }
     }
 
+    public static void execute(Connection conn, String sql, String... bindVars) throws SQLException {
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            for (int i = 0; i < bindVars.length; i++) {
+                stmt.setString(i + 1, bindVars[i]);
+            }
+            stmt.execute();
+        }
+    }
+
+    public static void executeSQLViaPostgres(String username, String password, int pgPort, String... sqls) throws SQLException {
+        try (final Connection connection = getConnectionForUser(username, password, pgPort)) {
+            for (String sql : sqls) {
+                execute(connection, sql);
+            }
+        }
+    }
+
     @NotNull
     public static Rnd generateRandom(Log log) {
         return generateRandom(log, System.nanoTime(), System.currentTimeMillis());
@@ -1332,6 +1433,10 @@ public final class TestUtils {
             }
         }
         return Integer.parseInt(version);
+    }
+
+    public static String getPgConnectionUri(int pgPort) {
+        return "jdbc:postgresql://127.0.0.1:" + pgPort + "/qdb";
     }
 
     public static String getResourcePath(String resourceName) {
@@ -1737,6 +1842,17 @@ public final class TestUtils {
         return sink.toString();
     }
 
+    // Useful for debugging
+    @SuppressWarnings("unused")
+    public static String reverseBeHex(String hex) {
+        var sb = new char[hex.length()];
+        for (int i = 0; i < hex.length(); i += 2) {
+            sb[hex.length() - i - 1] = hex.charAt(i + 1);
+            sb[hex.length() - i - 2] = hex.charAt(i);
+        }
+        return new String(sb);
+    }
+
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
         WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine);
         WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
@@ -1880,6 +1996,9 @@ public final class TestUtils {
                         Assert.assertEquals(rr.getLong128Hi(i), lr.getLong128Hi(i));
                         Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Lo(i));
                         break;
+                    case ColumnType.ARRAY:
+                        assertEquals(rr.getArray(i, columnType), lr.getArray(i, columnType));
+                        break;
                     default:
                         // Unknown record type.
                         assert false;
@@ -1930,6 +2049,36 @@ public final class TestUtils {
                         || expected.getLong3() != actual.getLong3()
         ) {
             Assert.assertEquals(toHexString(expected), toHexString(actual));
+        }
+    }
+
+    private static void assertEqualsRecursive(
+            ArrayView expected,
+            ArrayView actual,
+            int dim,
+            int expectedFlatIndex,
+            int actualFlatIndex
+    ) {
+        // last dimension
+        int dimLen = actual.getDimLen(dim);
+        if (dim == actual.getDimCount() - 1) {
+            for (int i = 0; i < dimLen; i++) {
+                Assert.assertEquals(
+                        expected.getDouble(expected.getFlatViewOffset() + expectedFlatIndex + i),
+                        actual.getDouble(actual.getFlatViewOffset() + actualFlatIndex + i),
+                        Numbers.TOLERANCE
+                );
+            }
+        } else {
+            for (int i = 0; i < dimLen; i++) {
+                assertEqualsRecursive(
+                        expected,
+                        actual,
+                        dim + 1,
+                        expectedFlatIndex + i * expected.getStride(dim),
+                        actualFlatIndex + i * actual.getStride(dim)
+                );
+            }
         }
     }
 
@@ -2137,6 +2286,13 @@ public final class TestUtils {
                     return i + 1;
                 }
         );
+    }
+
+    static Connection getConnectionForUser(String username, String password, int pgPort) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", username);
+        properties.setProperty("password", password);
+        return DriverManager.getConnection(getPgConnectionUri(pgPort), properties);
     }
 
     public interface CheckedIntFunction {

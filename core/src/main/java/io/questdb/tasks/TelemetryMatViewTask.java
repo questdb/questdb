@@ -49,7 +49,7 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
                                 "created TIMESTAMP, " +
                                 "event SHORT, " +
                                 "view_table_id INT, " +
-                                "base_table_txn LONG, " +
+                                "base_table_txn LONG, " + // -1 stands for range refresh
                                 "invalidation_reason VARCHAR, " +
                                 "latency FLOAT " +
                                 ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
@@ -124,7 +124,7 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
             row.append();
         } catch (CairoException e) {
             LOG.error().$("Could not insert a new ").$(TABLE_NAME).$(" row [errno=").$(e.getErrno())
-                    .$(", error=").$(e.getFlyweightMessage())
+                    .$(", error=").$safe(e.getFlyweightMessage())
                     .$(']').$();
         }
     }

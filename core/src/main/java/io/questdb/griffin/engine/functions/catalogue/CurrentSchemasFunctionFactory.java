@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -46,11 +47,20 @@ public class CurrentSchemasFunctionFactory implements FunctionFactory {
         return new CurrentSchemaFunction();
     }
 
-    private static class CurrentSchemaFunction extends StrArrayFunction {
+    private static class CurrentSchemaFunction extends StrArrayFunction implements FunctionExtension {
+        @Override
+        public FunctionExtension extendedOps() {
+            return this;
+        }
 
         @Override
         public int getArrayLength() {
             return 1;
+        }
+
+        @Override
+        public Record getRecord(Record rec) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

@@ -43,15 +43,19 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
 import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
+import io.questdb.griffin.engine.functions.array.ArrayCreateFunctionFactory;
+import io.questdb.griffin.engine.functions.array.DoubleArrayAccessFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampIntervalFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.WithinGeohashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
 import io.questdb.griffin.engine.functions.catalogue.WalTransactionsFunctionFactory;
+import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.columns.BinColumn;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
@@ -65,6 +69,7 @@ import io.questdb.griffin.engine.functions.columns.GeoLongColumn;
 import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
 import io.questdb.griffin.engine.functions.columns.IPv4Column;
 import io.questdb.griffin.engine.functions.columns.IntColumn;
+import io.questdb.griffin.engine.functions.columns.IntervalColumn;
 import io.questdb.griffin.engine.functions.columns.Long128Column;
 import io.questdb.griffin.engine.functions.columns.Long256Column;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
@@ -77,6 +82,8 @@ import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
+import io.questdb.griffin.engine.functions.constants.ArrayTypeConstant;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
@@ -121,6 +128,7 @@ import io.questdb.griffin.engine.functions.eq.EqSymTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqTimestampCursorFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.NegContainsEqIPv4StrFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.NegContainsIPv4StrFunctionFactory;
+import io.questdb.griffin.engine.functions.finance.LevelTwoPriceArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory;
@@ -128,13 +136,20 @@ import io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory;
 import io.questdb.griffin.engine.functions.math.GreatestNumericFunctionFactory;
 import io.questdb.griffin.engine.functions.math.LeastNumericFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
+import io.questdb.griffin.engine.functions.rnd.RndDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
 import io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LagDateFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LagLongFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LagTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LeadDateFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LeadDoubleFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LeadLongFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LeadTimestampFunctionFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
@@ -147,8 +162,10 @@ import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -366,6 +383,35 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_2\n"
         );
+    }
+
+    @Test
+    public void testArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][], arr3 DOUBLE[][][], a DOUBLE)");
+            String commonPart1 = "VirtualRecord\n  functions: [";
+            String commonPart2 = "]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: tango\n";
+            assertPlanNoLeakCheck("SELECT arr1[1] FROM tango",
+                    commonPart1 + "arr1[1]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT arr1[1:1] FROM tango",
+                    commonPart1 + "arr1[1:1]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT arr3[1:1, 2:3, 4:] FROM tango",
+                    commonPart1 + "arr3[1:1,2:3,4:]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[1.0, 2] FROM tango",
+                    commonPart1 + "ARRAY[1.0,2.0]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[[1.0, 2], [3.0, 4]] FROM tango",
+                    commonPart1 + "ARRAY[[1.0,2.0],[3.0,4.0]]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[a, a] FROM tango",
+                    commonPart1 + "ARRAY[a,a]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[arr1, arr1] FROM tango",
+                    commonPart1 + "ARRAY[arr1,arr1]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[arr1[1:2], arr2[1]] FROM tango",
+                    commonPart1 + "ARRAY[arr1[1:2],arr2[1]]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT transpose(arr2) FROM tango",
+                    commonPart1 + "transpose(arr2)" + commonPart2);
+            assertPlanNoLeakCheck("SELECT arr2 * transpose(arr2) FROM tango",
+                    commonPart1 + "arr2*transpose(arr2)" + commonPart2);
+        });
     }
 
     @Test
@@ -2320,6 +2366,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             constFuncs.put(ColumnType.UUID, list(new UuidConstant(0, 1)));
             constFuncs.put(ColumnType.NULL, list(NullConstant.NULL));
             constFuncs.put(ColumnType.INTERVAL, list(IntervalConstant.NULL));
+            constFuncs.put(ColumnType.ARRAY_STRING, list(new StringToStringArrayFunction(0, "{all}")));
 
             GenericRecordMetadata metadata = new GenericRecordMetadata();
             metadata.add(new TableColumnMetadata("bbb", ColumnType.INT));
@@ -2334,29 +2381,31 @@ public class ExplainPlanTest extends AbstractCairoTest {
             })));
 
             IntObjHashMap<Function> colFuncs = new IntObjHashMap<>();
-            colFuncs.put(ColumnType.BOOLEAN, new BooleanColumn(1));
-            colFuncs.put(ColumnType.BYTE, new ByteColumn(1));
-            colFuncs.put(ColumnType.SHORT, new ShortColumn(2));
+            colFuncs.put(ColumnType.BOOLEAN, BooleanColumn.newInstance(1));
+            colFuncs.put(ColumnType.BYTE, ByteColumn.newInstance(1));
+            colFuncs.put(ColumnType.SHORT, ShortColumn.newInstance(2));
             colFuncs.put(ColumnType.CHAR, new CharColumn(1));
-            colFuncs.put(ColumnType.INT, new IntColumn(1));
+            colFuncs.put(ColumnType.INT, IntColumn.newInstance(1));
             colFuncs.put(ColumnType.IPv4, new IPv4Column(1));
-            colFuncs.put(ColumnType.LONG, new LongColumn(1));
-            colFuncs.put(ColumnType.DATE, new DateColumn(1));
-            colFuncs.put(ColumnType.TIMESTAMP, new TimestampColumn(1));
-            colFuncs.put(ColumnType.FLOAT, new FloatColumn(1));
-            colFuncs.put(ColumnType.DOUBLE, new DoubleColumn(1));
+            colFuncs.put(ColumnType.LONG, LongColumn.newInstance(1));
+            colFuncs.put(ColumnType.DATE, DateColumn.newInstance(1));
+            colFuncs.put(ColumnType.TIMESTAMP, TimestampColumn.newInstance(1));
+            colFuncs.put(ColumnType.FLOAT, FloatColumn.newInstance(1));
+            colFuncs.put(ColumnType.DOUBLE, DoubleColumn.newInstance(1));
             colFuncs.put(ColumnType.STRING, new StrColumn(1));
             colFuncs.put(ColumnType.VARCHAR, new VarcharColumn(1));
             colFuncs.put(ColumnType.SYMBOL, new SymbolColumn(1, true));
-            colFuncs.put(ColumnType.LONG256, new Long256Column(1));
-            colFuncs.put(ColumnType.GEOBYTE, new GeoByteColumn(1, ColumnType.getGeoHashTypeWithBits(5)));
-            colFuncs.put(ColumnType.GEOSHORT, new GeoShortColumn(1, ColumnType.getGeoHashTypeWithBits(10)));
-            colFuncs.put(ColumnType.GEOINT, new GeoIntColumn(1, ColumnType.getGeoHashTypeWithBits(20)));
-            colFuncs.put(ColumnType.GEOLONG, new GeoLongColumn(1, ColumnType.getGeoHashTypeWithBits(35)));
-            colFuncs.put(ColumnType.GEOHASH, new GeoShortColumn((short) 1, ColumnType.getGeoHashTypeWithBits(15)));
-            colFuncs.put(ColumnType.BINARY, new BinColumn(1));
-            colFuncs.put(ColumnType.LONG128, new Long128Column(1));
-            colFuncs.put(ColumnType.UUID, new UuidColumn(1));
+            colFuncs.put(ColumnType.LONG256, Long256Column.newInstance(1));
+            colFuncs.put(ColumnType.GEOBYTE, GeoByteColumn.newInstance(1, ColumnType.getGeoHashTypeWithBits(5)));
+            colFuncs.put(ColumnType.GEOSHORT, GeoShortColumn.newInstance(1, ColumnType.getGeoHashTypeWithBits(10)));
+            colFuncs.put(ColumnType.GEOINT, GeoIntColumn.newInstance(1, ColumnType.getGeoHashTypeWithBits(20)));
+            colFuncs.put(ColumnType.GEOLONG, GeoLongColumn.newInstance(1, ColumnType.getGeoHashTypeWithBits(35)));
+            colFuncs.put(ColumnType.GEOHASH, GeoShortColumn.newInstance((short) 1, ColumnType.getGeoHashTypeWithBits(15)));
+            colFuncs.put(ColumnType.BINARY, BinColumn.newInstance(1));
+            colFuncs.put(ColumnType.LONG128, Long128Column.newInstance(1));
+            colFuncs.put(ColumnType.UUID, UuidColumn.newInstance(1));
+            colFuncs.put(ColumnType.ARRAY, new ArrayColumn(1, ColumnType.encodeArrayType(ColumnType.DOUBLE, 2)));
+            colFuncs.put(ColumnType.INTERVAL, IntervalColumn.newInstance(1));
 
             PlanSink planSink = new TextPlanSink() {
                 @Override
@@ -2382,6 +2431,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             factories.forEach((key, value) -> {
                 FUNCTIONS:
                 for (int i = 0, n = value.size(); i < n; i++) {
+                    long memUsedBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ND_ARRAY);
+
                     planSink.clear();
 
                     FunctionFactoryDescriptor descriptor = value.get(i);
@@ -2395,9 +2446,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     sink.put(factory.getSignature()).put(" types: ");
 
                     for (int p = 0; p < sigArgCount; p++) {
-                        int sigArgTypeMask = descriptor.getArgTypeMask(p);
-                        final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
-                        boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
+                        int typeWithFlags = descriptor.getArgTypeWithFlags(p);
+                        final short sigArgType = FunctionFactoryDescriptor.toTypeTag(typeWithFlags);
+                        boolean isArray = FunctionFactoryDescriptor.isArray(typeWithFlags);
 
                         if (p > 0) {
                             sink.put(',');
@@ -2412,9 +2463,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     int combinations = 1;
 
                     for (int p = 0; p < sigArgCount; p++) {
-                        int argTypeMask = descriptor.getArgTypeMask(p);
-                        boolean isConstant = FunctionFactoryDescriptor.isConstant(argTypeMask);
-                        short sigArgType = FunctionFactoryDescriptor.toType(argTypeMask);
+                        int typeWithFlags = descriptor.getArgTypeWithFlags(p);
+                        boolean isConstant = FunctionFactoryDescriptor.isConstant(typeWithFlags);
+                        short sigArgType = FunctionFactoryDescriptor.toTypeTag(typeWithFlags);
                         ObjList<Function> availableValues = constFuncs.get(sigArgType);
                         int constValues = availableValues != null ? availableValues.size() : 1;
                         combinations *= (constValues + (isConstant ? 0 : 1));
@@ -2430,10 +2481,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                         try {
                             for (int p = 0; p < sigArgCount; p++) {
-                                int sigArgTypeMask = descriptor.getArgTypeMask(p);
-                                short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
-                                boolean isConstant = FunctionFactoryDescriptor.isConstant(sigArgTypeMask);
-                                boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
+                                int typeWithFlags = descriptor.getArgTypeWithFlags(p);
+                                short sigArgType = FunctionFactoryDescriptor.toTypeTag(typeWithFlags);
+                                boolean isConstant = FunctionFactoryDescriptor.isConstant(typeWithFlags);
+                                boolean isArray = FunctionFactoryDescriptor.isArray(typeWithFlags);
                                 boolean useConst = isConstant || (tempNo & 1) == 1 || sigArgType == ColumnType.CURSOR || sigArgType == ColumnType.RECORD;
                                 boolean isVarArg = sigArgType == ColumnType.VAR_ARG;
 
@@ -2448,15 +2499,38 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         sigArgType = ColumnType.DOUBLE;
                                     } else if (factory instanceof LevelTwoPriceFunctionFactory) {
                                         sigArgType = ColumnType.DOUBLE;
-                                    } else if (factory instanceof LagDoubleFunctionFactory || factory instanceof LeadDoubleFunctionFactory) {
+                                    } else if (factory instanceof LagDoubleFunctionFactory || factory instanceof LeadDoubleFunctionFactory
+                                            || factory instanceof LagLongFunctionFactory || factory instanceof LeadLongFunctionFactory
+                                            || factory instanceof LagTimestampFunctionFactory || factory instanceof LeadTimestampFunctionFactory
+                                            || factory instanceof LagDateFunctionFactory || factory instanceof LeadDateFunctionFactory) {
                                         sigArgType = ColumnType.INT;
                                         useConst = true;
+                                    } else if (factory instanceof ArrayCreateFunctionFactory) {
+                                        sigArgType = ColumnType.DOUBLE;
+                                    } else if (factory instanceof DoubleArrayAccessFunctionFactory) {
+                                        sigArgType = ColumnType.INT;
+                                    } else if (factory instanceof RndDoubleArrayFunctionFactory) {
+                                        sigArgType = ColumnType.INT;
+                                        useConst = true;
+                                    } else if (factory instanceof WithinGeohashFunctionFactory) {
+                                        sigArgType = ColumnType.GEOBYTE;
                                     } else {
                                         sigArgType = ColumnType.STRING;
                                     }
                                 }
 
-                                if (factory instanceof SwitchFunctionFactory) {
+                                if (factory instanceof LevelTwoPriceArrayFunctionFactory) {
+                                    args.add(new DoubleConstant(2.0));
+                                    args.add(new ArrayConstant(new double[]{1.0}));
+                                    args.add(new ArrayConstant(new double[]{1.0}));
+                                    break;
+                                } else if (isArray && sigArgType == ColumnType.DOUBLE) {
+                                    if (p == 1 && factory.getSignature().startsWith("cast(")) {
+                                        args.add(new ArrayTypeConstant(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2)));
+                                    } else {
+                                        args.add(new ArrayConstant(new double[][]{{1}, {1}}));
+                                    }
+                                } else if (factory instanceof SwitchFunctionFactory) {
                                     args.add(new IntConstant(1));
                                     args.add(new IntConstant(2));
                                     args.add(new StrConstant("a"));
@@ -2464,8 +2538,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 } else if (factory instanceof EqIntervalFunctionFactory) {
                                     args.add(IntervalConstant.NULL);
                                 } else if (factory instanceof CoalesceFunctionFactory) {
-                                    args.add(new FloatColumn(1));
-                                    args.add(new FloatColumn(2));
+                                    args.add(FloatColumn.newInstance(1));
+                                    args.add(FloatColumn.newInstance(2));
                                     args.add(new FloatConstant(12f));
                                 } else if (factory instanceof ExtractFromTimestampFunctionFactory && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("day"));
@@ -2567,21 +2641,29 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                             // TODO: test with partition by, order by and various frame modes
                             if (factory.isWindow()) {
-                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1, false, 0);
+                                sqlExecutionContext.configureWindowContext(
+                                        null, null, null, false,
+                                        PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true,
+                                        WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20,
+                                        WindowColumn.EXCLUDE_NO_OTHERS, 0, -1, false, 0);
                             }
                             Function function = null;
                             try {
                                 try {
                                     function = factory.newInstance(0, args, argPositions, engine.getConfiguration(), sqlExecutionContext);
                                     function.toPlan(planSink);
+                                } catch (Throwable th) {
+                                    Misc.freeObjListAndClear(args);
                                 } finally {
                                     sqlExecutionContext.clearWindowContext();
                                 }
 
                                 goodArgsFound = true;
 
-                                Assert.assertFalse("function " + factory.getSignature() + " should serialize to text properly. current text: " + planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
-                                LOG.info().$(sink).$(planSink.getSink()).$();
+                                Assert.assertFalse("function " + factory.getSignature() +
+                                        " should serialize to text properly. current text: " +
+                                        planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
+                                LOG.info().$safe(sink).$safe(planSink.getSink()).$();
 
                                 if (function instanceof NegatableBooleanFunction && !((NegatableBooleanFunction) function).isNegated()) {
                                     ((NegatableBooleanFunction) function).setNegated();
@@ -2589,7 +2671,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     function.toPlan(tmpPlanSink);
 
                                     if (Chars.equals(planSink.getSink(), tmpPlanSink.getSink())) {
-                                        throw new AssertionError("Same output generated regardless of negatable flag! Factory: " + factory.getSignature() + " " + function);
+                                        throw new AssertionError("Same output generated regardless of " +
+                                                "negatable flag! Factory: " + factory.getSignature() + " " + function);
                                     }
 
                                     Assert.assertFalse(
@@ -2599,6 +2682,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 }
                             } finally {
                                 Misc.free(function);
+
+                                long memUsedAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ND_ARRAY);
+                                if (memUsedAfter > memUsedBefore) {
+                                    LOG.error().$("Memory leak detected in ").$(factory.getSignature()).$();
+                                    Assert.fail("Memory leak detected in " + factory.getSignature());
+                                }
                             }
                         } catch (Exception t) {
                             LOG.info().$(t).$();
@@ -3333,7 +3422,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [s]\n" +
                         "  values: [avg(l)]\n" +
                         "  filter: s in cursor \n" +
-                        "    Filter filter: s='key'\n" +
+                        "    Async JIT Filter workers: 1\n" +
+                        "      filter: s='key' [pre-touch]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a [state-shared]\n" +
@@ -10739,6 +10829,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testStringToDoubleArrayPlanDimensionality() throws Exception {
+        assertMemoryLeak(() -> {
+            assertPlanNoLeakCheck(
+                    "select '{}'::double[] from long_sequence(1)",
+                    "VirtualRecord\n" +
+                            "  functions: ['{}'::DOUBLE[]]\n" +
+                            "    long_sequence count: 1\n"
+            );
+
+
+            assertPlanNoLeakCheck(
+                    "select '{}'::double[][][] from long_sequence(1)",
+                    "VirtualRecord\n" +
+                            "  functions: ['{}'::DOUBLE[][][]]\n" +
+                            "    long_sequence count: 1\n"
             );
         });
     }

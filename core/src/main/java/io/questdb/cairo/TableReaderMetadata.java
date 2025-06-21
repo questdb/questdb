@@ -46,11 +46,15 @@ import static io.questdb.cairo.TableUtils.validationException;
 
 public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata, Mutable {
     protected final CairoConfiguration configuration;
-    private final IntList columnOrderMap = new IntList();
+    private final IntList columnOrderList = new IntList();
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private boolean isCopy;
     private boolean isSoftLink;
+    private int matViewRefreshLimitHoursOrMonths;
+    private int matViewTimerInterval;
+    private char matViewTimerIntervalUnit;
+    private long matViewTimerStart;
     private int maxUncommittedRows;
     private MemoryCARW metaCopyMem; // used when loadFrom() called
     private MemoryMR metaMem;
@@ -151,6 +155,23 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
+    }
+
+    @Override
+    public int getMatViewRefreshLimitHoursOrMonths() {
+        return matViewRefreshLimitHoursOrMonths;
+    }
+
+    public int getMatViewTimerInterval() {
+        return matViewTimerInterval;
+    }
+
+    public char getMatViewTimerIntervalUnit() {
+        return matViewTimerIntervalUnit;
+    }
+
+    public long getMatViewTimerStart() {
+        return matViewTimerStart;
     }
 
     @Override
@@ -297,20 +318,24 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.metadataVersion = mem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = mem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(mem);
+        this.matViewRefreshLimitHoursOrMonths = TableUtils.getMatViewRefreshLimitHoursOrMonths(mem);
+        this.matViewTimerStart = TableUtils.getMatViewTimerStart(mem);
+        this.matViewTimerInterval = TableUtils.getMatViewTimerInterval(mem);
+        this.matViewTimerIntervalUnit = TableUtils.getMatViewTimerIntervalUnit(mem);
         this.columnMetadata.clear();
         this.timestampIndex = -1;
 
-        buildWriterOrderMap(mem, columnCount);
+        TableUtils.buildColumnListFromMetadataFile(mem, columnCount, columnOrderList);
         this.columnNameIndexMap.clear();
 
-        for (int i = 0, n = columnOrderMap.size(); i < n; i += 3) {
-            int writerIndex = columnOrderMap.get(i);
+        for (int i = 0, n = columnOrderList.size(); i < n; i += 3) {
+            int writerIndex = columnOrderList.get(i);
             if (writerIndex < 0) {
                 continue;
             }
             int stableIndex = i / 3;
-            CharSequence name = mem.getStrA(columnOrderMap.get(i + 1));
-            int denseSymbolIndex = columnOrderMap.get(i + 2);
+            CharSequence name = mem.getStrA(columnOrderList.get(i + 1));
+            int denseSymbolIndex = columnOrderList.get(i + 2);
 
             assert name != null;
             int columnType = TableUtils.getColumnType(mem, writerIndex);
@@ -349,23 +374,27 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.tableToken = tableToken;
     }
 
-    private TableReaderMetadataTransitionIndex applyTransition0(MemoryR metaMem, int existingColumnCount) {
+    private TableReaderMetadataTransitionIndex applyTransition0(MemoryR newMetaMem, int existingColumnCount) {
         columnNameIndexMap.clear();
 
-        int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+        int columnCount = newMetaMem.getInt(TableUtils.META_OFFSET_COUNT);
         assert columnCount >= existingColumnCount;
         columnMetadata.setPos(columnCount);
-        int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-        this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-        this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
-        this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
-        this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
-        this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
-        this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
+        int timestampIndex = newMetaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+        this.tableId = newMetaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
+        this.metadataVersion = newMetaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
+        this.maxUncommittedRows = newMetaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
+        this.o3MaxLag = newMetaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
+        this.walEnabled = newMetaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
+        this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(newMetaMem);
+        this.matViewRefreshLimitHoursOrMonths = TableUtils.getMatViewRefreshLimitHoursOrMonths(newMetaMem);
+        this.matViewTimerStart = TableUtils.getMatViewTimerStart(newMetaMem);
+        this.matViewTimerInterval = TableUtils.getMatViewTimerInterval(newMetaMem);
+        this.matViewTimerIntervalUnit = TableUtils.getMatViewTimerIntervalUnit(newMetaMem);
 
         int shiftLeft = 0, existingIndex = 0;
-        buildWriterOrderMap(metaMem, columnCount);
-        int newColumnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+        TableUtils.buildColumnListFromMetadataFile(newMetaMem, columnCount, columnOrderList);
+        int newColumnCount = newMetaMem.getInt(TableUtils.META_OFFSET_COUNT);
 
         if (transitionIndex == null) {
             transitionIndex = new TableReaderMetadataTransitionIndex();
@@ -373,23 +402,23 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             transitionIndex.clear();
         }
 
-        buildWriterOrderMap(metaMem, newColumnCount);
-        for (int i = 0, n = columnOrderMap.size(); i < n; i += 3) {
+        TableUtils.buildColumnListFromMetadataFile(newMetaMem, newColumnCount, columnOrderList);
+        for (int i = 0, n = columnOrderList.size(); i < n; i += 3) {
             int stableIndex = i / 3;
-            int writerIndex = columnOrderMap.get(i);
+            int writerIndex = columnOrderList.get(i);
             if (writerIndex < 0) {
                 continue;
             }
-            CharSequence name = metaMem.getStrA(columnOrderMap.get(i + 1));
+            CharSequence name = newMetaMem.getStrA(columnOrderList.get(i + 1));
             assert name != null;
-            int denseSymbolIndex = columnOrderMap.get(i + 2);
-            int newColumnType = TableUtils.getColumnType(metaMem, writerIndex);
-            int columnType = TableUtils.getColumnType(metaMem, writerIndex);
-            boolean isIndexed = TableUtils.isColumnIndexed(metaMem, writerIndex);
-            boolean isDedupKey = TableUtils.isColumnDedupKey(metaMem, writerIndex);
-            int indexBlockCapacity = TableUtils.getIndexBlockCapacity(metaMem, writerIndex);
-            boolean symbolIsCached = TableUtils.isSymbolCached(metaMem, writerIndex);
-            int symbolCapacity = TableUtils.getSymbolCapacity(metaMem, writerIndex);
+            int denseSymbolIndex = columnOrderList.get(i + 2);
+            int newColumnType = TableUtils.getColumnType(newMetaMem, writerIndex);
+            int columnType = TableUtils.getColumnType(newMetaMem, writerIndex);
+            boolean isIndexed = TableUtils.isColumnIndexed(newMetaMem, writerIndex);
+            boolean isDedupKey = TableUtils.isColumnDedupKey(newMetaMem, writerIndex);
+            int indexBlockCapacity = TableUtils.getIndexBlockCapacity(newMetaMem, writerIndex);
+            boolean symbolIsCached = TableUtils.isSymbolCached(newMetaMem, writerIndex);
+            int symbolCapacity = TableUtils.getSymbolCapacity(newMetaMem, writerIndex);
             TableReaderMetadataColumn existing = null;
             String newName;
 
@@ -475,10 +504,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
 
         return transitionIndex;
-    }
-
-    private void buildWriterOrderMap(MemoryR newMetaMem, int newColumnCount) {
-        TableUtils.buildWriterOrderMap(newMetaMem, columnOrderMap, newColumnCount);
     }
 
     private void copyMemFrom(TableReaderMetadata srcMeta) {

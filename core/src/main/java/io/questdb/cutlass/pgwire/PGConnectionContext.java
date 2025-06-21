@@ -150,6 +150,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final int INT_BYTES_X = Numbers.bswap(Integer.BYTES);
     private static final int INT_NULL_X = Numbers.bswap(-1);
     private static final int IN_TRANSACTION = 1;
+    private static final Log LOG = LogFactory.getLog(PGConnectionContext.class);
     private static final byte MESSAGE_TYPE_BIND_COMPLETE = '2';
     private static final byte MESSAGE_TYPE_CLOSE_COMPLETE = '3';
     private static final byte MESSAGE_TYPE_COMMAND_COMPLETE = 'C';
@@ -174,7 +175,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final int SYNC_DESCRIBE_PORTAL = 4;
     private static final int SYNC_PARSE = 1;
     private static final String WRITER_LOCK_REASON = "pgConnection";
-    private static final Log LOG = LogFactory.getLog(PGConnectionContext.class);
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     // stores result format codes (0=Text,1=Binary) from the latest bind message
@@ -1388,8 +1388,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // poll this cache because it is shared, and we do not want
             // select factory to be used by another thread concurrently
             if (typesAndInsert != null) {
+                sqlExecutionContext.setCacheHit(true);
                 typesAndInsert.defineBindVariables(bindVariableService);
-                queryTag = TAG_INSERT;
+                queryTag = typesAndInsert.getInsertType() == CompiledQuery.INSERT ? TAG_INSERT : TAG_INSERT_AS_SELECT;
                 return false;
             }
 
@@ -1489,8 +1490,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     || queryTag == TAG_CTAS
                     || (queryTag == TAG_PSEUDO_SELECT && typesAndSelect == null)
                     || queryTag == TAG_ALTER_ROLE
-                    || queryTag == TAG_CREATE_ROLE
-                    || queryTag == TAG_INSERT_AS_SELECT;
+                    || queryTag == TAG_CREATE_ROLE;
             wrapper.queryContainsSecret = queryContainsSecret;
             namedStatementMap.putAt(index, Chars.toString(statementName), wrapper);
             this.activeBindVariableTypes = wrapper.bindVariableTypes;
@@ -1551,10 +1551,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         final InsertMethod m = typesAndInsert.getInsert().createMethod(sqlExecutionContext, this);
                         recompileStale = false;
                         try {
-                            rowCount = m.execute();
+                            rowCount = m.execute(sqlExecutionContext);
                             writer = m.popWriter();
                             pendingWriters.put(writer.getTableToken(), writer);
                         } catch (Throwable e) {
+                            TableWriterAPI w = m.getWriter();
+                            if (w != null) {
+                                pendingWriters.remove(w.getTableToken());
+                            }
                             Misc.free(m);
                             throw e;
                         }
@@ -1566,7 +1570,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         // in any other case we will commit in place
                         try (final InsertMethod m2 = typesAndInsert.getInsert().createMethod(sqlExecutionContext, this)) {
                             recompileStale = false;
-                            rowCount = m2.execute();
+                            rowCount = m2.execute(sqlExecutionContext);
                             m2.commit();
                         }
                         break;
@@ -1580,7 +1584,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     }
                     throw SqlException.$(0, ex.getFlyweightMessage());
                 }
-                LOG.info().$(ex.getFlyweightMessage()).$();
+                LOG.info().$safe(ex.getFlyweightMessage()).$();
                 Misc.free(typesAndInsert);
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
@@ -1642,7 +1646,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     }
                     throw SqlException.$(0, e.getFlyweightMessage());
                 }
-                LOG.info().$(e.getFlyweightMessage()).$();
+                LOG.info().$safe(e.getFlyweightMessage()).$();
                 typesAndUpdate = Misc.free(typesAndUpdate);
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
@@ -1795,7 +1799,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     securityContext.checkEntityEnabled();
                     r = authenticator.loginOK();
                 } catch (CairoException e) {
-                    LOG.error().$("failed to authenticate [error=").$(e.getFlyweightMessage()).I$();
+                    LOG.error().$("failed to authenticate [error=").$safe(e.getFlyweightMessage()).I$();
                     r = authenticator.denyAccess(e.getFlyweightMessage());
                 }
             }
@@ -1890,7 +1894,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final int msgLen = getIntUnsafe(address + 1);
         LOG.debug().$("received msg [type=").$((char) type).$(", len=").$(msgLen).I$();
         if (msgLen < 1) {
-            LOG.error().$("invalid message length [type=").$(type).$(", msgLen=").$(msgLen).$(", recvBufferReadOffset=").$(recvBufferReadOffset).$(", recvBufferWriteOffset=").$(recvBufferWriteOffset).$(", totalReceived=").$(totalReceived).I$();
+            LOG.error().$("invalid message length [type=").$(type)
+                    .$(", msgLen=").$(msgLen)
+                    .$(", recvBufferReadOffset=").$(recvBufferReadOffset)
+                    .$(", recvBufferWriteOffset=").$(recvBufferWriteOffset)
+                    .$(", totalReceived=").$(totalReceived).I$();
             throw BadProtocolException.INSTANCE;
         }
 
@@ -2034,9 +2042,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void prepareError(int position, CharSequence message, boolean critical, int errno) {
         prepareErrorResponse(position, message);
         if (critical) {
-            LOG.critical().$("error [msg=`").utf8(message).$("`, errno=").$(errno).I$();
+            LOG.critical().$("error [msg=`").$safe(message).$("`, errno=").$(errno).I$();
         } else {
-            LOG.error().$("error [msg=`").utf8(message).$("`, errno=").$(errno).I$();
+            LOG.error().$("error [msg=`").$safe(message).$("`, errno=").$(errno).I$();
         }
     }
 
@@ -2063,7 +2071,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             isEmptyQuery = false;
             Misc.clear(bindVariableService);
             currentCursor = Misc.free(currentCursor);
-            typesAndInsert = null;
+            // Insert plan is cached when typesAndInsert has bind variables only for legacy PG server.
+            // Do not close typesAndInsert if it is cached. See #2344
+            // if (bindVariableService.getIndexedVariableCount() > 0) {
+            // ...
+            // }
+            if (typesAndInsert != null && !typesAndInsert.hasBindVariables()) {
+                typesAndInsert = Misc.free(typesAndInsert);
+            } else {
+                typesAndInsert = null;
+            }
             clearCursorAndFactory();
             rowCount = 0;
             queryTag = TAG_OK;
@@ -2089,7 +2106,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void prepareNonCriticalError(int position, CharSequence message) {
         prepareErrorResponse(position, message);
-        LOG.error().$("error [pos=").$(position).$(", msg=`").utf8(message).$('`').I$();
+        LOG.error().$("error [pos=").$(position).$(", msg=`").$safe(message).$('`').I$();
     }
 
     private void prepareParameterDescription() {
@@ -2281,7 +2298,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         namedPortalPool.push(namedPortalMap.valueAt(index));
                         namedPortalMap.removeAt(index);
                     } else {
-                        LOG.error().$("invalid portal name [value=").$(portalName).I$();
+                        LOG.error().$("invalid portal name [value=").$safe(portalName).I$();
                         throw BadProtocolException.INSTANCE;
                     }
                 }
@@ -2324,9 +2341,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 LOG.debug().$("cache select [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).I$();
                 break;
             case CompiledQuery.INSERT:
-                queryTag = TAG_INSERT;
+            case CompiledQuery.INSERT_AS_SELECT:
+                queryTag = cq.getType() == CompiledQuery.INSERT ? TAG_INSERT : TAG_INSERT_AS_SELECT;
                 typesAndInsert = typesAndInsertPool.pop();
-                typesAndInsert.of(cq.getInsertOperation(), bindVariableService);
+                typesAndInsert.of(cq.popInsertOperation(), bindVariableService, cq.getType());
                 if (bindVariableService.getIndexedVariableCount() > 0) {
                     LOG.debug().$("cache insert [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).I$();
                     // we can add insert to cache right away because it is local to the connection
@@ -2338,10 +2356,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 typesAndUpdate = typesAndUpdatePool.pop();
                 typesAndUpdate.of(cq, bindVariableService);
                 typesAndUpdateIsCached = bindVariableService.getIndexedVariableCount() > 0;
-                break;
-            case CompiledQuery.INSERT_AS_SELECT:
-                queryTag = TAG_INSERT_AS_SELECT;
-                rowCount = cq.getAffectedRowsCount();
                 break;
             case CompiledQuery.PSEUDO_SELECT:
                 final RecordCursorFactory factory = cq.getRecordCursorFactory();
@@ -2420,7 +2434,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (p != null) {
                 target = p.statementName;
             } else {
-                LOG.error().$("invalid portal [name=").$(target).I$();
+                LOG.error().$("invalid portal [name=").$safe(target).I$();
                 throw BadProtocolException.INSTANCE;
             }
         }
@@ -2476,7 +2490,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             executeUpdate();
         } else { // this must be an OK/SET/COMMIT/ROLLBACK or empty query
             executeTag();
-            prepareCommandComplete(queryTag == TAG_INSERT_AS_SELECT);
+            prepareCommandComplete(false);
         }
     }
 
@@ -2538,7 +2552,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             LOG.debug().$("params [count=").$(this.parsePhaseBindVariableCount).I$();
             setupBindVariables(lo + Short.BYTES, activeBindVariableTypes, this.parsePhaseBindVariableCount);
         } else if (this.parsePhaseBindVariableCount < 0) {
-            LOG.error().$("invalid parameter count [parameterCount=").$(this.parsePhaseBindVariableCount).$(", offset=").$(lo - address).I$();
+            LOG.error().$("invalid parameter count [parameterCount=").$(this.parsePhaseBindVariableCount)
+                    .$(", offset=").$(lo - address)
+                    .I$();
             throw BadProtocolException.INSTANCE;
         }
 
@@ -2859,7 +2875,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     if (retries == maxRecompileAttempts) {
                         throw SqlException.$(0, e.getFlyweightMessage());
                     }
-                    LOG.info().$(e.getFlyweightMessage()).$("setupFactoryAndCursor [retries=").$(retries).I$();
+                    LOG.info().$safe(e.getFlyweightMessage()).$("setupFactoryAndCursor [retries=").$(retries).I$();
                     freeFactory();
                     if (!compileQuery()) {
                         // when we get a query from cache then we don't count it as
@@ -2953,7 +2969,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             responseUtf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
             long addr = responseUtf8Sink.skip();
             if (addRowCount) {
-                if (queryTag == TAG_INSERT) {
+                if (queryTag == TAG_INSERT || queryTag == TAG_INSERT_AS_SELECT) {
                     LOG.debug().$("insert [rowCount=").$(rowCount).I$();
                     responseUtf8Sink.put(queryTag).putAscii(" 0 ").put(rowCount).put((byte) 0);
                 } else {
@@ -3068,7 +3084,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     executeInsert();
                 } else if (typesAndUpdate != null) {
                     executeUpdate();
-                } else if (cq.getType() == CompiledQuery.INSERT_AS_SELECT || cq.getType() == CompiledQuery.CREATE_TABLE_AS_SELECT) {
+                } else if (cq.getType() == CompiledQuery.CREATE_TABLE_AS_SELECT) {
                     prepareCommandComplete(true);
                 } else {
                     executeTag();

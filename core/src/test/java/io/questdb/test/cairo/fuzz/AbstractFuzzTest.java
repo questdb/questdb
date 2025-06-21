@@ -124,6 +124,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
                 rnd.nextDouble(),
+                rnd.nextDouble(),
                 rnd.nextDouble()
         );
 
@@ -245,11 +246,13 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             double partitionDropProb,
             double truncateProb,
             double tableDropProb,
-            double setTtlProb
+            double setTtlProb,
+            double replaceProb
     ) {
         fuzzer.setFuzzProbabilities(cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
                 colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
-                equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb, setTtlProb
+                equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb, setTtlProb,
+                replaceProb
         );
     }
 
@@ -299,6 +302,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     protected void setRandomAppendPageSize(Rnd rnd) {
         int minPage = 18;
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1L << (minPage + rnd.nextInt(22 - minPage))); // MAX page size 4Mb
-        LOG.info().$("dataAppendPageSize=").$(configuration.getDataAppendPageSize()).$();
+        long dataAppendPageSize = configuration.getDataAppendPageSize();
+        LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
     }
 }

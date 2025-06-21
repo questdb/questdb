@@ -33,7 +33,6 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.datetime.DateFormat;
@@ -41,6 +40,7 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -69,6 +69,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean enableTestFactories() {
         return getDelegate().enableTestFactories();
+    }
+
+    @Override
+    public boolean exportConfiguration(CharSink<?> sink) {
+        return getDelegate().exportConfiguration(sink);
     }
 
     @Override
@@ -164,6 +169,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getColumnPurgeTaskPoolCapacity() {
         return getDelegate().getColumnPurgeTaskPoolCapacity();
+    }
+
+    @Override
+    public long getCommitLatency() {
+        return getDelegate().getCommitLatency();
     }
 
     @Override
@@ -452,6 +462,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewTimerStartEpsilon() {
+        return getDelegate().getMatViewTimerStartEpsilon();
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return getDelegate().getMaxCrashFiles();
     }
@@ -627,6 +642,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPreferencesStringPoolCapacity() {
+        return getDelegate().getPreferencesStringPoolCapacity();
+    }
+
+    @Override
     public int getQueryCacheEventQueueCapacity() {
         return getDelegate().getQueryCacheEventQueueCapacity();
     }
@@ -669,6 +689,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return getDelegate().getSampleByIndexSearchPageSize();
+    }
+
+    @Override
+    public int getScoreboardFormat() {
+        return getDelegate().getScoreboardFormat();
     }
 
     @Override
@@ -1301,8 +1326,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-        getDelegate().populateSettings(settings);
+    public int maxArrayElementCount() {
+        return getDelegate().maxArrayElementCount();
     }
 
     public void setDelegate(CairoConfiguration delegate) {
@@ -1312,6 +1337,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean useFastAsOfJoin() {
         return getDelegate().useFastAsOfJoin();
+    }
+
+    @Override
+    public boolean useWithinLatestByOptimisation() {
+        return getDelegate().useWithinLatestByOptimisation();
     }
 
     protected CairoConfiguration getDelegate() {

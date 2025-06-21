@@ -907,6 +907,8 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndexManyAddresses(
     auto segment_bytes = read_segment_bytes(indexFormat);
     auto dedup_key_count = (int32_t) dedupKeyCount;
     auto format = read_format(indexFormat);
+    auto reverse_index_bytes = read_reverse_index_format_bytes(indexFormat);
+    auto index_count = read_row_count(indexFormat);
 
     if (format != dedup_index_format) {
         return merge_index_format(-1, 0, 0, 0);
@@ -923,9 +925,8 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndexManyAddresses(
             src_keys
     );
 
-    auto reverse_index_bytes = read_reverse_index_format_bytes(indexFormat);
     if (dedup_row_count == no_timestamp_duplicates) {
-        return merge_index_format(dedup_row_count, reverse_index_bytes, segment_bytes, shuffle_index_format);
+        return merge_index_format(index_count, reverse_index_bytes, segment_bytes, shuffle_index_format);
     }
     return merge_index_format(dedup_row_count, reverse_index_bytes, segment_bytes, dedup_shuffle_index_format);
 }
@@ -980,6 +981,28 @@ Java_io_questdb_std_Vect_dedupMergeVarcharColumnSize(JNIEnv *env, jclass cl,
             auto size = (firstWord >> 4) & 0xffffff;
             dst_var_offset += size;
         }
+    }
+    return dst_var_offset;
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_dedupMergeArrayColumnSize(JNIEnv *env, jclass cl,
+                                                     jlong merge_index_addr,
+                                                     jlong merge_index_row_count,
+                                                     jlong src_data_fix_addr,
+                                                     jlong src_ooo_fix_addr) {
+    auto merge_index = reinterpret_cast<index_t *>(merge_index_addr);
+    auto src_ooo_fix = reinterpret_cast<int64_t *>(src_ooo_fix_addr);
+    auto src_data_fix = reinterpret_cast<int64_t *>(src_data_fix_addr);
+    int64_t *src_fix[] = {src_ooo_fix, src_data_fix};
+    int64_t dst_var_offset = 0;
+
+    for (int64_t l = 0; l < merge_index_row_count; l++) {
+        const uint64_t row = merge_index[l].i;
+        const uint32_t bit = (row >> 63);
+        const uint64_t rr = row & ~(1ull << 63);
+        // add up non-zero array sizes
+        dst_var_offset += std::max<int64_t >(0LL, src_fix[bit][rr * 2 + 1] & ARRAY_SIZE_MAX);
     }
     return dst_var_offset;
 }

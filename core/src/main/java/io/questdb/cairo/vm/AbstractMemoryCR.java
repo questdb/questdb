@@ -25,8 +25,11 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -39,7 +42,8 @@ import io.questdb.std.str.Utf8SplitString;
 // contiguous readable
 public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
-    private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
+    private final BorrowedArray borrowedArray = new BorrowedArray();
+    private final DirectByteSequenceView bsview = new DirectByteSequenceView();
     private final DirectString csviewA = new DirectString();
     private final DirectString csviewB = new DirectString();
     private final Long256Impl long256A = new Long256Impl();
@@ -53,12 +57,14 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     protected long size = 0;
     private long shiftAddressRight = 0;
 
+    @Override
     public long addressOf(long offset) {
         offset -= shiftAddressRight;
         assert checkOffsetMapped(offset);
         return pageAddress + offset;
     }
 
+    @Override
     public void clear() {
         // avoid debugger seg faulting when memory is closed
         csviewA.clear();
@@ -66,6 +72,12 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         bsview.clear();
     }
 
+    @Override
+    public final ArrayView getArray(long offset) {
+        return getArray(offset, borrowedArray);
+    }
+
+    @Override
     public final BinarySequence getBin(long offset) {
         return getBin(offset, bsview);
     }
@@ -91,11 +103,13 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return ff;
     }
 
+    @Override
     public Long256 getLong256A(long offset) {
         getLong256(offset, long256A);
         return long256A;
     }
 
+    @Override
     public Long256 getLong256B(long offset) {
         getLong256(offset, long256B);
         return long256B;
@@ -121,10 +135,12 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return utf8SplitViewB.of(auxLo, dataLo, dataLim, size, ascii);
     }
 
+    @Override
     public final CharSequence getStrA(long offset) {
         return getStr(offset, csviewA);
     }
 
+    @Override
     public final CharSequence getStrB(long offset) {
         return getStr(offset, csviewB);
     }

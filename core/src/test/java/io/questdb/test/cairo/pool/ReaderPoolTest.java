@@ -74,6 +74,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.fail;
 
+@SuppressWarnings("CallToPrintStackTrace")
 public class ReaderPoolTest extends AbstractCairoTest {
     private TableToken uTableToken;
 
@@ -105,6 +106,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         }
                     } catch (Throwable th) {
                         errors.put(threadIndex, th);
+                    } finally {
+                        Path.clearThreadLocals();
                     }
                     end.countDown();
                 }).start();
@@ -148,6 +151,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     halt.countDown();
                 }
             }).start();
@@ -164,6 +168,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     halt.countDown();
                 }
             }).start();
@@ -212,7 +217,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     pool.close();
                     Assert.fail();
                 } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), reader.getTableToken().getDirName() + "' is left behind");
+                    TestUtils.assertContains(ex.getFlyweightMessage(),
+                            "table is left behind on pool shutdown [table=" + reader.getTableToken().getDirName() + "]");
                 }
                 Assert.assertTrue(reader.isOpen());
             }
@@ -228,7 +234,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 pool.close();
                 Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), reader.getTableToken().getDirName() + "' is left behind");
+                TestUtils.assertContains(ex.getFlyweightMessage(),
+                        "table is left behind on pool shutdown [table=" + reader.getTableToken().getDirName() + "]");
             }
             Assert.assertTrue(reader.isOpen());
             reader.close();
@@ -412,6 +419,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         e.printStackTrace();
                         errors.incrementAndGet();
                     } finally {
+                        Path.clearThreadLocals();
                         halt.countDown();
                     }
                 }).start();
@@ -525,6 +533,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                             for (int i = 0; i < readers.size(); i++) {
                                 readers.get(i).close();
                             }
+                            Path.clearThreadLocals();
                             halt.countDown();
                         }
                     }
@@ -848,8 +857,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         barrier.await();
                         pool.close();
                     } catch (CairoException e) {
-                        // "is left behind" exception is a valid outcome, ignore it
-                        if (!Chars.contains(e.getFlyweightMessage(), xyzTableToken.getDirName() + "' is left behind")) {
+                        // "table is left behind" exception is a valid outcome, ignore it
+                        if (!Chars.contains(e.getFlyweightMessage(), "table is left behind on pool shutdown")) {
                             exceptionCount.incrementAndGet();
                             e.printStackTrace();
                         }
@@ -857,6 +866,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         exceptionCount.incrementAndGet();
                         e.printStackTrace();
                     } finally {
+                        Path.clearThreadLocals();
                         stopLatch.countDown();
                     }
                 }).start();
@@ -873,6 +883,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         exceptionCount.incrementAndGet();
                         e.printStackTrace();
                     } finally {
+                        Path.clearThreadLocals();
                         stopLatch.countDown();
                     }
                 }).start();
@@ -1022,6 +1033,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         ref.set(pool.get(nameX));
                     } catch (Throwable ignored) {
                     } finally {
+                        Path.clearThreadLocals();
                         // the end
                         halt.countDown();
                     }
@@ -1342,8 +1354,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     private void assertWithPool(PoolAwareCode code, final CairoConfiguration configuration) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (ReaderPool pool = new ReaderPool(configuration, messageBus)) {
+        assertMemoryLeak(() -> {
+            try (ReaderPool pool = new ReaderPool(configuration, engine.getTxnScoreboardPool(), messageBus)) {
                 code.run(pool);
             }
         });

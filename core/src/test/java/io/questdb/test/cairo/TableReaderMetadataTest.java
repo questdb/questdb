@@ -178,13 +178,13 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
     @Test
     public void testApplyTransitionFrom() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.HOUR);
             final String tableName = "all2";
             final TableToken tableToken = engine.verifyTableName(tableName);
             try (
                     TableReaderMetadata ogMeta = new TableReaderMetadata(configuration, tableToken);
-                    TableReaderMetadata copyMeta = new TableReaderMetadata(configuration, tableToken);
+                    TableReaderMetadata copyMeta = new TableReaderMetadata(configuration, tableToken)
             ) {
                 ogMeta.load();
                 copyMeta.load();
@@ -291,7 +291,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
             final TableToken tableToken = engine.verifyTableName(tableName);
             try (
                     TableReaderMetadata ogMeta = new TableReaderMetadata(configuration, tableToken);
-                    TableReaderMetadata copyMeta = new TableReaderMetadata(configuration, tableToken);
+                    TableReaderMetadata copyMeta = new TableReaderMetadata(configuration, tableToken)
             ) {
                 ogMeta.load();
                 copyMeta.loadFrom(ogMeta);
@@ -514,6 +514,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         Assert.assertEquals(expected.getMaxUncommittedRows(), actual.getMaxUncommittedRows());
         Assert.assertEquals(expected.getO3MaxLag(), actual.getO3MaxLag());
         Assert.assertEquals(expected.getTtlHoursOrMonths(), actual.getTtlHoursOrMonths());
+        Assert.assertEquals(expected.getMatViewRefreshLimitHoursOrMonths(), actual.getMatViewRefreshLimitHoursOrMonths());
         Assert.assertEquals(expected.getColumnCount(), actual.getColumnCount());
 
         for (int i = 0, n = expected.getColumnCount(); i < n; i++) {
@@ -542,7 +543,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     private void runWithManipulators(String expected, ColumnManipulator... manipulators) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             String tableName = "all";
             int tableId;
             try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.verifyTableName(tableName))) {

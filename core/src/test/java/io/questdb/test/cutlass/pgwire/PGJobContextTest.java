@@ -32,7 +32,6 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -136,10 +135,10 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
-import static org.junit.Assert.assertEquals;
+import static io.questdb.test.tools.TestUtils.assertEquals;
 import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -223,6 +222,7 @@ public class PGJobContextTest extends BasePGTest {
         });
     }
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -2095,6 +2095,28 @@ if __name__ == "__main__":
         });
     }
 
+//Testing through postgres - need to establish connection
+//    @Test
+//    public void testReadINet() throws SQLException, IOException {
+//        Properties properties = new Properties();
+//        properties.setProperty("user", "admin");
+//        properties.setProperty("password", "postgres");
+//        properties.setProperty("sslmode", "disable");
+//        properties.setProperty("binaryTransfer", Boolean.toString(true));
+//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
+//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+//
+//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
+//
+//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
+//            var stmt = connection.prepareStatement("select * from ipv4");
+//            ResultSet rs = stmt.executeQuery();
+//            assertResultSet("a[OTHER]\n" +
+//                    "1.1.1.1\n" +
+//                    "12.2.65.90\n", sink, rs);
+//        }
+//    }
+
     @Test
     public void testBindVariableInVarArg() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -2653,7 +2675,7 @@ if __name__ == "__main__":
                 connection.prepareStatement("drop table xyz").execute();
                 Assert.fail();
             } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "could not lock 'xyz'");
+                TestUtils.assertContains(e.getMessage(), "could not lock 'xyz~'");
                 Assert.assertEquals("00000", e.getSQLState());
             }
         });
@@ -2747,12 +2769,16 @@ if __name__ == "__main__":
                 PgConnection sameConn;
 
                 while (true) {
-                    final PgConnection conn = (PgConnection) getConnection(server.getPort(), false, true);
-                    if (backendPid == conn.getQueryExecutor().getBackendPID()) {
-                        sameConn = conn;
-                        break;
-                    } else {
-                        conn.close();
+                    try {
+                        final PgConnection conn = (PgConnection) getConnection(server.getPort(), false, true);
+                        if (backendPid == conn.getQueryExecutor().getBackendPID()) {
+                            sameConn = conn;
+                            break;
+                        } else {
+                            conn.close();
+                        }
+                    } catch (PSQLException e) {
+                        // ignore the error and retry
                     }
                 }
 
@@ -2951,6 +2977,7 @@ if __name__ == "__main__":
 
     @Test
     public void testCloseMessageHex() throws Exception {
+        Assume.assumeFalse(legacyMode);
         skipOnWalRun(); // select only
         //hex for close message 43 00000009 53 535f31 00
         assertHexScriptAltCreds(
@@ -5926,6 +5953,34 @@ nodejs code:
     }
 
     @Test
+    public void testInsertNoMemLeak() throws Exception {
+        Assume.assumeFalse(legacyMode);
+        skipOnWalRun(); // non-partitioned table
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE TABLE test(id LONG);");
+            }
+
+            try (PreparedStatement insert = connection.prepareStatement("INSERT INTO test values(alloc(42));")) {
+                insert.execute();
+                // execute insert multiple times to verify cache interaction
+                insert.execute();
+            }
+
+            try (Statement statement = connection.createStatement()) {
+                ResultSet rs = statement.executeQuery("test;");
+                assertResultSet(
+                        "id[BIGINT]\n" +
+                                "42\n" +
+                                "42\n",
+                        sink,
+                        rs
+                );
+            }
+        });
+    }
+
+    @Test
     public void testInsertPreparedRenameInsert() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
@@ -5933,6 +5988,11 @@ nodejs code:
             try (PreparedStatement insert = connection.prepareStatement("INSERT INTO ts VALUES(?, ?)")) {
                 insert.setInt(1, 0);
                 insert.setTimestamp(2, new Timestamp(1632761103202L));
+                insert.execute();
+                connection.commit();
+
+                insert.setInt(1, 1);
+                insert.setTimestamp(2, new Timestamp(1632761103203L));
                 insert.execute();
                 connection.commit();
 
@@ -5955,10 +6015,99 @@ nodejs code:
             ) {
                 assertResultSet(
                         "id[INTEGER],ts[TIMESTAMP]\n" +
-                                "0,2021-09-27 16:45:03.202\n",
+                                "0,2021-09-27 16:45:03.202\n" +
+                                "1,2021-09-27 16:45:03.203\n",
                         sink,
                         rs
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testInsertSelectRenameException() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("CREATE TABLE ts (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH").execute();
+            connection.prepareStatement("CREATE TABLE ts1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH").execute();
+            try (PreparedStatement insert = connection.prepareStatement("INSERT INTO ts VALUES(?, ?)");
+                 PreparedStatement insert2 = connection.prepareStatement("INSERT INTO ts1 SELECT id, ts from ts where ts = ?")
+            ) {
+                insert.setInt(1, 0);
+                insert.setTimestamp(2, new Timestamp(1632761103202L));
+                insert2.setTimestamp(1, new Timestamp(1632761103202L));
+                insert.execute();
+                connection.commit();
+                mayDrainWalQueue();
+                insert2.execute();
+                connection.commit();
+
+                connection.prepareStatement("rename table ts to ts_bak").execute();
+                try {
+                    insert2.execute();
+                    fail();
+                } catch (PSQLException ex) {
+                    TestUtils.assertContains(ex.getMessage(), "table does not exist [table=ts]");
+                }
+                connection.commit();
+
+                mayDrainWalQueue();
+
+                sink.clear();
+                try (
+                        PreparedStatement ps = connection.prepareStatement("ts1");
+                        ResultSet rs = ps.executeQuery()
+                ) {
+                    assertResultSet(
+                            "id[INTEGER],ts[TIMESTAMP]\n" +
+                                    "0,2021-09-27 16:45:03.202\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInsertSelectWithParameterBindings() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (
+                    final PreparedStatement insertSrc = connection.prepareStatement(
+                            "INSERT INTO source_table(id, name, value, ts) VALUES (?, ?, ?, ?)"
+                    );
+                    final PreparedStatement insertSelect = connection.prepareStatement(
+                            "INSERT INTO target_table(id, name, value, ts) " +
+                                    "SELECT id, name, value, ts FROM source_table s WHERE s.ts > ?"
+                    );
+                    final Statement queryStmt = connection.createStatement()
+            ) {
+                connection.prepareStatement("CREATE TABLE source_table (id INT, name symbol, value double, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH").execute();
+                connection.prepareStatement("CREATE TABLE target_table (id INT, name symbol, value double, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH").execute();
+
+                insertSrc.setInt(1, 1);
+                insertSrc.setString(2, "AAA");
+                insertSrc.setDouble(3, 123.45);
+                insertSrc.setString(4, "2025-04-22 12:00:00");
+                insertSrc.execute();
+                mayDrainWalQueue();
+                insertSrc.setInt(1, 2);
+                insertSrc.setString(2, "BBB");
+                insertSrc.setDouble(3, 123.45);
+                insertSrc.setString(4, "2025-04-23 12:00:00");
+                insertSrc.execute();
+                mayDrainWalQueue();
+                insertSelect.setString(1, "2025-04-23 08:00:00");
+                int affectedRows = insertSelect.executeUpdate();
+                Assert.assertEquals(1, affectedRows);
+                mayDrainWalQueue();
+                try (ResultSet rs = queryStmt.executeQuery(
+                        "SELECT id, name, value, FROM target_table")) {
+                    String expected =
+                            "id[INTEGER],name[VARCHAR],value[DOUBLE]\n" +
+                                    "2,BBB,123.45\n";
+                    assertResultSet(expected, sink, rs);
+                }
             }
         });
     }
@@ -12164,12 +12313,7 @@ create table tab as (
 
     private void mayDrainWalAndMatViewQueues() {
         if (walEnabled) {
-            drainWalQueue();
-            try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-                while (refreshJob.run(0)) {
-                }
-                drainWalQueue();
-            }
+            drainWalAndMatViewQueues();
         }
     }
 

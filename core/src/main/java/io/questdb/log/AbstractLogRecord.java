@@ -36,11 +36,14 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.util.Set;
+
+import static io.questdb.ParanoiaState.*;
 
 abstract class AbstractLogRecord implements LogRecord, Log {
     private static final ThreadLocal<ObjHashSet<Throwable>> tlSet = ThreadLocal.withInitial(ObjHashSet::new);
@@ -54,7 +57,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     protected final Sequence errorSeq;
     protected final RingQueue<LogRecordUtf8Sink> infoRing;
     protected final Sequence infoSeq;
-    protected final ThreadLocalCursor tl = new ThreadLocalCursor();
+    protected final ThreadLocal<CursorHolder> tl = ThreadLocal.withInitial(CursorHolder::new);
     private final MicrosecondClock clock;
     private final CharSequence name;
 
@@ -119,12 +122,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
-        sink().putAscii(sequence, lo, hi);
-        return this;
-    }
-
-    @Override
     public LogRecord $(@Nullable File x) {
         sink().put(x == null ? "null" : x.getAbsolutePath());
         return this;
@@ -148,7 +145,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
                 sink().put(x.toString());
             } catch (Throwable t) {
                 // Complex toString() method could throw e.g. NullPointerException.
-                // If that happens, we've to release cursor to prevent blocking log queue.
+                // If that happens, release the cursor to prevent blocking log queue.
                 $();
                 throw t;
             }
@@ -165,7 +162,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
                 x.toSink(sink());
             } catch (Throwable t) {
                 // Complex toSink() method could throw e.g. NullPointerException.
-                // If that happens, we've to release cursor to prevent blocking log queue.
+                // If that happens, release the cursor to prevent blocking log queue.
                 $();
                 throw t;
             }
@@ -226,9 +223,17 @@ abstract class AbstractLogRecord implements LogRecord, Log {
 
     @Override
     public void $() {
-        sink().putEOL();
-        Holder h = tl.get();
-        h.seq.done(h.cursor);
+        CursorHolder h = tl.get();
+        LogRecordUtf8Sink sink = h.ring.get(h.cursor);
+        sink.putEOL();
+        try {
+            if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
+                validateUtf8(sink);
+            }
+        } finally {
+            h.isLogRecordInProgress = false;
+            h.seq.done(h.cursor);
+        }
     }
 
     @Override
@@ -252,6 +257,48 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     @Override
     public LogRecord $ip(long ip) {
         Net.appendIP4(sink(), ip);
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(@Nullable DirectUtf8Sequence sequence) {
+        if (sequence == null) {
+            sink().putAscii("null");
+        } else {
+            Utf8s.putSafe(sequence.lo(), sequence.hi(), sink());
+        }
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(@NotNull CharSequence sequence, int lo, int hi) {
+        sink().put(sequence, lo, hi);
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(@Nullable Utf8Sequence sequence) {
+        if (sequence == null) {
+            sink().putAscii("null");
+        } else {
+            sink().put(sequence);
+        }
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(long lo, long hi) {
+        Utf8s.putSafe(lo, hi, sink());
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(@Nullable CharSequence sequence) {
+        if (sequence == null) {
+            sink().putAscii("null");
+        } else {
+            sink().put(sequence);
+        }
         return this;
     }
 
@@ -282,12 +329,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     @Override
     public LogRecord $ts(long x) {
         sink().putISODate(x);
-        return this;
-    }
-
-    @Override
-    public LogRecord $utf8(long lo, long hi) {
-        sink().putNonAscii(lo, hi);
         return this;
     }
 
@@ -392,16 +433,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord utf8(@Nullable CharSequence sequence) {
-        if (sequence == null) {
-            sink().putAscii("null");
-        } else {
-            sink().put(sequence);
-        }
-        return this;
-    }
-
-    @Override
     public LogRecord xDebugW() {
         return nextWaiting(debugSeq, debugRing, LogLevel.DEBUG);
     }
@@ -418,25 +449,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
      */
     public LogRecord xInfoW() {
         return nextWaiting(infoSeq, infoRing, LogLevel.INFO);
-    }
-
-    private static void put(Utf8Sink sink, StackTraceElement e) {
-        sink.putAscii("\tat ");
-        sink.putAscii(e.getClassName());
-        sink.putAscii('.');
-        sink.putAscii(e.getMethodName());
-        if (e.isNativeMethod()) {
-            sink.putAscii("(Native Method)");
-        } else {
-            if (e.getFileName() != null && e.getLineNumber() > -1) {
-                sink.putAscii('(').put(e.getFileName()).putAscii(':').put(e.getLineNumber()).putAscii(')');
-            } else if (e.getFileName() != null) {
-                sink.putAscii('(').put(e.getFileName()).putAscii(')');
-            } else {
-                sink.putAscii("(Unknown Source)");
-            }
-        }
-        sink.put(Misc.EOL);
     }
 
     private static void put(
@@ -490,11 +502,51 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         }
     }
 
+    private static void put(Utf8Sink sink, StackTraceElement e) {
+        sink.putAscii("\tat ");
+        sink.putAscii(e.getClassName());
+        sink.putAscii('.');
+        sink.putAscii(e.getMethodName());
+        if (e.isNativeMethod()) {
+            sink.putAscii("(Native Method)");
+        } else {
+            if (e.getFileName() != null && e.getLineNumber() > -1) {
+                sink.putAscii('(').put(e.getFileName()).putAscii(':').put(e.getLineNumber()).putAscii(')');
+            } else if (e.getFileName() != null) {
+                sink.putAscii('(').put(e.getFileName()).putAscii(')');
+            } else {
+                sink.putAscii("(Unknown Source)");
+            }
+        }
+        sink.put(Misc.EOL);
+    }
+
     private static void put0(Utf8Sink sink, Throwable e) {
         sink.putAscii(e.getClass().getName());
         if (e.getMessage() != null) {
             sink.putAscii(": ").put(e.getMessage());
         }
+    }
+
+    private static void validateUtf8(LogRecordUtf8Sink sink) {
+        if (Utf8s.validateUtf8(sink) < 0) {
+            LogError e = new LogError("Invalid UTF-8, partial message: \n"
+                    + Utf8s.stringFromUtf8BytesSafe(sink) + "\nEND partial message");
+            sink.clear();
+            e.printStackTrace(System.out);
+            throw e;
+        }
+    }
+
+    private @Nullable LogError detectAbandonedLogRecord(CursorHolder h) throws LogError {
+        LogError logError = h.abandonedLogRecordError;
+        if (!h.isLogRecordInProgress) {
+            h.isLogRecordInProgress = true;
+            logError.fillInStackTrace();
+            return null;
+        }
+        $(" #$#$ ABANDONED LOG RECORD #$#$").$();
+        return logError;
     }
 
     protected LogRecord addTimestamp(LogRecord rec, String level) {
@@ -510,18 +562,29 @@ abstract class AbstractLogRecord implements LogRecord, Log {
 
     @NotNull
     protected LogRecord prepareLogRecord(Sequence seq, RingQueue<LogRecordUtf8Sink> ring, int level, long cursor) {
-        Holder h = tl.get();
+        CursorHolder h = tl.get();
+        // It's important to keep this before the assignment to the fields of CursorHolder.
+        // We need the values before the assignment in order to recover the abandoned log record.
+        LogError logError = detectAbandonedLogRecord(h);
         h.cursor = cursor;
         h.seq = seq;
         h.ring = ring;
-        LogRecordUtf8Sink r = ring.get(cursor);
-        r.setLevel(level);
-        r.clear();
+        LogRecordUtf8Sink sink = ring.get(cursor);
+        sink.setLevel(level);
+        sink.clear();
+        if (logError == null) {
+            return this;
+        }
+        logError.printStackTrace(System.out);
+        if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
+            seq.done(cursor);
+            throw logError;
+        }
         return this;
     }
 
     protected LogRecordUtf8Sink sink() {
-        Holder h = tl.get();
+        CursorHolder h = tl.get();
         return h.ring.get(h.cursor);
     }
 
@@ -533,16 +596,20 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         return nextWaiting(criticalSeq, criticalRing, LogLevel.CRITICAL);
     }
 
-    protected static class Holder {
+    protected static class CursorHolder {
+        final LogError abandonedLogRecordError = createAbandonedLogError();
         protected long cursor;
         protected RingQueue<LogRecordUtf8Sink> ring;
         protected Sequence seq;
-    }
+        boolean isLogRecordInProgress;
 
-    protected static class ThreadLocalCursor extends ThreadLocal<Holder> {
-        @Override
-        protected Holder initialValue() {
-            return new Holder();
+        private static @NotNull LogError createAbandonedLogError() {
+            if (LOG_PARANOIA_MODE == LOG_PARANOIA_MODE_AGGRESSIVE)
+                return new LogError("Abandoned log record");
+            else {
+                return new LogError("Abandoned log record detected. Use LOG_PARANOIA_MODE_AGGRESSIVE to diagnose.",
+                        false);
+            }
         }
     }
 }

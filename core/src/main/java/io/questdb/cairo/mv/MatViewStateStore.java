@@ -47,7 +47,7 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     @Override
     void clear();
 
-    // Creates the view state, initiates refresh, logs telemetry event.
+    // Creates the view state, initiates refresh (only for incremental mat views), logs telemetry event.
     void createViewState(MatViewDefinition viewDefinition);
 
     void enqueueFullRefresh(TableToken matViewToken);
@@ -55,6 +55,10 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     void enqueueIncrementalRefresh(TableToken matViewToken);
 
     void enqueueInvalidate(TableToken matViewToken, String invalidationReason);
+
+    void enqueueInvalidateDependentViews(TableToken baseTableToken, String invalidationReason);
+
+    void enqueueRangeRefresh(TableToken matViewToken, long rangeFrom, long rangeTo);
 
     @Nullable
     MatViewState getViewState(TableToken matViewToken);

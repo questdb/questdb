@@ -176,6 +176,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE("cairo.mat.view.insert.as.select.batch.size"),
     CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE("cairo.mat.view.rows.per.query.estimate"),
     CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED("cairo.mat.view.parallel.sql.enabled"),
+    CAIRO_MAT_VIEW_TIMER_START_EPSILON("cairo.mat.view.timer.start.epsilon"),
     CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
     CAIRO_ATTACH_PARTITION_COPY("cairo.attach.partition.copy"),
     CAIRO_COMMIT_LATENCY("cairo.commit.latency"),
@@ -285,6 +286,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_PESSIMISTIC_HEALTH_CHECK("http.pessimistic.health.check.enabled"),
     HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED("http.health.check.authentication.required"),
     HTTP_SECURITY_READONLY("http.security.readonly"),
+    HTTP_SETTINGS_READONLY("http.settings.readonly"),
     HTTP_SECURITY_MAX_RESPONSE_ROWS("http.security.max.response.rows"),
     HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION("http.security.interrupt.on.closed.connection"),
     HTTP_BIND_TO("http.bind.to"),
@@ -332,6 +334,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_UDP_TIMESTAMP("line.udp.timestamp"),
     LINE_TCP_ENABLED("line.tcp.enabled"),
     LINE_HTTP_ENABLED("line.http.enabled"),
+    LINE_HTTP_MAX_RECV_BUFFER_SIZE("line.http.max.recv.buffer.size"),
     LINE_HTTP_PING_VERSION("line.http.ping.version"),
     LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT("line.tcp.net.active.connection.limit"),
     LINE_TCP_NET_CONNECTION_LIMIT("line.tcp.net.connection.limit"),
@@ -348,6 +351,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_TCP_TIMESTAMP("line.tcp.timestamp"),
     LINE_TCP_MSG_BUFFER_SIZE("line.tcp.msg.buffer.size"), // deprecated
     LINE_TCP_RECV_BUFFER_SIZE("line.tcp.recv.buffer.size"),
+    LINE_TCP_MAX_RECV_BUFFER_SIZE("line.tcp.max.recv.buffer.size"),
     LINE_TCP_MAX_MEASUREMENT_SIZE("line.tcp.max.measurement.size"),
     LINE_TCP_WRITER_QUEUE_CAPACITY("line.tcp.writer.queue.capacity"),
     LINE_TCP_WRITER_WORKER_COUNT("line.tcp.writer.worker.count"),
@@ -436,6 +440,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE("debug.http.force.recv.fragmentation.chunk.size", false, true),
     QUERY_TIMEOUT_SEC("query.timeout.sec"),
     QUERY_TIMEOUT("query.timeout"),
+    QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED("query.within.latest.by.optimisation.enabled"),
     SHARED_WORKER_COUNT("shared.worker.count"),
     SHARED_WORKER_AFFINITY("shared.worker.affinity"),
     SHARED_WORKER_HALT_ON_ERROR("shared.worker.haltOnError"),
@@ -457,6 +462,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY("cairo.sql.column.purge.retry.delay"),
     CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER("cairo.sql.column.purge.retry.delay.multiplier"),
     CAIRO_SQL_SYSTEM_TABLE_PREFIX("cairo.system.table.prefix"),
+    CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT("cairo.max.array.element.count"),
     CAIRO_MAX_FILE_NAME_LENGTH("cairo.max.file.name.length"),
     LINE_AUTO_CREATE_NEW_COLUMNS("line.auto.create.new.columns"),
     LINE_AUTO_CREATE_NEW_TABLES("line.auto.create.new.tables"),
@@ -470,6 +476,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WAL_SEQUENCER_CHECK_INTERVAL("cairo.wal.sequencer.check.interval"),
     CAIRO_SYSTEM_WAL_WRITER_DATA_APPEND_PAGE_SIZE("cairo.system.wal.writer.data.append.page.size"),
     CAIRO_SYSTEM_WAL_WRITER_EVENT_APPEND_PAGE_SIZE("cairo.system.wal.writer.event.append.page.size"),
+    CAIRO_PREFERENCES_STRING_POOL_CAPACITY("cairo.preferences.string.pool.capacity"),
     WAL_APPLY_WORKER_COUNT("wal.apply.worker.count"),
     WAL_APPLY_WORKER_AFFINITY("wal.apply.worker.affinity"),
     WAL_APPLY_WORKER_HALT_ON_ERROR("wal.apply.worker.haltOnError"),
@@ -550,6 +557,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD("mat.view.refresh.worker.sleep.threshold"),
     MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT("mat.view.refresh.worker.sleep.timeout"),
     MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD("mat.view.refresh.worker.yield.threshold"),
+    CAIRO_TXN_SCOREBOARD_FORMAT("cairo.txn.scoreboard.format"),
     DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY("debug.wal.apply.block.failure.no.retry", false, true);
 
     private static final Map<String, PropertyKey> nameMapping;

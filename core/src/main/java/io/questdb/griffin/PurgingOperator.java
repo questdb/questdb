@@ -175,13 +175,13 @@ public final class PurgingOperator {
                     );
                     cleanupColumnVersions.setPos(cleanupVersionSize);
 
-                    log.info().$("column purge scheduled [table=").utf8(tableToken.getTableName())
-                            .$(", column=").utf8(columnName)
+                    log.info().$("column purge scheduled [table=").$safe(tableToken.getTableName())
+                            .$(", column=").$safe(columnName)
                             .$(", updateTxn=").$(txn)
                             .I$();
                 } else {
-                    log.info().$("column purge complete [table=").utf8(tableToken.getTableName())
-                            .$(", column=").utf8(columnName)
+                    log.info().$("column purge complete [table=").$safe(tableToken.getTableName())
+                            .$(", column=").$safe(columnName)
                             .$(", newColumnVersion=").$(txn - 1)
                             .I$();
                 }
@@ -213,8 +213,8 @@ public final class PurgingOperator {
                 return;
             } else if (cursor == -1L) {
                 // Queue overflow
-                log.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").utf8(tableName.getTableName())
-                        .$("\"' [columnName=").utf8(columnName)
+                log.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").$safe(tableName.getTableName())
+                        .$("\"' [columnName=").$safe(columnName)
                         .$(", updateTxn=").$(updateTxn)
                         .I$();
                 return;

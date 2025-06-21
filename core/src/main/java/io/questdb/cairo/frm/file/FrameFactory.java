@@ -52,6 +52,18 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
         Misc.free(columnPool);
     }
 
+    public Frame createRW(
+            Path partitionPath,
+            long partitionTimestamp,
+            RecordMetadata metadata,
+            ColumnVersionWriter cvw,
+            long size
+    ) {
+        FrameImpl frame = getOrCreate();
+        frame.createRW(partitionPath, partitionTimestamp, metadata, cvw, size);
+        return frame;
+    }
+
     @Override
     public boolean isClosed() {
         return closed;

@@ -77,7 +77,6 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.SelectFacade;
 import io.questdb.network.SelectFacadeImpl;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Files;
@@ -111,6 +110,7 @@ import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -130,7 +130,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
-import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
+import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String ACL_ENABLED = "acl.enabled";
@@ -138,6 +138,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
     public static final String TMP_DIRECTORY = "tmp";
+    private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2]";
+    private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
+    private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
     private static final String RELEASE_TYPE = "release.type";
     private static final String RELEASE_VERSION = "release.version";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
@@ -172,6 +175,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean cairoSqlLegacyOperatorPrecedence;
     private final long cairoTableRegistryAutoReloadFrequency;
     private final int cairoTableRegistryCompactionThreshold;
+    private final int cairoTxnScoreboardFormat;
     private final long cairoWriteBackOffTimeoutOnMemPressureMs;
     private final boolean checkpointRecoveryEnabled;
     private final String checkpointRoot;
@@ -219,8 +223,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean httpNetConnectionHint;
     private final String httpPassword;
     private final boolean httpPessimisticHealthCheckEnabled;
+    private final long httpRecvMaxBufferSize;
     private final int httpSendBufferSize;
     private final boolean httpServerEnabled;
+    private final boolean httpSettingsReadOnly;
     private final int httpSqlCacheBlockCount;
     private final boolean httpSqlCacheEnabled;
     private final int httpSqlCacheRowCount;
@@ -237,6 +243,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long idleCheckInterval;
     private final boolean ilpAutoCreateNewColumns;
     private final boolean ilpAutoCreateNewTables;
+    private final String ilpProtoTransports;
     private final int inactiveReaderMaxOpenPartitions;
     private final long inactiveReaderTTL;
     private final long inactiveWalWriterTTL;
@@ -298,6 +305,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewRefreshWorkerSleepThreshold;
     private final long matViewRefreshWorkerYieldThreshold;
     private final int matViewRowsPerQueryEstimate;
+    private final long matViewTimerStartEpsilon;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -340,9 +348,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final String posthogApiKey;
     private final boolean posthogEnabled;
+    private final int preferencesStringPoolCapacity;
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
+    private final boolean queryWithinLatestByOptimisationEnabled;
     private final int readerPoolMaxSegments;
     private final Utf8SequenceObjHashMap<Utf8Sequence> redirectMap;
     private final int repeatMigrationFromVersion;
@@ -405,6 +415,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlLexerPoolCapacity;
     private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
+    private final int sqlMaxArrayElementCount;
     private final int sqlMaxNegativeLimit;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlModelPoolCapacity;
@@ -556,6 +567,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpIOWorkerYieldThreshold;
     private long lineTcpMaintenanceInterval;
     private int lineTcpMaxMeasurementSize;
+    private long lineTcpMaxRecvBufferSize;
     private int lineTcpNetBindIPv4Address;
     private int lineTcpNetBindPort;
     private long lineTcpNetConnectionHeartbeatInterval;
@@ -747,6 +759,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.isQueryTracingEnabled = getBoolean(properties, env, PropertyKey.QUERY_TRACING_ENABLED, false);
         this.cairoTableRegistryAutoReloadFrequency = getMillis(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
+        this.cairoTxnScoreboardFormat = getInt(properties, env, PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, 2);
         this.cairoWriteBackOffTimeoutOnMemPressureMs = getMillis(properties, env, PropertyKey.CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE, 4000);
         this.repeatMigrationFromVersion = getInt(properties, env, PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
         this.mkdirMode = getInt(properties, env, PropertyKey.CAIRO_MKDIR_MODE, 509);
@@ -957,6 +970,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_THRESHOLD, 10_000);
             this.httpWorkerSleepTimeout = getMillis(properties, env, PropertyKey.HTTP_WORKER_SLEEP_TIMEOUT, 10);
 
+            this.httpSettingsReadOnly = getBoolean(properties, env, PropertyKey.HTTP_SETTINGS_READONLY, false);
+
             // context paths
             this.httpContextWebConsole = stripTrailingSlash(getString(properties, env, PropertyKey.HTTP_CONTEXT_WEB_CONSOLE, "/"));
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_ILP, this.httpContextPathILP, "/write", "/api/v2/write");
@@ -968,15 +983,17 @@ public class PropServerConfiguration implements ServerConfiguration {
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathExec, httpContextWebConsole + "/exec");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_WARNINGS, this.httpContextPathWarnings, httpContextWebConsole + "/warnings");
 
-            // If any of the REST services the Web Console depends on are overridden, we need to make sure
-            // the context paths the Web Console requires are also present, so customization does not break the Web Console.
+            // If any REST services that the Web Console depends on are overridden,
+            // ensure the required context paths remain available,
+            // so that customization does not break the Web Console.
 
             // The following paths need to be added for the Web Console to work properly. This
-            // deals with the cases where context path was overridden by the user. Adding duplicate
-            // paths is ok, because duplicates are squashed by the HTTP server.
+            // deals with the cases where the context path was overridden by the user. Adding duplicate
+            // paths is ok because duplicates are squashed by the HTTP server.
             // 1. import, to support CSV import UI
             // 2. export, to support CSV export UI
-            // 3. settings, that is what the Web Console loads on startup
+            // 3. settings, a union of selected config properties and preferences,
+            //     the Web Console loads it on startup, the preferences part can be updated via POST/PUT
             // 4. table status, to support CSV import UI
             // 5. JSON query execution, e.g. exec
             // 6. warnings, that displays warnings in the table view
@@ -1102,7 +1119,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             final String publicDirectory = getString(properties, env, PropertyKey.HTTP_STATIC_PUBLIC_DIRECTORY, "public");
-            // translate public directory into absolute path
+            // translate public directory into an absolute path
             // this will generate some garbage, but this is ok - we're just doing this once on startup
             if (new File(publicDirectory).isAbsolute()) {
                 this.publicDirectory = publicDirectory;
@@ -1130,6 +1147,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_CONNECTION_RCVBUF, httpNetConnectionRcvBuf);
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECEIVE_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECV_BUFFER_SIZE, httpRecvBufferSize);
+            this.httpRecvMaxBufferSize = getLongSize(properties, env, PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE, Numbers.SIZE_1GB);
 
             this.dateAdapterPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_DATE_ADAPTER_POOL_CAPACITY, 16);
             this.jsonCacheLimit = getIntSize(properties, env, PropertyKey.HTTP_TEXT_JSON_CACHE_LIMIT, 16384);
@@ -1182,6 +1200,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.queryTimeout = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, "60") * Timestamps.SECOND_MILLIS);
             this.queryTimeout = getMillis(properties, env, PropertyKey.QUERY_TIMEOUT, this.queryTimeout);
 
+            this.queryWithinLatestByOptimisationEnabled = getBoolean(properties, env, PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, false);
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE, 64);
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE, netTestConnectionBufferSize);
 
@@ -1261,11 +1280,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplySleepTimeout = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
 
-            // reuse wal apply defaults for mat view workers
+            // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
             this.matViewMinRefreshInterval = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL, Timestamps.MINUTE_MICROS);
+            this.matViewTimerStartEpsilon = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_TIMER_START_EPSILON, Timestamps.MINUTE_MICROS);
             this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
             this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
@@ -1332,7 +1352,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlInsertModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY, 64);
             this.sqlInsertModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_BATCH_SIZE, 1_000_000);
             this.matViewInsertAsSelectBatchSize = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, sqlInsertModelBatchSize);
-            this.matViewRowsPerQueryEstimate = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 10_000_000);
+            this.matViewRowsPerQueryEstimate = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
             this.columnPurgeTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 256);
@@ -1340,6 +1360,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.columnPurgeRetryDelay = getMicros(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 10_000);
             this.columnPurgeRetryDelayMultiplier = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, "10.0");
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
+            this.sqlMaxArrayElementCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 10_000_000);
+            this.preferencesStringPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_PREFERENCES_STRING_POOL_CAPACITY, 64);
 
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024));
             this.writerDataIndexValueAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 16 * Numbers.SIZE_1MB));
@@ -1529,6 +1551,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 if (lineTcpMaxMeasurementSize > lineTcpRecvBufferSize) {
                     lineTcpRecvBufferSize = lineTcpMaxMeasurementSize;
                 }
+                this.lineTcpMaxRecvBufferSize = getLongSize(properties, env, PropertyKey.LINE_TCP_MAX_RECV_BUFFER_SIZE, Numbers.SIZE_1GB);
+                if (lineTcpRecvBufferSize > lineTcpMaxRecvBufferSize) {
+                    lineTcpMaxRecvBufferSize = lineTcpRecvBufferSize;
+                }
 
                 this.lineTcpWriterQueueCapacity = getQueueCapacity(properties, env, PropertyKey.LINE_TCP_WRITER_QUEUE_CAPACITY, 128);
                 this.lineTcpWriterWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_COUNT, 0);
@@ -1559,7 +1585,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 defaultTcpPartitionByProperty = getString(properties, env, PropertyKey.LINE_DEFAULT_PARTITION_BY, defaultTcpPartitionByProperty);
                 this.lineTcpDefaultPartitionBy = PartitionBy.fromString(defaultTcpPartitionByProperty);
                 if (this.lineTcpDefaultPartitionBy == -1) {
-                    log.info().$("invalid partition by ").$(defaultTcpPartitionByProperty).$("), will use DAY for TCP").$();
+                    log.info().$("invalid partition by ").$safe(defaultTcpPartitionByProperty).$("), will use DAY for TCP").$();
                     this.lineTcpDefaultPartitionBy = PartitionBy.DAY;
                 }
                 this.minIdleMsBeforeWriterRelease = getMillis(properties, env, PropertyKey.LINE_TCP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE, 500);
@@ -1582,13 +1608,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                 String floatDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_FLOAT_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.DOUBLE));
                 this.floatDefaultColumnType = ColumnType.tagOf(floatDefaultColumnTypeName);
                 if (floatDefaultColumnType != ColumnType.DOUBLE && floatDefaultColumnType != ColumnType.FLOAT) {
-                    log.info().$("invalid default column type for float ").$(floatDefaultColumnTypeName).$(", will use DOUBLE").$();
+                    log.info().$("invalid default column type for float ").$safe(floatDefaultColumnTypeName).$(", will use DOUBLE").$();
                     this.floatDefaultColumnType = ColumnType.DOUBLE;
                 }
                 String integerDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_INTEGER_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.LONG));
                 this.integerDefaultColumnType = ColumnType.tagOf(integerDefaultColumnTypeName);
                 if (integerDefaultColumnType != ColumnType.LONG && integerDefaultColumnType != ColumnType.INT && integerDefaultColumnType != ColumnType.SHORT && integerDefaultColumnType != ColumnType.BYTE) {
-                    log.info().$("invalid default column type for integer ").$(integerDefaultColumnTypeName).$(", will use LONG").$();
+                    log.info().$("invalid default column type for integer ").$safe(integerDefaultColumnTypeName).$(", will use LONG").$();
                     this.integerDefaultColumnType = ColumnType.LONG;
                 }
             }
@@ -1607,13 +1633,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (pgEnabled) {
                 this.pgSelectCacheEnabled = getBoolean(properties, env, PropertyKey.PG_SELECT_CACHE_ENABLED, true);
                 final int effectivePGWorkerCount = pgWorkerCount > 0 ? pgWorkerCount : sharedWorkerCount;
-                this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 8 * effectivePGWorkerCount);
-                this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, 2 * effectivePGWorkerCount);
+                this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 32);
+                this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, Math.max(effectivePGWorkerCount, 4));
             }
             final int effectiveHttpWorkerCount = httpWorkerCount > 0 ? httpWorkerCount : sharedWorkerCount;
             this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
-            this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 8 * effectiveHttpWorkerCount);
-            this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, 2 * effectiveHttpWorkerCount);
+            this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 32);
+            this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, Math.max(effectiveHttpWorkerCount, 4));
             this.queryCacheEventQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY, 4));
 
             this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + sharedWorkerCount + walApplyWorkerCount);
@@ -1653,6 +1679,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.buildInformation = buildInformation;
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
         }
+        this.ilpProtoTransports = initIlpTransport();
         this.allowTableRegistrySharedWrite = getBoolean(properties, env, PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE, false);
         this.enableTestFactories = getBoolean(properties, env, PropertyKey.DEBUG_ENABLE_TEST_FACTORIES, false);
 
@@ -1782,7 +1809,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         return configReloadEnabled;
     }
 
-    // Used by dynamic configuration to reuse already created factory provider.
+    // Used by dynamic configuration to reuse the already created factory provider.
     public void reinit(FactoryProvider factoryProvider) {
         this.factoryProvider = factoryProvider;
     }
@@ -1886,6 +1913,32 @@ public class PropServerConfiguration implements ServerConfiguration {
         return compiler.compile(getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT, "yyyy-MM-dd"));
     }
 
+    // The enterprise version needs to add tcps and https
+    private String initIlpTransport() {
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put('[');
+        boolean addComma = false;
+        if (lineTcpEnabled) {
+            addComma = true;
+            sink.put("\"tcp\"");
+        }
+        if (lineHttpEnabled && httpServerEnabled) {
+            if (addComma) {
+                sink.put(", ");
+            }
+            sink.put("\"http\"");
+            addComma = true;
+        }
+        if (lineUdpEnabled) {
+            if (addComma) {
+                sink.put(", ");
+            }
+            sink.put("\"udp\"");
+        }
+        sink.put(']');
+        return sink.toString();
+    }
+
     private boolean pathEquals(String p1, String p2) {
         try {
             if (p1 == null || p2 == null) {
@@ -1950,13 +2003,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             throw new ServerConfigurationException("Cannot calculate canonical path for configuration property [key=" + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + ",value=" + path + "]");
         }
     }
-
-/*
-    protected String getContextPath(Properties properties, @Nullable Map<String, String> env) {
-        final String contextPath = getString(properties, env, PropertyKey.HTTP_CONTEXT_PATH, "");
-        return !contextPath.isEmpty() && !contextPath.startsWith("/") ? "/" + contextPath : contextPath;
-    }
-*/
 
     protected double getDouble(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultValue) throws ServerConfigurationException {
         final String value = getString(properties, env, key, defaultValue);
@@ -2185,16 +2231,26 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public static class JsonPropertyValueFormatter {
-        public static String bool(boolean value) {
-            return Boolean.toString(value);
+        public static void arrayStr(CharSequence key, String value, CharSink<?> sink) {
+            sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
         }
 
-        public static String integer(int value) {
-            return Integer.toString(value);
+        public static void bool(CharSequence key, boolean value, CharSink<?> sink) {
+            sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
         }
 
-        public static String str(String value) {
-            return value != null ? '"' + value + '"' : "null";
+        public static void integer(CharSequence key, long value, CharSink<?> sink) {
+            sink.putQuoted(key).putAscii(':').put(value).putAscii(',');
+        }
+
+        public static void str(CharSequence key, CharSequence value, CharSink<?> sink) {
+            sink.putQuoted(key).putAscii(':');
+            if (value != null) {
+                sink.putQuoted(value);
+            } else {
+                sink.put("null");
+            }
+            sink.putAscii(',');
         }
     }
 
@@ -2540,6 +2596,22 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean enableTestFactories() {
             return enableTestFactories;
+        }
+
+        @Override
+        public boolean exportConfiguration(CharSink<?> sink) {
+            final String releaseType = getReleaseType();
+            str(RELEASE_TYPE, releaseType, sink);
+            str(RELEASE_VERSION, getBuildInformation().getSwVersion(), sink);
+            if (Chars.equalsNc(releaseType, OSS)) {
+                bool(PropertyKey.HTTP_SETTINGS_READONLY.getPropertyPath(), httpSettingsReadOnly, sink);
+            }
+            if (!Chars.empty(httpUsername)) {
+                bool(ACL_ENABLED, true, sink);
+            }
+            arrayStr(ILP_PROTO_SUPPORT_VERSIONS_NAME, ILP_PROTO_SUPPORT_VERSIONS, sink);
+            arrayStr(ILP_PROTO_TRANSPORTS, ilpProtoTransports, sink);
+            return true;
         }
 
         @Override
@@ -2931,6 +3003,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getMatViewTimerStartEpsilon() {
+            return matViewTimerStartEpsilon;
+        }
+
+        @Override
         public int getMaxCrashFiles() {
             return cairoMaxCrashFiles;
         }
@@ -3101,6 +3178,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getPreferencesStringPoolCapacity() {
+            return preferencesStringPoolCapacity;
+        }
+
+        @Override
         public int getQueryCacheEventQueueCapacity() {
             return queryCacheEventQueueCapacity;
         }
@@ -3143,6 +3225,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSampleByIndexSearchPageSize() {
             return sqlSampleByIndexSearchPageSize;
+        }
+
+        @Override
+        public int getScoreboardFormat() {
+            return cairoTxnScoreboardFormat;
         }
 
         @Override
@@ -3485,6 +3572,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             return cairoTableRegistryCompactionThreshold;
         }
 
+        @Override
         public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
             return telemetryConfiguration;
         }
@@ -3759,6 +3847,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             return walParallelExecutionEnabled;
         }
 
+        @Override
         public boolean isWalSupported() {
             return walSupported;
         }
@@ -3774,15 +3863,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-            settings.put(RELEASE_TYPE, str(getReleaseType()));
-            settings.put(RELEASE_VERSION, str(getBuildInformation().getSwVersion()));
-            settings.put(ACL_ENABLED, Boolean.toString(!Chars.empty(httpUsername)));
+        public int maxArrayElementCount() {
+            return sqlMaxArrayElementCount;
         }
 
         @Override
         public boolean useFastAsOfJoin() {
             return useFastAsOfJoin;
+        }
+
+        @Override
+        public boolean useWithinLatestByOptimisation() {
+            return queryWithinLatestByOptimisationEnabled;
         }
     }
 
@@ -4253,6 +4345,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isSettingsReadOnly() {
+            return httpSettingsReadOnly;
+        }
+
+        @Override
         public Counter listenerStateChangeCounter() {
             return metrics.httpMetrics().listenerStateChangeCounter();
         }
@@ -4314,6 +4411,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public CairoConfiguration getCairoConfiguration() {
+            return cairoConfiguration;
+        }
+
+        @Override
         public short getDefaultColumnTypeForFloat() {
             return floatDefaultColumnType;
         }
@@ -4331,6 +4433,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getInfluxPingVersion() {
             return lineHttpPingVersion;
+        }
+
+        @Override
+        public long getMaxRecvBufferSize() {
+            return httpRecvMaxBufferSize;
         }
 
         @Override
@@ -4439,6 +4546,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public CairoConfiguration getCairoConfiguration() {
+            return cairoConfiguration;
+        }
+
+        @Override
         public MillisecondClock getClock() {
             return MillisecondClockImpl.INSTANCE;
         }
@@ -4452,6 +4564,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             );
         }
 
+        @Override
         public long getCommitIntervalDefault() {
             return lineTcpCommitIntervalDefault;
         }
@@ -4549,6 +4662,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMaxMeasurementSize() {
             return lineTcpMaxMeasurementSize;
+        }
+
+        @Override
+        public long getMaxRecvBufferSize() {
+            return lineTcpMaxRecvBufferSize;
         }
 
         @Override
@@ -5208,6 +5326,14 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     class PropPublicPassthroughConfiguration implements PublicPassthroughConfiguration {
         @Override
+        public boolean exportConfiguration(CharSink<?> sink) {
+            bool(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), isPosthogEnabled(), sink);
+            str(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), getPosthogApiKey(), sink);
+            integer(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.toString(), maxFileNameLength, sink);
+            return true;
+        }
+
+        @Override
         public String getPosthogApiKey() {
             return posthogApiKey;
         }
@@ -5215,11 +5341,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isPosthogEnabled() {
             return posthogEnabled;
-        }
-
-        public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-            settings.put(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), JsonPropertyValueFormatter.bool(isPosthogEnabled()));
-            settings.put(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), str(getPosthogApiKey()));
         }
     }
 

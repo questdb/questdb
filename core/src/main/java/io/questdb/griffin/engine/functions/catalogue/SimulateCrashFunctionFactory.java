@@ -129,7 +129,7 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
             if (authorizationException) {
                 throw CairoException.authorization().put("simulated authorization exception");
             }
-            throw CairoException.critical(1).put("simulated cairo exception");
+            throw CairoException.critical(1).position(222).put("simulated cairo exception");
         }
 
         @Override

@@ -160,11 +160,66 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testACExprFollowingExprFollowingClauseInvalid() throws Exception {
-        assertWindowSyntaxError(
+    public void testACExprFollowingExprFollowingClauseValid() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 22 #UNIT following and 3 #UNIT following exclude no others) from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 22 following and 3 following) from xyz",
-                65,
-                "start of window must be lower than end of window",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprFrameEndUnboundedProceeding() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 2 following and unbounded preceding) from xyz",
+                91,
+                "'following' expected",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprFrameStartCurrentRowWithProceeding() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between current row and 2 preceding) from xyz",
+                83,
+                "start row is CURRENT, end row not must be PRECEDING",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprFrameStartFollowingWithProceeding() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 2 following and 2 preceding) from xyz",
+                83,
+                "start row is FOLLOWING, end row not must be PRECEDING",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprFrameStartUnboundedFollowing() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between unbounded following and 3 preceding) from xyz",
+                75,
+                "'preceding' expected",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -280,41 +335,39 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testACExprPrecedingExprPrecedingClauseInvalid() throws Exception {
-        assertWindowSyntaxError(
-                "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 20 preceding) from xyz",
-                65,
-                "start of window must be lower than end of window",
-                modelOf("xyz")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("c", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testACExprPrecedingExprPrecedingClauseInvalidUnion() throws Exception {
-        assertWindowSyntaxError(
-                "select a, b, c from xyz" +
-                        " union all " +
-                        "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 20 preceding) from xyz",
-                99,
-                "start of window must be lower than end of window",
-                modelOf("xyz")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("c", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testACExprPrecedingExprPrecedingClauseValid() throws Exception {
+    public void testACExprPrecedingExprPrecedingClauseValid1() throws Exception {
         assertWindowQuery(
                 "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 20 #UNIT preceding and 10 #UNIT preceding exclude no others) " +
                         "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 20 preceding and 10 preceding) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingExprPrecedingClauseValid2() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 10 #UNIT preceding and 20 #UNIT preceding exclude no others) from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 20 preceding) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingExprPrecedingClauseValidUnion() throws Exception {
+        assertWindowQuery(
+                "select-choose a, b, c from (select [a, b, c] from xyz timestamp (ts)) union all select-window a, b, f(c) f over (partition by b order by ts #FRAME between 10 #UNIT preceding and 20 #UNIT preceding exclude no others) from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a, b, c from xyz" +
+                        " union all " +
+                        "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 20 preceding) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -915,7 +968,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAmbiguousColumn() throws Exception {
-        assertSyntaxError("orders join customers on customerId = customerId", 25, "Ambiguous",
+        assertSyntaxError(
+                "orders join customers on customerId = customerId", 25, "Ambiguous",
                 modelOf("orders").col("customerId", ColumnType.INT),
                 modelOf("customers").col("customerId", ColumnType.INT)
         );
@@ -1159,7 +1213,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertIdentifierError("select 'a' } ");
         assertIdentifierError("select 'a' { ");
         assertIdentifierError("select 'a' ] ");
-        assertIdentifierError("select 'a' : ");
         assertIdentifierError("select 'a' ? ");
         assertIdentifierError("select 'a' @ ");
         assertSyntaxError("select 'a' ) ", 11, "unexpected token [)]");
@@ -1213,8 +1266,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertTableExistence(true, engine.verifyTableName("public"));
 
             assertSyntaxError(
-                    "create materialized view x_view5 with base 'dfc.x' as (select ts, max(v) from x sample by 1d) partition by day",
-                    43,
+                    "create materialized view x_view5 with base 'dfc.x' as (select ts, max(v) from dfc.x sample by 1d) partition by day",
+                    78,
                     "table does not exist [table=dfc.x]"
             );
             assertSyntaxError(
@@ -1359,6 +1412,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual x - 1 - x t1 from (select [x] from long_sequence(1000))",
                 "select (x - (1 - x)) as t1 from long_sequence(1000)",
                 modelOf("t1").col("t1", ColumnType.LONG)
+        );
+    }
+
+    @Test
+    public void testCTEWithTimestampClause() throws Exception {
+        assertQuery(
+                "select-choose ts from (" +
+                        "select-choose [ts] ts from (" +
+                        "select-choose [ts] ts from (" +
+                        "select-choose [ts] ts from (select [ts] from tango)) samba timestamp (ts)" +
+                        ") rhumba" +
+                        ") chacha",
+                "WITH samba AS (tango), rhumba AS (samba TIMESTAMP(ts)), chacha AS (rhumba), unused AS (chacha) SELECT * FROM chacha",
+                modelOf("tango").col("ts", ColumnType.TIMESTAMP)
         );
     }
 
@@ -1628,6 +1695,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateAsSelectErrorPosition() throws Exception {
+        assertSyntaxError(
+                "create table tmp as (select rnd_symbol(10) sym from long_sequence(10));",
+                39,
+                "STRING constant expected"
+        );
+    }
+
+    @Test
     public void testCreateAsSelectInvalidIndex() throws Exception {
         assertSyntaxError(
                 "create table X as ( select a, b, c from tab ), index(x)",
@@ -1731,8 +1807,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateMatView10() throws Exception {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW 'myview' REFRESH INCREMENTAL refresh",
-                61,
-                "'as' expected"
+                54,
+                "'refresh' or 'as' expected"
         );
     }
 
@@ -1740,8 +1816,80 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateMatView11() throws Exception {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' with base 'mytable2'",
-                60,
+                55,
+                "'refresh' or 'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView12() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh incremental",
+                74,
                 "'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView13() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh incremental foobar",
+                75,
+                "'refresh' or 'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView14() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh incremental start",
+                80,
+                "START timestamp expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView15() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh incremental start foobar",
+                81,
+                "invalid START timestamp value"
+        );
+    }
+
+    @Test
+    public void testCreateMatView16() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh start '2010-01-01'",
+                81,
+                "'every' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView17() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh start '2010-01-01' every",
+                87,
+                "interval expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView18() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview WITH BASE mytable1 REFRESH INCREMENTAL START '2010-01-01' EVERY foobar",
+                96,
+                "Invalid unit: foobar"
+        );
+    }
+
+    @Test
+    public void testCreateMatView19() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH START '2010-01-01' EVERY 42U",
+                65,
+                "unsupported interval unit: U, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
         );
     }
 
@@ -1751,6 +1899,51 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create materialized",
                 19,
                 "'view' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView20() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL START '2010-01-01' EVERY 2T;",
+                77,
+                "unsupported interval unit: T, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
+        );
+    }
+
+    @Test
+    public void testCreateMatView21() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL EVERY 2T;",
+                58,
+                "unsupported interval unit: T, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
+        );
+    }
+
+    @Test
+    public void testCreateMatView22() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL START '2010-01-01' EVERY 1s;",
+                77,
+                "unsupported interval unit: s, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
+        );
+    }
+
+    @Test
+    public void testCreateMatView23() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL EVERY 1s;",
+                58,
+                "unsupported interval unit: s, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
+        );
+    }
+
+    @Test
+    public void testCreateMatView24() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH EVERY 1s;",
+                46,
+                "unsupported interval unit: s, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
         );
     }
 
@@ -1767,8 +1960,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateMatView4() throws Exception {
         assertSyntaxError(
                 "create materialized view 'myview' foobar",
-                40,
-                "'as' expected"
+                34,
+                "'refresh' or 'as' expected"
         );
     }
 
@@ -1777,7 +1970,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create materialized view 'myview' refresh with",
                 42,
-                "'incremental' or 'manual' or 'interval' expected"
+                "'incremental' or 'start' or 'every' or 'as' expected"
         );
     }
 
@@ -1795,16 +1988,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create materialized view 'myview' refresh manual",
                 42,
-                "manual refresh is not yet supported"
+                "'incremental' or 'start' or 'every' or 'as' expected"
         );
     }
 
     @Test
     public void testCreateMatView8() throws Exception {
         assertSyntaxError(
-                "create materialized view 'myview' refresh interval",
-                42,
-                "interval refresh is not yet supported"
+                "create materialized view 'myview' refresh incremental",
+                53,
+                "'start' or 'every' or 'as' expected"
         );
     }
 
@@ -1871,7 +2064,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " t TIMESTAMP," +
                         " x SYMBOL capacity 128 cache," +
                         " z STRING," +
-                        " y BOOLEAN) timestamp(t) partition by MONTH",
+                        " y BOOLEAN," +
+                        " da DOUBLE[]," +
+                        " dpa DOUBLE[]) timestamp(t) partition by MONTH",
                 "create table x (" +
                         "a INT, " +
                         "b BYTE, " +
@@ -1884,7 +2079,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "t TIMESTAMP, " +
                         "x SYMBOL, " +
                         "z STRING, " +
-                        "y BOOLEAN) " +
+                        "y BOOLEAN, " +
+                        "da DOUBLE[], " +
+                        "dpa DOUBLE PRECISION[]) " +
                         "timestamp(t) " +
                         "partition by MONTH"
         );
@@ -2529,13 +2726,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableInVolumeFail() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                execute("create table tst0 (" +
-                        "a INT, " +
-                        "b BYTE, " +
-                        "c CHAR, " +
-                        "t TIMESTAMP) " +
-                        "TIMESTAMP(t) " +
-                        "PARTITION BY YEAR IN VOLUME 12", sqlExecutionContext);
+                execute(
+                        "create table tst0 (" +
+                                "a INT, " +
+                                "b BYTE, " +
+                                "c CHAR, " +
+                                "t TIMESTAMP) " +
+                                "TIMESTAMP(t) " +
+                                "PARTITION BY YEAR IN VOLUME 12", sqlExecutionContext
+                );
                 Assert.fail();
             } catch (SqlException e) {
                 if (Os.isWindows()) {
@@ -3543,125 +3742,133 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testDottedConstAlias() throws Exception {
-        assertSql("column1\tdjnfkvbjke\n" +
-                ".f.e.j.hve\tdjnfkvbjke\n", "select '.f.e.j.hve', 'djnfkvbjke'");
+        assertSql(
+                "column1\tdjnfkvbjke\n" +
+                        ".f.e.j.hve\tdjnfkvbjke\n", "select '.f.e.j.hve', 'djnfkvbjke'"
+        );
     }
 
     @Test
     public void testDottedConstAlias2() throws Exception {
-        assertSql("column1\tdjnfkvbjke\tcolumn2\tcolumn3\tcolumn4\n" +
-                ".f.e.j.hve\tdjnfkvbjke\t2.2\ta.a\t6.4\n", "select '.f.e.j.hve' column1, 'djnfkvbjke', 2.2, 'a.a', 6.4");
+        assertSql(
+                "column1\tdjnfkvbjke\tcolumn2\tcolumn3\tcolumn4\n" +
+                        ".f.e.j.hve\tdjnfkvbjke\t2.2\ta.a\t6.4\n", "select '.f.e.j.hve' column1, 'djnfkvbjke', 2.2, 'a.a', 6.4"
+        );
     }
 
     @Test
     public void testDottedConstAlias3() throws Exception {
-        assertSql("column2\tdjnfkvbjke\tcolumn1\tcolumn3\tcolumn4\n" +
-                ".f.e.j.hve\tdjnfkvbjke\t2.2\taghtrtr.ahnyyn\t6.4\n", "select '.f.e.j.hve', 'djnfkvbjke', 2.2 column1, 'aghtrtr.ahnyyn', 6.4");
+        assertSql(
+                "column2\tdjnfkvbjke\tcolumn1\tcolumn3\tcolumn4\n" +
+                        ".f.e.j.hve\tdjnfkvbjke\t2.2\taghtrtr.ahnyyn\t6.4\n", "select '.f.e.j.hve', 'djnfkvbjke', 2.2 column1, 'aghtrtr.ahnyyn', 6.4"
+        );
     }
 
     @Test
     public void testDottedConstAlias4() throws Exception {
-        assertSql("x\tx1\n" +
-                "1\t1\n" +
-                "1\t2\n" +
-                "1\t3\n" +
-                "1\t4\n" +
-                "1\t5\n" +
-                "1\t6\n" +
-                "1\t7\n" +
-                "1\t8\n" +
-                "1\t9\n" +
-                "1\t10\n" +
-                "2\t1\n" +
-                "2\t2\n" +
-                "2\t3\n" +
-                "2\t4\n" +
-                "2\t5\n" +
-                "2\t6\n" +
-                "2\t7\n" +
-                "2\t8\n" +
-                "2\t9\n" +
-                "2\t10\n" +
-                "3\t1\n" +
-                "3\t2\n" +
-                "3\t3\n" +
-                "3\t4\n" +
-                "3\t5\n" +
-                "3\t6\n" +
-                "3\t7\n" +
-                "3\t8\n" +
-                "3\t9\n" +
-                "3\t10\n" +
-                "4\t1\n" +
-                "4\t2\n" +
-                "4\t3\n" +
-                "4\t4\n" +
-                "4\t5\n" +
-                "4\t6\n" +
-                "4\t7\n" +
-                "4\t8\n" +
-                "4\t9\n" +
-                "4\t10\n" +
-                "5\t1\n" +
-                "5\t2\n" +
-                "5\t3\n" +
-                "5\t4\n" +
-                "5\t5\n" +
-                "5\t6\n" +
-                "5\t7\n" +
-                "5\t8\n" +
-                "5\t9\n" +
-                "5\t10\n" +
-                "6\t1\n" +
-                "6\t2\n" +
-                "6\t3\n" +
-                "6\t4\n" +
-                "6\t5\n" +
-                "6\t6\n" +
-                "6\t7\n" +
-                "6\t8\n" +
-                "6\t9\n" +
-                "6\t10\n" +
-                "7\t1\n" +
-                "7\t2\n" +
-                "7\t3\n" +
-                "7\t4\n" +
-                "7\t5\n" +
-                "7\t6\n" +
-                "7\t7\n" +
-                "7\t8\n" +
-                "7\t9\n" +
-                "7\t10\n" +
-                "8\t1\n" +
-                "8\t2\n" +
-                "8\t3\n" +
-                "8\t4\n" +
-                "8\t5\n" +
-                "8\t6\n" +
-                "8\t7\n" +
-                "8\t8\n" +
-                "8\t9\n" +
-                "8\t10\n" +
-                "9\t1\n" +
-                "9\t2\n" +
-                "9\t3\n" +
-                "9\t4\n" +
-                "9\t5\n" +
-                "9\t6\n" +
-                "9\t7\n" +
-                "9\t8\n" +
-                "9\t9\n" +
-                "9\t10\n" +
-                "10\t1\n" +
-                "10\t2\n" +
-                "10\t3\n" +
-                "10\t4\n" +
-                "10\t5\n" +
-                "10\t6\n" +
-                "10\t7\n" +
-                "10\t8\n" +
-                "10\t9\n" +
-                "10\t10\n", "select a.x, b.x from long_sequence(10) a cross join long_sequence(10) b");
+        assertSql(
+                "x\tx1\n" +
+                        "1\t1\n" +
+                        "1\t2\n" +
+                        "1\t3\n" +
+                        "1\t4\n" +
+                        "1\t5\n" +
+                        "1\t6\n" +
+                        "1\t7\n" +
+                        "1\t8\n" +
+                        "1\t9\n" +
+                        "1\t10\n" +
+                        "2\t1\n" +
+                        "2\t2\n" +
+                        "2\t3\n" +
+                        "2\t4\n" +
+                        "2\t5\n" +
+                        "2\t6\n" +
+                        "2\t7\n" +
+                        "2\t8\n" +
+                        "2\t9\n" +
+                        "2\t10\n" +
+                        "3\t1\n" +
+                        "3\t2\n" +
+                        "3\t3\n" +
+                        "3\t4\n" +
+                        "3\t5\n" +
+                        "3\t6\n" +
+                        "3\t7\n" +
+                        "3\t8\n" +
+                        "3\t9\n" +
+                        "3\t10\n" +
+                        "4\t1\n" +
+                        "4\t2\n" +
+                        "4\t3\n" +
+                        "4\t4\n" +
+                        "4\t5\n" +
+                        "4\t6\n" +
+                        "4\t7\n" +
+                        "4\t8\n" +
+                        "4\t9\n" +
+                        "4\t10\n" +
+                        "5\t1\n" +
+                        "5\t2\n" +
+                        "5\t3\n" +
+                        "5\t4\n" +
+                        "5\t5\n" +
+                        "5\t6\n" +
+                        "5\t7\n" +
+                        "5\t8\n" +
+                        "5\t9\n" +
+                        "5\t10\n" +
+                        "6\t1\n" +
+                        "6\t2\n" +
+                        "6\t3\n" +
+                        "6\t4\n" +
+                        "6\t5\n" +
+                        "6\t6\n" +
+                        "6\t7\n" +
+                        "6\t8\n" +
+                        "6\t9\n" +
+                        "6\t10\n" +
+                        "7\t1\n" +
+                        "7\t2\n" +
+                        "7\t3\n" +
+                        "7\t4\n" +
+                        "7\t5\n" +
+                        "7\t6\n" +
+                        "7\t7\n" +
+                        "7\t8\n" +
+                        "7\t9\n" +
+                        "7\t10\n" +
+                        "8\t1\n" +
+                        "8\t2\n" +
+                        "8\t3\n" +
+                        "8\t4\n" +
+                        "8\t5\n" +
+                        "8\t6\n" +
+                        "8\t7\n" +
+                        "8\t8\n" +
+                        "8\t9\n" +
+                        "8\t10\n" +
+                        "9\t1\n" +
+                        "9\t2\n" +
+                        "9\t3\n" +
+                        "9\t4\n" +
+                        "9\t5\n" +
+                        "9\t6\n" +
+                        "9\t7\n" +
+                        "9\t8\n" +
+                        "9\t9\n" +
+                        "9\t10\n" +
+                        "10\t1\n" +
+                        "10\t2\n" +
+                        "10\t3\n" +
+                        "10\t4\n" +
+                        "10\t5\n" +
+                        "10\t6\n" +
+                        "10\t7\n" +
+                        "10\t8\n" +
+                        "10\t9\n" +
+                        "10\t10\n", "select a.x, b.x from long_sequence(10) a cross join long_sequence(10) b"
+        );
     }
 
     @Test
@@ -3753,7 +3960,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testDuplicateAlias() throws Exception {
-        assertSyntaxError("customers a" +
+        assertSyntaxError(
+                "customers a" +
                         " cross join orders a", 30, "Duplicate table or alias: a",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.INT).col("product", ColumnType.STRING)
@@ -4082,35 +4290,40 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExplainWithBadFormat() throws Exception {
-        assertSyntaxError("explain (format xyz) select * from x", 16, "unexpected explain format found",
+        assertSyntaxError(
+                "explain (format xyz) select * from x", 16, "unexpected explain format found",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
 
     @Test
     public void testExplainWithBadOption() throws Exception {
-        assertSyntaxError("explain (xyz) select * from x", 14, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"select\"",
+        assertSyntaxError(
+                "explain (xyz) select * from x", 14, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"select\"",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
 
     @Test
     public void testExplainWithBadSql1() throws Exception {
-        assertSyntaxError("explain select 1)", 16, "unexpected token [)]",
+        assertSyntaxError(
+                "explain select 1)", 16, "unexpected token [)]",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
 
     @Test
     public void testExplainWithBadSql2() throws Exception {
-        assertSyntaxError("explain select 1))", 16, "unexpected token [)]",
+        assertSyntaxError(
+                "explain select 1))", 16, "unexpected token [)]",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
 
     @Test
     public void testExplainWithDefaultFormat() throws Exception {
-        assertModel("EXPLAIN (FORMAT TEXT) ",
+        assertModel(
+                "EXPLAIN (FORMAT TEXT) ",
                 "explain select * from x", ExecutionModel.EXPLAIN,
                 modelOf("x").col("x", ColumnType.INT)
         );
@@ -4118,7 +4331,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExplainWithJsonFormat() throws Exception {
-        assertModel("EXPLAIN (FORMAT JSON) ",
+        assertModel(
+                "EXPLAIN (FORMAT JSON) ",
                 "explain (format json) select * from x", ExecutionModel.EXPLAIN,
                 modelOf("x").col("x", ColumnType.INT)
         );
@@ -4126,14 +4340,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExplainWithMissingFormat() throws Exception {
-        assertSyntaxError("explain (format) select * from x", 15, "unexpected explain format found",
+        assertSyntaxError(
+                "explain (format) select * from x", 15, "unexpected explain format found",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
 
     @Test
     public void testExplainWithQueryInParentheses1() throws Exception {
-        assertModel("EXPLAIN (FORMAT TEXT) ",
+        assertModel(
+                "EXPLAIN (FORMAT TEXT) ",
                 "explain (select x from x) ", ExecutionModel.EXPLAIN,
                 modelOf("x").col("x", ColumnType.INT)
         );
@@ -4141,7 +4357,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExplainWithQueryInParentheses2() throws Exception {
-        assertModel("EXPLAIN (FORMAT TEXT) ",
+        assertModel(
+                "EXPLAIN (FORMAT TEXT) ",
                 "explain (x) ", ExecutionModel.EXPLAIN,
                 modelOf("x").col("x", ColumnType.INT)
         );
@@ -4149,7 +4366,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExplainWithTextFormat() throws Exception {
-        assertModel("EXPLAIN (FORMAT TEXT) ",
+        assertModel(
+                "EXPLAIN (FORMAT TEXT) ",
                 "explain (format text ) select * from x", ExecutionModel.EXPLAIN,
                 modelOf("x").col("x", ColumnType.INT)
         );
@@ -4180,7 +4398,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError("select x from a where a + b(c,) > 10", 30, "missing argument");
 
         // when AST cache is not cleared below query will pick up "garbage" and will misrepresent error
-        assertSyntaxError("orders join customers on orders.customerId = c.customerId", 45, "alias",
+        assertSyntaxError(
+                "orders join customers on orders.customerId = c.customerId", 45, "alias",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING).col("productId", ColumnType.INT)
         );
@@ -4411,6 +4630,74 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testGroupByAliasExistsInProjection() throws SqlException {
+        assertQuery(
+                "select-choose" +
+                        " symbol," +
+                        " side," +
+                        " price," +
+                        " amount," +
+                        " timestamp," +
+                        " msec_offs," +
+                        " offs," +
+                        " tsXYZ" +
+                        " from (select-virtual" +
+                        " [symbol, side, price, amount, timestamp, usec_offs * 0.001 msec_offs, offs, timestamp + usec_offs tsXYZ]" +
+                        " symbol, side, price, amount, timestamp, usec_offs * 0.001 msec_offs, offs, timestamp + usec_offs tsXYZ" +
+                        " from (select-choose" +
+                        " [orders.symbol symbol, orders.side side, orders.price price, orders.amount amount, orders.timestamp timestamp, offsets.usec_offs usec_offs, offs]" +
+                        " orders.symbol symbol, orders.side side, orders.price price, orders.amount amount, orders.timestamp timestamp, offsets.usec_offs usec_offs, offs" +
+                        " from (select" +
+                        " [symbol, side, price, amount, timestamp]" +
+                        " from (select-choose" +
+                        " [symbol, side, price, amount, timestamp]" +
+                        " symbol, side, price, amount, timestamp" +
+                        " from (select" +
+                        " [symbol, side, price, amount, timestamp]" +
+                        " from trades timestamp (timestamp)" +
+                        " where timestamp in '2025-05-21') limit 10) orders" +
+                        " cross join select" +
+                        " [usec_offs, offs]" +
+                        " from (select-virtual" +
+                        " [offs * 100000 usec_offs, offs]" +
+                        " offs * 100000 usec_offs, offs" +
+                        " from (select-virtual" +
+                        " [x - 51 offs]" +
+                        " x - 51 offs" +
+                        " from (select" +
+                        " [x] from long_sequence(101)))) offsets) orders) orders" +
+                        " order by tsXYZ" +
+                        ") points",
+                "WITH\n" +
+                        "  offsets AS (\n" +
+                        "    SELECT offs*100000 AS usec_offs, offs\n" +
+                        "    FROM (\n" +
+                        "      SELECT (x-51) AS offs\n" +
+                        "      FROM long_sequence(101)\n" +
+                        "    )\n" +
+                        "  ),\n" +
+                        "  orders AS (\n" +
+                        "    SELECT *  \n" +
+                        "    FROM trades\n" +
+                        "    WHERE timestamp IN '2025-05-21'\n" +
+                        "    LIMIT 10\n" +
+                        "  ),\n" +
+                        "  points AS (\n" +
+                        "    SELECT orders.*, offsets.usec_offs*0.001 AS msec_offs, offs, timestamp + usec_offs AS tsXYZ\n" +
+                        "    FROM orders CROSS JOIN offsets\n" +
+                        "    ORDER BY tsXYZ ASC\n" +
+                        "  )\n" +
+                        "select * from points;",
+                modelOf("trades")
+                        .col("symbol", ColumnType.SYMBOL)
+                        .col("side", ColumnType.SYMBOL)
+                        .col("price", ColumnType.DOUBLE)
+                        .col("amount", ColumnType.DOUBLE)
+                        .timestamp("timestamp")
+        );
+    }
+
+    @Test
     public void testGroupByConstant1() throws SqlException {
         assertQuery(
                 "select-virtual 'nts' nts, now() now, min from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
@@ -4479,6 +4766,145 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual 'nts' nts, min from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
                 "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
                 modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testGroupByExpressionDoeNotExistInProjection() throws SqlException {
+        assertQuery(
+                "select-choose" +
+                        " symbol," +
+                        " side," +
+                        " price," +
+                        " amount," +
+                        " timestamp," +
+                        " msec_offs," +
+                        " offs," +
+                        " tsXYZ" +
+                        " from (select-choose" +
+                        " [symbol, side, price, amount, timestamp, msec_offs, offs, tsXYZ]" +
+                        " symbol, side, price, amount, timestamp, msec_offs, offs, tsXYZ" +
+                        " from (select-virtual" +
+                        " [symbol, side, price, amount, timestamp, usec_offs * 0.001 msec_offs, offs, timestamp + usec_offs tsXYZ, timestamp + offs column]" +
+                        " symbol, side, price, amount, timestamp, usec_offs * 0.001 msec_offs, offs, timestamp + usec_offs tsXYZ, timestamp + offs column" +
+                        " from (select-choose" +
+                        " [orders.symbol symbol, orders.side side, orders.price price, orders.amount amount, orders.timestamp timestamp, offsets.usec_offs usec_offs, offs]" +
+                        " orders.symbol symbol, orders.side side, orders.price price, orders.amount amount, orders.timestamp timestamp, offsets.usec_offs usec_offs, offs" +
+                        " from (select" +
+                        " [symbol, side, price, amount, timestamp]" +
+                        " from (select-choose" +
+                        " [symbol, side, price, amount, timestamp]" +
+                        " symbol, side, price, amount, timestamp" +
+                        " from (select" +
+                        " [symbol, side, price, amount, timestamp]" +
+                        " from trades timestamp (timestamp)" +
+                        " where timestamp in '2025-05-21') limit 10) orders" +
+                        " cross join select" +
+                        " [usec_offs, offs]" +
+                        " from (select-virtual" +
+                        " [offs * 100000 usec_offs, offs]" +
+                        " offs * 100000 usec_offs, offs" +
+                        " from (select-virtual" +
+                        " [x - 51 offs]" +
+                        " x - 51 offs" +
+                        " from (select [x]" +
+                        " from long_sequence(101)))) offsets) orders)" +
+                        " orders order by column)" +
+                        ") points",
+                "WITH\n" +
+                        "  offsets AS (\n" +
+                        "    SELECT offs*100000 AS usec_offs, offs\n" +
+                        "    FROM (\n" +
+                        "      SELECT (x-51) AS offs\n" +
+                        "      FROM long_sequence(101)\n" +
+                        "    )\n" +
+                        "  ),\n" +
+                        "  orders AS (\n" +
+                        "    SELECT *  \n" +
+                        "    FROM trades\n" +
+                        "    WHERE timestamp IN '2025-05-21'\n" +
+                        "    LIMIT 10\n" +
+                        "  ),\n" +
+                        "  points AS (\n" +
+                        "    SELECT orders.*, offsets.usec_offs*0.001 AS msec_offs, offs, timestamp + usec_offs AS tsXYZ\n" +
+                        "    FROM orders CROSS JOIN offsets\n" +
+                        "    ORDER BY timestamp + offs ASC\n" +
+                        "  )\n" +
+                        "select * from points;",
+                modelOf("trades")
+                        .col("symbol", ColumnType.SYMBOL)
+                        .col("side", ColumnType.SYMBOL)
+                        .col("price", ColumnType.DOUBLE)
+                        .col("amount", ColumnType.DOUBLE)
+                        .timestamp("timestamp")
+        );
+    }
+
+    @Test
+    public void testGroupByExpressionExistsInProjection() throws SqlException {
+        assertQuery(
+                "select-choose" +
+                        " symbol," +
+                        " side," +
+                        " price," +
+                        " amount," +
+                        " timestamp," +
+                        " msec_offs," +
+                        " offs," +
+                        " tsXYZ" +
+                        " from (select-virtual" +
+                        " [symbol, side, price, amount, timestamp, usec_offs * 0.001 msec_offs, offs, timestamp + usec_offs tsXYZ]" +
+                        " symbol, side, price, amount, timestamp, usec_offs * 0.001 msec_offs, offs, timestamp + usec_offs tsXYZ" +
+                        " from (select-choose" +
+                        " [orders.symbol symbol, orders.side side, orders.price price, orders.amount amount, orders.timestamp timestamp, offsets.usec_offs usec_offs, offs]" +
+                        " orders.symbol symbol, orders.side side, orders.price price, orders.amount amount, orders.timestamp timestamp, offsets.usec_offs usec_offs, offs" +
+                        " from (select" +
+                        " [symbol, side, price, amount, timestamp]" +
+                        " from (select-choose" +
+                        " [symbol, side, price, amount, timestamp]" +
+                        " symbol, side, price, amount, timestamp" +
+                        " from (select" +
+                        " [symbol, side, price, amount, timestamp]" +
+                        " from trades timestamp (timestamp)" +
+                        " where timestamp in '2025-05-21') limit 10) orders" +
+                        " cross join select" +
+                        " [usec_offs, offs]" +
+                        " from (select-virtual" +
+                        " [offs * 100000 usec_offs, offs]" +
+                        " offs * 100000 usec_offs, offs" +
+                        " from (select-virtual" +
+                        " [x - 51 offs]" +
+                        " x - 51 offs" +
+                        " from (select" +
+                        " [x] from long_sequence(101)))) offsets) orders) orders" +
+                        " order by tsXYZ" +
+                        ") points",
+                "WITH\n" +
+                        "  offsets AS (\n" +
+                        "    SELECT offs*100000 AS usec_offs, offs\n" +
+                        "    FROM (\n" +
+                        "      SELECT (x-51) AS offs\n" +
+                        "      FROM long_sequence(101)\n" +
+                        "    )\n" +
+                        "  ),\n" +
+                        "  orders AS (\n" +
+                        "    SELECT *  \n" +
+                        "    FROM trades\n" +
+                        "    WHERE timestamp IN '2025-05-21'\n" +
+                        "    LIMIT 10\n" +
+                        "  ),\n" +
+                        "  points AS (\n" +
+                        "    SELECT orders.*, offsets.usec_offs*0.001 AS msec_offs, offs, timestamp + usec_offs AS tsXYZ\n" +
+                        "    FROM orders CROSS JOIN offsets\n" +
+                        "    ORDER BY timestamp + usec_offs ASC\n" +
+                        "  )\n" +
+                        "select * from points;",
+                modelOf("trades")
+                        .col("symbol", ColumnType.SYMBOL)
+                        .col("side", ColumnType.SYMBOL)
+                        .col("price", ColumnType.DOUBLE)
+                        .col("amount", ColumnType.DOUBLE)
+                        .timestamp("timestamp")
         );
     }
 
@@ -4930,7 +5356,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInsertAsSelectColumnCountMismatch() throws Exception {
-        assertSyntaxError("insert into x (b) select * from y",
+        assertSyntaxError(
+                "insert into x (b) select * from y",
                 12, "column count mismatch",
                 modelOf("x")
                         .col("a", ColumnType.INT)
@@ -4958,7 +5385,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInsertAsSelectDuplicateColumns() throws Exception {
-        assertSyntaxError("insert into x (b,b) select * from y",
+        assertSyntaxError(
+                "insert into x (b,b) select * from y",
                 17, "Duplicate column [name=b]",
                 modelOf("x")
                         .col("a", ColumnType.INT)
@@ -5150,7 +5578,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInvalidAlias() throws Exception {
-        assertSyntaxError("orders join customers on orders.customerId = c.customerId", 45, "alias",
+        assertSyntaxError(
+                "orders join customers on orders.customerId = c.customerId", 45, "alias",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING).col("productId", ColumnType.INT)
         );
@@ -5158,7 +5587,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInvalidColumn() throws Exception {
-        assertSyntaxError("orders join customers on customerIdx = customerId", 25, "Invalid column",
+        assertSyntaxError(
+                "orders join customers on customerIdx = customerId", 25, "Invalid column",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING).col("productId", ColumnType.INT)
         );
@@ -5274,7 +5704,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInvalidSelectColumn() throws Exception {
-        assertSyntaxError("select c.customerId, orderIdx, o.productId from " +
+        assertSyntaxError(
+                "select c.customerId, orderIdx, o.productId from " +
                         "customers c " +
                         "join (" +
                         "orders where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`) latest on ts partition by customerId" +
@@ -5283,7 +5714,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("orders").timestamp("ts").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
         );
 
-        assertSyntaxError("select c.customerId, orderId, o.productId2 from " +
+        assertSyntaxError(
+                "select c.customerId, orderId, o.productId2 from " +
                         "customers c " +
                         "join (" +
                         "orders where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`) latest on ts partition by customerId" +
@@ -5292,7 +5724,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("orders").timestamp("ts").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
         );
 
-        assertSyntaxError("select c.customerId, orderId, o2.productId from " +
+        assertSyntaxError(
+                "select c.customerId, orderId, o2.productId from " +
                         "customers c " +
                         "join (" +
                         "orders where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`) latest on ts partition by customerId" +
@@ -5309,7 +5742,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInvalidTableName() throws Exception {
-        assertSyntaxError("orders join customer on customerId = customerId", 12, "does not exist",
+        assertSyntaxError(
+                "orders join customer on customerId = customerId", 12, "does not exist",
                 modelOf("orders").col("customerId", ColumnType.INT)
         );
     }
@@ -6671,6 +7105,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testNestedWindowFunctionNotSupported() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSyntaxError(
+                    "select a,b, 1 + f(c) over (partition by b order by a groups between unbounded preceding and 10 day following) from xyz",
+                    21,
+                    "Nested window functions' context are not currently supported."
+            );
+
+            assertSyntaxError(
+                    "select a,b,cast(f(c) over (order by a) as int) from xyz",
+                    21,
+                    "Nested window functions' context are not currently supported."
+            );
+        });
+    }
+
+    @Test
     public void testNonAggFunctionWithAggFunctionSampleBy() throws SqlException {
         assertQuery(
                 "select-virtual day(ts) day, isin, last from (select-group-by [ts, isin, last(start_price) last] ts, isin, last(start_price) last from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4') sample by 1d)",
@@ -7662,7 +8113,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPGCastToFloat4() throws SqlException {
         assertQuery(
-                "select-virtual cast(123,float) x from (long_sequence(1))",
+                "select-virtual cast(123,FLOAT) x from (long_sequence(1))",
                 "select 123::float4 x"
         );
     }
@@ -7670,7 +8121,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPGCastToFloat8() throws SqlException {
         assertQuery(
-                "select-virtual cast(123,double) x from (long_sequence(1))",
+                "select-virtual cast(123,DOUBLE) x from (long_sequence(1))",
                 "select 123::float8 x"
         );
     }
@@ -8164,6 +8615,58 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRefreshMatView10() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM '2020-09-10T20:00:00.000000Z';",
+                    75,
+                    "'to' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView11() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to",
+                    78,
+                    "TO timestamp expected"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView12() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to 'foobar'",
+                    79,
+                    "invalid TO timestamp value"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView13() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to '2020-09-10T19:00:00.000000Z'",
+                    79,
+                    "TO timestamp must not be earlier than FROM timestamp"
+            );
+        });
+    }
+
+    @Test
     public void testRefreshMatView2() throws Exception {
         assertSyntaxError(
                 "REFRESH MATERIALIZED VIEW",
@@ -8211,7 +8714,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertException(
                     "REFRESH MATERIALIZED VIEW 'x_view' foobar",
                     35,
-                    "'full' or 'incremental' expected"
+                    "'full' or 'incremental' or 'range' expected"
             );
         });
     }
@@ -8225,6 +8728,45 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     "REFRESH MATERIALIZED VIEW 'x_view' INCREMENTAL foobar",
                     47,
                     "unexpected token"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView7() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW 'x_view' RANGE;",
+                    40,
+                    "'from' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView8() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM",
+                    45,
+                    "FROM timestamp expected"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView9() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM foobar;",
+                    46,
+                    "invalid FROM timestamp value"
             );
         });
     }
@@ -9390,12 +9932,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
         execute("INSERT INTO t2(ts, x) VALUES (1, 2)");
         engine.releaseInactive();
 
-        assertSql("TS\tts1\tx\tts2\n" +
-                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;");
-        assertSql("ts\tx\tts1\tx1\tts2\n" +
-                "1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000001Z\n", "select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;");
-        assertSql("ts\tx\tts1\n" +
-                "1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t1.*, t2.ts from t1 asof join (select * from t2) t2;");
+        assertSql(
+                "TS\tts1\tx\tts2\n" +
+                        "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;"
+        );
+        assertSql(
+                "ts\tx\tts1\tx1\tts2\n" +
+                        "1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000001Z\n", "select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;"
+        );
+        assertSql(
+                "ts\tx\tts1\n" +
+                        "1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t1.*, t2.ts from t1 asof join (select * from t2) t2;"
+        );
 
         assertSyntaxError(
                 "SELECT " +
@@ -9947,8 +10495,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSelectWindowOperator() throws Exception {
         assertSyntaxError(
                 "select sum(x), 2*x over() from tab",
-                16,
-                "Window function expected",
+                19,
+                "Nested window functions' context are not currently supported.",
                 modelOf("tab").col("x", ColumnType.INT)
         );
     }

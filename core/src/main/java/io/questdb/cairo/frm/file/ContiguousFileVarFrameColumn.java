@@ -24,7 +24,12 @@
 
 package io.questdb.cairo.frm.file;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -44,6 +49,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private final boolean mixedIOFlag;
     private long appendOffsetRowCount = -1;
     private long auxFd = -1;
+    private boolean closed = false;
     private int columnIndex;
     private long columnTop;
     private int columnType;
@@ -81,21 +87,21 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
             // Map source offset file, it will be used to copy data from anyway.
             // sourceHi is exclusive
-            long srcAuxMemSize = columnTypeDriver.getAuxVectorSize(sourceHi - sourceLo);
+            long srcAuxMemSize = columnTypeDriver.getAuxVectorSize(sourceHi);
 
             final long srcAuxMemAddr = TableUtils.mapAppendColumnBuffer(
                     ff,
                     sourceColumn.getSecondaryFd(),
-                    columnTypeDriver.getAuxVectorOffset(sourceLo),
+                    0,
                     srcAuxMemSize,
                     false,
                     MEMORY_TAG
             );
 
             try {
-                long srcDataOffset = columnTypeDriver.getDataVectorOffset(srcAuxMemAddr, 0);
-                assert (sourceLo == 0 && srcDataOffset == 0) || (sourceLo > 0 && srcDataOffset > 0 && srcDataOffset < 1L << 40);
-                long srcDataSize = columnTypeDriver.getDataVectorSize(srcAuxMemAddr, 0, sourceHi - 1);
+                long srcDataOffset = columnTypeDriver.getDataVectorOffset(srcAuxMemAddr, sourceLo);
+                assert (sourceLo == 0 && srcDataOffset == 0) || (sourceLo > 0 && srcDataOffset >= columnTypeDriver.getDataVectorMinEntrySize() && srcDataOffset < 1L << 40);
+                long srcDataSize = columnTypeDriver.getDataVectorSize(srcAuxMemAddr, sourceLo, sourceHi - 1);
                 if (srcDataSize > 0) {
                     assert srcDataSize < 1L << 40;
                     TableUtils.allocateDiskSpaceToPage(ff, dataFd, targetDataOffset + srcDataSize);
@@ -144,7 +150,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                     columnTypeDriver.shiftCopyAuxVector(
                             srcDataOffset - targetDataOffset,
                             srcAuxMemAddr,
-                            0,
+                            sourceLo,
                             sourceHi - 1, // inclusive
                             dstAuxAddr,
                             srcAuxMemSize
@@ -163,7 +169,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 TableUtils.mapAppendColumnBufferRelease(
                         ff,
                         srcAuxMemAddr,
-                        columnTypeDriver.getAuxVectorOffset(sourceLo),
+                        0,
                         srcAuxMemSize,
                         MEMORY_TAG
                 );
@@ -225,19 +231,22 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
     @Override
     public void close() {
-        if (auxFd != -1) {
-            ff.close(auxFd);
-            auxFd = -1;
-        }
-        if (dataFd != -1) {
-            ff.close(dataFd);
-            dataFd = -1;
-        }
+        if (!closed) {
+            if (auxFd != -1) {
+                ff.close(auxFd);
+                auxFd = -1;
+            }
+            if (dataFd != -1) {
+                ff.close(dataFd);
+                dataFd = -1;
+            }
 
-        if (recycleBin != null && !recycleBin.isClosed()) {
-            appendOffsetRowCount = 0;
-            dataAppendOffsetBytes = 0;
-            recycleBin.put(this);
+            if (recycleBin != null && !recycleBin.isClosed()) {
+                appendOffsetRowCount = 0;
+                dataAppendOffsetBytes = 0;
+                recycleBin.put(this);
+            }
+            closed = true;
         }
     }
 
@@ -273,22 +282,26 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
     public void ofRO(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex, boolean isEmpty) {
         assert auxFd == -1;
-        this.columnType = columnType;
-        this.columnTypeDriver = ColumnType.getDriver(columnType);
-        this.columnTop = columnTop;
-        this.columnIndex = columnIndex;
-        this.appendOffsetRowCount = -1;
-
+        closed = false;
         int plen = partitionPath.size();
+
         try {
+            this.columnType = columnType;
+            this.columnTypeDriver = ColumnType.getDriver(columnType);
+            this.columnTop = columnTop;
+            this.columnIndex = columnIndex;
+            this.appendOffsetRowCount = -1;
+
             if (!isEmpty) {
                 dFile(partitionPath, columnName, columnTxn);
                 this.dataFd = TableUtils.openRO(ff, partitionPath.$(), LOG);
-
                 partitionPath.trimTo(plen);
                 iFile(partitionPath, columnName, columnTxn);
                 this.auxFd = TableUtils.openRO(ff, partitionPath.$(), LOG);
             }
+        } catch (Exception e) {
+            close();
+            throw e;
         } finally {
             partitionPath.trimTo(plen);
         }
@@ -296,22 +309,26 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
     public void ofRW(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex) {
         assert auxFd == -1;
-        // Negative col top means column does not exist in the partition.
-        // Create it.
-        this.columnType = columnType;
-        this.columnTypeDriver = ColumnType.getDriver(columnType);
-        this.columnTop = columnTop;
-        this.columnIndex = columnIndex;
-        this.appendOffsetRowCount = -1;
-
+        closed = false;
         int plen = partitionPath.size();
+
         try {
+            // Negative col top means column does not exist in the partition.
+            // Create it.
+            this.columnType = columnType;
+            this.columnTypeDriver = ColumnType.getDriver(columnType);
+            this.columnTop = columnTop;
+            this.columnIndex = columnIndex;
+            this.appendOffsetRowCount = -1;
+
             dFile(partitionPath, columnName, columnTxn);
             this.dataFd = TableUtils.openRW(ff, partitionPath.$(), LOG, fileOpts);
-
             partitionPath.trimTo(plen);
             iFile(partitionPath, columnName, columnTxn);
             this.auxFd = TableUtils.openRW(ff, partitionPath.$(), LOG, fileOpts);
+        } catch (Throwable e) {
+            close();
+            throw e;
         } finally {
             partitionPath.trimTo(plen);
         }

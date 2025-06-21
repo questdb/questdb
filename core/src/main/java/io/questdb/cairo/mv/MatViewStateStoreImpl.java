@@ -34,9 +34,11 @@ import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Queue;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TelemetryMatViewTask;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -49,11 +51,11 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     // Flips to negative value once a refresh message is processed. Long.MIN_VALUE stands for "just invalidated" state.
     // The goal is to avoid sending excessive incremental refresh messages to the underlying queue.
     // Note: this map is grow-only, i.e. keys are never removed.
-    private final ConcurrentHashMap<AtomicLong> lastNotifiedTxnByTableName = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<AtomicLong> lastNotifiedTxnByTableName = new ConcurrentHashMap<>(false);
     private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<MatViewState> stateByTableDirName = new ConcurrentHashMap<>();
     private final ThreadLocal<MatViewRefreshTask> taskHolder = new ThreadLocal<>(MatViewRefreshTask::new);
-    private final Queue<MatViewRefreshTask> taskQueue = new ConcurrentQueue<>(MatViewRefreshTask::new);
+    private final Queue<MatViewRefreshTask> taskQueue = ConcurrentQueue.createConcurrentQueue(MatViewRefreshTask::new);
     private final Telemetry<TelemetryMatViewTask> telemetry;
     private final MatViewTelemetryFacade telemetryFacade;
 
@@ -106,6 +108,9 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     @TestOnly
     public void clear() {
         close();
+        taskQueue.clear();
+        stateByTableDirName.clear();
+        lastNotifiedTxnByTableName.clear();
     }
 
     @Override
@@ -113,14 +118,21 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         for (MatViewState state : stateByTableDirName.values()) {
             Misc.free(state);
         }
-        stateByTableDirName.clear();
-        lastNotifiedTxnByTableName.clear();
     }
 
     @Override
     public void createViewState(MatViewDefinition viewDefinition) {
         addViewState(viewDefinition).init();
-        enqueueMatViewTask(viewDefinition.getMatViewToken(), MatViewRefreshTask.INCREMENTAL_REFRESH, null);
+        if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
+            enqueueMatViewTask(
+                    viewDefinition.getMatViewToken(),
+                    null,
+                    MatViewRefreshTask.INCREMENTAL_REFRESH,
+                    null,
+                    Numbers.LONG_NULL,
+                    Numbers.LONG_NULL
+            );
+        }
     }
 
     @Override
@@ -138,11 +150,38 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.INVALIDATE, invalidationReason);
     }
 
-    public void enqueueRefreshTaskIfStateExists(TableToken matViewToken, int operation, String invalidationReason) {
+    @Override
+    public void enqueueInvalidateDependentViews(TableToken baseTableToken, String invalidationReason) {
+        enqueueMatViewTask(
+                null,
+                baseTableToken,
+                MatViewRefreshTask.INVALIDATE,
+                invalidationReason,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL
+        );
+    }
+
+    @Override
+    public void enqueueRangeRefresh(TableToken matViewToken, long rangeFrom, long rangeTo) {
+        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.RANGE_REFRESH, null, rangeFrom, rangeTo);
+    }
+
+    public void enqueueRefreshTaskIfStateExists(
+            TableToken matViewToken,
+            int operation,
+            String invalidationReason,
+            long rangeFrom,
+            long rangeTo
+    ) {
         final MatViewState state = stateByTableDirName.get(matViewToken.getDirName());
         if (state != null && !state.isDropped()) {
-            enqueueMatViewTask(matViewToken, operation, invalidationReason);
+            enqueueMatViewTask(matViewToken, null, operation, invalidationReason, rangeFrom, rangeTo);
         }
+    }
+
+    public void enqueueRefreshTaskIfStateExists(TableToken matViewToken, int operation, String invalidationReason) {
+        enqueueRefreshTaskIfStateExists(matViewToken, operation, invalidationReason, Numbers.LONG_NULL, Numbers.LONG_NULL);
     }
 
     @Override
@@ -171,7 +210,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         final AtomicLong lastNotifiedTxn = lastNotifiedTxnByTableName.get(task.baseTableToken.getTableName());
         if (lastNotifiedTxn != null && notifyOnBaseTableRefreshed(lastNotifiedTxn, seqTxn)) {
             // While refreshing more txn were committed. Refresh will need to re-run.
-            task.refreshTriggeredTimestamp = microsecondClock.getTicks();
+            task.refreshTriggerTimestamp = microsecondClock.getTicks();
             taskQueue.enqueue(task);
         }
     }
@@ -180,22 +219,20 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     public void notifyBaseTableCommit(MatViewRefreshTask task, long seqTxn) {
         final TableToken baseTableToken = task.baseTableToken;
         final AtomicLong lastNotifiedBaseTableTxn = lastNotifiedTxnByTableName.get(baseTableToken.getTableName());
-        if (lastNotifiedBaseTableTxn != null) {
-            // Always notify refresh job in case of mat view invalidation or full refresh.
+        task.refreshTriggerTimestamp = microsecondClock.getTicks();
+        // Always notify refresh job in case of mat view invalidation or full refresh.
+        if (task.operation != MatViewRefreshTask.INCREMENTAL_REFRESH) {
+            taskQueue.enqueue(task);
+            LOG.debug().$("notified [baseTable=").$(baseTableToken)
+                    .$(", op=").$(MatViewRefreshTask.getRefreshOperationName(task.operation))
+                    .I$();
+        } else if (lastNotifiedBaseTableTxn != null) {
             // For incremental refresh we check if we haven't already notified on the given txn.
-            if (task.operation != MatViewRefreshTask.INCREMENTAL_REFRESH || notifyBaseTableCommit(lastNotifiedBaseTableTxn, seqTxn)) {
-                task.refreshTriggeredTimestamp = microsecondClock.getTicks();
+            if (notifyBaseTableCommit(lastNotifiedBaseTableTxn, seqTxn)) {
                 taskQueue.enqueue(task);
-                if (task.operation == MatViewRefreshTask.INVALIDATE) {
-                    LOG.error()
-                            .$("will invalidate all views for [baseTable=").$(baseTableToken)
-                            .$(", reason=").$(task.invalidationReason)
-                            .I$();
-                } else {
-                    LOG.debug().$("refresh job notified [baseTable=").$(baseTableToken)
-                            .$(", op=").$(task.operation)
-                            .I$();
-                }
+                LOG.debug().$("notified [baseTable=").$(baseTableToken)
+                        .$(", op=incremental_refresh")
+                        .I$();
             } else {
                 LOG.debug().$("no need to notify to refresh job [baseTable=").$(baseTableToken).I$();
             }
@@ -216,14 +253,24 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         return taskQueue.tryDequeue(task);
     }
 
-    private void enqueueMatViewTask(TableToken matViewToken, int operation, String invalidationReason) {
+    private void enqueueMatViewTask(
+            @Nullable TableToken matViewToken,
+            @Nullable TableToken baseTableToken,
+            int operation,
+            String invalidationReason,
+            long rangeFrom,
+            long rangeTo
+    ) {
         final MatViewRefreshTask task = taskHolder.get();
         task.clear();
         task.matViewToken = matViewToken;
+        task.baseTableToken = baseTableToken;
         task.operation = operation;
         task.invalidationReason = invalidationReason;
-        if (operation == MatViewRefreshTask.INCREMENTAL_REFRESH || operation == MatViewRefreshTask.FULL_REFRESH) {
-            task.refreshTriggeredTimestamp = microsecondClock.getTicks();
+        task.rangeFrom = rangeFrom;
+        task.rangeTo = rangeTo;
+        if (MatViewRefreshTask.isRefreshOperation(operation)) {
+            task.refreshTriggerTimestamp = microsecondClock.getTicks();
         }
         taskQueue.enqueue(task);
     }
