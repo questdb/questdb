@@ -72,11 +72,9 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
         private final DirectArray arrayOut;
         private final Function leftArg;
         private final int leftArgPos;
-        private final boolean leftBroadcast;
-        private final DerivedArrayView leftDerived = new DerivedArrayView();
+        private final DerivedArrayView leftDerived;
         private final Function rightArg;
-        private final boolean rightBroadcast;
-        private final DerivedArrayView rightDerived = new DerivedArrayView();
+        private final DerivedArrayView rightDerived;
 
         public Func(
                 CairoConfiguration configuration,
@@ -92,22 +90,22 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
                 this.leftArgPos = leftArgPos;
                 int nDimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
                 int nDimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
-                boolean leftNeedBroadcast = false;
+                DerivedArrayView leftDerived = null;
                 if (nDimsLeft == 1) {
-                    leftNeedBroadcast = true;
+                    leftDerived = new DerivedArrayView();
                 } else if (nDimsLeft != 2) {
                     throw SqlException.position(rightArgPos).put("left array is not one or two-dimensional");
                 }
 
-                boolean rightNeedBroadcast = false;
+                DerivedArrayView rightDerived = null;
                 if (nDimsRight == 1) {
-                    rightNeedBroadcast = true;
+                    rightDerived = new DerivedArrayView();
                 } else if (nDimsRight != 2) {
                     throw SqlException.position(rightArgPos).put("right array is not one or two-dimensional");
                 }
 
-                this.leftBroadcast = leftNeedBroadcast;
-                this.rightBroadcast = rightNeedBroadcast;
+                this.rightDerived = rightDerived;
+                this.leftDerived = leftDerived;
                 this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
             } catch (Throwable th) {
                 close();
@@ -129,12 +127,12 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
                 arrayOut.ofNull();
                 return arrayOut;
             }
-            if (leftBroadcast) {
+            if (leftDerived != null) {
                 leftDerived.of(left);
                 leftDerived.broadcastByPrependDims(1);
                 left = leftDerived;
             }
-            if (rightBroadcast) {
+            if (rightDerived != null) {
                 rightDerived.of(right);
                 rightDerived.broadcastByAppendDims(1);
                 right = rightDerived;

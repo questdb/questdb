@@ -613,6 +613,36 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDiv() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, 3.0], ARRAY[4.0, 0]), " +
+                    "(ARRAY[6.0, null], ARRAY[8.0, 9])," +
+                    "(null, null)");
+            assertSql("div\n" +
+                    "[0.5,null]\n" +
+                    "[0.75,null]\n" +
+                    "null\n", "SELECT a / b div FROM tango");
+        });
+    }
+
+    @Test
+    public void testDivSlice3d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[][][], b DOUBLE[][][])");
+            execute("INSERT INTO tango VALUES " +
+                    "( ARRAY[ [ [2.0, 3], [4.0, 5] ], [ [6.0, 7], [8.0, 9] ]  ], " +
+                    "  ARRAY[ [ [10.0, 11], [12.0, 13] ], [ [14.0, 15], [16.0, 20] ]  ] ), " +
+                    "( null, null )");
+            assertSql("div\n" +
+                            "[[[0.1]]]\n" +
+                            "null\n",
+                    "SELECT a[1:2, 1:2, 1:2] / b[2:, 2:, 2:] div FROM tango");
+        });
+    }
+
+    @Test
     public void testDudupArrayAsKey() throws Exception {
         // when an array is part of the dedup key
         // it fails gracefully and with an informative error message
