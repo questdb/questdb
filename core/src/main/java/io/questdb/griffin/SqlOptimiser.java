@@ -6126,10 +6126,6 @@ public class SqlOptimiser implements Mutable {
                             if (sampleBy == null) {
                                 qc = ensureAliasUniqueness(groupByModel, qc);
                                 groupByModel.addBottomUpColumn(qc);
-                                // this model won't be used in group-by case; this is because
-                                // group-by can process virtual functions by itself. However,
-                                // we need innerVirtualModel complete to do the projection validation
-                                innerVirtualModel.addBottomUpColumn(qc);
                                 // group-by column references might be needed when we have
                                 // outer model supporting arithmetic such as:
                                 // select sum(a)+sum(b) ...
@@ -6145,6 +6141,12 @@ public class SqlOptimiser implements Mutable {
                                         baseModel,
                                         false
                                 );
+                                // this model won't be used in group-by case; this is because
+                                // group-by can process virtual functions by itself. However,
+                                // we need innerVirtualModel complete to do the projection validation
+                                // We add column after literal emission/validation to avoid allowing expression
+                                // self-referencing and passing validation
+                                innerVirtualModel.addBottomUpColumn(qc);
                                 continue;
                             }
                         }
@@ -6657,13 +6659,18 @@ public class SqlOptimiser implements Mutable {
      * validation is performed against the baseModel and its join model. In the joins referenced column must be
      * unambiguous.
      *
-     * @param baseModel
-     * @param innerVirtualModel
-     * @param literal
-     * @param dot
-     * @param position
-     * @return
-     * @throws SqlException
+     * @param baseModel         we are rewriting models recursively, for every iteration there is "model" and "baseModel", the former
+     *                          is the user-provided projection, the latter is the effective source of columns (excluding the projection
+     *                          itself)
+     * @param innerVirtualModel the model that contains the projection, this is not the "model" but a copy that maintains columns
+     *                          added to the projection.
+     * @param literal           the literal that references something, this could be either the projection itself or the base model
+     * @param dot               index of '.' character in the literal, assuming this character would separate table alias and column name.
+     *                          -1 when dot is missing. When dot is present, the literal will not be matched to the projection. We assume this is a
+     *                          reference to the base model.
+     * @param position          literal position in the SQL text to aid SQL error reporting
+     * @return -1 if literal was matched to the projection, otherwise 0-based index of the join model where it was matched.
+     * @throws SqlException exception is throw when literal could not be matched, or it matches several models at the same time (ambiguous).
      */
     private int validateColumnAndGetModelIndex(
             QueryModel baseModel,
