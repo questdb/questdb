@@ -34,16 +34,58 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.Timestamps;
+import org.jetbrains.annotations.Nullable;
+
 
 public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGenerateSeriesRecordCursorFactory {
+    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_DAYS_FUNCTION = Timestamps::addDays;
+    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_HOURS_FUNCTION = Timestamps::addHours;
+    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_MICROS_FUNCTION = Timestamps::addMicros;
+    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_MILLIS_FUNCTION = Timestamps::addMillis;
+    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_MINUTES_FUNCTION = Timestamps::addMinutes;
+    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_MONTHS_FUNCTION = Timestamps::addMonths;
+    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_SECONDS_FUNCTION = Timestamps::addSeconds;
+    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_WEEKS_FUNCTION = Timestamps::addWeeks;
+    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_YEARS_FUNCTION = Timestamps::addYears;
+
     private static final RecordMetadata METADATA;
+    private static final io.questdb.std.ThreadLocal<GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod> tlSampleByUnit = new ThreadLocal<>(GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod::new);
     private GenerateSeriesTimestampStringRecordCursor cursor;
 
-    public GenerateSeriesTimestampStringRecordCursorFactory(Function startFunc, Function endFunc, Function stepFunc, int position) throws SqlException {
-        super(METADATA, startFunc, endFunc, stepFunc, position);
+    public GenerateSeriesTimestampStringRecordCursorFactory(Function startFunc, Function endFunc, Function stepFunc, IntList argPositions) throws SqlException {
+        super(METADATA, startFunc, endFunc, stepFunc, argPositions);
+    }
+
+    public static @Nullable TimestampAddFunctionFactory.LongAddIntFunction lookupAddFunction(char period) {
+        switch (period) {
+            case 'u': // compatibility with dateadd syntax
+            case 'U':
+                return ADD_MICROS_FUNCTION;
+            case 'T':
+                return ADD_MILLIS_FUNCTION;
+            case 's':
+                return ADD_SECONDS_FUNCTION;
+            case 'm':
+                return ADD_MINUTES_FUNCTION;
+            case 'H':
+            case 'h': // compatibility with sample by syntax
+                return ADD_HOURS_FUNCTION;
+            case 'd':
+                return ADD_DAYS_FUNCTION;
+            case 'w':
+                return ADD_WEEKS_FUNCTION;
+            case 'M':
+                return ADD_MONTHS_FUNCTION;
+            case 'y':
+                return ADD_YEARS_FUNCTION;
+            default:
+                return null;
+        }
     }
 
     @Override
@@ -51,7 +93,7 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         if (cursor == null) {
             cursor = new GenerateSeriesTimestampStringRecordCursor(startFunc, endFunc, stepFunc);
         }
-        cursor.of(executionContext);
+        cursor.of(executionContext, stepPosition);
         return cursor;
     }
 
@@ -85,9 +127,14 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
             super(startFunc, endFunc, stepFunc);
         }
 
+        public static void throwInvalidPeriod(CharSequence stepStr, int stepPosition) throws SqlException {
+            throw SqlException.$(stepPosition, "invalid period [period=")
+                    .put(stepStr)
+                    .put(']');
+        }
+
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            toTop();
             while (hasNext()) {
                 counter.inc();
             }
@@ -116,37 +163,30 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
             }
         }
 
-        public void of(SqlExecutionContext executionContext) throws SqlException {
+        public void of(SqlExecutionContext executionContext, int stepPosition) throws SqlException {
             super.of(executionContext);
             this.start = startFunc.getTimestamp(null);
             this.end = endFunc.getTimestamp(null);
 
-            final CharSequence str = stepFunc.getStrA(null);
+            final CharSequence stepStr = stepFunc.getStrA(null);
 
-            if (str != null) {
-                if (str.length() == 1) {
-                    unit = str.charAt(0);
-                } else if (str.length() > 1) {
-                    unit = str.charAt(str.length() - 1);
-                    try {
-                        stride = Numbers.parseInt(str, 0, str.length() - 1);
-                        if (stride <= 0) {
-                            unit = 1;
-                        }
-                    } catch (NumericException ignored) {
-                        unit = 1;
-                    }
-                } else {
-                    unit = 1; // report it as an empty unit rather than null
-                }
-            } else {
-                unit = 1;
-            }
-            this.adder = TimestampAddFunctionFactory.lookupAddFunction(unit);
+            GenerateSeriesPeriod sbu = tlSampleByUnit.get();
+
+            sbu.parse(stepStr, stepPosition);
+
+            this.adder = lookupAddFunction(sbu.unit);
 
             if (this.adder == null) {
-                throw SqlException.$(-1, "invalid unit [unit=").put(str).put(']');
+                throwInvalidPeriod(stepStr, stepPosition);
             }
+
+            unit = sbu.unit;
+
+            if (sbu.stride == 0) {
+                throw SqlException.$(stepPosition, "stride cannot be zero");
+            }
+
+            stride = sbu.stride;
 
             // swap args round transparently if needed
             // so from/to are really a range
@@ -191,7 +231,9 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
                 case 'T':
                     micros *= Timestamps.MILLI_MICROS;
                     break;
+                case 'U':
                 case 'u':
+                    // todo: get rid of 'u' case whe nanosecond refactor happens
                     break;
                 default:
                     return -1;
@@ -241,11 +283,93 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
                     return stride * Timestamps.SECOND_MICROS;
                 case 'T':
                     return stride * Timestamps.MILLI_MICROS;
+                case 'U':
                 case 'u':
+                    // todo: get rid of 'u' case whe nanosecond refactor happens
                     return stride;
                 default:
                     throw new UnsupportedOperationException();
             }
+        }
+
+        public static class GenerateSeriesPeriod {
+            public int stride = 0;
+            public char unit = (char) 0;
+
+            public static boolean isPotentiallyValidUnit(char c) {
+                switch (c) {
+                    case 'u':  // compatibility
+                    case 'U':
+                        // micros
+                    case 'T':
+                        // millis
+                    case 's':
+                        // seconds
+                    case 'm':
+                        // minutes
+                    case 'h':
+                    case 'H': // compatibility
+                        // hours
+                    case 'd':
+                        // days
+                    case 'w':
+                        // weeks
+                    case 'M':
+                        // months
+                    case 'y':
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+
+            public void clear() {
+                of(0, (char) 0);
+            }
+
+            public void of(int stride, char unit) {
+                this.stride = stride;
+                this.unit = unit;
+            }
+
+            public boolean parse(CharSequence str, int position) throws SqlException {
+                if (str == null) {
+                    throw SqlException.$(position, "null step");
+                }
+
+                int len = str.length();
+                switch (len) {
+                    case 0:
+                        throw SqlException.$(position, "empty step");
+                    case 1:
+                        unit = str.charAt(0);
+                        stride = 1;
+                        break;
+                    case 2:
+                        // rule out edge case: -y, -h etc.
+                        if (str.charAt(0) == '-') {
+                            unit = str.charAt(1);
+                            stride = -1;
+                            break;
+                        }
+                    default:
+                        unit = str.charAt(str.length() - 1);
+                        try {
+                            stride = Numbers.parseInt(str, 0, str.length() - 1);
+                        } catch (NumericException ignored) {
+                            throwInvalidPeriod(str, position);
+                        }
+                }
+
+                if (!isPotentiallyValidUnit(unit)) {
+                    throwInvalidPeriod(str, position);
+                }
+
+                return true;
+            }
+
+
+            // todo: when nanosecond PR is fleshed out, either fold this into it, or move validation etc. to this class
         }
 
         private class GenerateSeriesTimestampStringRecord implements Record {
@@ -274,6 +398,7 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
                 curr = value;
             }
         }
+
     }
 
     static {

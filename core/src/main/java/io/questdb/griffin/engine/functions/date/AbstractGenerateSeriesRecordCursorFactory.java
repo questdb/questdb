@@ -31,29 +31,34 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+
 
 public abstract class AbstractGenerateSeriesRecordCursorFactory extends AbstractRecordCursorFactory {
     public final Function endFunc;
     public final Function startFunc;
     public final Function stepFunc;
+    int stepPosition;
 
-    public AbstractGenerateSeriesRecordCursorFactory(RecordMetadata metadata, Function startFunc, Function endFunc, Function stepFunc, int position) throws SqlException {
+
+    public AbstractGenerateSeriesRecordCursorFactory(RecordMetadata metadata, Function startFunc, Function endFunc, Function stepFunc, IntList argPositions) throws SqlException {
         super(metadata);
-        if (!startFunc.isConstantOrRuntimeConstant() || !endFunc.isConstantOrRuntimeConstant() || !stepFunc.isConstantOrRuntimeConstant()) {
-            throw SqlException.$(position, "arguments must be constant or bind variable constants");
+
+        if (!startFunc.isConstantOrRuntimeConstant() || startFunc.isNullConstant()) {
+            throw SqlException.$(argPositions.getQuick(0), "start argument must be a non-null constant or bind variable constant");
         }
-        if (startFunc.isNullConstant() || endFunc.isNullConstant() || stepFunc.isNullConstant()) {
-            throw SqlException.$(position, "arguments cannot be null");
+        if (!endFunc.isConstantOrRuntimeConstant() || endFunc.isNullConstant()) {
+            throw SqlException.$(argPositions.getQuick(1), "end argument must be a non-null constant or bind variable constant");
         }
+        if (!stepFunc.isConstantOrRuntimeConstant() || stepFunc.isNullConstant()) {
+            assert argPositions.size() > 2;
+            throw SqlException.$(argPositions.getQuick(2), "step argument must be a non-null constant or bind variable constant");
+        }
+
         this.startFunc = startFunc;
         this.endFunc = endFunc;
         this.stepFunc = stepFunc;
-    }
-
-    public void init(SqlExecutionContext executionContext) throws SqlException {
-        startFunc.init(null, executionContext);
-        endFunc.init(null, executionContext);
-        stepFunc.init(null, executionContext);
+        this.stepPosition = argPositions.size() > 2 ? argPositions.getQuick(2) : 0;
     }
 
     @Override

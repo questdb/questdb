@@ -39,6 +39,16 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testDivideByZero() throws Exception {
+        assertException("generate_series(-5, 5, 0);", 23, "step cannot be zero");
+        assertException("generate_series(-5.0, 5.0, 0.0);", 27, "step cannot be zero");
+        assertException("generate_series((-5)::timestamp, (5)::timestamp, 0);", 49, "step cannot be zero");
+        assertException("generate_series('2000', '2020', '0d');", 32, "stride cannot be zero");
+        assertException("generate_series('2000', '2020', '0');", 32, "invalid period");
+        assertException("generate_series('2000', '2020', '-0');", 32, "invalid period");
+    }
+
+    @Test
     public void testDoubleBindVariables() throws Exception {
         bindVariableService.setDouble("d1", -5.2);
         bindVariableService.setDouble("d2", 5.8);
@@ -477,6 +487,34 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testPeriodErrorPosition() throws Exception {
+        assertException("generate_series(1, 100, '11');", 24, "invalid period [period=11]");
+    }
+
+    @Test
+    public void testPeriodWithoutStride() throws Exception {
+        // this test is just checking for compilation errors, nothing more
+        printSql("generate_series(-5, 5, 'y');");
+        printSql("generate_series(-5, 5, 'M');");
+        printSql("generate_series(-5, 5, 'w');");
+        printSql("generate_series(-5, 5, 'd');");
+        printSql("generate_series(-5, 5, 'h');");
+        printSql("generate_series(-5, 5, 'm');");
+        printSql("generate_series(-5, 5, 's');");
+        printSql("generate_series(-5, 5, 'T');");
+        printSql("generate_series(-5, 5, 'U');");
+        printSql("generate_series(-5, 5, '-y');");
+        printSql("generate_series(-5, 5, '-M');");
+        printSql("generate_series(-5, 5, '-w');");
+        printSql("generate_series(-5, 5, '-d');");
+        printSql("generate_series(-5, 5, '-H');");
+        printSql("generate_series(-5, 5, '-m');");
+        printSql("generate_series(-5, 5, '-s');");
+        printSql("generate_series(-5, 5, '-T');");
+        printSql("generate_series(-5, 5, '-U');");
+    }
+
+    @Test
     public void testTimestampLongBindVariables() throws Exception {
         bindVariableService.setTimestamp("t1", -5);
         bindVariableService.setTimestamp("t2", 5);
@@ -514,13 +552,13 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testTimestampLongGenerationNulls() throws Exception {
-        assertException("generate_series(null::timestamp, 5::timestamp, 3::timestamp);", 0, "arguments cannot be null");
-        assertException("generate_series(2::timestamp, null::timestamp, 3::timestamp);", 0, "arguments cannot be null");
-        assertException("generate_series(2::timestamp, 5::timestamp, null::timestamp);", 0, "arguments cannot be null");
-        assertException("generate_series(null::timestamp, null::timestamp, 3::timestamp);", 0, "arguments cannot be null");
-        assertException("generate_series(2::timestamp, null::timestamp, null::timestamp);", 0, "arguments cannot be null");
-        assertException("generate_series(null::timestamp, 5::timestamp, null::timestamp);", 0, "arguments cannot be null");
-        assertException("generate_series(null::timestamp, null::timestamp, null::timestamp);", 0, "arguments cannot be null");
+        assertException("generate_series(null::timestamp, 5::timestamp, 3::timestamp);", 20, "start argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(2::timestamp, null::timestamp, 3::timestamp);", 34, "end argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(2::timestamp, 5::timestamp, null::timestamp);", 48, "step argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(null::timestamp, null::timestamp, 3::timestamp);", 20, "start argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(2::timestamp, null::timestamp, null::timestamp);", 34, "end argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(null::timestamp, 5::timestamp, null::timestamp);", 20, "start argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(null::timestamp, null::timestamp, null::timestamp);", 20, "start argument must be a non-null constant or bind variable constant");
     }
 
     @Test
@@ -672,7 +710,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1969-12-31T23:59:59.999999Z\n" +
                         "1969-12-31T23:59:59.999997Z\n" +
                         "1969-12-31T23:59:59.999995Z\n",
-                "generate_series((-5)::timestamp, 5::timestamp, (-2)::timestamp);",
+                "generate_series((-5)::timestamp, 5::timestamp, '-2U');",
                 "generate_series###DESC",
                 true,
                 true);
@@ -687,7 +725,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1969-12-31T23:59:59.999999Z\n" +
                         "1969-12-31T23:59:59.999997Z\n" +
                         "1969-12-31T23:59:59.999995Z\n",
-                "generate_series(5::timestamp, (-5)::timestamp, (-2)::timestamp);",
+                "generate_series(5::timestamp, (-5)::timestamp, '-2U');",
                 "generate_series###DESC",
                 true,
                 true);
@@ -700,7 +738,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1970-01-01T00:00:00.000002Z\n" +
                         "1969-12-31T23:59:59.999999Z\n" +
                         "1969-12-31T23:59:59.999996Z\n",
-                "generate_series((-5)::timestamp, 5::timestamp, (-3)::timestamp);",
+                "generate_series((-5)::timestamp, 5::timestamp, '-3U');",
                 "generate_series###DESC",
                 true,
                 true);
@@ -710,7 +748,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
     public void testTimestampStringNoRange() throws Exception {
         assertQuery("generate_series\n" +
                         "1970-01-01T00:00:00.000002Z\n",
-                "generate_series(2::timestamp, 2::timestamp, '1u');",
+                "generate_series(2::timestamp, 2::timestamp, '1U');",
                 "generate_series",
                 true,
                 true);
@@ -818,13 +856,13 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
     public void testTimestampStringWithLimit() throws Exception {
         assertQuery("generate_series\n" +
                         "1970-01-01T00:00:00.000001Z\n",
-                "generate_series(1::timestamp, 10000000::timestamp, '1u') LIMIT 1",
+                "generate_series(1::timestamp, 10000000::timestamp, '1U') LIMIT 1",
                 "generate_series",
                 true,
                 true);
         assertQuery("generate_series\n" +
                         "1970-01-01T00:00:10.000000Z\n",
-                "generate_series(1::timestamp, 10000000::timestamp, '1u') LIMIT -1",
+                "generate_series(1::timestamp, 10000000::timestamp, '1U') LIMIT -1",
                 "generate_series",
                 true,
                 true);
@@ -845,7 +883,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1969-12-31T23:59:59.999997Z\n" +
                         "1969-12-31T23:59:59.999996Z\n" +
                         "1969-12-31T23:59:59.999995Z\n",
-                "generate_series((-5)::timestamp, 5::timestamp, '1u') ORDER BY generate_series DESC;",
+                "generate_series((-5)::timestamp, 5::timestamp, '1U') ORDER BY generate_series DESC;",
                 "generate_series###DESC",
                 true,
                 true
@@ -906,5 +944,19 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testVariationsOfPeriods() throws Exception {
+        assertSqlWithTypes("generate_series\n" +
+                        "2025-01-01T00:00:00.000000Z:TIMESTAMP\n" +
+                        "2025-01-12T00:00:00.000000Z:TIMESTAMP\n" +
+                        "2025-01-23T00:00:00.000000Z:TIMESTAMP\n",
+                "generate_series(('2025-01-01')::timestamp, ('2025-02-01')::timestamp, '11d');");
+        assertSqlWithTypes("generate_series\n" +
+                        "2025-02-01T00:00:00.000000Z:TIMESTAMP\n" +
+                        "2025-01-21T00:00:00.000000Z:TIMESTAMP\n" +
+                        "2025-01-10T00:00:00.000000Z:TIMESTAMP\n",
+                "generate_series(('2025-01-01')::timestamp, ('2025-02-01')::timestamp, '-11d');");
     }
 }

@@ -42,6 +42,6 @@ public class GenerateSeriesLongFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new CursorFunction(new GenerateSeriesLongRecordCursorFactory(args.getQuick(0), args.getQuick(1), args.getQuick(2), position));
+        return new CursorFunction(new GenerateSeriesLongRecordCursorFactory(args.getQuick(0), args.getQuick(1), args.getQuick(2), argPositions));
     }
 }

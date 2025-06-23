@@ -33,14 +33,15 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 
 public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGenerateSeriesRecordCursorFactory {
     private static final RecordMetadata METADATA;
     private GenerateSeriesDoubleRecordCursor cursor;
 
-    public GenerateSeriesDoubleRecordCursorFactory(Function startFunc, Function endFunc, Function stepFunc, int position) throws SqlException {
-        super(METADATA, startFunc, endFunc, stepFunc, position);
+    public GenerateSeriesDoubleRecordCursorFactory(Function startFunc, Function endFunc, Function stepFunc, IntList argPositions) throws SqlException {
+        super(METADATA, startFunc, endFunc, stepFunc, argPositions);
     }
 
     @Override
@@ -48,7 +49,7 @@ public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGener
         if (cursor == null) {
             cursor = new GenerateSeriesDoubleRecordCursor(startFunc, endFunc, stepFunc);
         }
-        cursor.of(executionContext);
+        cursor.of(executionContext, stepPosition);
         return cursor;
     }
 
@@ -87,11 +88,14 @@ public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGener
             }
         }
 
-        public void of(SqlExecutionContext executionContext) throws SqlException {
+        public void of(SqlExecutionContext executionContext, int stepPosition) throws SqlException {
             super.of(executionContext);
             this.start = startFunc.getDouble(null);
             this.end = endFunc.getDouble(null);
             this.step = stepFunc.getDouble(null);
+            if (step == 0d) {
+                throw SqlException.$(stepPosition, "step cannot be zero");
+            }
             // swap args round transparently if needed
             // so from/to are really a range
             if (start <= end && step < 0

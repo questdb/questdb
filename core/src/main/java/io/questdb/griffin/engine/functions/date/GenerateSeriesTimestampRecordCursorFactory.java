@@ -33,13 +33,14 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 
 public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerateSeriesRecordCursorFactory {
     private static final GenericRecordMetadata METADATA;
     private GenerateSeriesTimestampRecordCursor cursor;
 
-    public GenerateSeriesTimestampRecordCursorFactory(Function startFunc, Function endFunc, Function stepFunc, int position) throws SqlException {
-        super(METADATA, startFunc, endFunc, stepFunc, position);
+    public GenerateSeriesTimestampRecordCursorFactory(Function startFunc, Function endFunc, Function stepFunc, IntList argPositions) throws SqlException {
+        super(METADATA, startFunc, endFunc, stepFunc, argPositions);
     }
 
     @Override
@@ -47,7 +48,7 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
         if (cursor == null) {
             cursor = new GenerateSeriesTimestampRecordCursor(startFunc, endFunc, stepFunc);
         }
-        cursor.of(executionContext);
+        cursor.of(executionContext, stepPosition);
         return cursor;
     }
 
@@ -92,11 +93,14 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
             }
         }
 
-        public void of(SqlExecutionContext executionContext) throws SqlException {
+        public void of(SqlExecutionContext executionContext, int stepPosition) throws SqlException {
             super.of(executionContext);
             this.start = startFunc.getTimestamp(null);
             this.end = endFunc.getTimestamp(null);
             this.step = stepFunc.getTimestamp(null);
+            if (step == 0) {
+                throw SqlException.$(stepPosition, "step cannot be zero");
+            }
             // swap args round transparently if needed
             // so from/to are really a range
             if (start <= end && step < 0
