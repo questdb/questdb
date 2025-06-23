@@ -826,30 +826,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testProjectionCanReferenceOwnFunctionsVanilla() throws SqlException {
-        assertQuery(
-                "select-virtual rnd_double_array(2,0,0,2,10) a, []([](a,0),0) c from (long_sequence(100))",
-                "select rnd_double_array(2, 0, 0, 2, 10) a, a[0][0] c from long_sequence(100);"
-        );
-    }
-
-    @Test
-    public void testProjectionCanReferenceOwnFunctionsGroupByKey() throws SqlException {
-        assertQuery(
-                "select-group-by rnd_double_array(2,0,0,2,10) a, []([](a,0),0) c, sum(x) sum from (select [x] from long_sequence(100))",
-                "select rnd_double_array(2, 0, 0, 2, 10) a, a[0][0] c, sum(x) from long_sequence(100);"
-        );
-    }
-
-    @Test
-    public void testProjectionCanReferenceOwnFunctions2() throws SqlException {
-        assertQuery(
-                "select-virtual rnd_double_array(2,0,0,2,10) a from (long_sequence(100))",
-                "select rnd_double_array(2, 0, 0, 2, 10) a from long_sequence(100);"
-        );
-    }
-
-    @Test
     public void testACWrongFrameTypeUsed() throws Exception {
         assertSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts rangez ) from xyz",
@@ -8281,6 +8257,83 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual 1 1, x, concat('2',cast(x + 1,string),'3') concat from (select [x] from tab)",
                 "select 1, x, '2' || cast(x + 1 as string) || '3' from tab",
                 modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testProjectionCanReferenceOwnFunctions2() throws SqlException {
+        assertQuery(
+                "select-virtual rnd_double_array(2,0,0,2,10) a from (long_sequence(100))",
+                "select rnd_double_array(2, 0, 0, 2, 10) a from long_sequence(100);"
+        );
+    }
+
+    @Test
+    public void testProjectionCanReferenceOwnFunctionsArithmetic() throws SqlException {
+        assertQuery(
+                "select-group-by rnd_double_array(2,0,0,2,10) a, a + 3 c, sum(a) sum from (long_sequence(100))",
+                "select rnd_double_array(2, 0, 0, 2, 10) a, a + 3 c, sum(a) from long_sequence(100);"
+        );
+    }
+
+    @Test
+    public void testProjectionCanReferenceOwnFunctionsGroupByKey() throws SqlException {
+        assertQuery(
+                "select-group-by rnd_double_array(2,0,0,2,10) a, []([](a,0),0) c, sum(x) sum from (select [x] from long_sequence(100))",
+                "select rnd_double_array(2, 0, 0, 2, 10) a, a[0][0] c, sum(x) from long_sequence(100);"
+        );
+    }
+
+    @Test
+    public void testProjectionCanReferenceOwnFunctionsGroupByValue() throws SqlException {
+        assertQuery(
+                "select-group-by rnd_double_array(2,0,0,2,10) a, []([](a,0),0) c, sum(a) sum from (long_sequence(100))",
+                "select rnd_double_array(2, 0, 0, 2, 10) a, a[0][0] c, sum(a) from long_sequence(100);"
+        );
+    }
+
+    @Test
+    public void testProjectionCanReferenceOwnFunctionsOrderBy() throws SqlException {
+        assertQuery(
+                "select-virtual rnd_double_array(2,0,0,2,10) a, a + 3 c from (long_sequence(100)) order by c, a",
+                "select rnd_double_array(2, 0, 0, 2, 10) a, a + 3 c from long_sequence(100) order by c, a;"
+        );
+    }
+
+    @Test
+    public void testProjectionCanReferenceOwnFunctionsSampleBy() throws SqlException {
+        assertQuery(
+                "select-choose c, column, sum" +
+                        " from (select-group-by" +
+                        " [f(a) c, c + 1 column, sum(b) sum, timestamp_floor('1h',ts,null,'00:00',null) ts]" +
+                        " f(a) c, c + 1 column, sum(b) sum, timestamp_floor('1h',ts,null,'00:00',null) ts" +
+                        " from (select [a, b, ts] from tab timestamp (ts) stride 1h) order by ts)",
+                "select f(a) c, c + 1, sum(b) from tab sample by 1h",
+                modelOf("tab")
+                        .col("a", ColumnType.encodeArrayType(ColumnType.DOUBLE, 2))
+                        .col("b", ColumnType.DOUBLE)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testProjectionCanReferenceOwnFunctionsVanilla() throws SqlException {
+        assertQuery(
+                "select-virtual rnd_double_array(2,0,0,2,10) a, []([](a,0),0) c from (long_sequence(100))",
+                "select rnd_double_array(2, 0, 0, 2, 10) a, a[0][0] c from long_sequence(100);"
+        );
+    }
+
+    @Test
+    public void testProjectionCanReferenceOwnFunctionsWindowFunction() throws SqlException {
+        assertQuery(
+                "select-window c, lag(c1) lag over () from (select-virtual [f(a) c, c c1] f(a) c, c c1 from (select [a] from tab timestamp (ts))) order by c",
+                "select f(a) c, lag(c) over() from tab order by c",
+                modelOf("tab")
+                        .col("a", ColumnType.encodeArrayType(ColumnType.DOUBLE, 2))
+                        .col("b", ColumnType.DOUBLE)
+                        .timestamp("ts")
+
         );
     }
 
