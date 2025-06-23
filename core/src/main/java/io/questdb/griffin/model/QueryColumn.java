@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
@@ -35,6 +36,7 @@ import java.util.Objects;
 public class QueryColumn implements Mutable, Sinkable {
     public static final ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
     private CharSequence alias;
+    private boolean aliasOrganic;
     private ExpressionNode ast;
     private int columnType;
     private boolean includeIntoWildcard = true;
@@ -79,6 +81,10 @@ public class QueryColumn implements Mutable, Sinkable {
         return Objects.hash(alias, ast, includeIntoWildcard);
     }
 
+    public boolean isAliasOrganic() {
+        return aliasOrganic;
+    }
+
     public boolean isIncludeIntoWildcard() {
         return includeIntoWildcard;
     }
@@ -87,24 +93,36 @@ public class QueryColumn implements Mutable, Sinkable {
         return false;
     }
 
-    public QueryColumn of(CharSequence alias, ExpressionNode ast) {
-        return of(alias, ast, true);
+    public QueryColumn of(CharSequence alias, boolean aliasOrganic, ExpressionNode ast) {
+        return of(alias, aliasOrganic, ast, true);
     }
 
-    public QueryColumn of(CharSequence alias, ExpressionNode ast, boolean includeIntoWildcard) {
-        return of(alias, ast, includeIntoWildcard, -1);
+    public QueryColumn of(CharSequence alias, boolean aliasOrganic, ExpressionNode ast, boolean includeIntoWildcard) {
+        return of(alias, aliasOrganic, ast, includeIntoWildcard, -1);
     }
 
-    public QueryColumn of(CharSequence alias, ExpressionNode ast, boolean includeIntoWildcard, int type) {
+    public QueryColumn of(CharSequence alias, boolean aliasOrganic, ExpressionNode ast, boolean includeIntoWildcard, int type) {
+        if (alias != null && Chars.equals("date_report", alias)) {
+            System.out.println("ok");
+        }
         this.alias = alias;
+        this.aliasOrganic = aliasOrganic;
         this.ast = ast;
         this.includeIntoWildcard = includeIntoWildcard;
         this.columnType = type;
         return this;
     }
 
-    public void setAlias(CharSequence alias) {
+    public void setAlias(CharSequence alias, boolean aliasOrganic) {
+        if (Chars.equals("date_report", alias)) {
+            System.out.println("ok");
+        }
+        // do not override organic flag by setting the same alias with "false"
+        if (this.alias == alias || Chars.equalsNc(alias, this.alias)) {
+            return;
+        }
         this.alias = alias;
+        this.aliasOrganic = aliasOrganic;
     }
 
     public void setIncludeIntoWildcard(boolean includeIntoWildcard) {

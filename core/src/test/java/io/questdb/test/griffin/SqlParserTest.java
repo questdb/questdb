@@ -826,17 +826,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testProjectionCanReferenceOwnFunctions() throws SqlException {
+    public void testProjectionCanReferenceOwnFunctionsVanilla() throws SqlException {
         assertQuery(
-                "",
-                "select rnd_double_array(2, 0, 0, 2, 10) a, a[0][0] from long_sequence(100);"
+                "select-virtual rnd_double_array(2,0,0,2,10) a, []([](a,0),0) c from (long_sequence(100))",
+                "select rnd_double_array(2, 0, 0, 2, 10) a, a[0][0] c from long_sequence(100);"
+        );
+    }
+
+    @Test
+    public void testProjectionCanReferenceOwnFunctionsGroupByKey() throws SqlException {
+        assertQuery(
+                "select-group-by rnd_double_array(2,0,0,2,10) a, []([](a,0),0) c, sum(x) sum from (select [x] from long_sequence(100))",
+                "select rnd_double_array(2, 0, 0, 2, 10) a, a[0][0] c, sum(x) from long_sequence(100);"
         );
     }
 
     @Test
     public void testProjectionCanReferenceOwnFunctions2() throws SqlException {
         assertQuery(
-                "",
+                "select-virtual rnd_double_array(2,0,0,2,10) a from (long_sequence(100))",
                 "select rnd_double_array(2, 0, 0, 2, 10) a from long_sequence(100);"
         );
     }

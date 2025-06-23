@@ -211,6 +211,9 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
 
             for (int i = 0, n = columns.size(); i < n; i++) {
                 AbstractSqlParserTest.checkLiteralIsInSet(columns.getQuick(i).getAst(), nameSets, nested.getModelAliasIndexes());
+                // columns are allowed to reference previous columns on the same projection
+                // add column name we just checked to the first name set (in case of joins there could be multiple)
+                nameSets.getQuick(0).add(columns.getQuick(i).getName());
             }
 
             columns = nested.getTopDownColumns();

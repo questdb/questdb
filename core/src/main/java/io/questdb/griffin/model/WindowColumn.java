@@ -213,8 +213,8 @@ public final class WindowColumn extends QueryColumn {
     }
 
     @Override
-    public WindowColumn of(CharSequence alias, ExpressionNode ast) {
-        return (WindowColumn) super.of(alias, ast);
+    public WindowColumn of(CharSequence alias, boolean aliasOrganic, ExpressionNode ast) {
+        return (WindowColumn) super.of(alias, aliasOrganic, ast);
     }
 
     public boolean requiresOrderBy() {
@@ -248,6 +248,7 @@ public final class WindowColumn extends QueryColumn {
         this.rowsHiExprPos = rowsHiExprPos;
     }
 
+    // todo: unused - check Ent usage
     public void setRowsHiExprTimeUnit(long unit) {
         this.rowsHiExprTimeUnit = unit;
     }
