@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
@@ -71,7 +72,11 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
         private final DirectArray arrayOut;
         private final Function leftArg;
         private final int leftArgPos;
+        private final boolean leftBroadcast;
+        private final DerivedArrayView leftDerived = new DerivedArrayView();
         private final Function rightArg;
+        private final boolean rightBroadcast;
+        private final DerivedArrayView rightDerived = new DerivedArrayView();
 
         public Func(
                 CairoConfiguration configuration,
@@ -87,12 +92,22 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
                 this.leftArgPos = leftArgPos;
                 int nDimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
                 int nDimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
-                if (nDimsLeft != 2) {
-                    throw SqlException.position(leftArgPos).put("left array is not two-dimensional");
+                boolean leftNeedBroadcast = false;
+                if (nDimsLeft == 1) {
+                    leftNeedBroadcast = true;
+                } else if (nDimsLeft != 2) {
+                    throw SqlException.position(rightArgPos).put("left array is not one or two-dimensional");
                 }
-                if (nDimsRight != 2) {
-                    throw SqlException.position(rightArgPos).put("right array is not two-dimensional");
+
+                boolean rightNeedBroadcast = false;
+                if (nDimsRight == 1) {
+                    rightNeedBroadcast = true;
+                } else if (nDimsRight != 2) {
+                    throw SqlException.position(rightArgPos).put("right array is not one or two-dimensional");
                 }
+
+                this.leftBroadcast = leftNeedBroadcast;
+                this.rightBroadcast = rightNeedBroadcast;
                 this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
             } catch (Throwable th) {
                 close();
@@ -113,6 +128,16 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
             if (left.isNull() || right.isNull()) {
                 arrayOut.ofNull();
                 return arrayOut;
+            }
+            if (leftBroadcast) {
+                leftDerived.of(left);
+                leftDerived.broadcastByPrependDims(1);
+                left = leftDerived;
+            }
+            if (rightBroadcast) {
+                rightDerived.of(right);
+                rightDerived.broadcastByAppendDims(1);
+                right = rightDerived;
             }
             int commonDimLen = left.getDimLen(1);
             if (right.getDimLen(0) != commonDimLen) {

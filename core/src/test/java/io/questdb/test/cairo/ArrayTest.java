@@ -1160,18 +1160,29 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatrixMultiplyAutoBroadcasting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT " +
+                    "ARRAY[[2.0, 3.0],[4.0, 5.0], [6.0, 7.0]] left, ARRAY[1.0, 2.0] right " +
+                    "FROM long_sequence(1))");
+            assertSql("product\n" +
+                    "[[8.0],[14.0],[20.0]]\n", "SELECT matmul(left, right) AS product FROM tango");
+        });
+    }
+
+    @Test
     public void testMatrixMultiplyInvalid() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT " +
-                    "ARRAY[[1.0, 2.0]] left2d, ARRAY[1.0] left1d, " +
-                    "ARRAY[[1.0]] right2d, ARRAY[1.0] right1d "
+                    "ARRAY[[[1.0, 2.0]]] left3d, ARRAY[1.0] left1d, " +
+                    "ARRAY[[[1.0]]] right3d, ARRAY[1.0, 2.0] right1d "
                     + "FROM long_sequence(1))");
             assertExceptionNoLeakCheck("SELECT matmul(left1d, right1d) FROM tango",
-                    14, "left array is not two-dimensional");
-            assertExceptionNoLeakCheck("SELECT matmul(left2d, right1d) FROM tango",
-                    22, "right array is not two-dimensional");
-            assertExceptionNoLeakCheck("SELECT matmul(left2d, right2d) FROM tango",
-                    14, "left array row length doesn't match right array column length");
+                    14, "left array row length doesn't match right array column length [leftRowLen=1, rightColLen=2]");
+            assertExceptionNoLeakCheck("SELECT matmul(left3d, right1d) FROM tango",
+                    22, "left array is not one or two-dimensional");
+            assertExceptionNoLeakCheck("SELECT matmul(left1d, right3d) FROM tango",
+                    22, "right array is not one or two-dimensional");
         });
     }
 
