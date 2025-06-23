@@ -86,11 +86,6 @@ public class Utf8String implements Utf8Sequence {
     }
 
     @Override
-    public int shortAt(int index) {
-        return Unsafe.byteArrayGetShort(bytes, index);
-    }
-
-    @Override
     public boolean isAscii() {
         return ascii;
     }
@@ -98,6 +93,11 @@ public class Utf8String implements Utf8Sequence {
     @Override
     public long longAt(int offset) {
         return Unsafe.byteArrayGetLong(bytes, offset);
+    }
+
+    @Override
+    public short shortAt(int index) {
+        return Unsafe.byteArrayGetShort(bytes, index);
     }
 
     @Override
