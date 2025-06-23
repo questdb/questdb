@@ -4558,14 +4558,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ObjList<QueryColumn> columns = model.getColumns();
         final int columnCount = columns.size();
         final ObjList<Function> functions = new ObjList<>(columnCount);
-        final RecordMetadata metadata = factory.getMetadata();
+        final RecordMetadata baseMetadata = factory.getMetadata();
+        // Lookup metadata will resolve column references, prioritising references to the projection
+        // over the references to the base table. +1 accounts for timestamp, which can be added conditionally later.
+        final VirtualPriorityMetadata priorityMetadata = new VirtualPriorityMetadata(columnCount + 1, baseMetadata);
         final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
         try {
             // attempt to preserve timestamp on new data set
             CharSequence timestampColumn;
-            final int timestampIndex = metadata.getTimestampIndex();
+            final int timestampIndex = baseMetadata.getTimestampIndex();
             if (timestampIndex > -1) {
-                timestampColumn = metadata.getColumnName(timestampIndex);
+                timestampColumn = baseMetadata.getColumnName(timestampIndex);
             } else {
                 timestampColumn = null;
             }
@@ -4579,7 +4582,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 Function function = functionParser.parseFunction(
                         column.getAst(),
-                        metadata,
+                        baseMetadata,
                         executionContext
                 );
 
@@ -4620,42 +4623,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 functions.add(function);
-
+                TableColumnMetadata m = null;
                 if (columnType == ColumnType.SYMBOL) {
                     if (function instanceof SymbolFunction) {
-                        virtualMetadata.add(
-                                new TableColumnMetadata(
-                                        Chars.toString(column.getAlias()),
-                                        function.getType(),
-                                        false,
-                                        0,
-                                        ((SymbolFunction) function).isSymbolTableStatic(),
-                                        function.getMetadata()
-                                )
+                        m = new TableColumnMetadata(
+                                Chars.toString(column.getAlias()),
+                                function.getType(),
+                                false,
+                                0,
+                                ((SymbolFunction) function).isSymbolTableStatic(),
+                                function.getMetadata()
                         );
                     } else if (function instanceof NullConstant) {
-                        virtualMetadata.add(
-                                new TableColumnMetadata(
-                                        Chars.toString(column.getAlias()),
-                                        ColumnType.SYMBOL,
-                                        false,
-                                        0,
-                                        false,
-                                        function.getMetadata()
-                                )
+                        m = new TableColumnMetadata(
+                                Chars.toString(column.getAlias()),
+                                ColumnType.SYMBOL,
+                                false,
+                                0,
+                                false,
+                                function.getMetadata()
                         );
                         // Replace with symbol null constant
                         functions.setQuick(functions.size() - 1, SymbolConstant.NULL);
                     }
                 } else {
-                    virtualMetadata.add(
-                            new TableColumnMetadata(
-                                    Chars.toString(column.getAlias()),
-                                    columnType,
-                                    function.getMetadata()
-                            )
+                    m = new TableColumnMetadata(
+                            Chars.toString(column.getAlias()),
+                            columnType,
+                            function.getMetadata()
                     );
                 }
+                assert m != null;
+                virtualMetadata.add(m);
+                priorityMetadata.add(m);
             }
 
             // if timestamp was required and present in the base model but
@@ -4668,7 +4668,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final Function timestampFunction = FunctionParser.createColumn(
                         0,
                         timestampColumn,
-                        metadata
+                        baseMetadata
                 );
                 functions.add(timestampFunction);
 
@@ -4680,13 +4680,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     QueryColumn qc = model.getBottomUpColumns().getQuick(i);
                     if (qc.getAst().type == LITERAL && Chars.equals(timestampColumn, qc.getAst().token)) {
                         virtualMetadata.setTimestampIndex(virtualMetadata.getColumnCount());
-                        virtualMetadata.add(
-                                new TableColumnMetadata(
-                                        Chars.toString(qc.getAlias()),
-                                        timestampFunction.getType(),
-                                        timestampFunction.getMetadata()
-                                )
+                        TableColumnMetadata m;
+                        m = new TableColumnMetadata(
+                                Chars.toString(qc.getAlias()),
+                                timestampFunction.getType(),
+                                timestampFunction.getMetadata()
                         );
+                        virtualMetadata.add(m);
+                        priorityMetadata.add(m);
                         break;
                     }
                 }
