@@ -90,6 +90,12 @@ struct ArrayAuxEntry {
     int32_t reserved2;
 };
 
+struct VarcharAuxEntryBoth {
+    uint64_t header1;
+    uint32_t header2;
+    uint8_t offset[6];
+};
+
 constexpr uint64_t ARRAY_OFFSET_MAX = (1ULL << 48) - 1ULL;
 #pragma pack(pop)
 

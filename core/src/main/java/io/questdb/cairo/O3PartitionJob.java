@@ -836,6 +836,33 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (srcOooLo <= srcOooHi) {
                         if (mergeType == O3_BLOCK_MERGE) {
 
+                            if (mergeDataHi - mergeDataLo == mergeO3Hi - mergeO3Lo) {
+                                if (Unsafe.getUnsafe().getLong(srcTimestampAddr + mergeDataLo * Long.BYTES)
+                                        == getTimestampIndexValue(sortedTimestampsAddr, mergeO3Lo)
+                                        && Unsafe.getUnsafe().getLong(srcTimestampAddr + mergeDataHi * Long.BYTES)
+                                        == getTimestampIndexValue(sortedTimestampsAddr, mergeO3Hi)) {
+                                    // We are replacing with exactly the same number of rows
+                                    // Maybe the rows are of the same data, then we don't need to rewrite the partition
+                                    if (tableWriter.checkCommitIdenticalToPartition(
+                                            partitionTimestamp,
+                                            srcNameTxn,
+                                            srcDataMax,
+                                            mergeDataLo,
+                                            mergeDataHi,
+                                            mergeO3Lo,
+                                            mergeO3Hi,
+                                            0,
+                                            mergeO3Hi - mergeO3Lo,
+                                            false
+                                    )) {
+                                        LOG.info().$("replace commit resuled in identical data [table=").$safe(tableWriter.getTableToken().getTableName())
+                                                .$(", partitionTimestamp=").$ts(partitionTimestamp)
+                                                .$(", srcNameTxn=").$(srcNameTxn)
+                                                .I$();
+                                    }
+                                }
+                            }
+
                             if (prefixType == O3_BLOCK_O3) {
                                 prefixHi = mergeO3Hi;
                                 mergeType = O3_BLOCK_NONE;
@@ -2054,7 +2081,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             // All the rows are duplicates
                             // check if all non-key rows are dups
-                            if (tableWriter.checkCommitValueColumnsIdenticalToPartition(
+                            if (tableWriter.checkCommitIdenticalToPartition(
                                     oldPartitionTimestamp,
                                     srcNameTxn,
                                     srcDataOldPartitionSize,
@@ -2063,7 +2090,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     mergeOOOLo,
                                     mergeOOOHi,
                                     timestampMergeIndexAddr,
-                                    dedupRows
+                                    dedupRows,
+                                    true
                             )) {
 
                                 if (suffixType != O3_BLOCK_O3) {

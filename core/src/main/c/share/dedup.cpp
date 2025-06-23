@@ -496,17 +496,18 @@ int64_t dedup_sorted_timestamp_index_many_addresses_segment_bits_row_encoding(
 }
 
 
-template<typename T>
-bool is_column_replace_identical(
-        int64_t column_top1, int64_t lo1_pos, int64_t hi1_pos, const T *data1,
-        int64_t column_top2, int64_t lo2_pos, int64_t hi2_pos, const T *data2,
+template<typename IsNotNull, typename AreNotEqual>
+inline bool is_column_merge_identical(
+        int64_t column_top1, int64_t lo1, int64_t hi1,
+        int64_t column_top2, int64_t lo2, int64_t hi2,
         const index_t *merge_index, int64_t merge_index_rows,
-        const T null_val
+        AreNotEqual &&are_not_equal_lambda,
+        IsNotNull &&is_not_null_lambda
 ) {
-    if (column_top1 >= hi1_pos) {
-        // All old values were nulls, check that the new values are null
-        for (int64_t i = std::max<int64_t>(lo2_pos - column_top2, 0); i < hi2_pos - column_top2; i++) {
-            if (data2[i] != null_val) {
+    if (column_top1 >= hi1) {
+        // All old values are nulls, check that the new values are null
+        for (int64_t i = std::max<int64_t>(lo2 - column_top2, 0); i < hi2 - column_top2; i++) {
+            if (is_not_null_lambda(1, i)) {
                 return false;
             }
         }
@@ -521,24 +522,23 @@ bool is_column_replace_identical(
         if (bit == 0) {
             auto merge_side_index = (int64_t) (index & ~(1ull << 63));
 
-            const auto data1_index = out_index + lo1_pos - column_top1;
+            const auto data1_index = out_index + lo1 - column_top1;
             const auto data2_index = merge_side_index - column_top2;
 
             if (data1_index < 0) {
                 // data1 points to column top, check new data2 is also null
-                if (data2_index > -1 && data2[data2_index] != null_val) {
+                if (data2_index > -1 && is_not_null_lambda(1, data2_index)) {
                     return false;
                 }
             } else {
-                auto existing = data1[data1_index];
                 if (data2_index > -1) {
                     // data was not null, check new data is the same
-                    if (existing != data2[data2_index]) {
+                    if (are_not_equal_lambda(data1_index, data2_index)) {
                         return false;
                     }
                 } else {
                     // data2 points to column top, check new data is also null
-                    if (existing != null_val) {
+                    if (is_not_null_lambda(0, data1_index)) {
                         return false;
                     }
                 }
@@ -548,183 +548,225 @@ bool is_column_replace_identical(
     return true;
 }
 
-bool is_varchar_column_replace_identical(
+template<typename IsNotNull, typename AreNotEqual>
+inline bool is_column_replace_identical(
+        int64_t column_top1, int64_t lo1, int64_t hi1,
+        int64_t column_top2, int64_t lo2, int64_t hi2,
+        AreNotEqual &&are_not_equal_lambda, IsNotNull &&is_not_null_lambda
+) {
+    column_top1 = std::min<int64_t>(column_top1, hi1);
+    column_top2 = std::min<int64_t>(column_top2, hi2);
+    auto row_count = hi1 - lo1;
+
+    if (row_count != hi2 - lo2) {
+        // Different row counts, cannot be identical
+        return false;
+    }
+
+    int64_t both_nulls_count = std::max<int64_t>(
+            std::min<int64_t>(column_top1 - lo1, column_top2 - lo2),
+            0
+    );
+
+    // If first column has column top sticking out of both_nulls_count,
+    // check that second column values are nulls in that range
+    auto col1_col_top_sticks_out_count = column_top1 - lo1;
+    if (col1_col_top_sticks_out_count > both_nulls_count
+        && is_not_null_lambda(
+            1,
+            lo2 - column_top2 + both_nulls_count,
+            lo2 - column_top2 + col1_col_top_sticks_out_count)) {
+        return false;
+    }
+
+    // If second column has column top sticking out of both_nulls_count,
+    // check that second column values are nulls in that range
+    auto col2_col_top_sticks_out_count = column_top2 - lo2;
+    if (col2_col_top_sticks_out_count > both_nulls_count
+        && is_not_null_lambda(
+            0,
+            lo1 - column_top1 + both_nulls_count,
+            lo1 - column_top1 + col2_col_top_sticks_out_count)) {
+        return false;
+    }
+
+    auto both_not_null = std::max<int64_t>(
+            column_top1 - lo1,
+            column_top2 - lo2
+    );
+    if (are_not_equal_lambda(lo1 - column_top1 - both_not_null,
+                          lo2 - column_top2 - both_not_null,
+                          hi2 - column_top2 - both_not_null)) {
+        return false;
+    }
+    return true;
+}
+
+template<typename T>
+bool is_fixed_column_merge_identical(
+        int64_t column_top1, int64_t lo1, int64_t hi1, const T *data1,
+        int64_t column_top2, int64_t lo2, int64_t hi2, const T *data2,
+        const index_t *merge_index, int64_t merge_index_rows,
+        T null_value
+) {
+    const T *data_ptrs[2] = {data1, data2};
+    if (merge_index != nullptr) {
+        return is_column_merge_identical(
+                column_top1, lo1, hi1,
+                column_top2, lo2, hi2,
+                merge_index, merge_index_rows,
+                // are_not_equal
+                [&](int64_t index1, int64_t index2) -> bool {
+                    return data1[index1] != data2[index2];
+                },
+                // is_not_null_lambda
+                [&](int data_index, int64_t index) -> bool {
+                    return data_ptrs[data_index][index] != null_value;
+                }
+        );
+    } else {
+        return is_column_replace_identical(
+                column_top1, lo1, hi1,
+                column_top2, lo2, hi2,
+                // are_not_equal
+                [&](int64_t lo1, int64_t lo2, int64_t size) -> bool {
+                    return memcmp(data1 + lo1, data2 + lo2, size * sizeof(T)) != 0;
+                },
+                // is_not_null_lambda
+                [&](int data_index, int64_t lo, int64_t hi) -> bool {
+                    auto data = data_ptrs[data_index];
+                    for (int64_t i = lo; i < hi; i++) {
+                        if (data[i] != null_value) {
+                            return true;
+                        }
+                    }
+                }
+        );
+    }
+}
+
+bool is_varchar_column_merge_identical(
         int64_t column_top1, int64_t lo1_pos, int64_t hi1_pos, const VarcharAuxEntryInlined *aux1, const uint8_t *data1,
         int64_t column_top2, int64_t lo2_pos, int64_t hi2_pos, const VarcharAuxEntryInlined *aux2, const uint8_t *data2,
         const index_t *merge_index, int64_t merge_index_rows
 ) {
-    if (column_top1 >= hi1_pos) {
-        // All old values were nulls, check that the new values are null
-        for (int64_t i = std::max<int64_t>(lo2_pos - column_top2, 0); i < hi2_pos - column_top2; i++) {
-            if (!(aux2[i].header & HEADER_FLAG_NULL)) {
-                return false;
-            }
-        }
-        return true;
-    }
+    const VarcharAuxEntryInlined *aux_ptrs[2] = {aux1, aux2};
+    if (merge_index != nullptr) {
+        return is_column_merge_identical(
+                column_top1, lo1_pos, hi1_pos,
+                column_top2, lo2_pos, hi2_pos,
+                merge_index, merge_index_rows,
+                // are_not_equal
+                [&](int64_t index1, int64_t index2) -> bool {
+                    return compare_varchar(
+                            (uint8_t *) aux1, data1, std::numeric_limits<int64_t>::max(), index1,
+                            (uint8_t *) aux2, data2, std::numeric_limits<int64_t>::max(), index2
+                    ) != 0;
+                },
+                // is_not_null_lambda
+                [&](int data_index, int64_t index) -> bool {
+                    return !(aux_ptrs[data_index][index].header & HEADER_FLAG_NULL);
+                }
+        );
+    } else {
+        return is_column_replace_identical(
+                column_top1, lo1_pos, hi1_pos,
+                column_top2, lo2_pos, hi2_pos,
+                // are_not_equal
+                [&](int64_t lo1, int64_t lo2, int64_t size) -> bool {
 
-    for (int64_t out_index = 0; out_index < merge_index_rows; out_index++) {
-        uint64_t index = merge_index[out_index].i;
-        const uint32_t bit = (index >> 63);
+                    // Aux entry is 10 bytes of meta + 6 bytes of pointer for both split and inlined
+                    // Compare first 10 bytes of aux entries
+                    auto aux1_cmp = reinterpret_cast<const VarcharAuxEntryBoth*>(aux1 + lo1);
+                    auto aux2_cmp = reinterpret_cast<const VarcharAuxEntryBoth*>(aux2 + lo2);
+                    for(int64_t i = 0; i < size; i++) {
+                        auto aux1_entry = aux1_cmp[lo1 + i];
+                        auto aux2_entry = aux2_cmp[lo2 + i];
+                        if (aux1_entry.header1 != aux2_entry.header1 ||
+                            aux1_entry.header2 != aux2_entry.header2) {
+                            return true;
+                        }
+                    }
+                    // Compare data
 
-        // Row is replaced, check if the data is the same
-        if (bit == 0) {
-            auto merge_side_index = (int64_t) (index & ~(1ull << 63));
-
-            const auto data1_index = out_index + lo1_pos - column_top1;
-            const auto data2_index = merge_side_index - column_top2;
-
-            if (data1_index < 0) {
-                // data1 points to column top, check new data2 is also null
-                if (data2_index > -1 && !(aux2[data2_index].header & HEADER_FLAG_NULL)) {
+                },
+                // is_not_null_lambda
+                [&](int data_index, int64_t lo, int64_t hi) -> bool {
+                    auto aux = aux_ptrs[data_index];
+                    for (int64_t i = lo; i < hi; i++) {
+                        if (!(aux[i].header & HEADER_FLAG_NULL)) {
+                            return true;
+                        }
+                    }
                     return false;
                 }
-            } else {
-                if (data2_index > -1) {
-                    // data was not null, check new data is the same
-                    if (
-                            compare_varchar(
-                                    (uint8_t *) aux1, data1, std::numeric_limits<int64_t>::max(), data1_index,
-                                    (uint8_t *) aux2, data2, std::numeric_limits<int64_t>::max(), data2_index
-                            )
-                            != 0) {
-                        return false;
-                    }
-                } else {
-                    // data2 points to column top, check new data is also null
-                    if (!(aux1[data1_index].header & HEADER_FLAG_NULL)) {
-                        return false;
-                    }
-                }
-            }
-        }
+        );
     }
-    return true;
 }
 
 template<typename T>
-bool is_str_bin_column_replace_identical(
+bool is_str_bin_column_merge_identical(
         int64_t column_top1, int64_t lo1_pos, int64_t hi1_pos, const int64_t *aux1, const uint8_t *data1,
         int64_t column_top2, int64_t lo2_pos, int64_t hi2_pos, const int64_t *aux2, const uint8_t *data2,
         const index_t *merge_index, int64_t merge_index_rows, int32_t char_size_bytes
 ) {
-    T null_len(-1);
+    constexpr T null_len(-1);
+    const int64_t *aux_ptrs[2] = {aux1, aux2};
+    const uint8_t *data_ptrs[2] = {data1, data2};
+    return is_column_merge_identical(
+            column_top1, lo1_pos, hi1_pos,
+            column_top2, lo2_pos, hi2_pos,
+            merge_index, merge_index_rows,
+            // are_not_equal
+            [&](int64_t index1, int64_t index2) -> bool {
+                // data was not null, check new data is the same
+                auto data1_offset = aux1[index1];
+                auto data2_offset = aux2[index2];
+                T len1 = *(T * )(data1 + data1_offset);
+                T len2 = *(T * )(data2 + data2_offset);
 
-    if (column_top1 >= hi1_pos) {
-        // All old values were nulls, check that the new values are null
-        for (int64_t i = std::max<int64_t>(lo2_pos - column_top2, 0); i < hi2_pos - column_top2; i++) {
-            auto data2_offset = aux2[i];
-            if (*(T *) (data2 + data2_offset) != null_len) {
-                return false;
+                return len1 != len2 ||
+                       (len1 > 0 && memcmp(
+                               data1 + data1_offset + sizeof(T),
+                               data2 + data2_offset + sizeof(T),
+                               len1 * char_size_bytes) != 0);
+
+            },
+            // is_not_null_lambda
+            [&](int data_index, int64_t index) -> bool {
+                auto offset = aux_ptrs[data_index][index];
+                auto data = data_ptrs[data_index];
+                return *(T * )(data + offset) != null_len;
             }
-        }
-        return true;
-    }
-
-    for (int64_t out_index = 0; out_index < merge_index_rows; out_index++) {
-        uint64_t index = merge_index[out_index].i;
-        const uint32_t bit = (index >> 63);
-
-        // Row is replaced, check if the data is the same
-        if (bit == 0) {
-            auto merge_side_index = (int64_t) (index & ~(1ull << 63));
-
-            const auto data1_index = out_index + lo1_pos - column_top1;
-            const auto data2_index = merge_side_index - column_top2;
-
-            if (data1_index < 0) {
-                // data1 points to column top, check new data2 is also null
-                if (data2_index > -1) {
-                    auto data2_offset = aux2[data2_index];
-                    if (*(T *) (data2 + data2_offset) != null_len) {
-                        return false;
-                    }
-                }
-            } else {
-                if (data2_index > -1) {
-                    // data was not null, check new data is the same
-                    auto data1_offset = aux1[data1_index];
-                    auto data2_offset = aux2[data2_index];
-                    T len1 = *(T *) (data1 + data1_offset);
-                    T len2 = *(T *) (data2 + data2_offset);
-
-                    if (len1 != len2 ||
-                        (len1 > 0 && memcmp(
-                                data1 + data1_offset + sizeof(T),
-                                data2 + data2_offset + sizeof(T),
-                                len1 * char_size_bytes) != 0)) {
-                        return false;
-                    }
-
-                } else {
-                    // data2 points to column top, check new data is also null
-                    auto data1_offset = aux1[data1_index];
-                    if (*(T *) (data1 + data1_offset) != null_len) {
-                        return false;
-                    }
-                }
-            }
-        }
-    }
-    return true;
+    );
 }
 
-bool is_array_column_replace_identical(
+bool is_array_column_merge_identical(
         int64_t column_top1, int64_t lo1_pos, int64_t hi1_pos, const ArrayAuxEntry *aux1, const uint8_t *data1,
         int64_t column_top2, int64_t lo2_pos, int64_t hi2_pos, const ArrayAuxEntry *aux2, const uint8_t *data2,
         const index_t *merge_index, int64_t merge_index_rows
 ) {
-    if (column_top1 >= hi1_pos) {
-        // All old values were nulls, check that the new values are null
-        for (int64_t i = std::max<int64_t>(lo2_pos - column_top2, 0); i < hi2_pos - column_top2; i++) {
-            if (aux2[i].data_size != 0) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    for (int64_t out_index = 0; out_index < merge_index_rows; out_index++) {
-        uint64_t index = merge_index[out_index].i;
-        const uint32_t bit = (index >> 63);
-
-        // Row is replaced, check if the data is the same
-        if (bit == 0) {
-            auto merge_side_index = (int64_t) (index & ~(1ull << 63));
-
-            const auto data1_index = out_index + lo1_pos - column_top1;
-            const auto data2_index = merge_side_index - column_top2;
-
-            if (data1_index < 0) {
-                // data1 points to column top, check new data2 is also null
-                if (data2_index > -1 && aux2[data2_index].data_size != 0) {
-                    return false;
+    const ArrayAuxEntry *aux_ptrs[2] = {aux1, aux2};
+    return is_column_merge_identical(
+            column_top1, lo1_pos, hi1_pos,
+            column_top2, lo2_pos, hi2_pos,
+            merge_index, merge_index_rows,
+            // are_not_equal
+            [&](int64_t index1, int64_t index2) -> bool {
+                int32_t size1 = aux1[index1].data_size;
+                int32_t size2 = aux2[index2].data_size;
+                if (size1 != size2) {
+                    return true;
                 }
-            } else {
-                int32_t size1 = aux1[data1_index].data_size;
-                if (data2_index > -1) {
-                    // data was not null, check new data is the same
-                    int32_t size2 = aux2[data2_index].data_size;
-
-                    if (size1 == size2) {
-                        auto offset1 = aux1[data1_index].offset_48 & ARRAY_OFFSET_MAX;
-                        auto offset2 = aux2[data2_index].offset_48 & ARRAY_OFFSET_MAX;
-                        if (memcmp(data1 + offset1, data2 + offset2, size1) != 0) {
-                            return false;
-                        }
-                    } else {
-                        return false;
-                    }
-                } else {
-                    // data2 points to column top, check new data is also null
-                    if (size1 != 0) {
-                        return false;
-                    }
-                }
+                auto offset1 = aux1[index1].offset_48 & ARRAY_OFFSET_MAX;
+                auto offset2 = aux2[index2].offset_48 & ARRAY_OFFSET_MAX;
+                return memcmp(data1 + offset1, data2 + offset2, size1) != 0;
+            },
+            // is_not_null_lambda
+            [&](int data_index, int64_t index) -> bool {
+                return aux_ptrs[data_index][index].data_size > 0;
             }
-        }
-    }
-    return true;
+    );
 }
 
 extern "C" {
@@ -1287,7 +1329,7 @@ Java_io_questdb_cairo_frm_FrameAlgebra_isColumnReplaceIdentical(
 
     switch (value_size_bytes) {
         case 1: {
-            return is_column_replace_identical<int8_t>(
+            return is_fixed_column_merge_identical<int8_t>(
                     column_top1, lo1_pos, hi1_pos, (int8_t *) data1,
                     column_top2, lo2_pos, hi2_pos, (int8_t *) data2,
                     merge_index, merge_index_rows,
@@ -1295,7 +1337,7 @@ Java_io_questdb_cairo_frm_FrameAlgebra_isColumnReplaceIdentical(
             );
         }
         case 2: {
-            return is_column_replace_identical<int16_t>(
+            return is_fixed_column_merge_identical<int16_t>(
                     column_top1, lo1_pos, hi1_pos, (int16_t *) data1,
                     column_top2, lo2_pos, hi2_pos, (int16_t *) data2,
                     merge_index, merge_index_rows,
@@ -1303,7 +1345,7 @@ Java_io_questdb_cairo_frm_FrameAlgebra_isColumnReplaceIdentical(
             );
         }
         case 4: {
-            return is_column_replace_identical<int32_t>(
+            return is_fixed_column_merge_identical<int32_t>(
                     column_top1, lo1_pos, hi1_pos, (int32_t *) data1,
                     column_top2, lo2_pos, hi2_pos, (int32_t *) data2,
                     merge_index, merge_index_rows,
@@ -1311,7 +1353,7 @@ Java_io_questdb_cairo_frm_FrameAlgebra_isColumnReplaceIdentical(
             );
         }
         case 8: {
-            return is_column_replace_identical<int64_t>(
+            return is_fixed_column_merge_identical<int64_t>(
                     column_top1, lo1_pos, hi1_pos, (int64_t *) data1,
                     column_top2, lo2_pos, hi2_pos, (int64_t *) data2,
                     merge_index, merge_index_rows,
@@ -1319,7 +1361,7 @@ Java_io_questdb_cairo_frm_FrameAlgebra_isColumnReplaceIdentical(
             );
         }
         case 16: {
-            return is_column_replace_identical<__int128>(
+            return is_fixed_column_merge_identical<__int128>(
                     column_top1, lo1_pos, hi1_pos, (__int128 *) data1,
                     column_top2, lo2_pos, hi2_pos, (__int128 *) data2,
                     merge_index, merge_index_rows,
@@ -1327,7 +1369,7 @@ Java_io_questdb_cairo_frm_FrameAlgebra_isColumnReplaceIdentical(
             );
         }
         case 32: {
-            return is_column_replace_identical<int256>(
+            return is_fixed_column_merge_identical<int256>(
                     column_top1, lo1_pos, hi1_pos, (int256 *) data1,
                     column_top2, lo2_pos, hi2_pos, (int256 *) data2,
                     merge_index, merge_index_rows,
@@ -1337,7 +1379,7 @@ Java_io_questdb_cairo_frm_FrameAlgebra_isColumnReplaceIdentical(
         case -1: {
             switch ((ColumnType) (column_type)) {
                 case ColumnType::VARCHAR: {
-                    return is_varchar_column_replace_identical(
+                    return is_varchar_column_merge_identical(
                             column_top1, lo1_pos, hi1_pos, (const VarcharAuxEntryInlined *) aux1,
                             (const uint8_t *) data1,
                             column_top2, lo2_pos, hi2_pos, (const VarcharAuxEntryInlined *) aux2,
@@ -1346,21 +1388,21 @@ Java_io_questdb_cairo_frm_FrameAlgebra_isColumnReplaceIdentical(
                     );
                 }
                 case ColumnType::STRING: {
-                    return is_str_bin_column_replace_identical<int32_t>(
+                    return is_str_bin_column_merge_identical<int32_t>(
                             column_top1, lo1_pos, hi1_pos, (const int64_t *) aux1, (const uint8_t *) data1,
                             column_top2, lo2_pos, hi2_pos, (const int64_t *) aux2, (const uint8_t *) data2,
                             merge_index, merge_index_rows, 2
                     );
                 }
                 case ColumnType::BINARY: {
-                    return is_str_bin_column_replace_identical<int64_t>(
+                    return is_str_bin_column_merge_identical<int64_t>(
                             column_top1, lo1_pos, hi1_pos, (const int64_t *) aux1, (const uint8_t *) data1,
                             column_top2, lo2_pos, hi2_pos, (const int64_t *) aux2, (const uint8_t *) data2,
                             merge_index, merge_index_rows, 1
                     );
                 }
                 case ColumnType::ARRAY: {
-                    return is_array_column_replace_identical(
+                    return is_array_column_merge_identical(
                             column_top1, lo1_pos, hi1_pos, (const ArrayAuxEntry *) aux1, (const uint8_t *) data1,
                             column_top2, lo2_pos, hi2_pos, (const ArrayAuxEntry *) aux2, (const uint8_t *) data2,
                             merge_index, merge_index_rows

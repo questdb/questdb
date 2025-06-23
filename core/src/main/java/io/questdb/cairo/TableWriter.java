@@ -9559,7 +9559,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    boolean checkCommitValueColumnsIdenticalToPartition(
+    boolean checkCommitIdenticalToPartition(
             long partitionTimestamp,
             long partitionNameTxn,
             long partitionRowCount,
@@ -9568,7 +9568,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long commitLo,
             long commitHi,
             long mergeIndexAddr,
-            long mergeIndexRows
+            long mergeIndexRows,
+            boolean nonDedupOnly
     ) {
         LOG.info().$("checking dedup insert results in noop [table=").$(getTableToken()).I$();
 
@@ -9579,7 +9580,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try (Frame commitFrame = openCommitFrame()) {
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
                     int columnType = metadata.getColumnType(i);
-                    if (columnType > 0 && !metadata.isDedupKey(i) && i != metadata.getTimestampIndex()) {
+                    if (columnType > 0 && (!nonDedupOnly || (!metadata.isDedupKey(i) && i != metadata.getTimestampIndex()))) {
                         if (!FrameAlgebra.isColumnReplaceIdentical(
                                 i,
                                 partitionFrame,
