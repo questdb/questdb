@@ -121,7 +121,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
         // unless that is, column already exists in one of the sets. If we don't check column existence, it might
         // cause "ambiguous" column error.
         boolean found = false;
-        for (int i  = 0, n = nameSets.size(); i < n; i++) {
+        for (int i = 0, n = nameSets.size(); i < n; i++) {
             if (nameSets.getQuick(i).contains(columnName)) {
                 found = true;
                 break;

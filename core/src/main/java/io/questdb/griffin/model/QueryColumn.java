@@ -102,9 +102,6 @@ public class QueryColumn implements Mutable, Sinkable {
     }
 
     public QueryColumn of(CharSequence alias, boolean aliasOrganic, ExpressionNode ast, boolean includeIntoWildcard, int type) {
-        if (alias != null && Chars.equals("date_report", alias)) {
-            System.out.println("ok");
-        }
         this.alias = alias;
         this.aliasOrganic = aliasOrganic;
         this.ast = ast;
@@ -114,9 +111,6 @@ public class QueryColumn implements Mutable, Sinkable {
     }
 
     public void setAlias(CharSequence alias, boolean aliasOrganic) {
-        if (Chars.equals("date_report", alias)) {
-            System.out.println("ok");
-        }
         // do not override organic flag by setting the same alias with "false"
         if (this.alias == alias || Chars.equalsNc(alias, this.alias)) {
             return;

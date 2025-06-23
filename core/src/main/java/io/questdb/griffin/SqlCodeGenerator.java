@@ -4550,7 +4550,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     @NotNull
-    private VirtualRecordCursorFactory generateSelectVirtualWithSubQuery(QueryModel model, SqlExecutionContext executionContext, RecordCursorFactory factory) throws SqlException {
+    private VirtualRecordCursorFactory generateSelectVirtualWithSubQuery(
+            QueryModel model,
+            SqlExecutionContext executionContext,
+            RecordCursorFactory factory
+    ) throws SqlException {
         final ObjList<QueryColumn> columns = model.getColumns();
         final int columnCount = columns.size();
         final ObjList<Function> functions = new ObjList<>(columnCount);
