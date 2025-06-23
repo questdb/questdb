@@ -58,13 +58,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private int defaultSymbolCapacity;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableNameExpr;
-    private int matViewPeriodDelay;
-    private char matViewPeriodDelayUnit;
-    private int matViewPeriodLength;
-    private char matViewPeriodLengthUnit;
-    private int matViewTimerInterval;
-    private long matViewTimerStart;
-    private char matViewTimerUnit;
     private int maxUncommittedRows;
     private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
@@ -116,14 +109,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     o3MaxLag,
                     columnModels,
                     batchSize,
-                    batchO3MaxLag,
-                    matViewTimerStart,
-                    matViewTimerInterval,
-                    matViewTimerUnit,
-                    matViewPeriodLength,
-                    matViewPeriodLengthUnit,
-                    matViewPeriodDelay,
-                    matViewPeriodDelayUnit
+                    batchO3MaxLag
             );
         }
 
@@ -187,13 +173,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         ttlHoursOrMonths = 0;
         ttlPosition = 0;
         walEnabled = false;
-        matViewTimerStart = 0;
-        matViewTimerInterval = 0;
-        matViewTimerUnit = 0;
-        matViewPeriodLength = 0;
-        matViewPeriodLengthUnit = 0;
-        matViewPeriodDelay = 0;
-        matViewPeriodDelayUnit = 0;
     }
 
     public int getColumnCount() {
@@ -210,34 +189,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public CharSequence getColumnName(int index) {
         return columnNames.get(index);
-    }
-
-    public int getMatViewPeriodDelay() {
-        return matViewPeriodDelay;
-    }
-
-    public char getMatViewPeriodDelayUnit() {
-        return matViewPeriodDelayUnit;
-    }
-
-    public int getMatViewPeriodLength() {
-        return matViewPeriodLength;
-    }
-
-    public char getMatViewPeriodLengthUnit() {
-        return matViewPeriodLengthUnit;
-    }
-
-    public int getMatViewTimerInterval() {
-        return matViewTimerInterval;
-    }
-
-    public long getMatViewTimerStart() {
-        return matViewTimerStart;
-    }
-
-    public char getMatViewTimerUnit() {
-        return matViewTimerUnit;
     }
 
     public int getPartitionByFromExpr() {
@@ -305,19 +256,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public void setLikeTableNameExpr(ExpressionNode expr) {
         this.likeTableNameExpr = expr;
-    }
-
-    public void setMatViewPeriodLength(int length, char lengthUnit, int delay, char delayUnit) {
-        this.matViewPeriodLength = length;
-        this.matViewPeriodLengthUnit = lengthUnit;
-        this.matViewPeriodDelay = delay;
-        this.matViewPeriodDelayUnit = delayUnit;
-    }
-
-    public void setMatViewTimer(long start, int interval, char unit) {
-        this.matViewTimerStart = start;
-        this.matViewTimerInterval = interval;
-        this.matViewTimerUnit = unit;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {

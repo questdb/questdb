@@ -43,7 +43,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -193,8 +192,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 for (; viewIndex < n; viewIndex++) {
                     final TableToken viewToken = viewTokens.get(viewIndex);
                     if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
-                        final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
-                        if (matViewDefinition == null) {
+                        final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
+                        if (viewDefinition == null) {
                             continue; // mat view was dropped concurrently
                         }
 
@@ -217,31 +216,24 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         final long lastRefreshedBaseTxn = viewStateReader.getLastRefreshBaseTxn();
                         final long lastRefreshTimestamp = viewStateReader.getLastRefreshTimestamp();
 
-                        final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
+                        final TableToken baseTableToken = engine.getTableTokenIfExists(viewDefinition.getBaseTableName());
                         // Read base table txn after mat view's last refreshed txn to avoid
                         // showing obsolete base table txn.
                         final long lastAppliedBaseTxn = baseTableToken != null
                                 ? engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn() : -1;
 
-                        final int refreshLimitHoursOrMonths;
-                        final int periodLength;
-                        final char periodLengthUnit;
-                        final int periodDelay;
-                        final char periodDelayUnit;
+                        final int refreshLimitHoursOrMonths = viewDefinition.getRefreshLimitHoursOrMonths();
+                        final int periodLength = viewDefinition.getPeriodLength();
+                        final char periodLengthUnit = viewDefinition.getPeriodLengthUnit();
+                        final int periodDelay = viewDefinition.getPeriodDelay();
+                        final char periodDelayUnit = viewDefinition.getPeriodDelayUnit();
                         long timerStart = Numbers.LONG_NULL;
                         int timerInterval = 0;
                         char timerIntervalUnit = 0;
-                        try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
-                            refreshLimitHoursOrMonths = matViewMeta.getMatViewRefreshLimitHoursOrMonths();
-                            periodLength = matViewMeta.getMatViewPeriodLength();
-                            periodLengthUnit = matViewMeta.getMatViewPeriodLengthUnit();
-                            periodDelay = matViewMeta.getMatViewPeriodDelay();
-                            periodDelayUnit = matViewMeta.getMatViewPeriodDelayUnit();
-                            if (matViewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE || periodLength > 0) {
-                                timerStart = matViewMeta.getMatViewTimerStart();
-                                timerInterval = matViewMeta.getMatViewTimerInterval();
-                                timerIntervalUnit = matViewMeta.getMatViewTimerUnit();
-                            }
+                        if (viewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE || periodLength > 0) {
+                            timerStart = viewDefinition.getTimerStart();
+                            timerInterval = viewDefinition.getTimerInterval();
+                            timerIntervalUnit = viewDefinition.getTimerUnit();
                         }
 
                         final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
@@ -249,7 +241,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         final long lastRefreshStartTimestamp = state != null ? state.getLastRefreshStartTimestamp() : Numbers.LONG_NULL;
 
                         record.of(
-                                matViewDefinition,
+                                viewDefinition,
                                 lastRefreshStartTimestamp,
                                 lastRefreshTimestamp,
                                 lastPeriodHi,

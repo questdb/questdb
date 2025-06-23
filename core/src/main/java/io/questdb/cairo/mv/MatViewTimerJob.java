@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
@@ -95,15 +94,15 @@ public class MatViewTimerJob extends SynchronizedJob {
             LOG.info().$("materialized view definition not found [view=").$(viewToken).I$();
             return;
         }
-        try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
-            long timerStart = matViewMeta.getMatViewTimerStart();
+        try {
+            long timerStart = viewDefinition.getTimerStart();
             TimeZoneRules timerTzRules = viewDefinition.getTimerTzRules();
 
-            if (matViewMeta.getMatViewPeriodLength() > 0) {
+            if (viewDefinition.getPeriodLength() > 0) {
                 // It's a period mat view, so first add the period timer.
-                final long start = matViewMeta.getMatViewTimerStart();
-                final int periodLength = matViewMeta.getMatViewPeriodLength();
-                final char periodLengthUnit = matViewMeta.getMatViewPeriodLengthUnit();
+                final long start = viewDefinition.getTimerStart();
+                final int periodLength = viewDefinition.getPeriodLength();
+                final char periodLengthUnit = viewDefinition.getPeriodLengthUnit();
                 final TimestampSampler periodSampler;
                 try {
                     periodSampler = TimestampSamplerFactory.getInstance(periodLength, periodLengthUnit, -1);
@@ -111,8 +110,8 @@ public class MatViewTimerJob extends SynchronizedJob {
                     throw CairoException.critical(0).put("invalid LENGTH interval and/or unit: ").put(periodLength)
                             .put(", ").put(periodLengthUnit);
                 }
-                final int periodDelay = matViewMeta.getMatViewPeriodDelay();
-                final char periodDelayUnit = matViewMeta.getMatViewPeriodDelayUnit();
+                final int periodDelay = viewDefinition.getPeriodDelay();
+                final char periodDelayUnit = viewDefinition.getPeriodDelayUnit();
                 final long delay = periodDelayMicros(periodDelay, periodDelayUnit);
                 final Timer periodTimer = new Timer(
                         Timer.PERIOD_REFRESH_TYPE,
@@ -138,8 +137,8 @@ public class MatViewTimerJob extends SynchronizedJob {
 
             if (viewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
                 // The view has timer refresh, so add a "normal" timer for it.
-                final int timerInterval = matViewMeta.getMatViewTimerInterval();
-                final char timerUnit = matViewMeta.getMatViewTimerUnit();
+                final int timerInterval = viewDefinition.getTimerInterval();
+                final char timerUnit = viewDefinition.getTimerUnit();
                 final TimestampSampler timerSampler;
                 try {
                     timerSampler = TimestampSamplerFactory.getInstance(timerInterval, timerUnit, -1);

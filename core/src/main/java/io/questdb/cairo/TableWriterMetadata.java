@@ -33,14 +33,6 @@ import io.questdb.std.Chars;
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
 public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata, TableStructure {
-    private int matViewPeriodDelay;
-    private char matViewPeriodDelayUnit;
-    private int matViewPeriodLength;
-    private char matViewPeriodLengthUnit;
-    private int matViewRefreshLimitHoursOrMonths;
-    private int matViewTimerInterval;
-    private long matViewTimerStart;
-    private char matViewTimerUnit;
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;
@@ -63,46 +55,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
-    }
-
-    @Override
-    public int getMatViewPeriodDelay() {
-        return matViewPeriodDelay;
-    }
-
-    @Override
-    public char getMatViewPeriodDelayUnit() {
-        return matViewPeriodDelayUnit;
-    }
-
-    @Override
-    public int getMatViewPeriodLength() {
-        return matViewPeriodLength;
-    }
-
-    @Override
-    public char getMatViewPeriodLengthUnit() {
-        return matViewPeriodLengthUnit;
-    }
-
-    @Override
-    public int getMatViewRefreshLimitHoursOrMonths() {
-        return matViewRefreshLimitHoursOrMonths;
-    }
-
-    @Override
-    public int getMatViewTimerInterval() {
-        return matViewTimerInterval;
-    }
-
-    @Override
-    public long getMatViewTimerStart() {
-        return matViewTimerStart;
-    }
-
-    @Override
-    public char getMatViewTimerUnit() {
-        return matViewTimerUnit;
     }
 
     @Override
@@ -186,14 +138,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
-        this.matViewRefreshLimitHoursOrMonths = TableUtils.getMatViewRefreshLimitHoursOrMonths(metaMem);
-        this.matViewTimerStart = TableUtils.getMatViewTimerStart(metaMem);
-        this.matViewTimerInterval = TableUtils.getMatViewTimerInterval(metaMem);
-        this.matViewTimerUnit = TableUtils.getMatViewTimerUnit(metaMem);
-        this.matViewPeriodLength = TableUtils.getMatViewPeriodLength(metaMem);
-        this.matViewPeriodLengthUnit = TableUtils.getMatViewPeriodLengthUnit(metaMem);
-        this.matViewPeriodDelay = TableUtils.getMatViewPeriodDelay(metaMem);
-        this.matViewPeriodDelayUnit = TableUtils.getMatViewPeriodDelayUnit(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -227,22 +171,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             }
             offset += Vm.getStorageLength(name);
         }
-    }
-
-    public void setMatViewRefreshLimitHoursOrMonths(int matViewRefreshLimitHoursOrMonths) {
-        this.matViewRefreshLimitHoursOrMonths = matViewRefreshLimitHoursOrMonths;
-    }
-
-    public void setMatViewTimerInterval(int matViewTimerInterval) {
-        this.matViewTimerInterval = matViewTimerInterval;
-    }
-
-    public void setMatViewTimerStart(long matViewTimerStart) {
-        this.matViewTimerStart = matViewTimerStart;
-    }
-
-    public void setMatViewTimerUnit(char matViewTimerUnit) {
-        this.matViewTimerUnit = matViewTimerUnit;
     }
 
     public void setMaxUncommittedRows(int rows) {

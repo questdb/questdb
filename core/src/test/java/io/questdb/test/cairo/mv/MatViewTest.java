@@ -29,12 +29,12 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshSqlExecutionContext;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
@@ -417,6 +417,11 @@ public class MatViewTest extends AbstractCairoTest {
             execute("create materialized view price_1h_t refresh every 1h as select sym, last(price) as price, ts from base_price sample by 1h");
 
             assertExceptionNoLeakCheck(
+                    "alter materialized view base_price set refresh every 1h",
+                    24,
+                    "materialized view name expected"
+            );
+            assertExceptionNoLeakCheck(
                     "alter materialized view price_1h set refresh every 1h",
                     45,
                     "materialized view must be of timer refresh type"
@@ -533,12 +538,11 @@ public class MatViewTest extends AbstractCairoTest {
             drainWalQueue();
             final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
             Assert.assertNotNull(viewToken);
-            try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
-                Assert.assertEquals(15, matViewMeta.getMatViewTimerInterval());
-                Assert.assertEquals('m', matViewMeta.getMatViewTimerUnit());
-                // start should stay as is
-                Assert.assertEquals(parseFloorPartialTimestamp(start), matViewMeta.getMatViewTimerStart());
-            }
+            final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
+            Assert.assertEquals(15, viewDefinition.getTimerInterval());
+            Assert.assertEquals('m', viewDefinition.getTimerUnit());
+            // start should stay as is
+            Assert.assertEquals(parseFloorPartialTimestamp(start), viewDefinition.getTimerStart());
 
             // the inserted rows are still in the future, just like the period start
             currentMicros = parseFloorPartialTimestamp("1999-12-30T00:00:00.000000Z");

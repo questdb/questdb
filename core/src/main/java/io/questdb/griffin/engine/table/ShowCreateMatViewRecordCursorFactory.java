@@ -87,8 +87,8 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
     }
 
     public static class ShowCreateMatViewCursor implements NoRandomAccessRecordCursor {
-        protected final MatViewDefinition matViewDefinition = new MatViewDefinition();
         protected final Utf8StringSink sink = new Utf8StringSink();
+        protected final MatViewDefinition viewDefinition = new MatViewDefinition();
         private final Path path;
         private final ShowCreateMatViewRecord record = new ShowCreateMatViewRecord();
         protected SqlExecutionContext executionContext;
@@ -104,7 +104,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
         @Override
         public void close() {
             sink.clear();
-            matViewDefinition.clear();
+            viewDefinition.clear();
             Misc.free(path);
             Misc.free(reader);
         }
@@ -133,6 +133,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
         ) throws SqlException {
             this.tableToken = tableToken;
             this.executionContext = executionContext;
+
             try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
                 this.table = metadataRO.getTable(tableToken);
                 if (table == null) {
@@ -155,7 +156,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             }
             try {
                 MatViewDefinition.readFrom(
-                        matViewDefinition,
+                        viewDefinition,
                         reader,
                         path,
                         pathLen,
@@ -188,53 +189,53 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             sink.putAscii("CREATE MATERIALIZED VIEW '")
                     .put(tableToken.getTableName())
                     .putAscii("' WITH BASE '")
-                    .put(matViewDefinition.getBaseTableName());
+                    .put(viewDefinition.getBaseTableName());
             sink.putAscii("' REFRESH");
-            if (matViewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
+            if (viewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
                 sink.putAscii(" EVERY ");
-                sink.put(table.getMatViewTimerInterval());
-                sink.putAscii(table.getMatViewTimerUnit());
-                if (matViewDefinition.isDeferred()) {
+                sink.put(viewDefinition.getTimerInterval());
+                sink.putAscii(viewDefinition.getTimerUnit());
+                if (viewDefinition.isDeferred()) {
                     sink.putAscii(" DEFERRED");
                 }
-                if (table.getMatViewPeriodLength() == 0) {
+                if (viewDefinition.getPeriodLength() == 0) {
                     sink.putAscii(" START '");
-                    sink.putISODate(table.getMatViewTimerStart());
-                    if (matViewDefinition.getTimerTimeZone() != null) {
+                    sink.putISODate(viewDefinition.getTimerStart());
+                    if (viewDefinition.getTimerTimeZone() != null) {
                         sink.putAscii("' TIME ZONE '");
-                        sink.put(matViewDefinition.getTimerTimeZone());
+                        sink.put(viewDefinition.getTimerTimeZone());
                     }
                     sink.putAscii('\'');
                 }
-            } else if (matViewDefinition.getRefreshType() == MatViewDefinition.IMMEDIATE_REFRESH_TYPE) {
+            } else if (viewDefinition.getRefreshType() == MatViewDefinition.IMMEDIATE_REFRESH_TYPE) {
                 sink.putAscii(" IMMEDIATE");
-                if (matViewDefinition.isDeferred()) {
+                if (viewDefinition.isDeferred()) {
                     sink.putAscii(" DEFERRED");
                 }
-            } else if (matViewDefinition.getRefreshType() == MatViewDefinition.MANUAL_REFRESH_TYPE) {
+            } else if (viewDefinition.getRefreshType() == MatViewDefinition.MANUAL_REFRESH_TYPE) {
                 sink.putAscii(" MANUAL");
-                if (matViewDefinition.isDeferred()) {
+                if (viewDefinition.isDeferred()) {
                     sink.putAscii(" DEFERRED");
                 }
             }
-            if (table.getMatViewPeriodLength() > 0) {
+            if (viewDefinition.getPeriodLength() > 0) {
                 sink.putAscii(" PERIOD (LENGTH ");
-                sink.put(table.getMatViewPeriodLength());
-                sink.putAscii(table.getMatViewPeriodLengthUnit());
-                if (matViewDefinition.getTimerTimeZone() != null) {
+                sink.put(viewDefinition.getPeriodLength());
+                sink.putAscii(viewDefinition.getPeriodLengthUnit());
+                if (viewDefinition.getTimerTimeZone() != null) {
                     sink.putAscii(" TIME ZONE '");
-                    sink.put(matViewDefinition.getTimerTimeZone());
+                    sink.put(viewDefinition.getTimerTimeZone());
                     sink.putAscii('\'');
                 }
-                if (table.getMatViewPeriodDelay() > 0) {
+                if (viewDefinition.getPeriodDelay() > 0) {
                     sink.putAscii(" DELAY ");
-                    sink.put(table.getMatViewPeriodDelay());
-                    sink.putAscii(table.getMatViewPeriodDelayUnit());
+                    sink.put(viewDefinition.getPeriodDelay());
+                    sink.putAscii(viewDefinition.getPeriodDelayUnit());
                 }
                 sink.putAscii(')');
             }
             sink.putAscii(" AS (\n")
-                    .put(matViewDefinition.getMatViewSql())
+                    .put(viewDefinition.getMatViewSql())
                     .putAscii('\n');
             sink.putAscii(") PARTITION BY ").put(table.getPartitionByName());
             ttlToSink(table.getTtlHoursOrMonths(), sink);
@@ -243,7 +244,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             sink.putAscii(';');
         }
 
-        // placeholder, do not remove!
+        // placeholder for ent, do not remove!
         protected void putAdditional() {
         }
 

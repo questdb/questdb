@@ -36,10 +36,6 @@ public class CairoTable implements Sinkable {
     public final IntList columnOrderList;
     public final ObjList<CairoColumn> columns;
     private boolean dedup;
-    private int matViewPeriodDelay;
-    private char matViewPeriodDelayUnit;
-    private int matViewPeriodLength;
-    private char matViewPeriodLengthUnit;
     private int matViewRefreshLimitHoursOrMonths;
     private int matViewTimerInterval;
     private long matViewTimerStart;
@@ -80,10 +76,6 @@ public class CairoTable implements Sinkable {
         matViewTimerStart = fromTab.getMatViewTimerStart();
         matViewTimerInterval = fromTab.getMatViewTimerInterval();
         matViewTimerUnit = fromTab.getMatViewTimerUnit();
-        matViewPeriodLength = fromTab.getMatViewPeriodLength();
-        matViewPeriodLengthUnit = fromTab.getMatViewPeriodLengthUnit();
-        matViewPeriodDelay = fromTab.getMatViewPeriodDelay();
-        matViewPeriodDelayUnit = fromTab.getMatViewPeriodDelayUnit();
     }
 
     public int getColumnCount() {
@@ -113,22 +105,6 @@ public class CairoTable implements Sinkable {
 
     public int getId() {
         return token.getTableId();
-    }
-
-    public int getMatViewPeriodDelay() {
-        return matViewPeriodDelay;
-    }
-
-    public char getMatViewPeriodDelayUnit() {
-        return matViewPeriodDelayUnit;
-    }
-
-    public int getMatViewPeriodLength() {
-        return matViewPeriodLength;
-    }
-
-    public char getMatViewPeriodLengthUnit() {
-        return matViewPeriodLengthUnit;
     }
 
     public int getMatViewRefreshLimitHoursOrMonths() {
@@ -211,22 +187,6 @@ public class CairoTable implements Sinkable {
 
     public void setDedupFlag(boolean dedup) {
         this.dedup = dedup;
-    }
-
-    public void setMatViewPeriodDelay(int matViewPeriodDelay) {
-        this.matViewPeriodDelay = matViewPeriodDelay;
-    }
-
-    public void setMatViewPeriodDelayUnit(char matViewPeriodDelayUnit) {
-        this.matViewPeriodDelayUnit = matViewPeriodDelayUnit;
-    }
-
-    public void setMatViewPeriodLength(int matViewPeriodLength) {
-        this.matViewPeriodLength = matViewPeriodLength;
-    }
-
-    public void setMatViewPeriodLengthUnit(char matViewPeriodLengthUnit) {
-        this.matViewPeriodLengthUnit = matViewPeriodLengthUnit;
     }
 
     public void setMatViewRefreshLimitHoursOrMonths(int matViewRefreshLimitHoursOrMonths) {

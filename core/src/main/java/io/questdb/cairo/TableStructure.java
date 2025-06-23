@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.std.Numbers;
 
 public interface TableStructure {
 
@@ -39,44 +38,6 @@ public interface TableStructure {
 
     default MatViewDefinition getMatViewDefinition() {
         return null;
-    }
-
-    default int getMatViewPeriodDelay() {
-        return 0; // disabled by default
-    }
-
-    default char getMatViewPeriodDelayUnit() {
-        return 0; // disabled by default
-    }
-
-    default int getMatViewPeriodLength() {
-        return 0; // disabled by default
-    }
-
-    default char getMatViewPeriodLengthUnit() {
-        return 0; // disabled by default
-    }
-
-    /**
-     * Returns incremental refresh limit for the materialized view:
-     * if positive, it's in hours;
-     * if negative, it's in months (and the actual value is positive);
-     * zero means "no refresh limit".
-     */
-    default int getMatViewRefreshLimitHoursOrMonths() {
-        return 0; // disabled by default
-    }
-
-    default int getMatViewTimerInterval() {
-        return 0; // disabled by default
-    }
-
-    default long getMatViewTimerStart() {
-        return Numbers.LONG_NULL; // disabled by default
-    }
-
-    default char getMatViewTimerUnit() {
-        return 0; // disabled by default
     }
 
     int getMaxUncommittedRows();

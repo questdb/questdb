@@ -1602,6 +1602,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         tok = expectToken(lexer, "materialized view name");
         assertNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
         final TableToken matViewToken = tableExistsOrFail(matViewNamePosition, GenericLexer.unquote(tok), executionContext);
+        if (!matViewToken.isMatView()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected");
+        }
         final SecurityContext securityContext = executionContext.getSecurityContext();
         final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
         if (viewDefinition == null) {
@@ -1653,12 +1656,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             throw SqlException.$(lexer.lastTokenPosition(), "materialized view must be of timer refresh type");
                         }
 
-                        final long periodLength;
-                        final long oldStart;
-                        try (TableMetadata matViewMeta = engine.getTableMetadata(matViewToken)) {
-                            periodLength = matViewMeta.getMatViewPeriodLength();
-                            oldStart = matViewMeta.getMatViewTimerStart();
-                        }
+                        final long periodLength = viewDefinition.getPeriodLength();
+                        final long oldStart = viewDefinition.getTimerStart();
                         // Use the current time as the start timestamp if it wasn't specified.
                         long start = configuration.getMicrosecondClock().getTicks();
 

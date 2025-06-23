@@ -73,8 +73,8 @@ import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
-import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
+import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
@@ -583,7 +583,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 return (int) (writer.getAppliedSeqTxn() - seqTxn + 1);
-
             case SQL:
                 try (WalEventReader eventReader = walEventReader) {
                     final WalEventCursor walEventCursor = eventReader.of(walPath, segmentTxn);
@@ -594,7 +593,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     lastCommittedRows = 0;
                     return 1;
                 }
-
             case TRUNCATE:
                 long txn = writer.getTxn();
                 writer.setSeqTxn(seqTxn);
@@ -747,7 +745,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     ) {
         try (BlockFileWriter stateWriter = mvStateWriter) {
             stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-
             MatViewState.append(
                     lastRefreshTimestamp,
                     lastRefreshBaseTxn,

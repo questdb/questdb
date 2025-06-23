@@ -34,6 +34,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
@@ -48,10 +49,17 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     private String baseTableName;
     private int baseTableNamePosition;
     private boolean deferred;
+    private int periodDelay;
+    private char periodDelayUnit;
+    private int periodLength;
+    private char periodLengthUnit;
     private int refreshType = -1;
     private String timeZone;
     private String timeZoneOffset;
+    private int timerInterval;
+    private long timerStart = Numbers.LONG_NULL;
     private String timerTimeZone;
+    private char timerUnit;
 
     @Override
     public CreateMatViewOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
@@ -65,7 +73,14 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
                 baseTableNamePosition,
                 timeZone,
                 timeZoneOffset,
-                timerTimeZone
+                timerInterval,
+                timerUnit,
+                timerStart,
+                timerTimeZone,
+                periodLength,
+                periodLengthUnit,
+                periodDelay,
+                periodDelayUnit
         );
     }
 
@@ -78,7 +93,14 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         baseTableNamePosition = 0;
         timeZone = null;
         timeZoneOffset = null;
+        timerInterval = 0;
+        timerUnit = 0;
+        timerStart = Numbers.LONG_NULL;
         timerTimeZone = null;
+        periodLength = 0;
+        periodLengthUnit = 0;
+        periodDelay = 0;
+        periodDelayUnit = 0;
     }
 
     public CreateTableOperationBuilderImpl getCreateTableOperationBuilder() {
@@ -113,7 +135,10 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     }
 
     public void setPeriodLength(int length, char lengthUnit, int delay, char delayUnit) {
-        createTableOperationBuilder.setMatViewPeriodLength(length, lengthUnit, delay, delayUnit);
+        this.periodLength = length;
+        this.periodLengthUnit = lengthUnit;
+        this.periodDelay = delay;
+        this.periodDelayUnit = delayUnit;
     }
 
     public void setRefreshType(int refreshType) {
@@ -134,8 +159,10 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     }
 
     public void setTimer(@Nullable String timeZone, long start, int interval, char unit) {
-        createTableOperationBuilder.setMatViewTimer(start, interval, unit);
         this.timerTimeZone = timeZone;
+        this.timerStart = start;
+        this.timerInterval = interval;
+        this.timerUnit = unit;
     }
 
     @Override
@@ -149,14 +176,14 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         sink.putAscii(" refresh");
         if (refreshType == MatViewDefinition.TIMER_REFRESH_TYPE) {
             sink.putAscii(" every ");
-            sink.put(createTableOperationBuilder.getMatViewTimerInterval());
-            sink.putAscii(createTableOperationBuilder.getMatViewTimerUnit());
+            sink.put(timerInterval);
+            sink.putAscii(timerUnit);
             if (deferred) {
                 sink.putAscii(" deferred");
             }
-            if (createTableOperationBuilder.getMatViewPeriodLength() == 0) {
+            if (periodLength == 0) {
                 sink.putAscii(" start '");
-                sink.putISODate(createTableOperationBuilder.getMatViewTimerStart());
+                sink.putISODate(timerStart);
                 if (timerTimeZone != null) {
                     sink.putAscii("' time zone '");
                     sink.put(timerTimeZone);
@@ -174,19 +201,19 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
                 sink.putAscii(" deferred");
             }
         }
-        if (createTableOperationBuilder.getMatViewPeriodLength() > 0) {
+        if (periodLength > 0) {
             sink.putAscii(" period (length ");
-            sink.put(createTableOperationBuilder.getMatViewPeriodLength());
-            sink.putAscii(createTableOperationBuilder.getMatViewPeriodLengthUnit());
+            sink.put(periodLength);
+            sink.putAscii(periodLengthUnit);
             if (timerTimeZone != null) {
                 sink.putAscii(" time zone '");
                 sink.put(timerTimeZone);
                 sink.putAscii('\'');
             }
-            if (createTableOperationBuilder.getMatViewPeriodDelay() > 0) {
+            if (periodDelay > 0) {
                 sink.putAscii(" delay ");
-                sink.put(createTableOperationBuilder.getMatViewPeriodDelay());
-                sink.putAscii(createTableOperationBuilder.getMatViewPeriodDelayUnit());
+                sink.put(periodDelay);
+                sink.putAscii(periodDelayUnit);
             }
             sink.putAscii(')');
         }

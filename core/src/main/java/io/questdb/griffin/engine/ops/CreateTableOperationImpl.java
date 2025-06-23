@@ -74,13 +74,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private final String likeTableName;
     // position of the "like" table name in the SQL text, for error reporting
     private final int likeTableNamePosition;
-    private final int matViewPeriodDelay;
-    private final char matViewPeriodDelayUnit;
-    private final int matViewPeriodLength;
-    private final char matViewPeriodLengthUnit;
-    private final int matViewTimerInterval;
-    private final long matViewTimerStart;
-    private final char matViewTimerUnit;
     private final String selectText;
     private final int selectTextPosition;
     private final String sqlText;
@@ -125,13 +118,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampColumnNamePosition = 0;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
-        this.matViewTimerStart = 0;
-        this.matViewTimerInterval = 0;
-        this.matViewTimerUnit = 0;
-        this.matViewPeriodLength = 0;
-        this.matViewPeriodLengthUnit = 0;
-        this.matViewPeriodDelay = 0;
-        this.matViewPeriodDelayUnit = 0;
     }
 
     public CreateTableOperationImpl(
@@ -187,13 +173,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.likeTableNamePosition = -1;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
-        this.matViewTimerStart = 0;
-        this.matViewTimerInterval = 0;
-        this.matViewTimerUnit = 0;
-        this.matViewPeriodLength = 0;
-        this.matViewPeriodLengthUnit = 0;
-        this.matViewPeriodDelay = 0;
-        this.matViewPeriodDelayUnit = 0;
     }
 
     /**
@@ -220,13 +199,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
      * @param batchSize                   number of rows in commit batch when data is moved from the select into the
      *                                    new table. Special value of -1 means "atomic" commit. This corresponds to "batch" keyword on the SQL.
      * @param batchO3MaxLag               lag windows in rows, which helps timestamp ordering code to smooth out timestamp jitter
-     * @param matViewTimerStart           start value for timer-refreshed mat view
-     * @param matViewTimerInterval        interval value for timer-refreshed mat view
-     * @param matViewTimerUnit            interval unit for timer-refreshed mat view
-     * @param matViewPeriodLength         length value for period mat view
-     * @param matViewPeriodLengthUnit     length interval unit for period mat view
-     * @param matViewPeriodDelay          delay value for period mat view
-     * @param matViewPeriodDelayUnit      delay interval unit value for period mat view
      */
     public CreateTableOperationImpl(
             String sqlText,
@@ -248,14 +220,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             long o3MaxLag,
             @Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap,
             long batchSize,
-            long batchO3MaxLag,
-            long matViewTimerStart,
-            int matViewTimerInterval,
-            char matViewTimerUnit,
-            int matViewPeriodLength,
-            char matViewPeriodLengthUnit,
-            int matViewPeriodDelay,
-            char matViewPeriodDelayUnit
+            long batchO3MaxLag
     ) {
         this.sqlText = sqlText;
         this.tableName = tableName;
@@ -276,13 +241,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.o3MaxLag = o3MaxLag;
         this.maxUncommittedRows = maxUncommittedRows;
         this.walEnabled = walEnabled;
-        this.matViewTimerStart = matViewTimerStart;
-        this.matViewTimerInterval = matViewTimerInterval;
-        this.matViewTimerUnit = matViewTimerUnit;
-        this.matViewPeriodLength = matViewPeriodLength;
-        this.matViewPeriodLengthUnit = matViewPeriodLengthUnit;
-        this.matViewPeriodDelay = matViewPeriodDelay;
-        this.matViewPeriodDelayUnit = matViewPeriodDelayUnit;
 
         this.likeTableName = null;
         this.likeTableNamePosition = -1;
@@ -349,41 +307,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public int getLikeTableNamePosition() {
         return likeTableNamePosition;
-    }
-
-    @Override
-    public int getMatViewPeriodDelay() {
-        return matViewPeriodDelay;
-    }
-
-    @Override
-    public char getMatViewPeriodDelayUnit() {
-        return matViewPeriodDelayUnit;
-    }
-
-    @Override
-    public int getMatViewPeriodLength() {
-        return matViewPeriodLength;
-    }
-
-    @Override
-    public char getMatViewPeriodLengthUnit() {
-        return matViewPeriodLengthUnit;
-    }
-
-    @Override
-    public int getMatViewTimerInterval() {
-        return matViewTimerInterval;
-    }
-
-    @Override
-    public long getMatViewTimerStart() {
-        return matViewTimerStart;
-    }
-
-    @Override
-    public char getMatViewTimerUnit() {
-        return matViewTimerUnit;
     }
 
     @Override

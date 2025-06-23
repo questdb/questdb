@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.QueryModel;
+import org.jetbrains.annotations.Nullable;
 
 public interface CreateMatViewOperation extends TableStructure, Operation {
 
@@ -39,11 +40,27 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
 
     CreateTableOperation getCreateTableOperation();
 
+    int getPeriodDelay();
+
+    char getPeriodDelayUnit();
+
+    int getPeriodLength();
+
+    char getPeriodLengthUnit();
+
     int getRefreshType();
 
     CharSequence getSqlText();
 
     int getTableNamePosition();
+
+    int getTimerInterval();
+
+    long getTimerStart();
+
+    @Nullable CharSequence getTimerTimeZone();
+
+    char getTimerUnit();
 
     CharSequence getVolumeAlias();
 

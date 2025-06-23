@@ -51,14 +51,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private boolean isCopy;
     private boolean isSoftLink;
-    private int matViewPeriodDelay;
-    private char matViewPeriodDelayUnit;
-    private int matViewPeriodLength;
-    private char matViewPeriodLengthUnit;
-    private int matViewRefreshLimitHoursOrMonths;
-    private int matViewTimerInterval;
-    private long matViewTimerStart;
-    private char matViewTimerUnit;
     private int maxUncommittedRows;
     private MemoryCARW metaCopyMem; // used when loadFrom() called
     private MemoryMR metaMem;
@@ -159,46 +151,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
-    }
-
-    @Override
-    public int getMatViewPeriodDelay() {
-        return matViewPeriodDelay;
-    }
-
-    @Override
-    public char getMatViewPeriodDelayUnit() {
-        return matViewPeriodDelayUnit;
-    }
-
-    @Override
-    public int getMatViewPeriodLength() {
-        return matViewPeriodLength;
-    }
-
-    @Override
-    public char getMatViewPeriodLengthUnit() {
-        return matViewPeriodLengthUnit;
-    }
-
-    @Override
-    public int getMatViewRefreshLimitHoursOrMonths() {
-        return matViewRefreshLimitHoursOrMonths;
-    }
-
-    @Override
-    public int getMatViewTimerInterval() {
-        return matViewTimerInterval;
-    }
-
-    @Override
-    public long getMatViewTimerStart() {
-        return matViewTimerStart;
-    }
-
-    @Override
-    public char getMatViewTimerUnit() {
-        return matViewTimerUnit;
     }
 
     @Override
@@ -345,14 +297,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.metadataVersion = mem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = mem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(mem);
-        this.matViewRefreshLimitHoursOrMonths = TableUtils.getMatViewRefreshLimitHoursOrMonths(mem);
-        this.matViewTimerStart = TableUtils.getMatViewTimerStart(mem);
-        this.matViewTimerInterval = TableUtils.getMatViewTimerInterval(mem);
-        this.matViewTimerUnit = TableUtils.getMatViewTimerUnit(mem);
-        this.matViewPeriodLength = TableUtils.getMatViewPeriodLength(mem);
-        this.matViewPeriodLengthUnit = TableUtils.getMatViewPeriodLengthUnit(mem);
-        this.matViewPeriodDelay = TableUtils.getMatViewPeriodDelay(mem);
-        this.matViewPeriodDelayUnit = TableUtils.getMatViewPeriodDelayUnit(mem);
         this.columnMetadata.clear();
         this.timestampIndex = -1;
 
@@ -418,14 +362,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.o3MaxLag = newMetaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
         this.walEnabled = newMetaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(newMetaMem);
-        this.matViewRefreshLimitHoursOrMonths = TableUtils.getMatViewRefreshLimitHoursOrMonths(newMetaMem);
-        this.matViewTimerStart = TableUtils.getMatViewTimerStart(newMetaMem);
-        this.matViewTimerInterval = TableUtils.getMatViewTimerInterval(newMetaMem);
-        this.matViewTimerUnit = TableUtils.getMatViewTimerUnit(newMetaMem);
-        this.matViewPeriodLength = TableUtils.getMatViewPeriodLength(newMetaMem);
-        this.matViewPeriodLengthUnit = TableUtils.getMatViewPeriodLengthUnit(newMetaMem);
-        this.matViewPeriodDelay = TableUtils.getMatViewPeriodDelay(newMetaMem);
-        this.matViewPeriodDelayUnit = TableUtils.getMatViewPeriodDelayUnit(newMetaMem);
 
         int shiftLeft = 0, existingIndex = 0;
         TableUtils.buildColumnListFromMetadataFile(newMetaMem, columnCount, columnOrderList);

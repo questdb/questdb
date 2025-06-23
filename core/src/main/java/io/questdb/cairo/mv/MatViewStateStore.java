@@ -27,6 +27,7 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -76,4 +77,6 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     void removeViewState(TableToken matViewToken);
 
     boolean tryDequeueRefreshTask(MatViewRefreshTask task);
+
+    void updateViewDefinition(@NotNull TableToken matViewToken, @NotNull MatViewDefinition newDefinition);
 }
