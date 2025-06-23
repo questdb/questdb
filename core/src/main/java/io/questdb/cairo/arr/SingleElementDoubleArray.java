@@ -26,6 +26,7 @@ package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Numbers;
 
 public final class SingleElementDoubleArray extends ArrayView {
     private double value;
@@ -51,6 +52,16 @@ public final class SingleElementDoubleArray extends ArrayView {
             if (flatViewLength == 1) {
                 mem.putDouble(value);
             }
+        }
+
+        @Override
+        public double avgDouble(int flatViewOffset, int flatViewLength) {
+            return flatViewLength == 0 ? Double.NaN : value;
+        }
+
+        @Override
+        public int countDouble(int flatViewOffset, int flatViewLength) {
+            return flatViewLength == 0 || Numbers.isNull(value) ? 0 : 1;
         }
 
         @Override

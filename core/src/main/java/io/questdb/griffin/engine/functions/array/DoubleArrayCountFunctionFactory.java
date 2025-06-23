@@ -32,14 +32,13 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class DoubleArraySumFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "arraySum";
+public class DoubleArrayCountFunctionFactory implements FunctionFactory {
+    private static final String FUNCTION_NAME = "arrayCount";
 
     @Override
     public String getSignature() {
@@ -51,10 +50,10 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    static class Func extends DoubleFunction implements UnaryFunction, DoubleArrayUnaryFunction {
+    static class Func extends IntFunction implements DoubleArrayUnaryFunction {
 
-        protected final Function arrayArg;
-        protected double sum = 0d;
+        private final Function arrayArg;
+        private int count;
 
         Func(Function arrayArg) {
             this.arrayArg = arrayArg;
@@ -62,20 +61,19 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
 
         @Override
         public void applyOnElement(ArrayView view, int index) {
-            double v = view.getDouble(index);
-            if (Numbers.isFinite(v)) {
-                sum += v;
+            if (Numbers.isFinite(view.getDouble(index))) {
+                count++;
             }
         }
 
         @Override
         public void applyOnEntireVanillaArray(ArrayView view) {
-            double res = view.flatView().sumDouble(view.getFlatViewOffset(), view.getFlatViewLength());
-            sum = Numbers.isNull(res) ? 0 : res;
+            count = view.flatView().countDouble(view.getFlatViewOffset(), view.getFlatViewLength());
         }
 
         @Override
         public void applyOnNullArray() {
+
         }
 
         @Override
@@ -84,11 +82,11 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public double getDouble(Record rec) {
-            ArrayView view = arrayArg.getArray(rec);
-            sum = 0d;
-            calculate(arrayArg.getArray(rec));
-            return sum;
+        public int getInt(Record rec) {
+            ArrayView arr = arrayArg.getArray(rec);
+            count = 0;
+            calculate(arr);
+            return count;
         }
 
         @Override

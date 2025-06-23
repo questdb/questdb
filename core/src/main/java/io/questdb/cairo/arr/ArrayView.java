@@ -231,37 +231,51 @@ public abstract class ArrayView implements QuietCloseable {
         if (isNull() || isEmpty()) {
             return 0;
         }
+        int stride = getStride(0);
 
-        int low = flatViewOffset;
-        int high = flatViewOffset + getDimLen(0) - 1;
+        int low = 0;
+        int high = getDimLen(0) - 1;
         // empty array
         if (low > high) return 0;
 
         // determine sort direction
-        double first = flatView.getDoubleAtAbsIndex(low);
-        double last = flatView.getDoubleAtAbsIndex(high);
+        double first = getDouble(low);
+        double last = getDouble(high * stride);
         boolean ascending = first <= last;
-        while (low <= high) {
-            int mid = low + (high - low) / 2;
-            double midVal = flatView.getDoubleAtAbsIndex(mid);
-            if (Math.abs(midVal - value) <= Numbers.DOUBLE_TOLERANCE) {
-                return mid - flatViewOffset + 1;
-            }
-            if (ascending) {
-                if (midVal < value) {
-                    low = mid + 1;
-                } else {
-                    high = mid - 1;
+        if (isVanilla) {
+            return flatView.binarySearchDouble(value, flatViewOffset, flatViewLength, ascending);
+        } else {
+            while (low <= high) {
+                int mid = low + (high - low) / 2;
+                double midVal = getDouble(mid * stride);
+                if (Math.abs(midVal - value) <= Numbers.DOUBLE_TOLERANCE) {
+                    do {
+                        if (mid > low) {
+                            mid--;
+                        } else {
+                            return mid + 1;
+                        }
+                    } while (Math.abs(getDouble(mid) - value) <= Numbers.DOUBLE_TOLERANCE);
+                    return mid + 2;
                 }
-            } else {
-                if (midVal > value) {
-                    low = mid + 1;
+
+                if (ascending) {
+                    if (midVal < value) {
+                        low = mid + 1;
+                    } else {
+                        high = mid - 1;
+                    }
                 } else {
-                    high = mid - 1;
+                    if (midVal > value) {
+                        low = mid + 1;
+                    } else {
+                        high = mid - 1;
+                    }
                 }
             }
         }
-        return 0;
+
+        return -(low + 1);
     }
 
     /**
@@ -465,11 +479,20 @@ public abstract class ArrayView implements QuietCloseable {
         if (isNull() || isEmpty()) {
             return 0;
         }
-        for (int i = flatViewOffset, dimLen = getDimLen(0) + flatViewOffset; i < dimLen; i++) {
-            if (Math.abs(value - flatView.getDoubleAtAbsIndex(i)) <= Numbers.DOUBLE_TOLERANCE) {
-                return i - flatViewOffset + 1;
+        if (isVanilla) {
+            return flatView.linearSearch(value, flatViewOffset, flatViewLength);
+        } else {
+            int stride = getStride(0);
+            int index = flatViewOffset;
+            for (int i = 0, n = getDimLen(0) - 1; i < n; i++) {
+                double v = flatView.getDoubleAtAbsIndex(index);
+                if (Math.abs(v - value) <= Numbers.DOUBLE_TOLERANCE) {
+                    return i + 1;
+                }
+                index += stride;
             }
         }
+
         return 0;
     }
 

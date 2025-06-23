@@ -32,14 +32,12 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class DoubleArraySumFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "arraySum";
+public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
+    private static final String FUNCTION_NAME = "arrayAvg";
 
     @Override
     public String getSignature() {
@@ -51,13 +49,11 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    static class Func extends DoubleFunction implements UnaryFunction, DoubleArrayUnaryFunction {
-
-        protected final Function arrayArg;
-        protected double sum = 0d;
+    static class Func extends DoubleArraySumFunctionFactory.Func {
+        private int count = 0;
 
         Func(Function arrayArg) {
-            this.arrayArg = arrayArg;
+            super(arrayArg);
         }
 
         @Override
@@ -65,30 +61,28 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
             double v = view.getDouble(index);
             if (Numbers.isFinite(v)) {
                 sum += v;
+                count++;
             }
         }
 
         @Override
         public void applyOnEntireVanillaArray(ArrayView view) {
-            double res = view.flatView().sumDouble(view.getFlatViewOffset(), view.getFlatViewLength());
-            sum = Numbers.isNull(res) ? 0 : res;
+            sum = view.flatView().avgDouble(view.getFlatViewOffset(), view.getFlatViewLength());
         }
 
         @Override
         public void applyOnNullArray() {
-        }
-
-        @Override
-        public Function getArg() {
-            return arrayArg;
+            sum = Double.NaN;
         }
 
         @Override
         public double getDouble(Record rec) {
-            ArrayView view = arrayArg.getArray(rec);
+            ArrayView arr = arrayArg.getArray(rec);
+            count = 0;
             sum = 0d;
+            boolean vanilla = arr.isVanilla();
             calculate(arrayArg.getArray(rec));
-            return sum;
+            return vanilla ? sum : (count == 0 ? Double.NaN : sum / count);
         }
 
         @Override

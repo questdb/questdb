@@ -218,11 +218,79 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayAvg() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[1.0, 9, 10, 12, 8, null, 20], ARRAY[[1.0, 9, 10, 12, 8, null, 20]]), " +
+                    "(ARRAY[], ARRAY[[null]])," +
+                    "(null, null)"
+            );
+            assertSql("arrayAvg\tarrayAvg1\tarrayAvg2\n" +
+                            "10.0\t11.8\t5.0\n" +
+                            "null\tnull\tnull\n" +
+                            "null\tnull\tnull\n",
+                    "SELECT arrayAvg(arr1), arrayAvg(arr1[2:]), arrayAvg(arr1[1:3]) FROM tango");
+            assertSql("arrayAvg\tarrayAvg1\tarrayAvg2\tarrayAvg3\tarrayAvg4\n" +
+                            "10.0\t10.0\t10.0\t10.0\tnull\n" +
+                            "null\tnull\tnull\tnull\tnull\n" +
+                            "null\tnull\tnull\tnull\tnull\n",
+                    "SELECT arrayAvg(arr2), arrayAvg(transpose(arr2)), arrayAvg(arr2[1]), arrayAvg(arr2[1:]), arrayAvg(arr2[2:]) FROM tango");
+        });
+    }
+
+    @Test
     public void testArrayCanBeClearedAfterInstantiation() throws Exception {
         assertMemoryLeak(() -> {
             try (DirectArray array = new DirectArray(configuration)) {
                 array.clear();
             }
+        });
+    }
+
+    @Test
+    public void testArrayCount() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[1.0, 9, 10, 12, 8, null, 20, 12], ARRAY[[1.0, 9, 10, 12, 8, null, 20, 12]]), " +
+                    "(ARRAY[], ARRAY[[null]])," +
+                    "(null, null)"
+            );
+            assertSql("arrayCount\tarrayCount1\tarrayCount2\n" +
+                            "7\t6\t2\n" +
+                            "0\t0\t0\n" +
+                            "0\t0\t0\n",
+                    "SELECT arrayCount(arr1), arrayCount(arr1[2:]), arrayCount(arr1[1:3]) FROM tango");
+
+            assertSql("arrayCount\tarrayCount1\tarrayCount2\tarrayCount3\tarrayCount4\n" +
+                            "7\t7\t7\t7\t0\n" +
+                            "0\t0\t0\t0\t0\n" +
+                            "0\t0\t0\t0\t0\n",
+                    "SELECT arrayCount(arr2), arrayCount(transpose(arr2)), arrayCount(arr2[1]), arrayCount(arr2[1:]), arrayCount(arr2[2:]) FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayCumSum() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[1.0, 9, 10, 12, 8, null, 20, 12], ARRAY[[1.0, 9, 10, 12, 8, null, 20, 12]]), " +
+                    "(ARRAY[null], ARRAY[[null]])," +
+                    "(null, null)"
+            );
+            assertSql("arrayCumSum\tarrayCumSum1\tarrayCumSum2\n" +
+                            "[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[9.0,19.0,31.0,39.0,39.0,59.0,71.0]\t[1.0,10.0]\n" +
+                            "[0.0]\t[]\t[0.0]\n" +
+                            "null\tnull\tnull\n",
+                    "SELECT arrayCumSum(arr1), arrayCumSum(arr1[2:]), arrayCumSum(arr1[1:3]) FROM tango");
+
+            assertSql("arrayCumSum\tarrayCumSum1\tarrayCumSum2\tarrayCumSum3\tarrayCumSum4\n" +
+                            "[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[]\n" +
+                            "[0.0]\t[0.0]\t[0.0]\t[0.0]\t[]\n" +
+                            "null\tnull\tnull\tnull\tnull\n",
+                    "SELECT arrayCumSum(arr2), arrayCumSum(transpose(arr2)), arrayCumSum(arr2[1]), arrayCumSum(arr2[1:]), arrayCumSum(arr2[2:]) FROM tango");
         });
     }
 
@@ -916,20 +984,20 @@ public class ArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
             execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[9.0, 10, 12, 20, 22, 100, 1000], ARRAY[[9.0, 10, 12, 20, 22, 100, 1000]]), " +
-                    "(ARRAY[1000.0, 100, 22, 20, 12, 10, 9], ARRAY[[1000.0, 100, 22, 20, 12, 10, 9]])," +
+                    "(ARRAY[9.0, 10, 12, 20, 22, 22, 100, 1000, 1001], ARRAY[[9.0, 10, 12, 20, 22, 100, 1000,1001]]), " +
+                    "(ARRAY[1001.0, 1000, 100, 22, 22, 20, 12, 10, 9], ARRAY[[1001.0, 1000, 100, 22, 20, 12, 10, 9]])," +
                     "(null, null)"
             );
-            assertSql("indexOfAssumeSorted\tindexOfAssumeSorted1\tindexOfAssumeSorted2\tindexOfAssumeSorted3\tindexOfAssumeSorted4\tindexOfAssumeSorted5\tindexOfAssumeSorted6\n" +
-                            "0\t0\t5\t7\t0\t0\t4\n" +
-                            "0\t0\t3\t1\t0\t0\t0\n" +
-                            "0\t0\t0\t0\t0\t0\t0\n",
-                    "SELECT indexOfAssumeSorted(arr1, 8), indexOfAssumeSorted(arr1, null), indexOfAssumeSorted(arr1, 22), indexOfAssumeSorted(arr1, 1000), " +
+            assertSql("indexOfAssumeSorted\tindexOfAssumeSorted1\tindexOfAssumeSorted2\tindexOfAssumeSorted3\tindexOfAssumeSorted4\tindexOfAssumeSorted5\tindexOfAssumeSorted6\tindexOfAssumeSorted7\n" +
+                            "-1\t0\t5\t-7\t8\t9\t-2\t5\n" +
+                            "-10\t0\t4\t-4\t2\t1\t-2\t1\n" +
+                            "0\t0\t0\t0\t0\t0\t0\t0\n",
+                    "SELECT indexOfAssumeSorted(arr1, 8), indexOfAssumeSorted(arr1, null), indexOfAssumeSorted(arr1, 22), indexOfAssumeSorted(arr1, 23), indexOfAssumeSorted(arr1, 1000), " +
                             "indexOfAssumeSorted(arr1, 1001), indexOfAssumeSorted(arr1[3:4], 1000), indexOfAssumeSorted(arr1[3:], 100)  FROM tango");
 
             assertSql("indexOfAssumeSorted\tindexOfAssumeSorted1\tindexOfAssumeSorted2\tindexOfAssumeSorted3\tindexOfAssumeSorted4\tindexOfAssumeSorted5\tindexOfAssumeSorted6\n" +
-                            "0\t0\t5\t7\t0\t0\t4\n" +
-                            "0\t0\t3\t1\t0\t0\t0\n" +
+                            "-1\t0\t5\t7\t8\t-2\t4\n" +
+                            "-9\t0\t4\t2\t1\t-2\t1\n" +
                             "0\t0\t0\t0\t0\t0\t0\n",
                     "SELECT indexOfAssumeSorted(arr2[1], 8), indexOfAssumeSorted(arr2[1], null), indexOfAssumeSorted(arr2[1], 22), indexOfAssumeSorted(arr2[1], 1000), " +
                             "indexOfAssumeSorted(arr2[1], 1001), indexOfAssumeSorted(arr2[1][3:4], 1000), indexOfAssumeSorted(arr2[1][3:], 100)  FROM tango");

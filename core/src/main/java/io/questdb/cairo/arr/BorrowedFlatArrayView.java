@@ -26,6 +26,7 @@ package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
@@ -44,6 +45,30 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     public void appendToMemFlat(MemoryA mem, int flatViewOffset, int flatViewLength) {
         assert ptr != 0;
         mem.putBlockOfBytes(ptr + (long) flatViewOffset * Double.BYTES, (long) flatViewLength * Double.BYTES);
+    }
+
+    @Override
+    public double avgDouble(int flatViewOffset, int flatViewLength) {
+        long count = Vect.countDouble(this.ptr + (long) flatViewOffset * Double.BYTES, flatViewLength);
+        if (count == 0) {
+            return Double.NaN;
+        }
+        double sum = Vect.sumDouble(this.ptr + (long) flatViewOffset * Double.BYTES, flatViewLength);
+        if (Numbers.isNull(sum)) {
+            return Double.NaN;
+        }
+        return sum / count;
+    }
+
+    @Override
+    public int binarySearchDouble(double value, int flatViewOffset, int flatViewLength, boolean ascending) {
+        long v = Vect.binarySearchDouble(this.ptr + (long) flatViewOffset * Double.BYTES, value, 0, flatViewLength - 1, ascending);
+        return v < 0 ? (int) v : (int) (v + 1);
+    }
+
+    @Override
+    public int countDouble(int flatViewOffset, int flatViewLength) {
+        return (int) Vect.countDouble(this.ptr + (long) flatViewOffset * Double.BYTES, flatViewLength);
     }
 
     @Override

@@ -1462,13 +1462,25 @@ Java_io_questdb_std_Vect_flattenIndex(JNIEnv *env, jclass cl, jlong pIndex,
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_binarySearch64Bit(JNIEnv *env, jclass cl, jlong pData, jlong value, jlong low,
                                            jlong high, jint scan_dir) {
-    return binary_search<int64_t>(reinterpret_cast<int64_t *>(pData), value, low, high, scan_dir);
+    return binary_search<true, int64_t>(reinterpret_cast<int64_t *>(pData), value, low, high, scan_dir);
 }
 
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_binarySearchIndexT(JNIEnv *env, jclass cl, jlong pData, jlong value, jlong low,
                                             jlong high, jint scan_dir) {
-    return binary_search<index_t>(reinterpret_cast<index_t *>(pData), value, low, high, scan_dir);
+    return binary_search<true, index_t>(reinterpret_cast<index_t *>(pData), value, low, high, scan_dir);
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_binarySearchDouble(
+    JNIEnv *env, jclass cl, jlong pData, jdouble value, jlong low, jlong high,
+    bool ascend) {
+        if (ascend) {
+          return binary_search<true, double>(reinterpret_cast<double *>(pData),
+                                             value, low, high, -1);
+        } else {
+          return binary_search<false, double>(reinterpret_cast<double *>(pData),
+                                              value, low, high, -1);
+        }
 }
 
 JNIEXPORT void JNICALL
