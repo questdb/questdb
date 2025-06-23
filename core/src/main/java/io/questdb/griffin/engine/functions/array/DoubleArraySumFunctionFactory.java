@@ -85,7 +85,6 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            ArrayView view = arrayArg.getArray(rec);
             sum = 0d;
             calculate(arrayArg.getArray(rec));
             return sum;

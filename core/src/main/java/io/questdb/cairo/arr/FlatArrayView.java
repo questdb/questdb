@@ -81,6 +81,10 @@ public interface FlatArrayView {
         return -(low - flatViewOffset + 1);
     }
 
+    // We could store the number of nulls(or null bitmaps) in an array within its metadata.
+    // Then the array's count could be obtained directly from the metadata.
+    // Similarly, knowing from the metadata that a set of data contains no nulls could also offer optimizations for other aggregate operators(eg. sum).
+    // Same logics applies to other data types.
     default int countDouble(int flatViewOffset, int flatViewLength) {
         int count = 0;
         for (int i = flatViewOffset, n = flatViewOffset + flatViewLength; i < n; i++) {

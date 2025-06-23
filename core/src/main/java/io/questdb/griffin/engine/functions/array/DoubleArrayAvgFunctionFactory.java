@@ -81,7 +81,7 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
             count = 0;
             sum = 0d;
             boolean vanilla = arr.isVanilla();
-            calculate(arrayArg.getArray(rec));
+            calculate(arr);
             return vanilla ? sum : (count == 0 ? Double.NaN : sum / count);
         }
 
