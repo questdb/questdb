@@ -595,8 +595,8 @@ inline bool is_column_replace_identical(
             column_top2 - lo2
     );
     if (are_not_equal_lambda(lo1 - column_top1 - both_not_null,
-                          lo2 - column_top2 - both_not_null,
-                          hi2 - column_top2 - both_not_null)) {
+                             lo2 - column_top2 - both_not_null,
+                             hi2 - column_top2 - both_not_null)) {
         return false;
     }
     return true;
@@ -677,9 +677,9 @@ bool is_varchar_column_merge_identical(
 
                     // Aux entry is 10 bytes of meta + 6 bytes of pointer for both split and inlined
                     // Compare first 10 bytes of aux entries
-                    auto aux1_cmp = reinterpret_cast<const VarcharAuxEntryBoth*>(aux1 + lo1);
-                    auto aux2_cmp = reinterpret_cast<const VarcharAuxEntryBoth*>(aux2 + lo2);
-                    for(int64_t i = 0; i < size; i++) {
+                    auto aux1_cmp = reinterpret_cast<const VarcharAuxEntryBoth *>(aux1 + lo1);
+                    auto aux2_cmp = reinterpret_cast<const VarcharAuxEntryBoth *>(aux2 + lo2);
+                    for (int64_t i = 0; i < size; i++) {
                         auto aux1_entry = aux1_cmp[lo1 + i];
                         auto aux2_entry = aux2_cmp[lo2 + i];
                         if (aux1_entry.header1 != aux2_entry.header1 ||
@@ -688,7 +688,18 @@ bool is_varchar_column_merge_identical(
                         }
                     }
                     // Compare data
-
+                    auto data1_offset_lo = aux1_cmp[lo1].get_data_offset();
+                    auto data1_offset_hi = aux1_cmp[lo1 + size - 1].get_data_offset();
+                    auto data2_offset_lo = aux2_cmp[lo2].get_data_offset();
+                    auto data2_offset_hi = aux2_cmp[lo2 + size - 1].get_data_offset();
+                    if (data1_offset_hi - data1_offset_lo != data2_offset_hi - data2_offset_lo) {
+                        return true;
+                    }
+                    if (memcmp(data1 + data1_offset_lo, data2 + data2_offset_lo,
+                               data1_offset_hi - data1_offset_lo) != 0) {
+                        return true;
+                    }
+                    return false;
                 },
                 // is_not_null_lambda
                 [&](int data_index, int64_t lo, int64_t hi) -> bool {
@@ -713,32 +724,73 @@ bool is_str_bin_column_merge_identical(
     constexpr T null_len(-1);
     const int64_t *aux_ptrs[2] = {aux1, aux2};
     const uint8_t *data_ptrs[2] = {data1, data2};
-    return is_column_merge_identical(
-            column_top1, lo1_pos, hi1_pos,
-            column_top2, lo2_pos, hi2_pos,
-            merge_index, merge_index_rows,
-            // are_not_equal
-            [&](int64_t index1, int64_t index2) -> bool {
-                // data was not null, check new data is the same
-                auto data1_offset = aux1[index1];
-                auto data2_offset = aux2[index2];
-                T len1 = *(T * )(data1 + data1_offset);
-                T len2 = *(T * )(data2 + data2_offset);
+    if (merge_index != nullptr) {
+        return is_column_merge_identical(
+                column_top1, lo1_pos, hi1_pos,
+                column_top2, lo2_pos, hi2_pos,
+                merge_index, merge_index_rows,
+                // are_not_equal
+                [&](int64_t index1, int64_t index2) -> bool {
+                    // data was not null, check new data is the same
+                    auto data1_offset = aux1[index1];
+                    auto data2_offset = aux2[index2];
+                    T len1 = *(T * )(data1 + data1_offset);
+                    T len2 = *(T * )(data2 + data2_offset);
 
-                return len1 != len2 ||
-                       (len1 > 0 && memcmp(
-                               data1 + data1_offset + sizeof(T),
-                               data2 + data2_offset + sizeof(T),
-                               len1 * char_size_bytes) != 0);
+                    return len1 != len2 ||
+                           (len1 > 0 && memcmp(
+                                   data1 + data1_offset + sizeof(T),
+                                   data2 + data2_offset + sizeof(T),
+                                   len1 * char_size_bytes) != 0);
 
-            },
-            // is_not_null_lambda
-            [&](int data_index, int64_t index) -> bool {
-                auto offset = aux_ptrs[data_index][index];
-                auto data = data_ptrs[data_index];
-                return *(T * )(data + offset) != null_len;
-            }
-    );
+                },
+                // is_not_null_lambda
+                [&](int data_index, int64_t index) -> bool {
+                    auto offset = aux_ptrs[data_index][index];
+                    auto data = data_ptrs[data_index];
+                    return *(T * )(data + offset) != null_len;
+                }
+        );
+    } else {
+        return is_column_replace_identical(
+                column_top1, lo1_pos, hi1_pos,
+                column_top2, lo2_pos, hi2_pos,
+                [&](int64_t lo1, int64_t lo2, int64_t size) -> bool {
+
+                    // Compare data
+                    auto data1_offset_lo = aux1[lo1];
+                    auto data1_offset_hi = aux1[lo1 + size - 1];
+                    auto data2_offset_lo = aux2[lo2];
+                    auto data2_offset_hi = aux2[lo2 + size - 1];
+                    if (data1_offset_hi - data1_offset_lo != data2_offset_hi - data2_offset_lo
+                        || memcmp(
+                            data1 + data1_offset_lo,
+                            data2 + data2_offset_lo,
+                            data1_offset_hi - data1_offset_lo
+                    ) != 0) {
+                        return true;
+                    }
+                    return false;
+                },
+                [&](int data_index, int64_t lo, int64_t hi) -> bool {
+                    auto data1_offset_lo = aux_ptrs[data_index][lo];
+                    auto data1_offset_hi = aux_ptrs[data_index][hi];
+                    if (data1_offset_hi - data1_offset_lo != sizeof(T) * (hi - lo)) {
+                        // there sum not nulls
+                        return true;
+                    }
+
+                    // Check that the data has all lenght as -1
+                    auto data = data_ptrs[data_index];
+                    for (int64_t o = data1_offset_lo; o < data1_offset_hi; o += sizeof(T)) {
+                        if (*(T * )(data + o) != null_len) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+        );
+    }
 }
 
 bool is_array_column_merge_identical(
@@ -747,26 +799,69 @@ bool is_array_column_merge_identical(
         const index_t *merge_index, int64_t merge_index_rows
 ) {
     const ArrayAuxEntry *aux_ptrs[2] = {aux1, aux2};
-    return is_column_merge_identical(
-            column_top1, lo1_pos, hi1_pos,
-            column_top2, lo2_pos, hi2_pos,
-            merge_index, merge_index_rows,
-            // are_not_equal
-            [&](int64_t index1, int64_t index2) -> bool {
-                int32_t size1 = aux1[index1].data_size;
-                int32_t size2 = aux2[index2].data_size;
-                if (size1 != size2) {
-                    return true;
+    if (merge_index != nullptr) {
+        return is_column_merge_identical(
+                column_top1, lo1_pos, hi1_pos,
+                column_top2, lo2_pos, hi2_pos,
+                merge_index, merge_index_rows,
+                // are_not_equal
+                [&](int64_t index1, int64_t index2) -> bool {
+                    int32_t size1 = aux1[index1].data_size;
+                    int32_t size2 = aux2[index2].data_size;
+                    if (size1 != size2) {
+                        return true;
+                    }
+                    auto offset1 = aux1[index1].offset_48 & ARRAY_OFFSET_MAX;
+                    auto offset2 = aux2[index2].offset_48 & ARRAY_OFFSET_MAX;
+                    return memcmp(data1 + offset1, data2 + offset2, size1) != 0;
+                },
+                // is_not_null_lambda
+                [&](int data_index, int64_t index) -> bool {
+                    return aux_ptrs[data_index][index].data_size > 0;
                 }
-                auto offset1 = aux1[index1].offset_48 & ARRAY_OFFSET_MAX;
-                auto offset2 = aux2[index2].offset_48 & ARRAY_OFFSET_MAX;
-                return memcmp(data1 + offset1, data2 + offset2, size1) != 0;
-            },
-            // is_not_null_lambda
-            [&](int data_index, int64_t index) -> bool {
-                return aux_ptrs[data_index][index].data_size > 0;
-            }
-    );
+        );
+    } else {
+        return is_column_replace_identical(
+                column_top1, lo1_pos, hi1_pos,
+                column_top2, lo2_pos, hi2_pos,
+                // are_not_equal
+                [&](int64_t lo1, int64_t lo2, int64_t size) -> bool {
+                    auto data1_offset_lo = aux1[lo1].offset_48 & ARRAY_OFFSET_MAX;
+                    auto data1_offset_hi = aux1[lo1 + size - 1].offset_48 & ARRAY_OFFSET_MAX;
+                    auto data2_offset_lo = aux2[lo2].offset_48 & ARRAY_OFFSET_MAX;
+                    auto data2_offset_hi = aux2[lo2 + size - 1].offset_48 & ARRAY_OFFSET_MAX;
+
+                    if (data1_offset_hi - data1_offset_lo != data2_offset_hi - data2_offset_lo) {
+                        // Compare array sizes
+                        for (int64_t i = 0; i < size; i++) {
+                            if (aux1[lo1 + i].data_size != aux2[lo2 + i].data_size) {
+                                return true;
+                            }
+                        }
+
+                        // Compare array data
+                        if (memcmp(
+                                data1 + data1_offset_lo,
+                                data2 + data2_offset_lo,
+                                data1_offset_hi - data1_offset_lo
+                        ) != 0)
+                            return true;
+                    }
+                    return false;
+                },
+
+                // is_not_null_lambda
+                [&](int data_index, int64_t lo, int64_t hi) -> bool {
+                    auto aux = aux_ptrs[data_index];
+                    for (int64_t i = lo; i < hi; i++) {
+                        if (aux[i].data_size > 0) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+        );
+    }
 }
 
 extern "C" {
@@ -1418,7 +1513,6 @@ Java_io_questdb_cairo_frm_FrameAlgebra_isColumnReplaceIdentical(
             return false;
     }
 }
-
 } // extern C
 
 

@@ -9559,48 +9559,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    boolean checkCommitIdenticalToPartition(
-            long partitionTimestamp,
-            long partitionNameTxn,
-            long partitionRowCount,
-            long partitionLo,
-            long partitionHi,
-            long commitLo,
-            long commitHi,
-            long mergeIndexAddr,
-            long mergeIndexRows,
-            boolean nonDedupOnly
-    ) {
-        LOG.info().$("checking dedup insert results in noop [table=").$(getTableToken()).I$();
-
-        // This code is thread safe, e.g. can be triggered from multiple partition merge tasks
-        TableRecordMetadata metadata = getMetadata();
-        FrameFactory frameFactory = engine.getFrameFactory();
-        try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount)) {
-            try (Frame commitFrame = openCommitFrame()) {
-                for (int i = 0; i < metadata.getColumnCount(); i++) {
-                    int columnType = metadata.getColumnType(i);
-                    if (columnType > 0 && (!nonDedupOnly || (!metadata.isDedupKey(i) && i != metadata.getTimestampIndex()))) {
-                        if (!FrameAlgebra.isColumnReplaceIdentical(
-                                i,
-                                partitionFrame,
-                                partitionLo,
-                                partitionHi + 1,
-                                commitFrame,
-                                commitLo,
-                                commitHi + 1,
-                                mergeIndexAddr,
-                                mergeIndexRows
-                        )) {
-                            return false;
-                        }
-                    }
-                }
-            }
-        }
-        return true;
-    }
-
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
         if (partitionIndexHi <= partitionIndexLo + Math.max(1, optimalPartitionCount)) {
             // Nothing to do
@@ -10173,6 +10131,79 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     boolean allowMixedIO() {
         return mixedIOFlag;
+    }
+
+    boolean checkCommitIdenticalToPartition(
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long partitionRowCount,
+            long partitionLo,
+            long partitionHi,
+            long commitLo,
+            long commitHi,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            boolean nonDedupOnly
+    ) {
+        LOG.info().$("checking dedup insert results in noop [table=").$(getTableToken()).I$();
+
+        // This code is thread safe, e.g. can be triggered from multiple partition merge tasks
+        TableRecordMetadata metadata = getMetadata();
+        FrameFactory frameFactory = engine.getFrameFactory();
+        try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount)) {
+            try (Frame commitFrame = openCommitFrame()) {
+                for (int i = 0; i < metadata.getColumnCount(); i++) {
+                    if (!nonDedupOnly) {
+                        // Do not compare dedup keys, already a match
+                        if (!metadata.isDedupKey(i) && !FrameAlgebra.isColumnReplaceIdentical(
+                                i,
+                                partitionFrame,
+                                partitionLo,
+                                partitionHi + 1,
+                                commitFrame,
+                                commitLo,
+                                commitHi + 1,
+                                mergeIndexAddr,
+                                mergeIndexRows
+                        )) {
+                            return false;
+                        }
+                    } else {
+                        // Compare all columns, dedup keys and non-keys
+                        if (i != metadata.getTimestampIndex()) {
+                            // Non-designated timestamp
+                            if (!FrameAlgebra.isColumnReplaceIdentical(
+                                    i,
+                                    partitionFrame,
+                                    partitionLo,
+                                    partitionHi + 1,
+                                    commitFrame,
+                                    commitLo,
+                                    commitHi + 1,
+                                    0,
+                                    mergeIndexRows
+                            )) {
+                                return false;
+                            }
+                        } else {
+                            // Designated timestamp
+                            if (!FrameAlgebra.isDesignatedTimestampColumnReplaceIdentical(
+                                    i,
+                                    partitionFrame,
+                                    partitionLo,
+                                    partitionHi + 1,
+                                    commitFrame,
+                                    commitLo,
+                                    commitHi + 1
+                            )) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return true;
     }
 
     void closeActivePartition(long size) {

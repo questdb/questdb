@@ -87,13 +87,19 @@ struct VarcharAuxEntrySplit {
 struct ArrayAuxEntry {
     uint64_t offset_48;
     int32_t data_size;
-    int32_t reserved2;
+    [[maybe_unused]] int32_t reserved2;
 };
 
 struct VarcharAuxEntryBoth {
     uint64_t header1;
-    uint32_t header2;
-    uint8_t offset[6];
+    uint16_t header2;
+    uint32_t offset_lo;
+    uint16_t offset_hi;
+
+    [[nodiscard]]
+    inline int64_t get_data_offset() const {
+        return (static_cast<int64_t>(offset_hi) << 32) | offset_lo;
+    }
 };
 
 constexpr uint64_t ARRAY_OFFSET_MAX = (1ULL << 48) - 1ULL;
