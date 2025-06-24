@@ -104,13 +104,13 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testDoubleGenerationNulls() throws Exception {
-        assertException("generate_series(null, 5.0, 3.0);", 0, "arguments cannot be null");
-        assertException("generate_series(2.0, null, 3.0);", 0, "arguments cannot be null");
-        assertException("generate_series(2.0, 5.0, null);", 0, "arguments cannot be null");
-        assertException("generate_series(null, null, 3.0);", 0, "arguments cannot be null");
-        assertException("generate_series(2.0, null, null);", 0, "arguments cannot be null");
-        assertException("generate_series(null, 5.0, null);", 0, "arguments cannot be null");
-        assertException("generate_series(null, null, null);", 0, "arguments cannot be null");
+        assertException("generate_series(null, 5.0, 3.0);", 16, "start argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(2.0, null, 3.0);", 21, "end argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(2.0, 5.0, null);", 26, "step argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(null, null, 3.0);", 16, "start argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(2.0, null, null);", 21, "end argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(null, 5.0, null);", 16, "start argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(null, null, null);", 16, "start argument must be a non-null constant or bind variable constant");
     }
 
     @Test
@@ -325,13 +325,13 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testLongGenerationNulls() throws Exception {
-        assertException("generate_series(null, 5, 3);", 0, "arguments cannot be null");
-        assertException("generate_series(2, null, 3);", 0, "arguments cannot be null");
-        assertException("generate_series(2, 5, null);", 0, "arguments cannot be null");
-        assertException("generate_series(null, null, 3);", 0, "arguments cannot be null");
-        assertException("generate_series(2, null, null);", 0, "arguments cannot be null");
-        assertException("generate_series(null, 5, null);", 0, "arguments cannot be null");
-        assertException("generate_series(null, null, null);", 0, "arguments cannot be null");
+        assertException("generate_series(null, 5, 3);", 16, "start argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(2, null, 3);", 19, "end argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(2, 5, null);", 22, "step argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(null, null, 3);", 16, "start argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(2, null, null);", 19, "end argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(null, 5, null);", 16, "start argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(null, null, null);", 16, "start argument must be a non-null constant or bind variable constant");
     }
 
     @Test
@@ -692,13 +692,13 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testTimestampStringGenerationNulls() throws Exception {
-        assertException("generate_series(null::timestamp, 5::timestamp, 3::timestamp);", 0, "arguments cannot be null");
-        assertException("generate_series(2::timestamp, null::timestamp, 3::timestamp);", 0, "arguments cannot be null");
-        assertException("generate_series(2::timestamp, 5::timestamp, null::timestamp);", 0, "arguments cannot be null");
-        assertException("generate_series(null::timestamp, null::timestamp, 3::timestamp);", 0, "arguments cannot be null");
-        assertException("generate_series(2::timestamp, null::timestamp, null::timestamp);", 0, "arguments cannot be null");
-        assertException("generate_series(null::timestamp, 5::timestamp, null::timestamp);", 0, "arguments cannot be null");
-        assertException("generate_series(null::timestamp, null::timestamp, null::timestamp);", 0, "arguments cannot be null");
+        assertException("generate_series(null::timestamp, 5::timestamp, '3U');", 20, "start argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(2::timestamp, null::timestamp, '3U');", 34, "end argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(2::timestamp, 5::timestamp, null);", 44, "step argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(null::timestamp, null::timestamp, '3U');", 20, "start argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(2::timestamp, null::timestamp, null);", 34, "end argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(null::timestamp, 5::timestamp, null);", 20, "start argument must be a non-null constant or bind variable constant");
+        assertException("generate_series(null::timestamp, null::timestamp, null);", 20, "start argument must be a non-null constant or bind variable constant");
     }
 
     @Test
