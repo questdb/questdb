@@ -778,12 +778,13 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     /**
-     * Write the values and -- while doing so, also calculate the crc value, unless it was already cached.
+     * Write the values.
      **/
     private static void writeDataEntry(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
         writeShape(dataMem, array);
         // We could be storing values of different datatypes.
-        // We thus need to align accordingly. I.e., if we store doubles, we need to align on an 8-byte boundary.
+        // We thus need to align accordingly. I.e., if we store doubles, we need to align
+        // on an 8-byte boundary.
         // for shorts, it's on a 2-byte boundary. For booleans, we align to the byte.
         final int requiredByteAlignment = ColumnType.sizeOf(array.getElemType());
         padTo(dataMem, requiredByteAlignment);
