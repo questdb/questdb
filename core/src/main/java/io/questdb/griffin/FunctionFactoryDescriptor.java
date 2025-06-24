@@ -209,13 +209,21 @@ public class FunctionFactoryDescriptor {
         StringSink signatureBuilder = Misc.getThreadLocalSink();
         signatureBuilder.put(name);
         signatureBuilder.put('(');
+        boolean bracket = false;
         for (int i = signature.length() - 2; i > openParenIndex; i--) {
             char curr = signature.charAt(i);
             if (curr == '[') {
-                signatureBuilder.put("[]");
+                bracket = true;
             } else if (curr != ']') {
                 signatureBuilder.put(curr);
+                if (bracket) {
+                    signatureBuilder.put("[]");
+                    bracket = false;
+                }
             }
+        }
+        if (bracket) {
+            signatureBuilder.put("[]");
         }
         signatureBuilder.put(')');
         return signatureBuilder.toString();

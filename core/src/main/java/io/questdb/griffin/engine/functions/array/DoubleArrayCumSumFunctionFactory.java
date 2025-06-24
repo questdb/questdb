@@ -37,6 +37,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -55,7 +56,7 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), configuration);
     }
 
-    private static class Func extends ArrayFunction implements DoubleArrayUnaryFunction {
+    private static class Func extends ArrayFunction implements DoubleArrayUnaryOperator, UnaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
         private double currentSum;
@@ -94,7 +95,7 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            DoubleArrayUnaryFunction.super.close();
+            UnaryFunction.super.close();
             Misc.free(array);
         }
 

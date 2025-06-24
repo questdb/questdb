@@ -218,6 +218,29 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayAddScalarValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, null], ARRAY[[2.0, 3], [4.0, 5]]), " +
+                    "(ARRAY[6.0, 7], ARRAY[[8.0, 9]])," +
+                    "(null, null)");
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                    "[7.0,null]\t[[5.0,7.0],[9.0,11.0]]\t[11.0,16.0]\t[[41.0,51.0]]\n" +
+                    "[19.0,22.0]\t[[17.0,19.0]]\t[41.0,46.0]\t[]\n" +
+                    "null\tnull\tnull\tnull\n", "SELECT a * 3.0 + 1.0, b * 2.0 + 1.0, b[1] * 5.0 + 1.0, b[2:] * 10.0 + 1.0 FROM tango");
+            assertSql("column\tcolumn1\n" +
+                    "[5.0,null]\t[[4.0,6.0],[5.0,7.0]]\n" +
+                    "[9.0,10.0]\t[[10.0],[11.0]]\n" +
+                    "null\tnull\n", "SELECT transpose(a) + 3.0, transpose(b) + 2.0 FROM tango");
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                    "[5.0,null]\t[[4.0,5.0],[6.0,7.0]]\t[7.0,8.0]\t[[14.0,15.0]]\n" +
+                    "[9.0,10.0]\t[[10.0,11.0]]\t[13.0,14.0]\t[]\n" +
+                    "null\tnull\tnull\tnull\n", "SELECT 3.0 + a, 2.0 + b, 5.0 + b[1], 10.0 + b[2:] FROM tango");
+        });
+    }
+
+    @Test
     public void testArrayAvg() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
@@ -291,6 +314,75 @@ public class ArrayTest extends AbstractCairoTest {
                             "[0.0]\t[0.0]\t[0.0]\t[0.0]\t[]\n" +
                             "null\tnull\tnull\tnull\tnull\n",
                     "SELECT arrayCumSum(arr2), arrayCumSum(transpose(arr2)), arrayCumSum(arr2[1]), arrayCumSum(arr2[1:]), arrayCumSum(arr2[2:]) FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayDivScalarValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, null], ARRAY[[2.0, 3], [4.0, 5]]), " +
+                    "(ARRAY[6.0, 7], ARRAY[[8.0, 9]])," +
+                    "(null, null)");
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                    "[12.0,null]\t[[8.0,12.0],[16.0,20.0]]\t[20.0,30.0]\t[[80.0,100.0]]\n" +
+                    "[36.0,42.0]\t[[32.0,36.0]]\t[80.0,90.0]\t[]\n" +
+                    "null\tnull\tnull\tnull\n", "SELECT a * 3.0/0.5, b * 2.0/0.5, b[1] * 5.0 / 0.5, b[2:] * 10.0 / 0.5 FROM tango");
+            assertSql("column\tcolumn1\n" +
+                    "[4.0,null]\t[[4.0,8.0],[6.0,10.0]]\n" +
+                    "[12.0,14.0]\t[[16.0],[18.0]]\n" +
+                    "null\tnull\n", "SELECT transpose(a)/0.5, transpose(b)/0.5 FROM tango");
+            assertSql("column\tcolumn1\n" +
+                    "[null,null]\t[null,null]\n" +
+                    "[null,null]\t[null,null]\n" +
+                    "null\tnull\n", "SELECT a/0.0, a/null::double FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayMultiplyScalarValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, null], ARRAY[[2.0, 3], [4.0, 5]]), " +
+                    "(ARRAY[6.0, 7], ARRAY[[8.0, 9]])," +
+                    "(null, null)");
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                    "[6.0,null]\t[[4.0,6.0],[8.0,10.0]]\t[10.0,15.0]\t[[40.0,50.0]]\n" +
+                    "[18.0,21.0]\t[[16.0,18.0]]\t[40.0,45.0]\t[]\n" +
+                    "null\tnull\tnull\tnull\n", "SELECT a * 3.0, b * 2.0, b[1] * 5.0, b[2:] * 10.0 FROM tango");
+            assertSql("column\tcolumn1\n" +
+                    "[6.0,null]\t[[4.0,8.0],[6.0,10.0]]\n" +
+                    "[18.0,21.0]\t[[16.0],[18.0]]\n" +
+                    "null\tnull\n", "SELECT transpose(a) * 3.0, transpose(b) * 2.0 FROM tango");
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                    "[6.0,null]\t[[4.0,6.0],[8.0,10.0]]\t[10.0,15.0]\t[[40.0,50.0]]\n" +
+                    "[18.0,21.0]\t[[16.0,18.0]]\t[40.0,45.0]\t[]\n" +
+                    "null\tnull\tnull\tnull\n", "SELECT 3.0 * a, 2.0 * b, 5.0 * b[1], 10.0 * b[2:] FROM tango");
+        });
+    }
+
+    @Test
+    public void testArraySubtractScalarValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, null], ARRAY[[2.0, 3], [4.0, 5]]), " +
+                    "(ARRAY[6.0, 7], ARRAY[[8.0, 9]])," +
+                    "(null, null)");
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                    "[5.0,null]\t[[3.0,5.0],[7.0,9.0]]\t[9.0,14.0]\t[[39.0,49.0]]\n" +
+                    "[17.0,20.0]\t[[15.0,17.0]]\t[39.0,44.0]\t[]\n" +
+                    "null\tnull\tnull\tnull\n", "SELECT a * 3.0 - 1.0, b * 2.0 - 1.0, b[1] * 5.0 - 1.0, b[2:] * 10.0 - 1.0 FROM tango");
+            assertSql("column\tcolumn1\n" +
+                    "[-1.0,null]\t[[0.0,2.0],[1.0,3.0]]\n" +
+                    "[3.0,4.0]\t[[6.0],[7.0]]\n" +
+                    "null\tnull\n", "SELECT transpose(a) - 3.0, transpose(b) - 2.0 FROM tango");
+            assertSql("column\n" +
+                    "[null,null]\n" +
+                    "[null,null]\n" +
+                    "null\n", "SELECT a - null::double FROM tango");
         });
     }
 

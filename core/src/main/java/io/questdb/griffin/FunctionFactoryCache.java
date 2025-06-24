@@ -99,6 +99,10 @@ public class FunctionFactoryCache {
                         cursorFunctionNames.add(name);
                     } else if (factory.isRuntimeConstant()) {
                         runtimeConstantFunctionNames.add(name);
+                    } else if (factory.isCommutative() && descriptor.getSigArgCount() == 2 &&
+                            descriptor.getArgTypeWithFlags(0) != descriptor.getArgTypeWithFlags(1)) { // commutative
+                        FunctionFactory swappingFactory = createSwappingFactory(name, factory);
+                        addFactoryToList(factories, swappingFactory);
                     }
                 } catch (SqlException e) {
                     LOG.error().$((Sinkable) e)

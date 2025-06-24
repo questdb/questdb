@@ -82,6 +82,18 @@ public interface FunctionFactory {
         return false;
     }
 
+    /**
+     * If the function is commutative.
+     *
+     * <p>This method should be overridden to return {@code true} if the binary expression satisfies
+     * two conditions:
+     * <li>The operation is mathematically commutative (e.g., addition, multiplication).</li>
+     * <li>The types of the left and right operands are not the same.</li>
+     */
+    default boolean isCommutative() {
+        return false;
+    }
+
     default boolean isCursor() {
         return false;
     }

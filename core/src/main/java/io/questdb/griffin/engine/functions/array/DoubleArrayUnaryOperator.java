@@ -25,9 +25,8 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 
-public interface DoubleArrayUnaryFunction extends UnaryFunction {
+public interface DoubleArrayUnaryOperator {
 
     void applyOnElement(ArrayView view, int index);
 

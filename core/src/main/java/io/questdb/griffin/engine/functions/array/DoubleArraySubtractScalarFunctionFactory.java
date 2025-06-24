@@ -26,73 +26,44 @@ package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class DoubleArrayCountFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "arrayCount";
+public class DoubleArraySubtractScalarFunctionFactory implements FunctionFactory {
+    private static final String FUNCTION_NAME = "-";
 
     @Override
     public String getSignature() {
-        return FUNCTION_NAME + "(D[])";
+        return FUNCTION_NAME + "(D[]D)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0));
+        return new Func(args.getQuick(0), args.getQuick(1), configuration);
     }
 
-    static class Func extends IntFunction implements DoubleArrayUnaryOperator, UnaryFunction {
+    private static class Func extends DoubleArrayAndScalarArrayOperator {
 
-        private final Function arrayArg;
-        private int count;
-
-        Func(Function arrayArg) {
-            this.arrayArg = arrayArg;
+        public Func(Function arrayArg, Function scalarArg, CairoConfiguration configuration) {
+            super(FUNCTION_NAME, arrayArg, scalarArg, configuration);
         }
 
         @Override
         public void applyOnElement(ArrayView view, int index) {
-            if (Numbers.isFinite(view.getDouble(index))) {
-                count++;
-            }
+            memory.putDouble(view.getDouble(index) - scalarValue);
         }
 
         @Override
         public void applyOnEntireVanillaArray(ArrayView view) {
-            count = view.flatView().countDouble(view.getFlatViewOffset(), view.getFlatViewLength());
-        }
-
-        @Override
-        public void applyOnNullArray() {
-
-        }
-
-        @Override
-        public Function getArg() {
-            return arrayArg;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            ArrayView arr = arrayArg.getArray(rec);
-            count = 0;
-            calculate(arr);
-            return count;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(FUNCTION_NAME).val('(').val(arrayArg).val(')');
+            FlatArrayView flatView = view.flatView();
+            for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
+                memory.putDouble(flatView.getDoubleAtAbsIndex(i) - scalarValue);
+            }
         }
     }
 }
