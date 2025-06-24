@@ -196,14 +196,19 @@ public abstract class ArrayView implements QuietCloseable {
             switch (getElemType()) {
                 case ColumnType.DOUBLE:
                     for (int i = 0; i < length; i++) {
-                        if (!Numbers.equals(flatViewLeft.getDoubleAtAbsIndex(flatViewOffset + i), flatViewRight.getDoubleAtAbsIndex(other.flatViewOffset + i))) {
+                        if (!Numbers.equals(
+                                flatViewLeft.getDoubleAtAbsIndex(flatViewOffset + i),
+                                flatViewRight.getDoubleAtAbsIndex(other.flatViewOffset + i))
+                        ) {
                             return false;
                         }
                     }
                     break;
                 case ColumnType.LONG:
                     for (int i = 0; i < length; i++) {
-                        if (flatViewLeft.getLongAtAbsIndex(flatViewOffset + i) != flatViewRight.getLongAtAbsIndex(other.flatViewOffset + i)) {
+                        if (flatViewLeft.getLongAtAbsIndex(flatViewOffset + i) !=
+                                flatViewRight.getLongAtAbsIndex(other.flatViewOffset + i)
+                        ) {
                             return false;
                         }
                     }
