@@ -83,15 +83,13 @@ public interface FunctionFactory {
     }
 
     /**
-     * Tells whether this is a binary function with parameters of two different types,
-     * but where swapping the arguments always gives the same result.
+     * This method should return true when the function signature specifies two parameters
+     * of different types, but we want to accept them in the opposite order as well.
      * <p>
-     * In other words, the method should return {@code true} if the function satisfies
-     * two conditions:
-     * <ol>
-     * <li>For any two arguments (x, y), the result is the same as with arguments swapped: (y, x).</li>
-     * <li>The types of the left and right operands are not the same.</li>
-     * </ol>
+     * Example: {@code array + scalar}, where we also want to support {@code scalar + array}.
+     * <p>
+     * When this returns true, a function signature with the opposite parameter order will
+     * be automatically generated.
      */
     default boolean isCommutative() {
         return false;
