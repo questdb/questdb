@@ -1371,6 +1371,15 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[])");
+            execute("INSERT INTO tango VALUES (ARRAY[1.0, 2, 3][2:])");
+            assertSql("arr\n[2.0,3.0]\n", "tango");
+        });
+    }
+
+    @Test
     public void testInsertTransposed() throws Exception {
         assertMemoryLeak(() -> {
             String original = "[[1.0,2.0],[3.0,4.0],[5.0,6.0]]";
