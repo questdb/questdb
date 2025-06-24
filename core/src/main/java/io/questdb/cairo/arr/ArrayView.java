@@ -467,9 +467,9 @@ public abstract class ArrayView implements QuietCloseable {
         if (isNull() || isEmpty()) {
             return 0;
         }
-        for (int i = flatViewOffset, dimLen = getDimLen(0) + flatViewOffset; i < dimLen; i++) {
-            if (Numbers.isNull(flatView.getDoubleAtAbsIndex(i))) {
-                return i - flatViewOffset + 1;
+        for (int i = 0, dimLen = getDimLen(0); i < dimLen; i++) {
+            if (Numbers.isNull(getDouble(i))) {
+                return i + 1;
             }
         }
         return 0;
@@ -483,9 +483,9 @@ public abstract class ArrayView implements QuietCloseable {
             return flatView.linearSearch(value, flatViewOffset, flatViewLength);
         } else {
             int stride = getStride(0);
-            int index = flatViewOffset;
+            int index = 0;
             for (int i = 0, n = getDimLen(0) - 1; i < n; i++) {
-                double v = flatView.getDoubleAtAbsIndex(index);
+                double v = getDouble(index);
                 if (Math.abs(v - value) <= Numbers.DOUBLE_TOLERANCE) {
                     return i + 1;
                 }
