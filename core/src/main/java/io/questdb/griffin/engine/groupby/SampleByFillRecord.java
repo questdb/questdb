@@ -32,14 +32,14 @@ import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 
-public class SplitVirtualRecord implements Record {
+public class SampleByFillRecord implements Record {
     private final ObjList<? extends Function> functionsA;
     private final ObjList<? extends Function> functionsB;
     private final ObjList<InterpolationGroupByFunction> interpolations = new ObjList<>();
     private Record base;
     private ObjList<? extends Function> current;
 
-    public SplitVirtualRecord(ObjList<? extends Function> functionsA, ObjList<? extends Function> functionsB) {
+    public SampleByFillRecord(ObjList<? extends Function> functionsA, ObjList<? extends Function> functionsB) {
         this.current = functionsA;
         this.functionsA = functionsA;
         this.functionsB = functionsB;

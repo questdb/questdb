@@ -40,20 +40,41 @@ import io.questdb.cairo.sql.RecordMetadata;
 public class VirtualPriorityMetadata extends AbstractRecordMetadata {
     private final int virtualColumnCount;
     private int pos = 0;
+    private final RecordMetadata baseMetadata;
 
     public VirtualPriorityMetadata(int virtualColumnCount, RecordMetadata baseMetadata) {
         this.virtualColumnCount = virtualColumnCount;
-        int baseColumnCount = baseMetadata.getColumnCount();
-        columnMetadata.setPos(virtualColumnCount + baseColumnCount);
-        for (int i = 0; i < baseColumnCount; i++) {
-            TableColumnMetadata m = baseMetadata.getColumnMetadata(i);
-            int pos = virtualColumnCount + i;
-            columnMetadata.set(pos, m);
-            // set the initial position assuming virtual column names can clash
-            // with the base column names. We will update the position when we start
-            // compiling virtual functions
-            columnNameIndexMap.put(m.getColumnName(), pos);
+        columnMetadata.setPos(virtualColumnCount);
+        // hold on to the base metadata, in case this is a join metadata, and it is able to
+        // resolve column names containing table aliases.
+        this.baseMetadata = baseMetadata;
+    }
+
+
+    @Override
+    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
+        int index = baseMetadata.getColumnIndexQuiet(columnName, lo, hi);
+        if (index == -1) {
+            int keyIndex = columnNameIndexMap.keyIndex(columnName, lo, hi);
+            if (keyIndex < 0) {
+                return columnNameIndexMap.valueAt(keyIndex);
+            }
+            return -1;
         }
+        return index + virtualColumnCount;
+    }
+
+    @Override
+    public TableColumnMetadata getColumnMetadata(int index) {
+        if (index < virtualColumnCount) {
+            return columnMetadata.getQuick(index);
+        }
+        return baseMetadata.getColumnMetadata(index - virtualColumnCount);
+    }
+
+    @Override
+    public int getColumnType(CharSequence columnName) {
+        return super.getColumnType(columnName);
     }
 
     public void add(TableColumnMetadata m) {

@@ -4582,7 +4582,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 Function function = functionParser.parseFunction(
                         column.getAst(),
-                        baseMetadata,
+                        priorityMetadata,
                         executionContext
                 );
 
@@ -4668,7 +4668,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final Function timestampFunction = FunctionParser.createColumn(
                         0,
                         timestampColumn,
-                        baseMetadata
+                        priorityMetadata
                 );
                 functions.add(timestampFunction);
 
@@ -4692,7 +4692,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
             }
-            return new VirtualRecordCursorFactory(virtualMetadata, functions, factory);
+            return new VirtualRecordCursorFactory(virtualMetadata, priorityMetadata, functions, factory);
         } catch (SqlException | CairoException e) {
             Misc.freeObjList(functions);
             factory.close();

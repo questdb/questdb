@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -38,16 +40,19 @@ import io.questdb.std.ObjList;
 
 public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
-    private final VirtualFunctionDirectSymbolRecordCursor cursor;
+    private final VirtualFunctionRecordCursor cursor;
     private final ObjList<Function> functions;
+    private final VirtualRecordCursorFactorySymbolTableSource internalSymbolTableSource;
+    private final RecordMetadata priorityMetadata;
     private final boolean supportsRandomAccess;
 
     public VirtualRecordCursorFactory(
-            RecordMetadata metadata,
+            RecordMetadata virtualMetadata,
+            RecordMetadata priorityMetadata,
             ObjList<Function> functions,
             RecordCursorFactory base
     ) {
-        super(metadata);
+        super(virtualMetadata);
         this.base = base;
         this.functions = functions;
         boolean supportsRandomAccess = base.recordCursorSupportsRandomAccess();
@@ -58,7 +63,9 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
         this.supportsRandomAccess = supportsRandomAccess;
-        this.cursor = new VirtualFunctionDirectSymbolRecordCursor(functions, supportsRandomAccess);
+        this.cursor = new VirtualFunctionRecordCursor(functions, supportsRandomAccess);
+        this.internalSymbolTableSource = new VirtualRecordCursorFactorySymbolTableSource(cursor, functions.size() + 1);
+        this.priorityMetadata = priorityMetadata;
     }
 
     @Override
@@ -72,6 +79,11 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public String getBaseColumnName(int idx) {
+        return priorityMetadata.getColumnName(idx);
+    }
+
+    @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
     }
@@ -80,7 +92,8 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor cursor = base.getCursor(executionContext);
         try {
-            Function.init(functions, cursor, executionContext, null);
+            internalSymbolTableSource.of(cursor);
+            Function.init(functions, internalSymbolTableSource, executionContext, null);
             this.cursor.of(cursor);
             return this.cursor;
         } catch (Throwable th) {
@@ -130,5 +143,37 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     protected void _close() {
         Misc.freeObjList(functions);
         Misc.free(base);
+    }
+
+    private static class VirtualRecordCursorFactorySymbolTableSource implements SymbolTableSource {
+        private final RecordCursor own;
+        private final int split;
+        private RecordCursor base;
+
+
+        public VirtualRecordCursorFactorySymbolTableSource(RecordCursor own, int split) {
+            this.own = own;
+            this.split = split;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            if (columnIndex < split) {
+                return own.getSymbolTable(columnIndex);
+            }
+            return base.getSymbolTable(columnIndex - split);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            if (columnIndex < split) {
+                return own.newSymbolTable(columnIndex);
+            }
+            return base.newSymbolTable(columnIndex - split);
+        }
+
+        public void of(RecordCursor base) {
+            this.base = base;
+        }
     }
 }
