@@ -581,12 +581,15 @@ public class TruncateTest extends AbstractCairoTest {
                     true
             );
 
+
             try {
-                assertExceptionNoLeakCheck("truncate table x, y,z");
+                assertExceptionNoLeakCheck("truncate table z");
             } catch (SqlException e) {
-                Assert.assertEquals(20, e.getPosition());
+                Assert.assertEquals(15, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=z]");
             }
+
+            execute("truncate table if exists z");
 
             assertQuery(
                     "count\n" +
@@ -605,6 +608,103 @@ public class TruncateTest extends AbstractCairoTest {
                     false,
                     true
             );
+
+            execute("truncate table if exists x, y");
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from y",
+                    null,
+                    false,
+                    true
+            );
+
+        });
+    }
+
+    @Test
+    public void testTableIfExist() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            createY();
+
+            assertQuery(
+                    "count\n" +
+                            "10\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+
+            assertQuery(
+                    "count\n" +
+                            "20\n",
+                    "select count() from y",
+                    null,
+                    false,
+                    true
+            );
+
+
+            try {
+                assertExceptionNoLeakCheck("truncate table z");
+            } catch (SqlException e) {
+                Assert.assertEquals(15, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=z]");
+            }
+
+            execute("truncate table if exists z");
+
+            assertQuery(
+                    "count\n" +
+                            "10\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+
+            assertQuery(
+                    "count\n" +
+                            "20\n",
+                    "select count() from y",
+                    null,
+                    false,
+                    true
+            );
+
+            // this query will fail silently because z does not exists
+            execute("truncate table if exists x, y, z");
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from y",
+                    null,
+                    false,
+                    true
+            );
+
         });
     }
 
