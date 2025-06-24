@@ -53,8 +53,7 @@ public class DoubleArrayDivFunctionFactory implements FunctionFactory {
                 configuration,
                 args.getQuick(0),
                 args.getQuick(1),
-                argPositions.getQuick(0),
-                argPositions.getQuick(1)
+                argPositions.getQuick(0)
         );
     }
 
@@ -64,15 +63,14 @@ public class DoubleArrayDivFunctionFactory implements FunctionFactory {
                 CairoConfiguration configuration,
                 Function leftArg,
                 Function rightArg,
-                int leftArgPos,
-                int rightArgPos
-        ) throws SqlException {
-            super("/", configuration, leftArg, rightArg, leftArgPos, rightArgPos);
+                int leftArgPos
+        ) {
+            super("/", configuration, leftArg, rightArg, leftArgPos);
         }
 
         @Override
         protected double applyOperation(double leftVal, double rightVal) {
-            return leftVal * rightVal;
+            return leftVal / rightVal;
         }
 
         @Override

@@ -468,15 +468,23 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBasicArithmeticInvalid() throws Exception {
+    public void testBasicArithmeticAutoBroadcast() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[], c DOUBLE[][])");
+            execute("CREATE TABLE tango (a DOUBLE[][], b DOUBLE[])");
             execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[2.0, 3], ARRAY[4.0, 5, 6], ARRAY[ [1.0, 2], [3.0, 4] ])");
-            assertException("SELECT a + c from tango", 7,
-                    "arrays have different number of dimensions [nDimsLeft=1, nDimsRight=2]");
-            assertException("SELECT a + b from tango", 7,
-                    "arrays have different shapes [leftShape=[2], rightShape=[3]]");
+                    "(ARRAY[[0.0, 0, 0], [10, 10, 10], [20, 20, 20], [30, 30, 30]], ARRAY[0, 1, 2])");
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                            "[[0.0,1.0,2.0],[10.0,11.0,12.0],[20.0,21.0,22.0],[30.0,31.0,32.0]]\t[[0.0,-1.0,-2.0],[10.0,9.0,8.0],[20.0,19.0,18.0],[30.0,29.0,28.0]]\t[[0.0,0.0,0.0],[0.0,10.0,20.0],[0.0,20.0,40.0],[0.0,30.0,60.0]]\t[[null,0.0,0.0],[null,10.0,5.0],[null,20.0,10.0],[null,30.0,15.0]]\n",
+                    "SELECT a + b, a - b, a * b, a / b FROM tango");
+            assertSql("column\n" +
+                            "[[0.0,-1.0,-4.0],[100.0,99.0,96.0],[400.0,399.0,396.0],[900.0,899.0,896.0]]\n",
+                    "SELECT (a + b) * (a - b) from tango");
+            execute("CREATE TABLE tango1 (a DOUBLE[][], b DOUBLE[])");
+            execute("INSERT INTO tango1 VALUES " +
+                    "(ARRAY[[1.0, 2.0]], ARRAY[0, 1, 2])");
+            assertException("select a + b from tango1",
+                    7,
+                    "arrays have incompatible shapes [leftShape=[1,2], rightShape=[3]]");
         });
     }
 

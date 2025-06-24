@@ -53,8 +53,7 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
                 configuration,
                 args.getQuick(0),
                 args.getQuick(1),
-                argPositions.getQuick(0),
-                argPositions.getQuick(1)
+                argPositions.getQuick(0)
         );
     }
 
@@ -64,10 +63,9 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
                 CairoConfiguration configuration,
                 Function leftArg,
                 Function rightArg,
-                int leftArgPos,
-                int rightArgPos
-        ) throws SqlException {
-            super("*", configuration, leftArg, rightArg, leftArgPos, rightArgPos);
+                int leftArgPos
+        ) {
+            super("*", configuration, leftArg, rightArg, leftArgPos);
         }
 
         @Override

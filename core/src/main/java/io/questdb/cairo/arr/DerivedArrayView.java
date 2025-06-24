@@ -26,6 +26,7 @@ package io.questdb.cairo.arr;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.std.IntList;
 
 /**
  * A view over an array. Does not own the backing flat array. The array contents can't
@@ -33,6 +34,33 @@ import io.questdb.cairo.ColumnType;
  * of the underlying flat array it represents, as well as transpose it.
  */
 public class DerivedArrayView extends ArrayView {
+
+    public static void computeBroadcastShape(ArrayView left, ArrayView right, IntList out, int leftArgPosition) {
+        out.clear();
+        int dimsA = left.getDimCount();
+        int dimsB = right.getDimCount();
+        int maxDims = Math.max(dimsA, dimsB);
+        out.setPos(maxDims);
+
+        for (int i = 0; i < maxDims; i++) {
+            int posA = dimsA - 1 - i;
+            int posB = dimsB - 1 - i;
+            int dimA = (posA >= 0) ? left.shape.get(posA) : 1;
+            int dimB = (posB >= 0) ? right.shape.get(posB) : 1;
+            if (dimA == dimB) {
+                out.setQuick(maxDims - 1 - i, dimA);
+            } else if (dimA == 1) {
+                out.setQuick(maxDims - 1 - i, dimB);
+            } else if (dimB == 1) {
+                out.setQuick(maxDims - 1 - i, dimA);
+            } else {
+                throw CairoException.nonCritical().position(leftArgPosition)
+                        .put("arrays have incompatible shapes [leftShape=").put(left.shapeToString())
+                        .put(", rightShape=").put(right.shapeToString())
+                        .put(']');
+            }
+        }
+    }
 
     /**
      * Adds extra dimensions to the array view.
@@ -69,11 +97,34 @@ public class DerivedArrayView extends ArrayView {
         type = ColumnType.encodeArrayType(getElemType(), getDimCount() + count);
     }
 
+    public void broadcast(IntList targetShape) {
+        int targetDims = targetShape.size();
+        int originalDims = getDimCount();
+        assert targetDims >= originalDims;
+        if (originalDims < targetDims) {
+            broadcastByPrependDims(targetDims - originalDims);
+        }
+
+        boolean changed = false;
+        for (int i = 0; i < targetDims; i++) {
+            if (shape.getQuick(i) == 1 && targetShape.getQuick(i) != 1) {
+                strides.setQuick(i, 0);
+                shape.setQuick(i, targetShape.getQuick(i));
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            isVanilla = false;
+        }
+    }
+
     public void broadcastByAppendDims(int dim) {
         for (int i = 0; i < dim; i++) {
             shape.add(1);
             strides.add(0);
         }
+        this.type = ColumnType.encodeArrayType(getElemType(), shape.size());
     }
 
     public void broadcastByPrependDims(int dim) {
@@ -83,6 +134,7 @@ public class DerivedArrayView extends ArrayView {
             shape.set(i, 1);
             strides.set(i, 0);
         }
+        this.type = ColumnType.encodeArrayType(getElemType(), shape.size());
     }
 
     public void flattenDim(int dim, int argPos) {
