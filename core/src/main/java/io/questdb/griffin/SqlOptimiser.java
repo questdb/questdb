@@ -643,6 +643,52 @@ public class SqlOptimiser implements Mutable {
         model.setPostJoinWhereClause(concatFilters(model.getPostJoinWhereClause(), node));
     }
 
+    private void addTimestampToProjection(
+            CharSequence columnName,
+            ExpressionNode columnAst,
+            QueryModel baseModel,
+            QueryModel translatingModel,
+            QueryModel innerVirtualModel,
+            QueryModel windowModel
+    ) throws SqlException {
+        // add duplicate column names only to group-by model
+        // taking into account that column is pre-aliased, e.g.
+        // "col, col" will look like "col, col col1"
+
+        LowerCaseCharSequenceObjHashMap<CharSequence> translatingAliasMap = translatingModel.getColumnNameToAliasMap();
+        int index = translatingAliasMap.keyIndex(columnAst.token);
+        if (index < 0) {
+            // column is already being referenced by translating model
+            final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
+            final CharSequence innerAlias = createColumnAlias(columnName, innerVirtualModel);
+            final QueryColumn translatedColumn = nextColumn(innerAlias, false, translatedColumnName);
+            innerVirtualModel.addBottomUpColumn(translatedColumn);
+
+            // window model is used together with the inner model
+            final CharSequence windowAlias = createColumnAlias(innerAlias, windowModel);
+            final QueryColumn windowColumn = nextColumn(windowAlias, false, innerAlias);
+            windowModel.addBottomUpColumn(windowColumn);
+        } else {
+            final CharSequence alias = createColumnAlias(columnName, translatingModel);
+            addColumnToTranslatingModel(
+                    queryColumnPool.next().of(
+                            alias,
+                            false,
+                            columnAst
+                    ),
+                    translatingModel,
+                    innerVirtualModel,
+                    baseModel
+            );
+
+            final QueryColumn translatedColumn = nextColumn(alias, false);
+
+            // create column that references inner alias we just created
+            innerVirtualModel.addBottomUpColumn(translatedColumn);
+            windowModel.addBottomUpColumn(translatedColumn);
+        }
+    }
+
     private void addTopDownColumn(@Transient ExpressionNode node, QueryModel model) {
         if (node != null && node.type == LITERAL) {
             final CharSequence columnName = node.token;
@@ -1369,7 +1415,6 @@ public class SqlOptimiser implements Mutable {
             );
 
             final QueryColumn translatedColumn = nextColumn(alias, false);
-//            windowModel.addBottomUpColumn(translatedColumn);
             groupByModel.addBottomUpColumn(translatedColumn);
             return translatedColumn;
         }
@@ -1534,53 +1579,6 @@ public class SqlOptimiser implements Mutable {
             if (distinctModel != null) {
                 distinctModel.addBottomUpColumn(translatedColumn);
             }
-        }
-    }
-
-    // todo: possibly rename, this method only adds timestamp column
-    private void createSelectColumn0(
-            CharSequence columnName,
-            ExpressionNode columnAst,
-            QueryModel baseModel,
-            QueryModel translatingModel,
-            QueryModel innerVirtualModel,
-            QueryModel windowModel
-    ) throws SqlException {
-        // add duplicate column names only to group-by model
-        // taking into account that column is pre-aliased, e.g.
-        // "col, col" will look like "col, col col1"
-
-        LowerCaseCharSequenceObjHashMap<CharSequence> translatingAliasMap = translatingModel.getColumnNameToAliasMap();
-        int index = translatingAliasMap.keyIndex(columnAst.token);
-        if (index < 0) {
-            // column is already being referenced by translating model
-            final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
-            final CharSequence innerAlias = createColumnAlias(columnName, innerVirtualModel);
-            final QueryColumn translatedColumn = nextColumn(innerAlias, false, translatedColumnName);
-            innerVirtualModel.addBottomUpColumn(translatedColumn);
-
-            // window model is used together with the inner model
-            final CharSequence windowAlias = createColumnAlias(innerAlias, windowModel);
-            final QueryColumn windowColumn = nextColumn(windowAlias, false, innerAlias);
-            windowModel.addBottomUpColumn(windowColumn);
-        } else {
-            final CharSequence alias = createColumnAlias(columnName, translatingModel);
-            addColumnToTranslatingModel(
-                    queryColumnPool.next().of(
-                            alias,
-                            false,
-                            columnAst
-                    ),
-                    translatingModel,
-                    innerVirtualModel,
-                    baseModel
-            );
-
-            final QueryColumn translatedColumn = nextColumn(alias, false);
-
-            // create column that references inner alias we just created
-            innerVirtualModel.addBottomUpColumn(translatedColumn);
-            windowModel.addBottomUpColumn(translatedColumn);
         }
     }
 
@@ -5845,11 +5843,6 @@ public class SqlOptimiser implements Mutable {
                     } else {
                         if (explicitGroupBy) {
                             nonAggSelectCount++;
-                            // todo: we may not need to table-prefix column if it references this projection
-                            //      we may also need to alias the column differently if it clashes with a column in the projection (test first)
-
-
-                            // todo: if we are auto-hiding column names, we may skip using them to lookup the group-by list
                             addMissingTablePrefixes(qc.getAst(), baseModel, innerVirtualModel);
                             int matchingColIdx = findColumnIdxByAst(groupByNodes, qc.getAst());
                             if (matchingColIdx == -1) {
@@ -5880,7 +5873,6 @@ public class SqlOptimiser implements Mutable {
                                 qc.setAlias(newAlias, false);
                             }
 
-                            // todo: alias of this column to the projection so it can be referenced by columns following this
                             createSelectColumn(
                                     qc.getAlias(),
                                     qc.getAst(),
@@ -5926,15 +5918,12 @@ public class SqlOptimiser implements Mutable {
                         outerVirtualModel.addBottomUpColumn(ref);
                         distinctModel.addBottomUpColumn(ref);
                         // ensure literals referenced by window column are present in nested models
-                        // todo: can window function reference the projection ?
                         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, true, baseModel, true);
                         continue;
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
-                        // todo: why are we prefixing group by column ?
                         addMissingTablePrefixes(qc.getAst(), baseModel, innerVirtualModel);
                         CharSequence matchingCol = findColumnByAst(groupByNodes, groupByAliases, qc.getAst());
                         if (useOuterModel && matchingCol != null) {
-                            // todo: verify what is this for, seems like an early exit for group-by
                             QueryColumn ref = nextColumn(qc.getAlias(), qc.isAliasOrganic(), matchingCol);
                             ref = ensureAliasUniqueness(outerVirtualModel, ref);
                             outerVirtualModel.addBottomUpColumn(ref);
@@ -5965,7 +5954,6 @@ public class SqlOptimiser implements Mutable {
                     } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
                         // this is a select on projection, e.g. something like
                         // select a, b, c, (select 1 from tab) from tab2
-                        // todo: i am unsure what we need the base model for here, it should not be referenced at all, this is a cross join
                         addCursorFunctionAsCrossJoin(
                                 qc.getAst(),
                                 qc.getAlias(),
@@ -6004,7 +5992,6 @@ public class SqlOptimiser implements Mutable {
                                 : originalNode;
 
                         // add table or alias prefix to the literal arguments of this function or operator
-                        // todo: this should not add prefixes to the projection references, otherwise it will be a mess
                         addMissingTablePrefixes(node, baseModel, innerVirtualModel);
 
                         // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in outer virtual model
@@ -6024,7 +6011,6 @@ public class SqlOptimiser implements Mutable {
                             qc.of(qc.getAlias(), qc.isAliasOrganic(), node, qc.isIncludeIntoWildcard(), qc.getColumnType());
                         }
 
-                        // todo: why are we emitting cursors here?
                         emitCursors(
                                 qc.getAst(),
                                 cursorModel,
@@ -6072,8 +6058,6 @@ public class SqlOptimiser implements Mutable {
                                 groupByNodes,
                                 groupByAliases
                         );
-                        // todo: wtf is with cursor emission everywhere, is it just spray and pray coding?
-                        //    is it a select sum(select 1 from t) from t2?
                         emitCursors(
                                 qc.getAst(),
                                 cursorModel,
@@ -6087,7 +6071,6 @@ public class SqlOptimiser implements Mutable {
                         qc = ensureAliasUniqueness(outerVirtualModel, qc);
                         outerVirtualModel.addBottomUpColumn(qc);
                         distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isAliasOrganic()));
-                        // todo: also here, we need to be able to reference the projection
                         for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
                             emitLiterals(
                                     groupByModel.getBottomUpColumns().getQuick(j).getAst(),
@@ -6100,7 +6083,6 @@ public class SqlOptimiser implements Mutable {
                         }
                         useOuterModel = true;
                     } else {
-                        // todo: another one
                         emitCursors(
                                 qc.getAst(),
                                 cursorModel,
@@ -6132,7 +6114,6 @@ public class SqlOptimiser implements Mutable {
                                 QueryColumn ref = nextColumn(qc.getAlias(), qc.isAliasOrganic());
                                 outerVirtualModel.addBottomUpColumn(ref);
                                 distinctModel.addBottomUpColumn(ref);
-                                // todo: ok, this also might use projection
                                 emitLiterals(
                                         qc.getAst(),
                                         translatingModel,
@@ -6151,7 +6132,6 @@ public class SqlOptimiser implements Mutable {
                             }
                         }
 
-                        // todo: totally needs projection
                         addFunction(
                                 qc,
                                 baseModel,
@@ -6258,7 +6238,7 @@ public class SqlOptimiser implements Mutable {
                 // no, do we rename columns? does model select timestamp under a new name?
                 if (translationIsRedundant) {
                     // columns were not renamed
-                    createSelectColumn0(
+                    addTimestampToProjection(
                             baseModel.getTimestamp().token,
                             baseModel.getTimestamp(),
                             baseModel,
@@ -6276,7 +6256,7 @@ public class SqlOptimiser implements Mutable {
                         if (translatingModel.getColumnNameToAliasMap().excludes(prefixedTimestampName)) {
                             if (baseModel.getJoinModels().size() > 0 && isAmbiguousColumn(baseModel, baseModel.getTimestamp().token)) {
                                 // add prefixed column since the name is ambiguous
-                                createSelectColumn0(
+                                addTimestampToProjection(
                                         prefixedTimestampName,
                                         nextLiteral(prefixedTimestampName),
                                         baseModel,
@@ -6285,7 +6265,7 @@ public class SqlOptimiser implements Mutable {
                                         windowModel
                                 );
                             } else {
-                                createSelectColumn0(
+                                addTimestampToProjection(
                                         baseModel.getTimestamp().token,
                                         baseModel.getTimestamp(),
                                         baseModel,
