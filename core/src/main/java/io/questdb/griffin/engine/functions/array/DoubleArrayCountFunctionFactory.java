@@ -29,7 +29,6 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
@@ -91,8 +90,8 @@ public class DoubleArrayCountFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(FUNCTION_NAME).val('(').val(arrayArg).val(')');
+        public String getName() {
+            return FUNCTION_NAME;
         }
     }
 }

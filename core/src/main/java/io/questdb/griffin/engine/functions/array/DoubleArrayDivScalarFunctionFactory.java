@@ -35,11 +35,11 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayDivScalarFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "/";
+    private static final String OPERATOR_NAME = "/";
 
     @Override
     public String getSignature() {
-        return FUNCTION_NAME + "(D[]D)";
+        return OPERATOR_NAME + "(D[]D)";
     }
 
     @Override
@@ -50,7 +50,7 @@ public class DoubleArrayDivScalarFunctionFactory implements FunctionFactory {
     private static class Func extends DoubleArrayAndScalarArrayOperator {
 
         public Func(Function arrayArg, Function scalarArg, CairoConfiguration configuration) {
-            super(FUNCTION_NAME, arrayArg, scalarArg, configuration);
+            super(OPERATOR_NAME, arrayArg, scalarArg, configuration);
         }
 
         @Override

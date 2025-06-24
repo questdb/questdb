@@ -341,6 +341,26 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayDotProduct() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0, 3], [2.0, 5.0]], ARRAY[[1.0, 5.0], [7.0, 2.0]]), " +
+                    "(ARRAY[[1.0, 1]], ARRAY[[5.0, null]])");
+            assertSql("product\n" +
+                    "40.0\n" +
+                    "5.0\n", "SELECT arrayDotProduct(left, right) AS product FROM tango");
+            assertSql("product\n" +
+                    "40.0\n" +
+                    "5.0\n", "SELECT arrayDotProduct(transpose(left), transpose(right)) AS product FROM tango");
+            assertExceptionNoLeakCheck("SELECT arrayDotProduct(Array[1.0], Array[[1.0]]) AS product FROM tango",
+                    28, "arrays have different number of dimensions [nDimsLeft=1, nDimsRight=2]");
+            assertExceptionNoLeakCheck("SELECT arrayDotProduct(Array[1.0], Array[1.0, 2.0]) AS product FROM tango",
+                    28, "arrays have different shapes [leftShape=[1], rightShape=[2]]");
+        });
+    }
+
+    @Test
     public void testArrayMultiplyScalarValue() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[][])");

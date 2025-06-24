@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -122,13 +121,13 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isThreadSafe() {
-            return false;
+        public String getName() {
+            return FUNCTION_NAME;
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
-            sink.val("transpose(").val(arrayArg).val(')');
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 
