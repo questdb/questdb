@@ -37,22 +37,22 @@ public class DerivedArrayView extends ArrayView {
 
     public static void computeBroadcastShape(ArrayView left, ArrayView right, IntList out, int leftArgPosition) {
         out.clear();
-        int dimsA = left.getDimCount();
-        int dimsB = right.getDimCount();
-        int maxDims = Math.max(dimsA, dimsB);
+        int nDimsA = left.getDimCount();
+        int nDimsB = right.getDimCount();
+        int maxDims = Math.max(nDimsA, nDimsB);
         out.setPos(maxDims);
 
         for (int i = 0; i < maxDims; i++) {
-            int posA = dimsA - 1 - i;
-            int posB = dimsB - 1 - i;
-            int dimA = (posA >= 0) ? left.shape.get(posA) : 1;
-            int dimB = (posB >= 0) ? right.shape.get(posB) : 1;
-            if (dimA == dimB) {
-                out.setQuick(maxDims - 1 - i, dimA);
-            } else if (dimA == 1) {
-                out.setQuick(maxDims - 1 - i, dimB);
-            } else if (dimB == 1) {
-                out.setQuick(maxDims - 1 - i, dimA);
+            int posA = nDimsA - 1 - i;
+            int posB = nDimsB - 1 - i;
+            int dimLenA = (posA >= 0) ? left.shape.get(posA) : 1;
+            int dimLenB = (posB >= 0) ? right.shape.get(posB) : 1;
+            if (dimLenA == dimLenB) {
+                out.setQuick(maxDims - 1 - i, dimLenA);
+            } else if (dimLenA == 1) {
+                out.setQuick(maxDims - 1 - i, dimLenB);
+            } else if (dimLenB == 1) {
+                out.setQuick(maxDims - 1 - i, dimLenA);
             } else {
                 throw CairoException.nonCritical().position(leftArgPosition)
                         .put("arrays have incompatible shapes [leftShape=").put(left.shapeToString())
@@ -89,7 +89,7 @@ public class DerivedArrayView extends ArrayView {
         shape.rshift(count);
         strides.rshift(count);
         for (int i = 0; i < count; i++) {
-            shape.setQuick(i, 1); // new dimensions have all length 1
+            shape.setQuick(i, 1); // all new dimensions have length 1
             strides.setQuick(i, newStride); // new dimensions have the same stride as the outermost existing dimension
         }
 
@@ -97,12 +97,20 @@ public class DerivedArrayView extends ArrayView {
         type = ColumnType.encodeArrayType(getElemType(), getDimCount() + count);
     }
 
+    public void appendDims(int nDims) {
+        for (int i = 0; i < nDims; i++) {
+            shape.add(1);
+            strides.add(0);
+        }
+        this.type = ColumnType.encodeArrayType(getElemType(), shape.size());
+    }
+
     public void broadcast(IntList targetShape) {
         int targetDims = targetShape.size();
         int originalDims = getDimCount();
         assert targetDims >= originalDims;
         if (originalDims < targetDims) {
-            broadcastByPrependDims(targetDims - originalDims);
+            prependDims(targetDims - originalDims);
         }
 
         boolean changed = false;
@@ -117,24 +125,6 @@ public class DerivedArrayView extends ArrayView {
         if (changed) {
             isVanilla = false;
         }
-    }
-
-    public void broadcastByAppendDims(int dim) {
-        for (int i = 0; i < dim; i++) {
-            shape.add(1);
-            strides.add(0);
-        }
-        this.type = ColumnType.encodeArrayType(getElemType(), shape.size());
-    }
-
-    public void broadcastByPrependDims(int dim) {
-        shape.rshift(dim);
-        strides.rshift(dim);
-        for (int i = 0; i < dim; i++) {
-            shape.set(i, 1);
-            strides.set(i, 0);
-        }
-        this.type = ColumnType.encodeArrayType(getElemType(), shape.size());
     }
 
     public void flattenDim(int dim, int argPos) {
@@ -174,6 +164,16 @@ public class DerivedArrayView extends ArrayView {
         }
     }
 
+    public void prependDims(int nDims) {
+        shape.rshift(nDims);
+        strides.rshift(nDims);
+        for (int i = 0; i < nDims; i++) {
+            shape.set(i, 1);
+            strides.set(i, 0);
+        }
+        this.type = ColumnType.encodeArrayType(getElemType(), shape.size());
+    }
+
     public void removeDim(int dim) {
         assert dim >= 0 && dim < shape.size() : "dim out of range: " + dim;
         shape.removeIndex(dim);
@@ -206,22 +206,22 @@ public class DerivedArrayView extends ArrayView {
             return;
         }
 
-        if (this.isVanilla) {
+        if (isVanilla) {
             for (int i = 0; i < dim; i++) {
                 if (shape.getQuick(i) > 1) {
-                    this.isVanilla = false;
+                    isVanilla = false;
                 }
             }
         }
 
         if (lo < hi) {
             flatViewOffset += lo * getStride(dim);
-            this.flatViewLength = this.flatViewLength / shape.getQuick(dim) * (hi - lo);
+            flatViewLength = flatViewLength / dimLen * (hi - lo);
             shape.set(dim, hi - lo);
         } else {
             shape.set(dim, 0);
             isVanilla = true;
-            this.flatViewLength = 0;
+            flatViewLength = 0;
         }
     }
 
