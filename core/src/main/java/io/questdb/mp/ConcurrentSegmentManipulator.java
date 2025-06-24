@@ -22,36 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.mp;
 
-import io.questdb.std.Unsafe;
-import io.questdb.std.bytes.DirectByteSequence;
+public interface ConcurrentSegmentManipulator<T> {
+    T dequeue(ConcurrentQueueSegment.Slot<T>[] slots, int slotsIndex, T item);
 
-/**
- * A sequence of UTF-8 bytes stored in native memory.
- */
-public interface DirectUtf8Sequence extends Utf8Sequence, DirectByteSequence {
-
-    @Override
-    default byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte(ptr() + index);
-    }
-
-    @Override
-    default int intAt(int offset) {
-        return Unsafe.getUnsafe().getInt(ptr() + offset);
-    }
-
-    @Override
-    default long longAt(int offset) {
-        return Unsafe.getUnsafe().getLong(ptr() + offset);
-    }
-
-    @Override
-    long ptr();
-
-    @Override
-    default short shortAt(int offset) {
-        return Unsafe.getUnsafe().getShort(ptr() + offset);
-    }
+    void enqueue(T item, ConcurrentQueueSegment.Slot<T>[] slots, int slotsIndex);
 }
