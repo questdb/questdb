@@ -302,7 +302,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                     this.port
             );
         }
-        LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
+        LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(this.port)
                 .$(" [fd=").$(serverFd)
                 .$(" backlog=").$(backlog)
                 .I$();
