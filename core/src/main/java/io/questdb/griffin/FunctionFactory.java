@@ -91,7 +91,7 @@ public interface FunctionFactory {
      * true. The function's signature {@code func(array, scalar)} will then be automatically
      * used to generate the equivalent function {@code func(scalar, array)}.
      */
-    default boolean isCommutative() {
+    default boolean isCommutativeArrayFunction() {
         return false;
     }
 
