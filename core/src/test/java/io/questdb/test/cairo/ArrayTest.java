@@ -1296,8 +1296,8 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectDoubleNoWAL() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table blah (a double[][])");
-            execute("insert into blah select rnd_double_array(2, 1) from long_sequence(10)");
+            execute("CREATE TABLE blah (a DOUBLE[][])");
+            execute("INSERT INTO blah SELECT rnd_double_array(2, 1) FROM long_sequence(10)");
 
             assertQuery(
                     "a\n" +
