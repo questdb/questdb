@@ -2043,28 +2043,6 @@ if __name__ == "__main__":
         });
     }
 
-//Testing through postgres - need to establish connection
-//    @Test
-//    public void testReadINet() throws SQLException, IOException {
-//        Properties properties = new Properties();
-//        properties.setProperty("user", "admin");
-//        properties.setProperty("password", "postgres");
-//        properties.setProperty("sslmode", "disable");
-//        properties.setProperty("binaryTransfer", Boolean.toString(true));
-//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
-//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-//
-//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
-//
-//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
-//            var stmt = connection.prepareStatement("select * from ipv4");
-//            ResultSet rs = stmt.executeQuery();
-//            assertResultSet("a[OTHER]\n" +
-//                    "1.1.1.1\n" +
-//                    "12.2.65.90\n", sink, rs);
-//        }
-//    }
-
     @Test
     public void testBindVariableInFilter() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -2193,6 +2171,28 @@ if __name__ == "__main__":
             }
         });
     }
+
+//Testing through postgres - need to establish connection
+//    @Test
+//    public void testReadINet() throws SQLException, IOException {
+//        Properties properties = new Properties();
+//        properties.setProperty("user", "admin");
+//        properties.setProperty("password", "postgres");
+//        properties.setProperty("sslmode", "disable");
+//        properties.setProperty("binaryTransfer", Boolean.toString(true));
+//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
+//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+//
+//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
+//
+//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
+//            var stmt = connection.prepareStatement("select * from ipv4");
+//            ResultSet rs = stmt.executeQuery();
+//            assertResultSet("a[OTHER]\n" +
+//                    "1.1.1.1\n" +
+//                    "12.2.65.90\n", sink, rs);
+//        }
+//    }
 
     @Test
     public void testBindVariableIsNotNull() throws Exception {
@@ -10861,6 +10861,108 @@ create table tab as (
     public void testStringyColEqVarcharBindvar() throws Exception {
         testVarcharBindVars(
                 "select v,s from x where v != ?::varchar and s != ?::varchar");
+    }
+
+    @Test
+    public void testSuperWideTable() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, "64");
+        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, "64");
+        setProperty(PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, "64");
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, "64");
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, "64");
+        setProperty(PropertyKey.PG_RECV_BUFFER_SIZE, "1M");
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            if ((mode == Mode.EXTENDED || mode == Mode.EXTENDED_CACHE_EVERYTHING) && binary) {
+                // pg jdbc has difficulty with super wide tables in extended mode + binary transfer
+                return;
+            }
+
+            int colCount = 0xffff; // 65535 columns, the maximum number of columns supported by Postgres Wire Protocol
+            try (Statement statement = connection.createStatement()) {
+                sink.clear();
+                sink.put("create table x (");
+                for (int i = 0; i < colCount; i++) {
+                    if (i > 0) {
+                        sink.put(", ");
+                    }
+                    sink.put("i").put(i).put(" int");
+                }
+                sink.put(")");
+                statement.execute(sink.toString());
+                sink.clear();
+            }
+            drainWalQueue();
+
+            sink.put("insert into x values (");
+            for (int i = 0; i < colCount; i++) {
+                if (i > 0) {
+                    sink.put(", ");
+                }
+                sink.put('?');
+            }
+            sink.put(")");
+            try (PreparedStatement statement = connection.prepareStatement(sink.toString())) {
+                sink.clear();
+                for (int i = 0; i < colCount; i++) {
+                    statement.setInt(i + 1, i);
+                }
+                statement.execute();
+            }
+            drainWalQueue();
+
+            sink.clear();
+            for (int i = 0; i < colCount; i++) {
+                if (i > 0) {
+                    sink.put(",");
+                }
+                sink.put('i').put(i).put("[INTEGER]");
+            }
+            sink.put('\n');
+            for (int i = 0; i < colCount; i++) {
+                if (i > 0) {
+                    sink.put(",");
+                }
+                sink.put(i);
+            }
+            sink.put('\n');
+            String expected = sink.toString();
+            sink.clear();
+            try (PreparedStatement statement = connection.prepareStatement("select * from x")) {
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet(expected, sink, rs);
+                }
+            }
+
+            sink.clear();
+            sink.put("select * from x where ");
+            int predicateCount = 5000; // we don't query on all columns, since otherwise recursion in query optimizer triggers StackOverflowError
+            for (int i = 0; i < predicateCount; i++) {
+                if (i > 0) {
+                    sink.put(" and ");
+                }
+                sink.put("i").put(i).put(" =  ?");
+            }
+            String query = sink.toString();
+            try (PreparedStatement statement = connection.prepareStatement(query)) {
+                for (int i = 0; i < predicateCount; i++) {
+                    statement.setInt(i + 1, i);
+                }
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet(expected, sink, rs);
+                }
+            }
+        }, () -> {
+            setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, "64");
+            setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, "64");
+            setProperty(PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, "64");
+            setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, "64");
+            setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, "64");
+            sendBufferSize = 20_000_000;
+            recvBufferSize = 20_000_000;
+        });
     }
 
     @Test

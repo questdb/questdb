@@ -484,8 +484,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     public void msgBindCopyParameterFormatCodes(
             long lo,
             long msgLimit,
-            short parameterFormatCodeCount,
-            short parameterValueCount
+            int parameterFormatCodeCount,
+            int parameterValueCount
     ) throws BadProtocolException {
         this.msgBindParameterValueCount = parameterValueCount;
 
@@ -512,9 +512,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             } else {
                 // Process all formats provided by the client. Should the client provide fewer
                 // formats than the value count, we will assume the rest is string.
-                if (lo + Short.BYTES * parameterFormatCodeCount <= msgLimit) {
+                if (lo + (long) Short.BYTES * parameterFormatCodeCount <= msgLimit) {
                     for (int i = 0; i < parameterFormatCodeCount; i++) {
-                        if (getShortUnsafe(lo + i * Short.BYTES) == 1) {
+                        if (getShortUnsafe(lo + (long) i * Short.BYTES) == 1) {
                             this.msgBindParameterFormatCodes.set(i);
                         }
                     }
@@ -711,7 +711,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         msgParseParameterTypeOIDs.addAll(that.msgParseParameterTypeOIDs);
     }
 
-    public void msgParseCopyParameterTypesFromMsg(long lo, short parameterTypeCount) {
+    public void msgParseCopyParameterTypesFromMsg(long lo, int parameterTypeCount) {
         msgParseParameterTypeOIDs.setPos(parameterTypeCount);
         for (int i = 0; i < parameterTypeCount; i++) {
             msgParseParameterTypeOIDs.setQuick(i, Unsafe.getUnsafe().getInt(lo + i * 4L));
@@ -2906,7 +2906,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // to cache the SQL and 0 parameters to retrieve SQL from cache - this is a match.
     // It is irrelevant which types were defined by the SQL compiler. We are assuming that same SQL text will
     // produce the same parameter definitions for every compilation.
-    boolean msgParseReconcileParameterTypes(short parameterTypeCount, TypeContainer typeContainer) {
+    boolean msgParseReconcileParameterTypes(int parameterTypeCount, TypeContainer typeContainer) {
         final IntList cachedTypes = typeContainer.getPgInParameterTypeOIDs();
         final int cachedTypeCount = cachedTypes.size();
         if (parameterTypeCount != cachedTypeCount) {
