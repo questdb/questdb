@@ -263,6 +263,19 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayAvgNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]]);"
+            );
+            assertSql("arrayAvg\tarrayAvg1\n" +
+                            "5.0\t5.0\n",
+                    "SELECT arrayAvg(arr), arrayAvg(transpose(arr)) FROM tango");
+        });
+    }
+
+    @Test
     public void testArrayCanBeClearedAfterInstantiation() throws Exception {
         assertMemoryLeak(() -> {
             try (DirectArray array = new DirectArray(configuration)) {
@@ -291,6 +304,19 @@ public class ArrayTest extends AbstractCairoTest {
                             "0\t0\t0\t0\t0\n" +
                             "0\t0\t0\t0\t0\n",
                     "SELECT arrayCount(arr2), arrayCount(transpose(arr2)), arrayCount(arr2[1]), arrayCount(arr2[1:]), arrayCount(arr2[2:]) FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayCountNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]]);"
+            );
+            assertSql("arrayCount\tarrayCount1\n" +
+                            "9\t9\n",
+                    "SELECT arrayCount(arr), arrayCount(transpose(arr)) FROM tango");
         });
     }
 
@@ -361,6 +387,22 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayDotProductScalarValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0, 3], [2.0, 5.0]], ARRAY[[1.0, 5.0], [7.0, 2.0]]), " +
+                    "(ARRAY[[1.0, 1]], ARRAY[[5.0, null]])");
+            assertSql("arrayDotProduct\tarrayDotProduct1\tarrayDotProduct2\n" +
+                    "11.0\t30.0\t0.0\n" +
+                    "2.0\t10.0\t0.0\n", "SELECT arrayDotProduct(left, 1.0), arrayDotProduct(right, 2.0), arrayDotProduct(left, null::double) FROM tango");
+            assertSql("arrayDotProduct\tarrayDotProduct1\tarrayDotProduct2\n" +
+                    "11.0\t30.0\t30.0\n" +
+                    "2.0\t10.0\t10.0\n", "SELECT arrayDotProduct(transpose(left), 1.0), arrayDotProduct(transpose(right), 2.0), arrayDotProduct(2.0, transpose(right)) FROM tango");
+        });
+    }
+
+    @Test
     public void testArrayMultiplyScalarValue() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[][])");
@@ -426,6 +468,19 @@ public class ArrayTest extends AbstractCairoTest {
                             "0.0\t0.0\t0.0\t0.0\t0.0\n" +
                             "0.0\t0.0\t0.0\t0.0\t0.0\n",
                     "SELECT arraySum(arr2), arraySum(transpose(arr2)), arraySum(arr2[1]), arraySum(arr2[1:]), arraySum(arr2[2:]) FROM tango");
+        });
+    }
+
+    @Test
+    public void testArraySumNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]]);"
+            );
+            assertSql("arraySum\tarraySum1\n" +
+                            "45.0\t45.0\n",
+                    "SELECT arraySum(arr), arraySum(transpose(arr)) FROM tango");
         });
     }
 
@@ -1159,6 +1214,34 @@ public class ArrayTest extends AbstractCairoTest {
                     "SELECT indexOfAssumeSorted(arr1, arr1[1]), indexOfAssumeSorted(arr1, arr1[2]), indexOfAssumeSorted(arr1, arr1[3]), indexOfAssumeSorted(arr1[2:], arr1[2])  FROM tango");
             assertExceptionNoLeakCheck("SELECT indexOfAssumeSorted(arr2, 0) len FROM tango",
                     33, "array is not one-dimensional");
+        });
+    }
+
+    @Test
+    public void testIndexOfAssumeSortedNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[9.0], [10], [12], [20], [22], [22], [100], [1000], [1001]])"
+            );
+            assertSql("indexOfAssumeSorted\tindexOfAssumeSorted1\tindexOfAssumeSorted2\tindexOfAssumeSorted3\tindexOfAssumeSorted4\tindexOfAssumeSorted5\tindexOfAssumeSorted6\tindexOfAssumeSorted7\n" +
+                            "-1\t0\t5\t-7\t8\t9\t-2\t5\n",
+                    "SELECT indexOfAssumeSorted(transpose(arr)[1], 8), indexOfAssumeSorted(transpose(arr)[1], null), indexOfAssumeSorted(transpose(arr)[1], 22), " +
+                            "indexOfAssumeSorted(transpose(arr)[1], 23), indexOfAssumeSorted(transpose(arr)[1], 1000), indexOfAssumeSorted(transpose(arr)[1], 1001), " +
+                            "indexOfAssumeSorted(transpose(arr)[1, 3:4], 1000), indexOfAssumeSorted(transpose(arr)[1, 3:], 100)  FROM tango");
+        });
+    }
+
+    @Test
+    public void testIndexOfNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0], [9], [10], [12], [8], [null], [20], [12]]) "
+            );
+            assertSql("indexOf\tindexOf1\tindexOf2\tindexOf3\n" +
+                            "5\t6\t0\t1\n",
+                    "SELECT indexOf(transpose(arr)[1], 8), indexOf(transpose(arr)[1], null), indexOf(transpose(arr)[1], 11), indexOf(transpose(arr)[1, 2:], 9)  FROM tango");
         });
     }
 

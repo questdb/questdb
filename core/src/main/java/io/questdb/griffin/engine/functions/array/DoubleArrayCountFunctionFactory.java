@@ -50,7 +50,7 @@ public class DoubleArrayCountFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    static class Func extends IntFunction implements DoubleArrayUnaryOperator, UnaryFunction {
+    static class Func extends IntFunction implements DoubleUnaryArrayAccessor, UnaryFunction {
 
         private final Function arrayArg;
         private int count;

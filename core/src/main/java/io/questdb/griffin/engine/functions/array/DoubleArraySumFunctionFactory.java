@@ -50,7 +50,7 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    static class Func extends DoubleFunction implements UnaryFunction, DoubleArrayUnaryOperator {
+    static class Func extends DoubleFunction implements UnaryFunction, DoubleUnaryArrayAccessor {
 
         protected final Function arrayArg;
         protected double sum = 0d;

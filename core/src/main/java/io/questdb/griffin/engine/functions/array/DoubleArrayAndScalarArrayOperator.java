@@ -34,7 +34,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.Misc;
 
-abstract class DoubleArrayAndScalarArrayOperator extends ArrayFunction implements DoubleArrayUnaryOperator, BinaryFunction {
+abstract class DoubleArrayAndScalarArrayOperator extends ArrayFunction implements DoubleUnaryArrayAccessor, BinaryFunction {
     private final DirectArray array;
     private final Function arrayArg;
     private final String name;

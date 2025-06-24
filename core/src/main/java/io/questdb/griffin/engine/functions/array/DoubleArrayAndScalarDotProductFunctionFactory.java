@@ -25,55 +25,64 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FlatArrayView;
-import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
-public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "arrayCumSum";
+public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFactory {
+    private static final String FUNCTION_NAME = "arrayDotProduct";
 
     @Override
     public String getSignature() {
-        return FUNCTION_NAME + "(D[])";
+        return FUNCTION_NAME + "(D[]D)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0), configuration);
+    public boolean isCommutative() {
+        return true;
     }
 
-    private static class Func extends ArrayFunction implements DoubleUnaryArrayAccessor, UnaryFunction {
-        private final DirectArray array;
-        private final Function arrayArg;
-        private double currentSum;
-        private MemoryA memory;
+    @Override
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        return new Func(args.getQuick(0), args.getQuick(1));
+    }
 
-        public Func(Function arrayArg, CairoConfiguration configuration) {
-            this.arrayArg = arrayArg;
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
-            this.array = new DirectArray(configuration);
+    private static class Func extends DoubleFunction implements BinaryFunction, DoubleUnaryArrayAccessor {
+        private final Function leftArg;
+        private final Function rightArg;
+        private double scalar;
+        private double value;
+
+        public Func(
+                Function leftArg,
+                Function rightArg
+        ) {
+            this.leftArg = leftArg;
+            this.rightArg = rightArg;
         }
 
         @Override
         public void applyOnElement(ArrayView view, int index) {
             double v = view.getDouble(index);
             if (Numbers.isFinite(v)) {
-                currentSum += v;
+                value += v * scalar;
             }
-            memory.putDouble(currentSum);
         }
 
         @Override
@@ -82,9 +91,8 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
             for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
                 double v = flatView.getDoubleAtAbsIndex(i);
                 if (Numbers.isFinite(v)) {
-                    currentSum += v;
+                    value += v * scalar;
                 }
-                memory.putDouble(currentSum);
             }
         }
 
@@ -93,31 +101,23 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void close() {
-            UnaryFunction.super.close();
-            Misc.free(array);
-        }
-
-        @Override
-        public Function getArg() {
-            return arrayArg;
-        }
-
-        @Override
-        public ArrayView getArray(Record rec) {
-            ArrayView arr = arrayArg.getArray(rec);
+        public double getDouble(Record rec) {
+            ArrayView arr = leftArg.getArray(rec);
             if (arr.isNull()) {
-                array.ofNull();
-                return array;
+                return 0d;
             }
-
-            currentSum = 0d;
-            array.setType(getType());
-            array.setDimLen(0, arr.getCardinality());
-            array.applyShape();
-            memory = array.startMemoryA();
+            scalar = rightArg.getDouble(rec);
+            if (Numbers.isNull(scalar)) {
+                return 0d;
+            }
+            value = 0d;
             calculate(arr);
-            return array;
+            return value;
+        }
+
+        @Override
+        public Function getLeft() {
+            return leftArg;
         }
 
         @Override
@@ -126,9 +126,8 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isThreadSafe() {
-            return false;
+        public Function getRight() {
+            return rightArg;
         }
     }
-
 }
