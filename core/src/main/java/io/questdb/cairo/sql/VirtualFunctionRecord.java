@@ -42,13 +42,13 @@ public class VirtualFunctionRecord implements ColumnTypes, Record, QuietCloseabl
     private final JoinRecord internalJoinRecord;
     private Record baseRecord;
 
-    public VirtualFunctionRecord(ObjList<? extends Function> functions) {
+    public VirtualFunctionRecord(ObjList<? extends Function> functions, int virtualColumnReservedSlots) {
         this.functions = functions;
         this.functionCount = functions.size();
         // + 1 is a placeholder for conditional timestamp. Timestamp is not assigned in this class, but
         // rather may or may not have been added to the metadata, which resolved column indexes. There are
         // several places
-        this.internalJoinRecord = new JoinRecord(functionCount + 1);
+        this.internalJoinRecord = new JoinRecord(virtualColumnReservedSlots);
     }
 
     @Override

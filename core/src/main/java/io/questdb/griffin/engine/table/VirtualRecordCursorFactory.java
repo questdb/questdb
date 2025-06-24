@@ -50,7 +50,8 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordMetadata virtualMetadata,
             RecordMetadata priorityMetadata,
             ObjList<Function> functions,
-            RecordCursorFactory base
+            RecordCursorFactory base,
+            int virtualColumnReservedSlots
     ) {
         super(virtualMetadata);
         this.base = base;
@@ -63,8 +64,8 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
         this.supportsRandomAccess = supportsRandomAccess;
-        this.cursor = new VirtualFunctionRecordCursor(functions, supportsRandomAccess);
-        this.internalSymbolTableSource = new VirtualRecordCursorFactorySymbolTableSource(cursor, functions.size() + 1);
+        this.cursor = new VirtualFunctionRecordCursor(functions, supportsRandomAccess, virtualColumnReservedSlots);
+        this.internalSymbolTableSource = new VirtualRecordCursorFactorySymbolTableSource(cursor, virtualColumnReservedSlots);
         this.priorityMetadata = priorityMetadata;
     }
 
@@ -147,29 +148,28 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static class VirtualRecordCursorFactorySymbolTableSource implements SymbolTableSource {
         private final RecordCursor own;
-        private final int split;
+        private final int virtualColumnReservedSlots;
         private RecordCursor base;
 
-
-        public VirtualRecordCursorFactorySymbolTableSource(RecordCursor own, int split) {
+        public VirtualRecordCursorFactorySymbolTableSource(RecordCursor own, int virtualColumnReservedSlots) {
             this.own = own;
-            this.split = split;
+            this.virtualColumnReservedSlots = virtualColumnReservedSlots;
         }
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            if (columnIndex < split) {
+            if (columnIndex < virtualColumnReservedSlots) {
                 return own.getSymbolTable(columnIndex);
             }
-            return base.getSymbolTable(columnIndex - split);
+            return base.getSymbolTable(columnIndex - virtualColumnReservedSlots);
         }
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
-            if (columnIndex < split) {
+            if (columnIndex < virtualColumnReservedSlots) {
                 return own.newSymbolTable(columnIndex);
             }
-            return base.newSymbolTable(columnIndex - split);
+            return base.newSymbolTable(columnIndex - virtualColumnReservedSlots);
         }
 
         public void of(RecordCursor base) {

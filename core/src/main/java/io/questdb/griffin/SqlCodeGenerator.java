@@ -4561,7 +4561,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final RecordMetadata baseMetadata = factory.getMetadata();
         // Lookup metadata will resolve column references, prioritising references to the projection
         // over the references to the base table. +1 accounts for timestamp, which can be added conditionally later.
-        final VirtualPriorityMetadata priorityMetadata = new VirtualPriorityMetadata(columnCount + 1, baseMetadata);
+        final int virtualColumnReservedSlots = columnCount + 1;
+        final VirtualPriorityMetadata priorityMetadata = new VirtualPriorityMetadata(virtualColumnReservedSlots, baseMetadata);
         final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
         try {
             // attempt to preserve timestamp on new data set
@@ -4692,7 +4693,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
             }
-            return new VirtualRecordCursorFactory(virtualMetadata, priorityMetadata, functions, factory);
+            return new VirtualRecordCursorFactory(virtualMetadata, priorityMetadata, functions, factory, virtualColumnReservedSlots);
         } catch (SqlException | CairoException e) {
             Misc.freeObjList(functions);
             factory.close();

@@ -44,13 +44,13 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     private final boolean supportsRandomAccess;
     protected RecordCursor baseCursor;
 
-    public VirtualFunctionRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
+    public VirtualFunctionRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess, int virtualColumnReservedSlots) {
         this.functions = functions;
         if (supportsRandomAccess) {
-            this.recordA = new VirtualFunctionRecord(functions);
-            this.recordB = new VirtualFunctionRecord(functions);
+            this.recordA = new VirtualFunctionRecord(functions, virtualColumnReservedSlots);
+            this.recordB = new VirtualFunctionRecord(functions, virtualColumnReservedSlots);
         } else {
-            this.recordA = new VirtualFunctionRecord(functions);
+            this.recordA = new VirtualFunctionRecord(functions, virtualColumnReservedSlots);
             this.recordB = null;
         }
         this.supportsRandomAccess = supportsRandomAccess;

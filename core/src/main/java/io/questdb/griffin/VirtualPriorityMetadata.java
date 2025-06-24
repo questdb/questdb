@@ -32,15 +32,15 @@ import io.questdb.cairo.sql.RecordMetadata;
 /**
  * This class supports generation of VirtualRecordCursorFactory in allowing functions
  * reference previously used function of the same projection.
- *
+ * <p>
  * When generating factory we're compiling functions in the order they appear in the column list. Avoiding
  * multi-pass over the columns we do not know the metadata for the virtual columns upfront. To work around this
  * we allocate metadata slots for all function in the projection and add base column metadata after that.
  */
 public class VirtualPriorityMetadata extends AbstractRecordMetadata {
+    private final RecordMetadata baseMetadata;
     private final int virtualColumnCount;
     private int pos = 0;
-    private final RecordMetadata baseMetadata;
 
     public VirtualPriorityMetadata(int virtualColumnCount, RecordMetadata baseMetadata) {
         this.virtualColumnCount = virtualColumnCount;
@@ -50,6 +50,20 @@ public class VirtualPriorityMetadata extends AbstractRecordMetadata {
         this.baseMetadata = baseMetadata;
     }
 
+    public void add(TableColumnMetadata m) {
+        assert pos < virtualColumnCount;
+        // Check if column name is a duplicate. The allowed duplicates are
+        // when virtual column takes precedence over the base column. We can check
+        // that when column index is over the virtual column count.
+        int keyIndex = columnNameIndexMap.keyIndex(m.getColumnName());
+        if (keyIndex < 0 && columnNameIndexMap.valueAt(keyIndex) < virtualColumnCount) {
+            throw CairoException.duplicateColumn(m.getColumnName());
+        }
+
+        columnMetadata.set(pos, m);
+        columnNameIndexMap.putAt(keyIndex, m.getColumnName(), pos);
+        pos++;
+    }
 
     @Override
     public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
@@ -75,20 +89,5 @@ public class VirtualPriorityMetadata extends AbstractRecordMetadata {
     @Override
     public int getColumnType(CharSequence columnName) {
         return super.getColumnType(columnName);
-    }
-
-    public void add(TableColumnMetadata m) {
-        assert pos < virtualColumnCount;
-        // Check if column name is a duplicate. The allowed duplicates are
-        // when virtual column takes precedence over the base column. We can check
-        // that when column index is over the virtual column count.
-        int keyIndex = columnNameIndexMap.keyIndex(m.getColumnName());
-        if (keyIndex < 0 && columnNameIndexMap.valueAt(keyIndex) < virtualColumnCount) {
-            throw CairoException.duplicateColumn(m.getColumnName());
-        }
-
-        columnMetadata.set(pos, m);
-        columnNameIndexMap.putAt(keyIndex, m.getColumnName(), pos);
-        pos++;
     }
 }
