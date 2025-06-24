@@ -932,7 +932,8 @@ public class ArrayTest extends AbstractCairoTest {
             // casting to fewer dimensions is not allowed
             assertException("SELECT ARRAY[[1.0], [2.0]]::double[]",
                     26,
-                    "cannot cast array to lower dimension [from=DOUBLE[][] (2D), to=DOUBLE[] (1D)]. Use array flattening operation (e.g. 'arr[:]' or 'flatten_array(arr)') instead"
+                    "cannot cast array to lower dimension [from=DOUBLE[][] (2D), to=DOUBLE[] (1D)]. " +
+                            "Use array flattening operation (e.g. 'arr[:]' or 'flatten_array(arr)') instead"
             );
         });
     }
@@ -1166,19 +1167,34 @@ public class ArrayTest extends AbstractCairoTest {
                             "5\t6\t0\t1\n" +
                             "0\t1\t0\t0\n" +
                             "0\t0\t0\t0\n",
-                    "SELECT indexOf(arr1, 8), indexOf(arr1, null), indexOf(arr1, 11), indexOf(arr1[2:], 9)  FROM tango");
+                    "SELECT " +
+                            "indexOf(arr1, 8), " +
+                            "indexOf(arr1, null), " +
+                            "indexOf(arr1, 11), " +
+                            "indexOf(arr1[2:], 9) " +
+                            "FROM tango");
 
             assertSql("indexOf\tindexOf1\tindexOf2\tindexOf3\n" +
                             "5\t6\t0\t1\n" +
                             "0\t1\t0\t0\n" +
                             "0\t0\t0\t0\n",
-                    "SELECT indexOf(arr2[1], 8), indexOf(arr2[1], null), indexOf(arr2[1], 11), indexOf(arr2[1][2:], 9)  FROM tango");
+                    "SELECT " +
+                            "indexOf(arr2[1], 8), " +
+                            "indexOf(arr2[1], null), " +
+                            "indexOf(arr2[1], 11), " +
+                            "indexOf(arr2[1][2:], 9) " +
+                            "FROM tango");
 
             assertSql("indexOf\tindexOf1\tindexOf2\tindexOf3\n" +
                             "1\t2\t3\t1\n" +
                             "1\t1\t1\t0\n" +
                             "0\t0\t0\t0\n",
-                    "SELECT indexOf(arr1, arr1[1]), indexOf(arr1, arr1[2]), indexOf(arr1, arr1[3]), indexOf(arr1[2:], arr1[2])  FROM tango");
+                    "SELECT " +
+                            "indexOf(arr1, arr1[1]), " +
+                            "indexOf(arr1, arr1[2]), " +
+                            "indexOf(arr1, arr1[3]), " +
+                            "indexOf(arr1[2:], arr1[2]) " +
+                            "FROM tango");
             assertExceptionNoLeakCheck("SELECT indexOf(arr2, 0) len FROM tango",
                     21, "array is not one-dimensional");
         });
@@ -1193,25 +1209,45 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[1001.0, 1000, 100, 22, 22, 20, 12, 10, 9], ARRAY[[1001.0, 1000, 100, 22, 20, 12, 10, 9]])," +
                     "(null, null)"
             );
-            assertSql("indexOfAssumeSorted\tindexOfAssumeSorted1\tindexOfAssumeSorted2\tindexOfAssumeSorted3\tindexOfAssumeSorted4\tindexOfAssumeSorted5\tindexOfAssumeSorted6\tindexOfAssumeSorted7\n" +
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\ti8\n" +
                             "-1\t0\t5\t-7\t8\t9\t-2\t5\n" +
                             "-10\t0\t4\t-4\t2\t1\t-2\t1\n" +
                             "0\t0\t0\t0\t0\t0\t0\t0\n",
-                    "SELECT indexOfAssumeSorted(arr1, 8), indexOfAssumeSorted(arr1, null), indexOfAssumeSorted(arr1, 22), indexOfAssumeSorted(arr1, 23), indexOfAssumeSorted(arr1, 1000), " +
-                            "indexOfAssumeSorted(arr1, 1001), indexOfAssumeSorted(arr1[3:4], 1000), indexOfAssumeSorted(arr1[3:], 100)  FROM tango");
+                    "SELECT " +
+                            "indexOfAssumeSorted(arr1, 8) i1, " +
+                            "indexOfAssumeSorted(arr1, null) i2, " +
+                            "indexOfAssumeSorted(arr1, 22) i3, " +
+                            "indexOfAssumeSorted(arr1, 23) i4, " +
+                            "indexOfAssumeSorted(arr1, 1000) i5, " +
+                            "indexOfAssumeSorted(arr1, 1001) i6, " +
+                            "indexOfAssumeSorted(arr1[3:4], 1000) i7, " +
+                            "indexOfAssumeSorted(arr1[3:], 100) i8 " +
+                            "FROM tango");
 
-            assertSql("indexOfAssumeSorted\tindexOfAssumeSorted1\tindexOfAssumeSorted2\tindexOfAssumeSorted3\tindexOfAssumeSorted4\tindexOfAssumeSorted5\tindexOfAssumeSorted6\n" +
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
                             "-1\t0\t5\t7\t8\t-2\t4\n" +
                             "-9\t0\t4\t2\t1\t-2\t1\n" +
                             "0\t0\t0\t0\t0\t0\t0\n",
-                    "SELECT indexOfAssumeSorted(arr2[1], 8), indexOfAssumeSorted(arr2[1], null), indexOfAssumeSorted(arr2[1], 22), indexOfAssumeSorted(arr2[1], 1000), " +
-                            "indexOfAssumeSorted(arr2[1], 1001), indexOfAssumeSorted(arr2[1][3:4], 1000), indexOfAssumeSorted(arr2[1][3:], 100)  FROM tango");
+                    "SELECT " +
+                            "indexOfAssumeSorted(arr2[1], 8) i1, " +
+                            "indexOfAssumeSorted(arr2[1], null) i2, " +
+                            "indexOfAssumeSorted(arr2[1], 22) i3, " +
+                            "indexOfAssumeSorted(arr2[1], 1000) i4, " +
+                            "indexOfAssumeSorted(arr2[1], 1001) i5, " +
+                            "indexOfAssumeSorted(arr2[1][3:4], 1000) i6, " +
+                            "indexOfAssumeSorted(arr2[1][3:], 100) i7 " +
+                            "FROM tango");
 
-            assertSql("indexOfAssumeSorted\tindexOfAssumeSorted1\tindexOfAssumeSorted2\tindexOfAssumeSorted3\n" +
+            assertSql("i1\ti2\ti3\ti4\n" +
                             "1\t2\t3\t1\n" +
                             "1\t2\t3\t1\n" +
                             "0\t0\t0\t0\n",
-                    "SELECT indexOfAssumeSorted(arr1, arr1[1]), indexOfAssumeSorted(arr1, arr1[2]), indexOfAssumeSorted(arr1, arr1[3]), indexOfAssumeSorted(arr1[2:], arr1[2])  FROM tango");
+                    "SELECT " +
+                            "indexOfAssumeSorted(arr1, arr1[1]) i1, " +
+                            "indexOfAssumeSorted(arr1, arr1[2]) i2, " +
+                            "indexOfAssumeSorted(arr1, arr1[3]) i3, " +
+                            "indexOfAssumeSorted(arr1[2:], arr1[2]) i4 " +
+                            "FROM tango");
             assertExceptionNoLeakCheck("SELECT indexOfAssumeSorted(arr2, 0) len FROM tango",
                     33, "array is not one-dimensional");
         });
@@ -1224,11 +1260,18 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[9.0], [10], [12], [20], [22], [22], [100], [1000], [1001]])"
             );
-            assertSql("indexOfAssumeSorted\tindexOfAssumeSorted1\tindexOfAssumeSorted2\tindexOfAssumeSorted3\tindexOfAssumeSorted4\tindexOfAssumeSorted5\tindexOfAssumeSorted6\tindexOfAssumeSorted7\n" +
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\ti8\n" +
                             "-1\t0\t5\t-7\t8\t9\t-2\t5\n",
-                    "SELECT indexOfAssumeSorted(transpose(arr)[1], 8), indexOfAssumeSorted(transpose(arr)[1], null), indexOfAssumeSorted(transpose(arr)[1], 22), " +
-                            "indexOfAssumeSorted(transpose(arr)[1], 23), indexOfAssumeSorted(transpose(arr)[1], 1000), indexOfAssumeSorted(transpose(arr)[1], 1001), " +
-                            "indexOfAssumeSorted(transpose(arr)[1, 3:4], 1000), indexOfAssumeSorted(transpose(arr)[1, 3:], 100)  FROM tango");
+                    "SELECT " +
+                            "indexOfAssumeSorted(transpose(arr)[1], 8) i1, " +
+                            "indexOfAssumeSorted(transpose(arr)[1], null) i2, " +
+                            "indexOfAssumeSorted(transpose(arr)[1], 22) i3, " +
+                            "indexOfAssumeSorted(transpose(arr)[1], 23) i4, " +
+                            "indexOfAssumeSorted(transpose(arr)[1], 1000) i5, " +
+                            "indexOfAssumeSorted(transpose(arr)[1], 1001) i6, " +
+                            "indexOfAssumeSorted(transpose(arr)[1, 3:4], 1000) i7, " +
+                            "indexOfAssumeSorted(transpose(arr)[1, 3:], 100) i8 " +
+                            "FROM tango");
         });
     }
 
@@ -1241,7 +1284,12 @@ public class ArrayTest extends AbstractCairoTest {
             );
             assertSql("indexOf\tindexOf1\tindexOf2\tindexOf3\n" +
                             "5\t6\t0\t1\n",
-                    "SELECT indexOf(transpose(arr)[1], 8), indexOf(transpose(arr)[1], null), indexOf(transpose(arr)[1], 11), indexOf(transpose(arr)[1, 2:], 9)  FROM tango");
+                    "SELECT " +
+                            "indexOf(transpose(arr)[1], 8), " +
+                            "indexOf(transpose(arr)[1], null), " +
+                            "indexOf(transpose(arr)[1], 11), " +
+                            "indexOf(transpose(arr)[1, 2:], 9) " +
+                            "FROM tango");
         });
     }
 
