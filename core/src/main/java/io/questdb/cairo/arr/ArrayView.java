@@ -230,7 +230,8 @@ public abstract class ArrayView implements QuietCloseable {
      *   <li>The array <b>must not contain null values</b></li>
      * </ul>
      *
-     * <p>The method automatically detects sort direction by comparing the first and last elements.
+     * <p>The method automatically detects the sort order by comparing the first and
+     * last elements.
      */
     public final int binarySearchDoubleValue1DArray(double value) {
         if (isNull() || isEmpty()) {
@@ -440,12 +441,11 @@ public abstract class ArrayView implements QuietCloseable {
 
     /**
      * Tells whether this array is a "vanilla array". A vanilla array's shape
-     * directly describe the physical layout of the underlying flat array. The
+     * directly describes the physical layout of the underlying flat array. The
      * main reason to know this is when you're about to iterate over all the array
-     * elements. For a vanilla array, you can go through the flat indices from
-     * zero + {@link #getFlatViewOffset}} to {@link #getFlatViewLength} + {@link #getFlatViewOffset}
-     * and you'll iterate over the whole array in row-major order. You are not discourage
-     * use {@link FlatArrayView#getDoubleAtAbsIndex} directly.
+     * elements. For a vanilla array, you can go through the flat indices from zero
+     * to {@link #getFlatViewLength()} and you'll iterate over the whole array in
+     * row-major order.
      * <p>
      * On a non-vanilla array, you must calculate each element's flat index from its
      * coordinates, applying the array's strides. A non-vanilla array arises when you

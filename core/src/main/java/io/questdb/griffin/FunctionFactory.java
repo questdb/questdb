@@ -83,14 +83,13 @@ public interface FunctionFactory {
     }
 
     /**
-     * If the function is commutative.
+     * This is a special-purpose flag that applies to functions of array and scalar,
+     * which apply a binary operation element-wise on the whole array. One binary operand
+     * is an array element, and the other is the provided scalar.
      * <p>
-     * This method should be overridden to return {@code true} if the binary expression satisfies
-     * two conditions:
-     * <ol>
-     * <li>The operation is mathematically commutative (e.g., addition, multiplication).</li>
-     * <li>The types of the left and right operands are not the same.</li>
-     * </ol>
+     * When the underlying binary operation is commutative, this method should return
+     * true. The function's signature {@code func(array, scalar)} will then be automatically
+     * used to generate the equivalent function {@code func(scalar, array)}.
      */
     default boolean isCommutative() {
         return false;

@@ -29,11 +29,21 @@ import io.questdb.std.Numbers;
 
 public interface FlatArrayView {
     /**
-     * Appends the contents of this flat array to the supplied memory block.
+     * Appends a block of elements from this flat array to the supplied memory
+     * block.
+     *
+     * @param offset the starting offset (in elements) into this array from which to append
+     * @param length the number of elements to append
      */
     void appendToMemFlat(MemoryA mem, int flatViewOffset, int flatViewLength);
 
     default double avgDouble(int flatViewOffset, int flatViewLength) {
+    /**
+     * Computes the average of the block of elements in this flat array.
+     *
+     * @param offset the starting offset of the block (in elements)
+     * @param length the number of elements in the block
+     */
         double sum = 0d;
         int count = 0;
         for (int i = flatViewOffset, n = flatViewOffset + flatViewLength; i < n; i++) {
@@ -49,6 +59,18 @@ public interface FlatArrayView {
     default int binarySearchDouble(double value, int flatViewOffset, int flatViewLength, boolean ascending) {
         int low = flatViewOffset;
         int high = flatViewOffset + flatViewLength - 1;
+    /**
+     * Performs a binary search on the block of elements in this flat array. The
+     * elements must be sorted in the order specified by the {@code ascending} parameter.
+     *
+     * @param offset    the starting offset of the block (in elements)
+     * @param length    the number of elements in the block
+     * @param ascending if true, the elements are expected to be sorted in the ascending order;
+     *                  otherwise, they must be sorted in the descending order
+     * @return if positive, it's the index of the found element. If negative, its absolute value
+     * is the insertion point into the flat array of the element that wasn't found. In both cases,
+     * the index is relative to the supplied offset.
+     */
 
         while (low <= high) {
             int mid = low + (high - low) / 2;
@@ -81,11 +103,16 @@ public interface FlatArrayView {
         return -(low - flatViewOffset + 1);
     }
 
-    // We could store the number of nulls(or null bitmaps) in an array within its metadata.
-    // Then the array's count could be obtained directly from the metadata.
-    // Similarly, knowing from the metadata that a set of data contains no nulls could also offer optimizations for other aggregate operators(eg. sum).
-    // Same logics applies to other data types.
-    default int countDouble(int flatViewOffset, int flatViewLength) {
+    /**
+     * Counts the number of finite numbers within a block of this flat array.
+     *
+     * @param offset the starting offset of the block (in elements)
+     * @param length the number of elements in the block
+     */
+        // Optimization idea: store the number of nulls (or a null bitmap) as metadata.
+        // Then the array's count could be obtained directly from the metadata.
+        // Similarly, knowing from the metadata that a set of data contains no nulls could
+        // also offer optimizations for other aggregate operators (sum, avg etc.).
         int count = 0;
         for (int i = flatViewOffset, n = flatViewOffset + flatViewLength; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
@@ -107,6 +134,12 @@ public interface FlatArrayView {
 
     default int linearSearch(double value, int flatViewOffset, int flatViewLength) {
         for (int i = flatViewOffset, n = flatViewOffset + flatViewLength; i < n; i++) {
+    /**
+     * Performs a linear search on the block of elements in this flat array.
+     *
+     * @param offset the starting offset of the block (in elements)
+     * @param length the number of elements in the block
+     */
             if (Math.abs(getDoubleAtAbsIndex(i) - value) <= Numbers.DOUBLE_TOLERANCE) {
                 return i - flatViewOffset + 1;
             }
@@ -115,6 +148,12 @@ public interface FlatArrayView {
     }
 
     default double sumDouble(int flatViewOffset, int flatViewLength) {
+    /**
+     * Computes the average of the block of elements in this flat array.
+     *
+     * @param offset the starting offset of the block (in elements)
+     * @param length the number of elements in the block
+     */
         double sum = 0d;
         for (int i = flatViewOffset, n = flatViewOffset + flatViewLength; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
