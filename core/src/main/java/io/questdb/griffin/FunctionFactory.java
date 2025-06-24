@@ -83,15 +83,17 @@ public interface FunctionFactory {
     }
 
     /**
-     * This is a special-purpose flag that applies to functions of array and scalar,
-     * which apply a binary operation element-wise on the whole array. One binary operand
-     * is an array element, and the other is the provided scalar.
+     * Tells whether this is a binary function with parameters of two different types,
+     * but where swapping the arguments always gives the same result.
      * <p>
-     * When the underlying binary operation is commutative, this method should return
-     * true. The function's signature {@code func(array, scalar)} will then be automatically
-     * used to generate the equivalent function {@code func(scalar, array)}.
+     * In other words, the method should return {@code true} if the function satisfies
+     * two conditions:
+     * <ol>
+     * <li>For any two arguments (x, y), the result is the same as with arguments swapped: (y, x).</li>
+     * <li>The types of the left and right operands are not the same.</li>
+     * </ol>
      */
-    default boolean isCommutativeArrayFunction() {
+    default boolean isCommutative() {
         return false;
     }
 

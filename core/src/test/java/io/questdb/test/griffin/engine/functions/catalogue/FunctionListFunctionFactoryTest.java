@@ -87,7 +87,7 @@ public class FunctionListFunctionFactoryTest extends AbstractCairoTest {
             sink2.put(FunctionListFunctionFactory.FunctionFactoryType.getType(factory).name()).put('\n');
             lines.add(sink2.toString());
 
-            if (factory.isCommutativeArrayFunction()) {
+            if (factory.isCommutative()) {
                 sink2.clear();
                 sink2.put(name).put('\t');
                 signature = FunctionFactoryDescriptor.replaceSignatureNameAndSwapArgs(name, signature);

@@ -43,7 +43,7 @@ public class DoubleArrayAddScalarFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public boolean isCommutativeArrayFunction() {
+    public boolean isCommutative() {
         return true;
     }
 

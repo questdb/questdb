@@ -48,7 +48,7 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
     }
 
     @Override
-    public boolean isCommutativeArrayFunction() {
+    public boolean isCommutative() {
         return true;
     }
 
