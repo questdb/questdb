@@ -3231,10 +3231,10 @@ public class SqlOptimiser implements Mutable {
                 CharSequence alias = copyModel.getModelAliasIndexes().keys().getQuick(i);
                 ExpressionNode aliasNode = expressionNodePool.next();
                 aliasNode.token = alias;
-                level1.addModelAliasIndex(aliasNode, i);
+                level0.addModelAliasIndex(aliasNode, i);
             }
         }
-
+        propagateTimestampColumnFromBaseModelToLevel0(baseTableModel, level0);
 
         // level 1 make filter and limit model of select-choose type
             level1.setSelectModelType(1);
@@ -3271,29 +3271,21 @@ public class SqlOptimiser implements Mutable {
                 aliasNode.token = originalAlias.replace(truncateAlias, "");
                 level1.addOrderBy(aliasNode, model.getNestedModel().getOrderByDirection().getQuick(i));
             }
-
+            createAndAddTimestampColumn(baseTableModel, level1);
             level1.setNestedModel(level0);
+
 
 
             //level 2 model to order by timestamp ASC
             QueryModel level2 = QueryModel.FACTORY.newInstance();
             level2.setSelectModelType(1);
             level2.copyColumnsFrom(level1, queryColumnPool, expressionNodePool);
+            level2.setTimestamp(baseTableModel.getTimestamp());
+            createAndAddTimestampColumn(baseTableModel, level1);
             final CharSequence timestampColumn = baseTableModel.getTimestamp().token;
             final ExpressionNode timestampNode = expressionNodePool.next();
             timestampNode.token = timestampColumn;
             level2.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
-
-//            CharSequence timestampAlias = baseTableModel.getTimestamp().token;
-//            QueryColumn qc = copyModel.getAliasToColumnMap().get(timestampAlias);
-//            if (qc != null) {
-//                QueryColumn newQc = queryColumnPool.next();
-//                newQc.of(timestampAlias, qc.getAst());
-//                level2.getAliasToColumnMap().put(timestampAlias, qc);
-//            }
-
-
-
             level2.setNestedModel(level1);
 
 
@@ -3301,21 +3293,29 @@ public class SqlOptimiser implements Mutable {
         targetModel.setWhereClause(null);
         targetModel.setNestedModel(level2);
         targetModel.setTableNameExpr(null);
-//        targetModel.setTimestamp(null);
+        targetModel.setTimestamp(null);
         targetModel.toString0();
 
         model.setLimit(null, null);
     }
 
-//    private void propogateTimestampColumnFromBaseModel(QueryModel baseTableModel,){
-//        CharSequence timestampAlias = baseTableModel.getTimestamp().token;
-//        QueryColumn qc = copyModel.getAliasToColumnMap().get(timestampAlias);
-//        if (qc != null) {
-//            QueryColumn newQc = queryColumnPool.next();
-//            newQc.of(timestampAlias, qc.getAst());
-//            level2.getAliasToColumnMap().put(timestampAlias, qc);
-//        }
-//    }
+    private void propagateTimestampColumnFromBaseModelToLevel0(QueryModel baseTableModel, QueryModel targetModel){
+        if(targetModel.getNestedModel()== null || targetModel == baseTableModel)
+           return;
+        targetModel = targetModel.getNestedModel();
+        propagateTimestampColumnFromBaseModelToLevel0(baseTableModel, targetModel);
+        createAndAddTimestampColumn(baseTableModel, targetModel);
+    }
+
+    private void createAndAddTimestampColumn(QueryModel baseTableModel, QueryModel targetModel){
+        QueryColumn qc = baseTableModel.getAliasToColumnMap().get(baseTableModel.getTimestamp().token);
+        if (qc != null) {
+            QueryColumn newQc = queryColumnPool.next();
+            newQc.of(qc.getAlias(), qc.getAst());
+            targetModel.getAliasToColumnMap().put(qc.getAlias(), qc);
+        }
+    }
+
 
     private void optimiseJoins(QueryModel model) throws SqlException {
         ObjList<QueryModel> joinModels = model.getJoinModels();
