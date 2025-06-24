@@ -880,11 +880,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             }
                         }
                     } else {
-                        if (mergeType == O3_BLOCK_O3 && prefixType == O3_BLOCK_DATA && suffixType == O3_BLOCK_DATA) {
-                            // O3 data is supposed to be merged into the middle of an existing partition
-                            // but there is no O3 data, it's a replacing commit with no new rows, just the range.
-                            // At the end we have existing column data prefix, suffix and nothing to insert in between.
-                            // We can finish here without modifying this partition.
+                        // Replacing data with no O3 data, e.g. effectively deleting a part of the partition
+
+                        // O3 data is supposed to be merged into the middle of an existing partition
+                        // but there is no O3 data, it's a replacing commit with no new rows, just the range.
+                        // At the end we have existing column data prefix, suffix and nothing to insert in between.
+                        // We can finish here without modifying this partition.
+                        boolean noop = mergeType == O3_BLOCK_O3 && prefixType == O3_BLOCK_DATA && suffixType == O3_BLOCK_DATA;
+
+                        // No intersection with existing partition data, the whole replace range is before the existing partition
+                        noop |= suffixType == O3_BLOCK_DATA && suffixLo == 0 && suffixHi == srcDataMax - 1;
+
+                        // No intersection with existing partition data, the whole replace range is after the existing partition
+                        noop |= prefixType == O3_BLOCK_DATA && prefixLo == 0 && prefixHi == srcDataMax - 1;
+
+                        if (noop) {
                             updatePartition(ff, srcTimestampAddr, srcTimestampSize, srcTimestampFd, tableWriter, partitionUpdateSinkAddr, partitionTimestamp, newMinPartitionTimestamp, oldPartitionSize, oldPartitionSize, 0);
                             return;
                         }
