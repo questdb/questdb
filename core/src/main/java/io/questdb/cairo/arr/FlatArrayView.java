@@ -35,18 +35,18 @@ public interface FlatArrayView {
      * @param offset the starting offset (in elements) into this array from which to append
      * @param length the number of elements to append
      */
-    void appendToMemFlat(MemoryA mem, int flatViewOffset, int flatViewLength);
+    void appendToMemFlat(MemoryA mem, int offset, int length);
 
-    default double avgDouble(int flatViewOffset, int flatViewLength) {
     /**
      * Computes the average of the block of elements in this flat array.
      *
      * @param offset the starting offset of the block (in elements)
      * @param length the number of elements in the block
      */
+    default double avgDouble(int offset, int length) {
         double sum = 0d;
         int count = 0;
-        for (int i = flatViewOffset, n = flatViewOffset + flatViewLength; i < n; i++) {
+        for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
             if (Numbers.isFinite(v)) {
                 sum += v;
@@ -56,9 +56,6 @@ public interface FlatArrayView {
         return count == 0 ? Double.NaN : sum / count;
     }
 
-    default int binarySearchDouble(double value, int flatViewOffset, int flatViewLength, boolean ascending) {
-        int low = flatViewOffset;
-        int high = flatViewOffset + flatViewLength - 1;
     /**
      * Performs a binary search on the block of elements in this flat array. The
      * elements must be sorted in the order specified by the {@code ascending} parameter.
@@ -71,6 +68,9 @@ public interface FlatArrayView {
      * is the insertion point into the flat array of the element that wasn't found. In both cases,
      * the index is relative to the supplied offset.
      */
+    default int binarySearchDouble(double value, int offset, int length, boolean ascending) {
+        int low = offset;
+        int high = offset + length - 1;
 
         while (low <= high) {
             int mid = low + (high - low) / 2;
@@ -80,10 +80,10 @@ public interface FlatArrayView {
                     if (mid > low) {
                         mid--;
                     } else {
-                        return mid - flatViewOffset + 1;
+                        return mid - offset + 1;
                     }
                 } while (Math.abs(getDoubleAtAbsIndex(mid) - value) <= Numbers.DOUBLE_TOLERANCE);
-                return mid - flatViewOffset + 2;
+                return mid - offset + 2;
             }
             if (ascending) {
                 if (midVal < value) {
@@ -100,7 +100,7 @@ public interface FlatArrayView {
             }
         }
 
-        return -(low - flatViewOffset + 1);
+        return -(low - offset + 1);
     }
 
     /**
@@ -109,12 +109,13 @@ public interface FlatArrayView {
      * @param offset the starting offset of the block (in elements)
      * @param length the number of elements in the block
      */
+    default int countDouble(int offset, int length) {
         // Optimization idea: store the number of nulls (or a null bitmap) as metadata.
         // Then the array's count could be obtained directly from the metadata.
         // Similarly, knowing from the metadata that a set of data contains no nulls could
         // also offer optimizations for other aggregate operators (sum, avg etc.).
         int count = 0;
-        for (int i = flatViewOffset, n = flatViewOffset + flatViewLength; i < n; i++) {
+        for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
             if (Numbers.isFinite(v)) {
                 count++;
@@ -132,30 +133,30 @@ public interface FlatArrayView {
      */
     int length();
 
-    default int linearSearch(double value, int flatViewOffset, int flatViewLength) {
-        for (int i = flatViewOffset, n = flatViewOffset + flatViewLength; i < n; i++) {
     /**
      * Performs a linear search on the block of elements in this flat array.
      *
      * @param offset the starting offset of the block (in elements)
      * @param length the number of elements in the block
      */
+    default int linearSearch(double value, int offset, int length) {
+        for (int i = offset, n = offset + length; i < n; i++) {
             if (Math.abs(getDoubleAtAbsIndex(i) - value) <= Numbers.DOUBLE_TOLERANCE) {
-                return i - flatViewOffset + 1;
+                return i - offset + 1;
             }
         }
         return 0;
     }
 
-    default double sumDouble(int flatViewOffset, int flatViewLength) {
     /**
      * Computes the average of the block of elements in this flat array.
      *
      * @param offset the starting offset of the block (in elements)
      * @param length the number of elements in the block
      */
+    default double sumDouble(int offset, int length) {
         double sum = 0d;
-        for (int i = flatViewOffset, n = flatViewOffset + flatViewLength; i < n; i++) {
+        for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
             if (Numbers.isFinite(v)) {
                 sum += v;

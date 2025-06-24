@@ -42,18 +42,18 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     private int size;
 
     @Override
-    public void appendToMemFlat(MemoryA mem, int flatViewOffset, int flatViewLength) {
+    public void appendToMemFlat(MemoryA mem, int offset, int length) {
         assert ptr != 0;
-        mem.putBlockOfBytes(ptr + (long) flatViewOffset * Double.BYTES, (long) flatViewLength * Double.BYTES);
+        mem.putBlockOfBytes(ptr + (long) offset * Double.BYTES, (long) length * Double.BYTES);
     }
 
     @Override
-    public double avgDouble(int flatViewOffset, int flatViewLength) {
-        long count = Vect.countDouble(this.ptr + (long) flatViewOffset * Double.BYTES, flatViewLength);
+    public double avgDouble(int offset, int length) {
+        long count = Vect.countDouble(this.ptr + (long) offset * Double.BYTES, length);
         if (count == 0) {
             return Double.NaN;
         }
-        double sum = Vect.sumDouble(this.ptr + (long) flatViewOffset * Double.BYTES, flatViewLength);
+        double sum = Vect.sumDouble(this.ptr + (long) offset * Double.BYTES, length);
         if (Numbers.isNull(sum)) {
             return Double.NaN;
         }
@@ -61,14 +61,14 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     }
 
     @Override
-    public int binarySearchDouble(double value, int flatViewOffset, int flatViewLength, boolean ascending) {
-        long v = Vect.binarySearchDouble(this.ptr + (long) flatViewOffset * Double.BYTES, value, 0, flatViewLength - 1, ascending);
+    public int binarySearchDouble(double value, int offset, int length, boolean ascending) {
+        long v = Vect.binarySearchDouble(this.ptr + (long) offset * Double.BYTES, value, 0, length - 1, ascending);
         return v < 0 ? (int) v : (int) (v + 1);
     }
 
     @Override
-    public int countDouble(int flatViewOffset, int flatViewLength) {
-        return (int) Vect.countDouble(this.ptr + (long) flatViewOffset * Double.BYTES, flatViewLength);
+    public int countDouble(int offset, int length) {
+        return (int) Vect.countDouble(this.ptr + (long) offset * Double.BYTES, length);
     }
 
     @Override
@@ -130,7 +130,7 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     }
 
     @Override
-    public double sumDouble(int flatViewOffset, int flatViewLength) {
-        return Vect.sumDouble(this.ptr + (long) flatViewOffset * Double.BYTES, flatViewLength);
+    public double sumDouble(int offset, int length) {
+        return Vect.sumDouble(this.ptr + (long) offset * Double.BYTES, length);
     }
 }

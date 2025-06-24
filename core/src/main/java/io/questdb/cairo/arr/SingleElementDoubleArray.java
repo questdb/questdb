@@ -48,20 +48,20 @@ public final class SingleElementDoubleArray extends ArrayView {
     private class SingleElementFlatArrayView implements FlatArrayView {
 
         @Override
-        public void appendToMemFlat(MemoryA mem, int flatViewOffset, int flatViewLength) {
-            if (flatViewLength == 1) {
+        public void appendToMemFlat(MemoryA mem, int offset, int length) {
+            if (length == 1) {
                 mem.putDouble(value);
             }
         }
 
         @Override
-        public double avgDouble(int flatViewOffset, int flatViewLength) {
-            return flatViewLength == 0 ? Double.NaN : value;
+        public double avgDouble(int offset, int length) {
+            return length == 0 ? Double.NaN : value;
         }
 
         @Override
-        public int countDouble(int flatViewOffset, int flatViewLength) {
-            return flatViewLength == 0 || Numbers.isNull(value) ? 0 : 1;
+        public int countDouble(int offset, int length) {
+            return length == 0 || Numbers.isNull(value) ? 0 : 1;
         }
 
         @Override
@@ -80,8 +80,8 @@ public final class SingleElementDoubleArray extends ArrayView {
         }
 
         @Override
-        public double sumDouble(int flatViewOffset, int flatViewLength) {
-            return flatViewLength == 0 ? 0d : value;
+        public double sumDouble(int offset, int length) {
+            return length == 0 ? 0d : value;
         }
     }
 }

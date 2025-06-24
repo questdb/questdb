@@ -50,11 +50,11 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
     }
 
     @Override
-    public void appendToMemFlat(MemoryA mem, int flatViewOffset, int flatViewLength) {
+    public void appendToMemFlat(MemoryA mem, int offset, int length) {
         switch (ColumnType.decodeArrayElementType(type)) {
             case ColumnType.LONG:
             case ColumnType.DOUBLE:
-                for (int i = 0; i < flatViewLength; i++) {
+                for (int i = 0; i < length; i++) {
                     mem.putLong(getLong(i));
                 }
                 break;
