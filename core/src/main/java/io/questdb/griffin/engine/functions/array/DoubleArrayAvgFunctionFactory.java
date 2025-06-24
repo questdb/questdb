@@ -56,7 +56,7 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void applyOnElement(ArrayView view, int index) {
+        public void applyToElement(ArrayView view, int index) {
             double v = view.getDouble(index);
             if (Numbers.isFinite(v)) {
                 sum += v;
@@ -65,12 +65,12 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void applyOnEntireVanillaArray(ArrayView view) {
+        public void applyToEntireVanillaArray(ArrayView view) {
             sum = view.flatView().avgDouble(view.getFlatViewOffset(), view.getFlatViewLength());
         }
 
         @Override
-        public void applyOnNullArray() {
+        public void applyToNullArray() {
             sum = Double.NaN;
         }
 

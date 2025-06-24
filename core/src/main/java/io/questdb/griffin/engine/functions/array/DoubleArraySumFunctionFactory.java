@@ -60,7 +60,7 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void applyOnElement(ArrayView view, int index) {
+        public void applyToElement(ArrayView view, int index) {
             double v = view.getDouble(index);
             if (Numbers.isFinite(v)) {
                 sum += v;
@@ -68,13 +68,13 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void applyOnEntireVanillaArray(ArrayView view) {
+        public void applyToEntireVanillaArray(ArrayView view) {
             double res = view.flatView().sumDouble(view.getFlatViewOffset(), view.getFlatViewLength());
             sum = Numbers.isNull(res) ? 0 : res;
         }
 
         @Override
-        public void applyOnNullArray() {
+        public void applyToNullArray() {
         }
 
         @Override

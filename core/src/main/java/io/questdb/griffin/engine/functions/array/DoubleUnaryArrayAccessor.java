@@ -28,17 +28,17 @@ import io.questdb.cairo.arr.ArrayView;
 
 public interface DoubleUnaryArrayAccessor {
 
-    void applyOnElement(ArrayView view, int index);
+    void applyToElement(ArrayView view, int index);
 
-    void applyOnEntireVanillaArray(ArrayView view);
+    void applyToEntireVanillaArray(ArrayView view);
 
-    void applyOnNullArray();
+    void applyToNullArray();
 
     default void calculate(ArrayView view) {
         if (view.isNull()) {
-            applyOnNullArray();
+            applyToNullArray();
         } else if (view.isVanilla()) {
-            applyOnEntireVanillaArray(view);
+            applyToEntireVanillaArray(view);
         } else {
             calculateRecursive(view, 0, 0);
         }
@@ -50,7 +50,7 @@ public interface DoubleUnaryArrayAccessor {
         final boolean atDeepestDim = dim == view.getDimCount() - 1;
         if (atDeepestDim) {
             for (int i = 0; i < count; i++) {
-                applyOnElement(view, flatIndex);
+                applyToElement(view, flatIndex);
                 flatIndex += stride;
             }
         } else {

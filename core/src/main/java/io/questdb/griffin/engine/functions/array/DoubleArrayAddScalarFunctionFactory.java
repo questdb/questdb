@@ -59,12 +59,12 @@ public class DoubleArrayAddScalarFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void applyOnElement(ArrayView view, int index) {
+        public void applyToElement(ArrayView view, int index) {
             memory.putDouble(scalarValue + view.getDouble(index));
         }
 
         @Override
-        public void applyOnEntireVanillaArray(ArrayView view) {
+        public void applyToEntireVanillaArray(ArrayView view) {
             FlatArrayView flatView = view.flatView();
             for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
                 memory.putDouble(flatView.getDoubleAtAbsIndex(i) + scalarValue);

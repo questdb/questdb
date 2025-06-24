@@ -68,7 +68,7 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void applyOnElement(ArrayView view, int index) {
+        public void applyToElement(ArrayView view, int index) {
             double v = view.getDouble(index);
             if (Numbers.isFinite(v)) {
                 currentSum += v;
@@ -77,7 +77,7 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void applyOnEntireVanillaArray(ArrayView view) {
+        public void applyToEntireVanillaArray(ArrayView view) {
             FlatArrayView flatView = view.flatView();
             for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
                 double v = flatView.getDoubleAtAbsIndex(i);
@@ -89,7 +89,7 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void applyOnNullArray() {
+        public void applyToNullArray() {
         }
 
         @Override

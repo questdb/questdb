@@ -51,7 +51,7 @@ abstract class DoubleArrayAndScalarArrayOperator extends ArrayFunction implement
     }
 
     @Override
-    public void applyOnNullArray() {
+    public void applyToNullArray() {
     }
 
     @Override

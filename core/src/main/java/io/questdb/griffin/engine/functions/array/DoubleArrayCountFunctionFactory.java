@@ -60,19 +60,19 @@ public class DoubleArrayCountFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void applyOnElement(ArrayView view, int index) {
+        public void applyToElement(ArrayView view, int index) {
             if (Numbers.isFinite(view.getDouble(index))) {
                 count++;
             }
         }
 
         @Override
-        public void applyOnEntireVanillaArray(ArrayView view) {
+        public void applyToEntireVanillaArray(ArrayView view) {
             count = view.flatView().countDouble(view.getFlatViewOffset(), view.getFlatViewLength());
         }
 
         @Override
-        public void applyOnNullArray() {
+        public void applyToNullArray() {
 
         }
 
