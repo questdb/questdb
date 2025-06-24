@@ -57,6 +57,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
     public static @Nullable LongAddIntFunction lookupAddFunction(char period) {
         switch (period) {
             case 'u':
+            case 'U':
                 return ADD_MICROS_FUNCTION;
             case 'T':
                 return ADD_MILLIS_FUNCTION;

@@ -33,7 +33,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    private static final char[] UNITS = {'y', 'M', 'w', 'd', 'h', 'm', 's', 'T', 'U'};
+    private static final char[] UNITS = {'y', 'M', 'w', 'd', 'h', 'm', 's', 'T', 'u'};
 
     @Test
     public void testAllVariables() throws Exception {
