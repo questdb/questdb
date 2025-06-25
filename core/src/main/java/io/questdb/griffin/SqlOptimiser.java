@@ -3147,7 +3147,7 @@ public class SqlOptimiser implements Mutable {
     private boolean isModelEligibleForOptimisation(SqlExecutionContext executionContext , QueryModel targetModel) {
         boolean isOrderByPresent = false;
         boolean isLimitPresent = false;
-        boolean isValidWhereClause = true;
+        boolean isWhereClausePresent = false;
         if (targetModel != null && targetModel.getJoinModels().size() > 1 &&
                 targetModel.getJoinModels().get(1).getJoinType() == QueryModel.JOIN_ASOF) {
 
@@ -3163,17 +3163,26 @@ public class SqlOptimiser implements Mutable {
             }
 
             if (targetModel.getWhereClause() != null) {
+                isWhereClausePresent = true;
                 String whereClauseColumn = targetModel.getWhereClause().lhs.token.toString();
                 int dot = whereClauseColumn.indexOf('.');
                 String whereClauseColumnName = whereClauseColumn.substring(dot + 1);
-                //if where clause column is from slave table, then ASOF join optimisation will not be applied
-                if (!targetModel.getAliasToColumnMap().contains(whereClauseColumnName)) {
+
+                String whereClauseValue = targetModel.getWhereClause().rhs.token.toString();
+                dot = whereClauseColumn.indexOf('.');
+                String whereClauseActualValue = whereClauseValue.substring(dot + 1);
+                String whereClauseAlias = dot == -1 ? null : whereClauseValue.substring(0, dot);
+                CharSequence joinModelAlias = targetModel.getJoinModels().get(1).getTableNameExpr() == null ?
+                        targetModel.getJoinModels().get(1).getAlias().token : targetModel.getJoinModels().get(1).getTableNameExpr().token;
+
+                //if where clause column is from slave table OR there is a join condition, then ASOF join optimisation will not be applied
+                if (joinModelAlias.toString().equals(whereClauseAlias)  || !targetModel.getAliasToColumnMap().contains(whereClauseColumnName)) {
                     return false;
                 }
             }
 
-            isLimitPresent = targetModel != null;
-            return isValidWhereClause || (isOrderByPresent && isLimitPresent);
+            isLimitPresent = targetModel.getLimitLo() != null;
+            return isWhereClausePresent || (isOrderByPresent && isLimitPresent);
         }
         return false;
     }
@@ -3218,7 +3227,7 @@ public class SqlOptimiser implements Mutable {
         QueryModel copyModel = level0 == null ? targetModel : level0;
         QueryModel level1 = QueryModel.FACTORY.newInstance();
 
-        // level 0 is the base model
+//         level 0 is the base model
         if(level0 == null){
             level0 = QueryModel.FACTORY.newInstance();
             level0.copyColumnsFrom(copyModel, queryColumnPool, expressionNodePool);
@@ -3241,11 +3250,6 @@ public class SqlOptimiser implements Mutable {
             level1.copyColumnsFrom(copyModel, queryColumnPool, expressionNodePool);
             level1.setLimit(parentModel.getLimitLo(), null);
             level1.setWhereClause(targetModel.getWhereClause());
-            if(copyModel.getTableNameExpr() != null)
-            level1.setTableNameExpr(copyModel.getTableNameExpr());
-            else if(copyModel.getAlias() != null){
-            level1.setAlias(copyModel.getAlias());
-            }
             final ObjList<CharSequence> aliases = copyModel.getAliasToColumnMap().keys();
             for (int i = 0, n = aliases.size(); i < n; i++) {
                 final CharSequence alias = aliases.getQuick(i);
@@ -3282,25 +3286,32 @@ public class SqlOptimiser implements Mutable {
             level2.copyColumnsFrom(level1, queryColumnPool, expressionNodePool);
             level2.setTimestamp(baseTableModel.getTimestamp());
             createAndAddTimestampColumn(baseTableModel, level1);
-            final CharSequence timestampColumn = baseTableModel.getTimestamp().token;
-            final ExpressionNode timestampNode = expressionNodePool.next();
-            timestampNode.token = timestampColumn;
-            level2.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
+            if(baseTableModel.getTimestamp() != null) {
+                final CharSequence timestampColumn = baseTableModel.getTimestamp().token;
+                final ExpressionNode timestampNode = expressionNodePool.next();
+                timestampNode.token = timestampColumn;
+                level2.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
+            }
             level2.setNestedModel(level1);
 
 
 
         targetModel.setWhereClause(null);
         targetModel.setNestedModel(level2);
-        targetModel.setTableNameExpr(null);
+        if(targetModel.getTableNameExpr() != null){
+          ExpressionNode aliasNode = expressionNodePool.next();
+          aliasNode.token = targetModel.getTableNameExpr().token;
+          targetModel.setAlias(aliasNode);
+          targetModel.setTableNameExpr(null);
+        }
+
         targetModel.setTimestamp(null);
-        targetModel.toString0();
 
         model.setLimit(null, null);
     }
 
     private void propagateTimestampColumnFromBaseModelToLevel0(QueryModel baseTableModel, QueryModel targetModel){
-        if(targetModel.getNestedModel()== null || targetModel == baseTableModel)
+        if(targetModel.getNestedModel()== null || targetModel == baseTableModel || baseTableModel.getTimestamp() == null)
            return;
         targetModel = targetModel.getNestedModel();
         propagateTimestampColumnFromBaseModelToLevel0(baseTableModel, targetModel);
@@ -3308,6 +3319,9 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void createAndAddTimestampColumn(QueryModel baseTableModel, QueryModel targetModel){
+        if(baseTableModel.getTimestamp() == null)
+            return;
+
         QueryColumn qc = baseTableModel.getAliasToColumnMap().get(baseTableModel.getTimestamp().token);
         if (qc != null) {
             QueryColumn newQc = queryColumnPool.next();
@@ -6868,9 +6882,7 @@ public class SqlOptimiser implements Mutable {
             rewriteOrderByPosition(rewrittenModel);
             rewriteOrderByPositionForUnionModels(rewrittenModel);
             rewrittenModel = rewriteOrderBy(rewrittenModel);
-            System.out.println("***" + rewrittenModel.toString0() + "***");
             optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
-            System.out.println("***" + rewrittenModel.toString0() + "***");
             createOrderHash(rewrittenModel);
             System.out.println("***" + rewrittenModel.toString0() + "***");
             moveWhereInsideSubQueries(rewrittenModel);
@@ -6880,7 +6892,7 @@ public class SqlOptimiser implements Mutable {
             moveTimestampToChooseModel(rewrittenModel);
             System.out.println("***" + rewrittenModel.toString0() + "***");
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
-            System.out.println("***lIMIT DISSAPEARS***" + rewrittenModel.toString0() + "***");
+            System.out.println("***" + rewrittenModel.toString0() + "***");
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             System.out.println("***" + rewrittenModel.toString0() + "***");
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
