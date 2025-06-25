@@ -129,12 +129,12 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
             }
             if (leftDerived != null) {
                 leftDerived.of(left);
-                leftDerived.prependDims(1);
+                leftDerived.prependDimensions(1);
                 left = leftDerived;
             }
             if (rightDerived != null) {
                 rightDerived.of(right);
-                rightDerived.appendDims(1);
+                rightDerived.appendDimensions(1);
                 right = rightDerived;
             }
             int commonDimLen = left.getDimLen(1);

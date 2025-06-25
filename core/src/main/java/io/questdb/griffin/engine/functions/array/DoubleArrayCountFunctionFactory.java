@@ -38,7 +38,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayCountFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "arrayCount";
+    private static final String FUNCTION_NAME = "array_count";
 
     @Override
     public String getSignature() {

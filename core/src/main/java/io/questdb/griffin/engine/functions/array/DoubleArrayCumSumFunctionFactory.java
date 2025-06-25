@@ -43,7 +43,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "arrayCumSum";
+    private static final String FUNCTION_NAME = "array_cum_sum";
 
     @Override
     public String getSignature() {

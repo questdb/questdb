@@ -38,7 +38,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class DoubleArraySumFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "arraySum";
+    private static final String FUNCTION_NAME = "array_sum";
 
     @Override
     public String getSignature() {

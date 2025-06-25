@@ -249,16 +249,16 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[], ARRAY[[null]])," +
                     "(null, null)"
             );
-            assertSql("arrayAvg\tarrayAvg1\tarrayAvg2\n" +
+            assertSql("array_avg\tarray_avg1\tarray_avg2\n" +
                             "10.0\t11.8\t5.0\n" +
                             "null\tnull\tnull\n" +
                             "null\tnull\tnull\n",
-                    "SELECT arrayAvg(arr1), arrayAvg(arr1[2:]), arrayAvg(arr1[1:3]) FROM tango");
-            assertSql("arrayAvg\tarrayAvg1\tarrayAvg2\tarrayAvg3\tarrayAvg4\n" +
+                    "SELECT array_avg(arr1), array_avg(arr1[2:]), array_avg(arr1[1:3]) FROM tango");
+            assertSql("array_avg\tarray_avg1\tarray_avg2\tarray_avg3\tarray_avg4\n" +
                             "10.0\t10.0\t10.0\t10.0\tnull\n" +
                             "null\tnull\tnull\tnull\tnull\n" +
                             "null\tnull\tnull\tnull\tnull\n",
-                    "SELECT arrayAvg(arr2), arrayAvg(transpose(arr2)), arrayAvg(arr2[1]), arrayAvg(arr2[1:]), arrayAvg(arr2[2:]) FROM tango");
+                    "SELECT array_avg(arr2), array_avg(transpose(arr2)), array_avg(arr2[1]), array_avg(arr2[1:]), array_avg(arr2[2:]) FROM tango");
         });
     }
 
@@ -269,9 +269,9 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]]);"
             );
-            assertSql("arrayAvg\tarrayAvg1\n" +
+            assertSql("array_avg\tarray_avg1\n" +
                             "5.0\t5.0\n",
-                    "SELECT arrayAvg(arr), arrayAvg(transpose(arr)) FROM tango");
+                    "SELECT array_avg(arr), array_avg(transpose(arr)) FROM tango");
         });
     }
 
@@ -293,17 +293,17 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[], ARRAY[[null]])," +
                     "(null, null)"
             );
-            assertSql("arrayCount\tarrayCount1\tarrayCount2\n" +
+            assertSql("array_count\tarray_count1\tarray_count2\n" +
                             "7\t6\t2\n" +
                             "0\t0\t0\n" +
                             "0\t0\t0\n",
-                    "SELECT arrayCount(arr1), arrayCount(arr1[2:]), arrayCount(arr1[1:3]) FROM tango");
+                    "SELECT array_count(arr1), array_count(arr1[2:]), array_count(arr1[1:3]) FROM tango");
 
-            assertSql("arrayCount\tarrayCount1\tarrayCount2\tarrayCount3\tarrayCount4\n" +
+            assertSql("array_count\tarray_count1\tarray_count2\tarray_count3\tarray_count4\n" +
                             "7\t7\t7\t7\t0\n" +
                             "0\t0\t0\t0\t0\n" +
                             "0\t0\t0\t0\t0\n",
-                    "SELECT arrayCount(arr2), arrayCount(transpose(arr2)), arrayCount(arr2[1]), arrayCount(arr2[1:]), arrayCount(arr2[2:]) FROM tango");
+                    "SELECT array_count(arr2), array_count(transpose(arr2)), array_count(arr2[1]), array_count(arr2[1:]), array_count(arr2[2:]) FROM tango");
         });
     }
 
@@ -314,9 +314,9 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]]);"
             );
-            assertSql("arrayCount\tarrayCount1\n" +
+            assertSql("array_count\tarray_count1\n" +
                             "9\t9\n",
-                    "SELECT arrayCount(arr), arrayCount(transpose(arr)) FROM tango");
+                    "SELECT array_count(arr), array_count(transpose(arr)) FROM tango");
         });
     }
 
@@ -329,17 +329,17 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[null], ARRAY[[null]])," +
                     "(null, null)"
             );
-            assertSql("arrayCumSum\tarrayCumSum1\tarrayCumSum2\n" +
+            assertSql("array_cum_sum\tarray_cum_sum1\tarray_cum_sum2\n" +
                             "[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[9.0,19.0,31.0,39.0,39.0,59.0,71.0]\t[1.0,10.0]\n" +
                             "[0.0]\t[]\t[0.0]\n" +
                             "null\tnull\tnull\n",
-                    "SELECT arrayCumSum(arr1), arrayCumSum(arr1[2:]), arrayCumSum(arr1[1:3]) FROM tango");
+                    "SELECT array_cum_sum(arr1), array_cum_sum(arr1[2:]), array_cum_sum(arr1[1:3]) FROM tango");
 
-            assertSql("arrayCumSum\tarrayCumSum1\tarrayCumSum2\tarrayCumSum3\tarrayCumSum4\n" +
+            assertSql("array_cum_sum\tarray_cum_sum1\tarray_cum_sum2\tarray_cum_sum3\tarray_cum_sum4\n" +
                             "[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[]\n" +
                             "[0.0]\t[0.0]\t[0.0]\t[0.0]\t[]\n" +
                             "null\tnull\tnull\tnull\tnull\n",
-                    "SELECT arrayCumSum(arr2), arrayCumSum(transpose(arr2)), arrayCumSum(arr2[1]), arrayCumSum(arr2[1:]), arrayCumSum(arr2[2:]) FROM tango");
+                    "SELECT array_cum_sum(arr2), array_cum_sum(transpose(arr2)), array_cum_sum(arr2[1]), array_cum_sum(arr2[1:]), array_cum_sum(arr2[2:]) FROM tango");
         });
     }
 
@@ -375,14 +375,14 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[[1.0, 1]], ARRAY[[5.0, null]])");
             assertSql("product\n" +
                     "40.0\n" +
-                    "5.0\n", "SELECT arrayDotProduct(left, right) AS product FROM tango");
+                    "5.0\n", "SELECT array_dot_product(left, right) AS product FROM tango");
             assertSql("product\n" +
                     "40.0\n" +
-                    "5.0\n", "SELECT arrayDotProduct(transpose(left), transpose(right)) AS product FROM tango");
-            assertExceptionNoLeakCheck("SELECT arrayDotProduct(Array[1.0], Array[[1.0]]) AS product FROM tango",
-                    28, "arrays have different number of dimensions [nDimsLeft=1, nDimsRight=2]");
-            assertExceptionNoLeakCheck("SELECT arrayDotProduct(Array[1.0], Array[1.0, 2.0]) AS product FROM tango",
-                    28, "arrays have different shapes [leftShape=[1], rightShape=[2]]");
+                    "5.0\n", "SELECT array_dot_product(transpose(left), transpose(right)) AS product FROM tango");
+            assertExceptionNoLeakCheck("SELECT array_dot_product(Array[1.0], Array[[1.0]]) AS product FROM tango",
+                    30, "arrays have different number of dimensions [nDimsLeft=1, nDimsRight=2]");
+            assertExceptionNoLeakCheck("SELECT array_dot_product(Array[1.0], Array[1.0, 2.0]) AS product FROM tango",
+                    30, "arrays have different shapes [leftShape=[1], rightShape=[2]]");
         });
     }
 
@@ -393,12 +393,12 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[1.0, 3], [2.0, 5.0]], ARRAY[[1.0, 5.0], [7.0, 2.0]]), " +
                     "(ARRAY[[1.0, 1]], ARRAY[[5.0, null]])");
-            assertSql("arrayDotProduct\tarrayDotProduct1\tarrayDotProduct2\n" +
+            assertSql("array_dot_product\tarray_dot_product1\tarray_dot_product2\n" +
                     "11.0\t30.0\t0.0\n" +
-                    "2.0\t10.0\t0.0\n", "SELECT arrayDotProduct(left, 1.0), arrayDotProduct(right, 2.0), arrayDotProduct(left, null::double) FROM tango");
-            assertSql("arrayDotProduct\tarrayDotProduct1\tarrayDotProduct2\n" +
+                    "2.0\t10.0\t0.0\n", "SELECT array_dot_product(left, 1.0), array_dot_product(right, 2.0), array_dot_product(left, null::double) FROM tango");
+            assertSql("array_dot_product\tarray_dot_product1\tarray_dot_product2\n" +
                     "11.0\t30.0\t30.0\n" +
-                    "2.0\t10.0\t10.0\n", "SELECT arrayDotProduct(transpose(left), 1.0), arrayDotProduct(transpose(right), 2.0), arrayDotProduct(2.0, transpose(right)) FROM tango");
+                    "2.0\t10.0\t10.0\n", "SELECT array_dot_product(transpose(left), 1.0), array_dot_product(transpose(right), 2.0), array_dot_product(2.0, transpose(right)) FROM tango");
         });
     }
 
@@ -457,17 +457,17 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[null], ARRAY[[null]])," +
                     "(null, null)"
             );
-            assertSql("arraySum\tarraySum1\tarraySum2\n" +
+            assertSql("array_sum\tarray_sum1\tarray_sum2\n" +
                             "72.0\t71.0\t10.0\n" +
                             "0.0\t0.0\t0.0\n" +
                             "0.0\t0.0\t0.0\n",
-                    "SELECT arraySum(arr1), arraySum(arr1[2:]), arraySum(arr1[1:3]) FROM tango");
+                    "SELECT array_sum(arr1), array_sum(arr1[2:]), array_sum(arr1[1:3]) FROM tango");
 
-            assertSql("arraySum\tarraySum1\tarraySum2\tarraySum3\tarraySum4\n" +
+            assertSql("array_sum\tarray_sum1\tarray_sum2\tarray_sum3\tarray_sum4\n" +
                             "72.0\t72.0\t72.0\t72.0\t0.0\n" +
                             "0.0\t0.0\t0.0\t0.0\t0.0\n" +
                             "0.0\t0.0\t0.0\t0.0\t0.0\n",
-                    "SELECT arraySum(arr2), arraySum(transpose(arr2)), arraySum(arr2[1]), arraySum(arr2[1:]), arraySum(arr2[2:]) FROM tango");
+                    "SELECT array_sum(arr2), array_sum(transpose(arr2)), array_sum(arr2[1]), array_sum(arr2[1:]), array_sum(arr2[2:]) FROM tango");
         });
     }
 
@@ -478,9 +478,9 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]]);"
             );
-            assertSql("arraySum\tarraySum1\n" +
+            assertSql("array_sum\tarray_sum1\n" +
                             "45.0\t45.0\n",
-                    "SELECT arraySum(arr), arraySum(transpose(arr)) FROM tango");
+                    "SELECT array_sum(arr), array_sum(transpose(arr)) FROM tango");
         });
     }
 
@@ -1163,40 +1163,40 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[null], ARRAY[[null]])," +
                     "(null, null)"
             );
-            assertSql("indexOf\tindexOf1\tindexOf2\tindexOf3\n" +
+            assertSql("index_of\tindex_of1\tindex_of2\tindex_of3\n" +
                             "5\t6\t0\t1\n" +
                             "0\t1\t0\t0\n" +
                             "0\t0\t0\t0\n",
                     "SELECT " +
-                            "indexOf(arr1, 8), " +
-                            "indexOf(arr1, null), " +
-                            "indexOf(arr1, 11), " +
-                            "indexOf(arr1[2:], 9) " +
+                            "index_of(arr1, 8), " +
+                            "index_of(arr1, null), " +
+                            "index_of(arr1, 11), " +
+                            "index_of(arr1[2:], 9) " +
                             "FROM tango");
 
-            assertSql("indexOf\tindexOf1\tindexOf2\tindexOf3\n" +
+            assertSql("index_of\tindex_of1\tindex_of2\tindex_of3\n" +
                             "5\t6\t0\t1\n" +
                             "0\t1\t0\t0\n" +
                             "0\t0\t0\t0\n",
                     "SELECT " +
-                            "indexOf(arr2[1], 8), " +
-                            "indexOf(arr2[1], null), " +
-                            "indexOf(arr2[1], 11), " +
-                            "indexOf(arr2[1][2:], 9) " +
+                            "index_of(arr2[1], 8), " +
+                            "index_of(arr2[1], null), " +
+                            "index_of(arr2[1], 11), " +
+                            "index_of(arr2[1][2:], 9) " +
                             "FROM tango");
 
-            assertSql("indexOf\tindexOf1\tindexOf2\tindexOf3\n" +
+            assertSql("index_of\tindex_of1\tindex_of2\tindex_of3\n" +
                             "1\t2\t3\t1\n" +
                             "1\t1\t1\t0\n" +
                             "0\t0\t0\t0\n",
                     "SELECT " +
-                            "indexOf(arr1, arr1[1]), " +
-                            "indexOf(arr1, arr1[2]), " +
-                            "indexOf(arr1, arr1[3]), " +
-                            "indexOf(arr1[2:], arr1[2]) " +
+                            "index_of(arr1, arr1[1]), " +
+                            "index_of(arr1, arr1[2]), " +
+                            "index_of(arr1, arr1[3]), " +
+                            "index_of(arr1[2:], arr1[2]) " +
                             "FROM tango");
-            assertExceptionNoLeakCheck("SELECT indexOf(arr2, 0) len FROM tango",
-                    21, "array is not one-dimensional");
+            assertExceptionNoLeakCheck("SELECT index_of(arr2, 0) len FROM tango",
+                    22, "array is not one-dimensional");
         });
     }
 
@@ -1214,14 +1214,14 @@ public class ArrayTest extends AbstractCairoTest {
                             "-10\t0\t4\t-4\t2\t1\t-2\t1\n" +
                             "0\t0\t0\t0\t0\t0\t0\t0\n",
                     "SELECT " +
-                            "indexOfAssumeSorted(arr1, 8) i1, " +
-                            "indexOfAssumeSorted(arr1, null) i2, " +
-                            "indexOfAssumeSorted(arr1, 22) i3, " +
-                            "indexOfAssumeSorted(arr1, 23) i4, " +
-                            "indexOfAssumeSorted(arr1, 1000) i5, " +
-                            "indexOfAssumeSorted(arr1, 1001) i6, " +
-                            "indexOfAssumeSorted(arr1[3:4], 1000) i7, " +
-                            "indexOfAssumeSorted(arr1[3:], 100) i8 " +
+                            "index_of_sorted(arr1, 8) i1, " +
+                            "index_of_sorted(arr1, null) i2, " +
+                            "index_of_sorted(arr1, 22) i3, " +
+                            "index_of_sorted(arr1, 23) i4, " +
+                            "index_of_sorted(arr1, 1000) i5, " +
+                            "index_of_sorted(arr1, 1001) i6, " +
+                            "index_of_sorted(arr1[3:4], 1000) i7, " +
+                            "index_of_sorted(arr1[3:], 100) i8 " +
                             "FROM tango");
 
             assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
@@ -1229,13 +1229,13 @@ public class ArrayTest extends AbstractCairoTest {
                             "-9\t0\t4\t2\t1\t-2\t1\n" +
                             "0\t0\t0\t0\t0\t0\t0\n",
                     "SELECT " +
-                            "indexOfAssumeSorted(arr2[1], 8) i1, " +
-                            "indexOfAssumeSorted(arr2[1], null) i2, " +
-                            "indexOfAssumeSorted(arr2[1], 22) i3, " +
-                            "indexOfAssumeSorted(arr2[1], 1000) i4, " +
-                            "indexOfAssumeSorted(arr2[1], 1001) i5, " +
-                            "indexOfAssumeSorted(arr2[1][3:4], 1000) i6, " +
-                            "indexOfAssumeSorted(arr2[1][3:], 100) i7 " +
+                            "index_of_sorted(arr2[1], 8) i1, " +
+                            "index_of_sorted(arr2[1], null) i2, " +
+                            "index_of_sorted(arr2[1], 22) i3, " +
+                            "index_of_sorted(arr2[1], 1000) i4, " +
+                            "index_of_sorted(arr2[1], 1001) i5, " +
+                            "index_of_sorted(arr2[1][3:4], 1000) i6, " +
+                            "index_of_sorted(arr2[1][3:], 100) i7 " +
                             "FROM tango");
 
             assertSql("i1\ti2\ti3\ti4\n" +
@@ -1243,53 +1243,13 @@ public class ArrayTest extends AbstractCairoTest {
                             "1\t2\t3\t1\n" +
                             "0\t0\t0\t0\n",
                     "SELECT " +
-                            "indexOfAssumeSorted(arr1, arr1[1]) i1, " +
-                            "indexOfAssumeSorted(arr1, arr1[2]) i2, " +
-                            "indexOfAssumeSorted(arr1, arr1[3]) i3, " +
-                            "indexOfAssumeSorted(arr1[2:], arr1[2]) i4 " +
+                            "index_of_sorted(arr1, arr1[1]) i1, " +
+                            "index_of_sorted(arr1, arr1[2]) i2, " +
+                            "index_of_sorted(arr1, arr1[3]) i3, " +
+                            "index_of_sorted(arr1[2:], arr1[2]) i4 " +
                             "FROM tango");
-            assertExceptionNoLeakCheck("SELECT indexOfAssumeSorted(arr2, 0) len FROM tango",
-                    33, "array is not one-dimensional");
-        });
-    }
-
-    @Test
-    public void testIndexOfAssumeSortedNonVanilla() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr DOUBLE[][])");
-            execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[[9.0], [10], [12], [20], [22], [22], [100], [1000], [1001]])"
-            );
-            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\ti8\n" +
-                            "-1\t0\t5\t-7\t8\t9\t-2\t5\n",
-                    "SELECT " +
-                            "indexOfAssumeSorted(transpose(arr)[1], 8) i1, " +
-                            "indexOfAssumeSorted(transpose(arr)[1], null) i2, " +
-                            "indexOfAssumeSorted(transpose(arr)[1], 22) i3, " +
-                            "indexOfAssumeSorted(transpose(arr)[1], 23) i4, " +
-                            "indexOfAssumeSorted(transpose(arr)[1], 1000) i5, " +
-                            "indexOfAssumeSorted(transpose(arr)[1], 1001) i6, " +
-                            "indexOfAssumeSorted(transpose(arr)[1, 3:4], 1000) i7, " +
-                            "indexOfAssumeSorted(transpose(arr)[1, 3:], 100) i8 " +
-                            "FROM tango");
-        });
-    }
-
-    @Test
-    public void testIndexOfNonVanilla() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr DOUBLE[][])");
-            execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[[1.0], [9], [10], [12], [8], [null], [20], [12]]) "
-            );
-            assertSql("indexOf\tindexOf1\tindexOf2\tindexOf3\n" +
-                            "5\t6\t0\t1\n",
-                    "SELECT " +
-                            "indexOf(transpose(arr)[1], 8), " +
-                            "indexOf(transpose(arr)[1], null), " +
-                            "indexOf(transpose(arr)[1], 11), " +
-                            "indexOf(transpose(arr)[1, 2:], 9) " +
-                            "FROM tango");
+            assertExceptionNoLeakCheck("SELECT index_of_sorted(arr2, 0) len FROM tango",
+                    29, "array is not one-dimensional");
         });
     }
 
@@ -2175,6 +2135,46 @@ public class ArrayTest extends AbstractCairoTest {
                     18,
                     "too many array dimensions [nDims=33, maxNDims=32]"
             );
+        });
+    }
+
+    @Test
+    public void testindex_ofAssumeSortedNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[9.0], [10], [12], [20], [22], [22], [100], [1000], [1001]])"
+            );
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\ti8\n" +
+                            "-1\t0\t5\t-7\t8\t9\t-2\t5\n",
+                    "SELECT " +
+                            "index_of_sorted(transpose(arr)[1], 8) i1, " +
+                            "index_of_sorted(transpose(arr)[1], null) i2, " +
+                            "index_of_sorted(transpose(arr)[1], 22) i3, " +
+                            "index_of_sorted(transpose(arr)[1], 23) i4, " +
+                            "index_of_sorted(transpose(arr)[1], 1000) i5, " +
+                            "index_of_sorted(transpose(arr)[1], 1001) i6, " +
+                            "index_of_sorted(transpose(arr)[1, 3:4], 1000) i7, " +
+                            "index_of_sorted(transpose(arr)[1, 3:], 100) i8 " +
+                            "FROM tango");
+        });
+    }
+
+    @Test
+    public void testindex_ofNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0], [9], [10], [12], [8], [null], [20], [12]]) "
+            );
+            assertSql("index_of\tindex_of1\tindex_of2\tindex_of3\n" +
+                            "5\t6\t0\t1\n",
+                    "SELECT " +
+                            "index_of(transpose(arr)[1], 8), " +
+                            "index_of(transpose(arr)[1], null), " +
+                            "index_of(transpose(arr)[1], 11), " +
+                            "index_of(transpose(arr)[1, 2:], 9) " +
+                            "FROM tango");
         });
     }
 }

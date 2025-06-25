@@ -41,7 +41,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayIndexOfFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "indexOf";
+    private static final String FUNCTION_NAME = "index_of";
 
     @Override
     public String getSignature() {

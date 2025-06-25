@@ -39,7 +39,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayIndexOfAssumeSortedFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "indexOfAssumeSorted";
+    private static final String FUNCTION_NAME = "index_of_sorted";
 
     @Override
     public String getSignature() {

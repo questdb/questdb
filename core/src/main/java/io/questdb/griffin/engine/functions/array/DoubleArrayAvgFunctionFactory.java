@@ -36,7 +36,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "arrayAvg";
+    private static final String FUNCTION_NAME = "array_avg";
 
     @Override
     public String getSignature() {

@@ -63,13 +63,12 @@ public class DerivedArrayView extends ArrayView {
     }
 
     /**
-     * Adds extra dimensions to the array view.
-     * For example, a 1D array [1, 2, 3] with one dimension added becomes a 2D array [[1, 2, 3]].
-     * New dimensions are added at the beginning with length 1.
+     * Append extra dimensions to the array view.
+     * For example, a 1D array [1, 2, 3] with one dimension added becomes a 2D array [[1], [2], [3]].
      *
      * @param count Number of dimensions to add
      */
-    public void addDimensions(int count) {
+    public void appendDimensions(int count) {
         if (count == 0) {
             return;
         }
@@ -82,27 +81,11 @@ public class DerivedArrayView extends ArrayView {
                     .put(ColumnType.ARRAY_NDIMS_LIMIT)
                     .put(")");
         }
-
-        // new stride is the same as the outermost current stride
-        int newStride = getStride(0);
-
-        shape.rshift(count);
-        strides.rshift(count);
         for (int i = 0; i < count; i++) {
-            shape.setQuick(i, 1); // all new dimensions have length 1
-            strides.setQuick(i, newStride); // new dimensions have the same stride as the outermost existing dimension
-        }
-
-        // Update the type to reflect the new dimension count
-        type = ColumnType.encodeArrayType(getElemType(), getDimCount() + count);
-    }
-
-    public void appendDims(int nDims) {
-        for (int i = 0; i < nDims; i++) {
             shape.add(1);
             strides.add(0);
         }
-        this.type = ColumnType.encodeArrayType(getElemType(), shape.size());
+        this.type = ColumnType.encodeArrayType(getElemType(), getDimCount() + count);
     }
 
     public void broadcast(IntList targetShape) {
@@ -110,7 +93,7 @@ public class DerivedArrayView extends ArrayView {
         int originalDims = getDimCount();
         assert targetDims >= originalDims;
         if (originalDims < targetDims) {
-            prependDims(targetDims - originalDims);
+            prependDimensions(targetDims - originalDims);
         }
 
         boolean changed = false;
@@ -164,14 +147,36 @@ public class DerivedArrayView extends ArrayView {
         }
     }
 
-    public void prependDims(int nDims) {
-        shape.rshift(nDims);
-        strides.rshift(nDims);
-        for (int i = 0; i < nDims; i++) {
-            shape.set(i, 1);
-            strides.set(i, 0);
+    /**
+     * Prepend extra dimensions to the array view.
+     * For example, a 1D array [1, 2, 3] with one dimension added becomes a 2D array [[1, 2, 3]].
+     * New dimensions are added at the beginning with length 1.
+     *
+     * @param count Number of dimensions to add
+     */
+    public void prependDimensions(int count) {
+        if (count == 0) {
+            return;
         }
-        this.type = ColumnType.encodeArrayType(getElemType(), shape.size());
+
+        if (count + getDimCount() > ColumnType.ARRAY_NDIMS_LIMIT) {
+            throw CairoException.nonCritical()
+                    .put("cannot add ")
+                    .put(count)
+                    .put(" dimensions, would exceed maximum array dimensions (")
+                    .put(ColumnType.ARRAY_NDIMS_LIMIT)
+                    .put(")");
+        }
+
+        shape.rshift(count);
+        strides.rshift(count);
+        for (int i = 0; i < count; i++) {
+            shape.setQuick(i, 1); // all new dimensions have length 1
+            strides.setQuick(i, 0); // all new strides set to 0
+        }
+
+        // Update the type to reflect the new dimension count
+        type = ColumnType.encodeArrayType(getElemType(), getDimCount() + count);
     }
 
     public void removeDim(int dim) {
