@@ -33,13 +33,13 @@ import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
 public final class TimestampFunctionMemoizer extends TimestampFunction implements UnaryFunction {
-    private final Function tsFunction;
+    private final Function fn;
     private boolean memoized;
     private long value;
 
-    public TimestampFunctionMemoizer(Function tsFunction) {
-        assert tsFunction.canPrefetch();
-        this.tsFunction = tsFunction;
+    public TimestampFunctionMemoizer(Function fn) {
+        assert fn.canPrefetch();
+        this.fn = fn;
     }
 
     @Override
@@ -49,12 +49,12 @@ public final class TimestampFunctionMemoizer extends TimestampFunction implement
 
     @Override
     public Function getArg() {
-        return tsFunction;
+        return fn;
     }
 
     @Override
     public long getTimestamp(Record rec) {
-        return memoized ? value : tsFunction.getLong(rec);
+        return memoized ? value : fn.getLong(rec);
     }
 
     @Override
@@ -65,7 +65,12 @@ public final class TimestampFunctionMemoizer extends TimestampFunction implement
 
     @Override
     public void prefetch(Record record) {
-        value = tsFunction.getLong(record);
+        value = fn.getLong(record);
         memoized = true;
+    }
+
+    @Override
+    public boolean supportsRandomAccess() {
+        return fn.supportsRandomAccess();
     }
 }

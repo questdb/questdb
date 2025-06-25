@@ -33,13 +33,13 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
 public final class IntFunctionMemoizer extends IntFunction implements UnaryFunction {
-    private final Function intFunction;
+    private final Function fn;
     private boolean memoized;
     private int value;
 
-    public IntFunctionMemoizer(Function longFunction) {
-        assert longFunction.canPrefetch();
-        this.intFunction = longFunction;
+    public IntFunctionMemoizer(Function fn) {
+        assert fn.canPrefetch();
+        this.fn = fn;
     }
 
     @Override
@@ -49,12 +49,12 @@ public final class IntFunctionMemoizer extends IntFunction implements UnaryFunct
 
     @Override
     public Function getArg() {
-        return intFunction;
+        return fn;
     }
 
     @Override
     public int getInt(Record rec) {
-        return memoized ? value : intFunction.getInt(rec);
+        return memoized ? value : fn.getInt(rec);
     }
 
     @Override
@@ -65,7 +65,12 @@ public final class IntFunctionMemoizer extends IntFunction implements UnaryFunct
 
     @Override
     public void prefetch(Record record) {
-        value = intFunction.getInt(record);
+        value = fn.getInt(record);
         memoized = true;
+    }
+
+    @Override
+    public boolean supportsRandomAccess() {
+        return fn.supportsRandomAccess();
     }
 }
