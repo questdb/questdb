@@ -204,7 +204,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         final long now = microsecondClock.getTicks();
         final boolean rangeRefresh = rangeTo != Numbers.LONG_NULL;
-        final boolean incrementalRefresh = lastRefreshTxn > 0;
+        final boolean incrementalRefresh = lastRefreshTxn != Numbers.LONG_NULL;
 
         LongList txnIntervals = null;
         long minTs = Long.MAX_VALUE;
@@ -214,7 +214,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Find min/max timestamps from WAL transactions.
             txnIntervals = intervals;
             txnIntervals.clear();
-            txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, lastRefreshTxn, lastTxn);
+            txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, Math.max(lastRefreshTxn, 0), lastTxn);
             minTs = txnRangeLoader.getMinTimestamp();
             maxTs = txnRangeLoader.getMaxTimestamp();
             // Check if refresh limit should be applied.
@@ -231,9 +231,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // Timer-triggered period refresh.
                 long periodLo = viewState.getLastPeriodHi();
                 if (periodLo == Numbers.LONG_NULL) {
-                    periodLo = viewDefinition.getTimerTzRules() != null
-                            ? viewDefinition.getTimerStart() - viewDefinition.getTimerTzRules().getOffset(viewDefinition.getTimerStart())
-                            : viewDefinition.getTimerStart();
+                    periodLo = baseTableReader.getMinTimestamp();
                 }
                 if (periodLo < rangeTo) {
                     minTs = periodLo;
@@ -289,14 +287,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // that became complete since the last refresh.
                 long periodLo = viewState.getLastPeriodHi();
                 if (periodLo == Numbers.LONG_NULL) {
-                    periodLo = viewDefinition.getTimerTzRules() != null
-                            ? viewDefinition.getTimerStart() - viewDefinition.getTimerTzRules().getOffset(viewDefinition.getTimerStart())
-                            : viewDefinition.getTimerStart();
+                    periodLo = baseTableReader.getMinTimestamp();
                 }
                 if (periodLo < periodHi) {
                     txnIntervals.add(periodLo, periodHi);
                     IntervalUtils.unionInPlace(txnIntervals, txnIntervals.size() - 2);
-                    maxTs = periodHi;
+                    minTs = txnIntervals.getQuick(0);
+                    maxTs = txnIntervals.getQuick(txnIntervals.size() - 1);
                     // Period hi is exclusive, but previously we made its value inclusive.
                     refreshIntervals.periodHi = periodHi + 1;
                 }
@@ -416,7 +413,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                     final long toBaseTxn = baseTableReader.getSeqTxn();
                     // Specify -1 as the last refresh txn, so that we scan all partitions.
-                    final RefreshIntervals refreshIntervals = findRefreshIntervals(baseTableReader, viewState, -1);
+                    final RefreshIntervals refreshIntervals = findRefreshIntervals(baseTableReader, viewState, Numbers.LONG_NULL);
                     if (refreshIntervals != null) {
                         insertAsSelect(
                                 viewState,
@@ -893,7 +890,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 refreshSqlExecutionContext.of(baseTableReader);
                 try {
                     // Specify -1 as the last refresh txn, so that we scan all partitions.
-                    final RefreshIntervals refreshIntervals = findRefreshIntervals(baseTableReader, viewState, -1, rangeFrom, rangeTo);
+                    final RefreshIntervals refreshIntervals = findRefreshIntervals(baseTableReader, viewState, Numbers.LONG_NULL, rangeFrom, rangeTo);
                     if (refreshIntervals != null) {
                         insertAsSelect(
                                 viewState,
