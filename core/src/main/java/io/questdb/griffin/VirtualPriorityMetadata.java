@@ -39,10 +39,10 @@ import io.questdb.cairo.sql.RecordMetadata;
  */
 public class VirtualPriorityMetadata extends AbstractRecordMetadata {
     private final RecordMetadata baseMetadata;
-    private final int virtualColumnCount;
+    private final int virtualColumnReservedSlots;
 
-    public VirtualPriorityMetadata(int virtualColumnCount, RecordMetadata baseMetadata) {
-        this.virtualColumnCount = virtualColumnCount;
+    public VirtualPriorityMetadata(int virtualColumnReservedSlots, RecordMetadata baseMetadata) {
+        this.virtualColumnReservedSlots = virtualColumnReservedSlots;
         // hold on to the base metadata, in case this is a join metadata, and it is able to
         // resolve column names containing table aliases.
         this.baseMetadata = baseMetadata;
@@ -68,14 +68,14 @@ public class VirtualPriorityMetadata extends AbstractRecordMetadata {
             }
             return -1;
         }
-        return index + virtualColumnCount;
+        return index + virtualColumnReservedSlots;
     }
 
     @Override
     public TableColumnMetadata getColumnMetadata(int index) {
-        if (index < virtualColumnCount) {
+        if (index < virtualColumnReservedSlots) {
             return columnMetadata.getQuick(index);
         }
-        return baseMetadata.getColumnMetadata(index - virtualColumnCount);
+        return baseMetadata.getColumnMetadata(index - virtualColumnReservedSlots);
     }
 }

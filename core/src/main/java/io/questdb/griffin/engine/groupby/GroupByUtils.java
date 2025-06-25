@@ -107,6 +107,61 @@ public class GroupByUtils {
             int lastIndex = -1;
             final ObjList<QueryColumn> columns = model.getColumns();
 
+            // compile functions upfront and assemble the metadata for group-by
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn column = columns.getQuick(i);
+                final ExpressionNode node = column.getAst();
+                final int index = baseMetadata.getColumnIndexQuiet(node.token);
+                if (node.type != LITERAL || index != timestampIndex || timestampUnimportant) {
+                    Function func = functionParser.parseFunction(
+                            node,
+                            baseMetadata,
+                            executionContext
+                    );
+                    outRecordFunctions.add(func);
+
+                    if (node.type != LITERAL) {
+                        outGroupByMetadata.add(
+                                new TableColumnMetadata(
+                                        Chars.toString(column.getName()),
+                                        func.getType(),
+                                        false,
+                                        0,
+                                        func instanceof SymbolFunction && (((SymbolFunction) func).isSymbolTableStatic()),
+                                        func.getMetadata()
+                                )
+                        );
+                    }
+                } else {
+                    // set this function to null, cursor will replace it with an instance class
+                    // timestamp function returns value of class member which makes it impossible
+                    // to create these columns in advance of cursor instantiation
+                    outRecordFunctions.add(null);
+                }
+
+                if (node.type == LITERAL) {
+                    if (index == timestampIndex && !timestampUnimportant) {
+                        if (outGroupByMetadata.getTimestampIndex() == -1) {
+                            outGroupByMetadata.setTimestampIndex(i);
+                        }
+                    }
+                    if (column.getAlias() == null) {
+                        outGroupByMetadata.add(baseMetadata.getColumnMetadata(index));
+                    } else {
+                        outGroupByMetadata.add(
+                                new TableColumnMetadata(
+                                        Chars.toString(column.getAlias()),
+                                        baseMetadata.getColumnType(index),
+                                        baseMetadata.isColumnIndexed(index),
+                                        baseMetadata.getIndexValueBlockCapacity(index),
+                                        baseMetadata.isSymbolTableStatic(index),
+                                        baseMetadata.getMetadata(index)
+                                )
+                        );
+                    }
+                }
+            }
+
             // There are two iterations over the model's columns. The first iterations create value
             // slots for the group-by functions. They are added first because each group-by function is likely
             // to require several slots. The number of slots for each function is not known upfront and
@@ -116,75 +171,57 @@ public class GroupByUtils {
                 final ExpressionNode node = column.getAst();
 
                 if (node.type != LITERAL) {
-                    // this can fail
-                    final Function function = functionParser.parseFunction(
-                            node,
-                            baseMetadata,
-                            executionContext
-                    );
+                    Function function = outRecordFunctions.getQuick(i);
+                    if (function instanceof GroupByFunction) {
+                        // configure map value columns for group-by functions
+                        // some functions may need more than one column in values,
+                        // so we have them do all the work
+                        GroupByFunction func = (GroupByFunction) function;
 
-                    // record functions will have all model function, including consecutive duplicates
-                    outRecordFunctions.add(function);
-
-                    try {
-                        if (function instanceof GroupByFunction) {
-                            // configure map value columns for group-by functions
-                            // some functions may need more than one column in values,
-                            // so we have them do all the work
-                            GroupByFunction func = (GroupByFunction) function;
-
-                            // insert the function into our function list even before we validate it support a given
-                            // fill type. it's to close the function properly when the validation fails
-                            outGroupByFunctions.add(func);
-                            outGroupByFunctionPositions.add(node.position);
-                            if (fillCount > 0) {
-                                // index of the function relative to the list of fill values
-                                // we might have the same fill value for all functions
-                                int funcIndex = outGroupByFunctions.size();
-                                int sampleByFlags = func.getSampleByFlags();
-                                ExpressionNode fillNode = sampleByFill.getQuick(Math.min(funcIndex, fillCount - 1));
-                                if (validateFill) {
-                                    if (SqlKeywords.isNullKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NULL) == 0) {
-                                        throw SqlException.$(node.position, "support for NULL fill is not yet implemented [function=").put(node)
-                                                .put(", class=").put(func.getClass().getName())
-                                                .put(']');
-                                    } else if (SqlKeywords.isPrevKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_PREVIOUS) == 0) {
-                                        throw SqlException.$(node.position, "support for PREV fill is not yet implemented [function=").put(node)
-                                                .put(", class=").put(func.getClass().getName())
-                                                .put(']');
-                                    } else if (SqlKeywords.isLinearKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_LINEAR) == 0) {
-                                        throw SqlException.$(node.position, "support for LINEAR fill is not yet implemented [function=").put(node)
-                                                .put(", class=").put(func.getClass().getName())
-                                                .put(']');
-                                    } else if (SqlKeywords.isNoneKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NONE) == 0) {
-                                        throw SqlException.$(node.position, "support for NONE fill is not yet implemented [function=").put(node)
-                                                .put(", class=").put(func.getClass().getName())
-                                                .put(']');
-                                    } else if ((sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_VALUE) == 0) {
-                                        throw SqlException.$(node.position, "support for VALUE fill is not yet implemented [function=").put(node)
-                                                .put(", class=").put(func.getClass().getName())
-                                                .put(']');
-                                    }
+                        // insert the function into our function list even before we validate it support a given
+                        // fill type. it's to close the function properly when the validation fails
+                        outGroupByFunctions.add(func);
+                        outGroupByFunctionPositions.add(node.position);
+                        if (fillCount > 0) {
+                            // index of the function relative to the list of fill values
+                            // we might have the same fill value for all functions
+                            int funcIndex = outGroupByFunctions.size();
+                            int sampleByFlags = func.getSampleByFlags();
+                            ExpressionNode fillNode = sampleByFill.getQuick(Math.min(funcIndex, fillCount - 1));
+                            if (validateFill) {
+                                if (SqlKeywords.isNullKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NULL) == 0) {
+                                    throw SqlException.$(node.position, "support for NULL fill is not yet implemented [function=").put(node)
+                                            .put(", class=").put(func.getClass().getName())
+                                            .put(']');
+                                } else if (SqlKeywords.isPrevKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_PREVIOUS) == 0) {
+                                    throw SqlException.$(node.position, "support for PREV fill is not yet implemented [function=").put(node)
+                                            .put(", class=").put(func.getClass().getName())
+                                            .put(']');
+                                } else if (SqlKeywords.isLinearKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_LINEAR) == 0) {
+                                    throw SqlException.$(node.position, "support for LINEAR fill is not yet implemented [function=").put(node)
+                                            .put(", class=").put(func.getClass().getName())
+                                            .put(']');
+                                } else if (SqlKeywords.isNoneKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NONE) == 0) {
+                                    throw SqlException.$(node.position, "support for NONE fill is not yet implemented [function=").put(node)
+                                            .put(", class=").put(func.getClass().getName())
+                                            .put(']');
+                                } else if ((sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_VALUE) == 0) {
+                                    throw SqlException.$(node.position, "support for VALUE fill is not yet implemented [function=").put(node)
+                                            .put(", class=").put(func.getClass().getName())
+                                            .put(']');
                                 }
                             }
-                            func.initValueTypes(outValueTypes);
-                        } else {
-                            // it's a key function
-                            if (outKeyFunctions == null || outKeyFunctionNodes == null) {
-                                throw SqlException.$(node.position, "key functions are supported in GROUP BY only [function=").put(node).put(']');
-                            }
-                            outKeyFunctions.add(function);
-                            outKeyFunctionNodes.add(node);
                         }
-                    } catch (Throwable e) {
-                        Misc.freeObjListAndClear(outRecordFunctions);
-                        throw e;
+                        func.initValueTypes(outValueTypes);
+                    } else {
+                        // it's a key function
+                        if (outKeyFunctions == null || outKeyFunctionNodes == null) {
+                            throw SqlException.$(node.position, "key functions are supported in GROUP BY only [function=").put(node).put(']');
+                        }
+                        outKeyFunctions.add(function);
+                        outKeyFunctionNodes.add(node);
                     }
                 } else {
-                    // function is unknown at this iteration, because we cannot create function not knowing
-                    // the slot in the map it will occupy.
-                    outRecordFunctions.add(null);
-
                     int index = baseMetadata.getColumnIndexQuiet(node.token);
                     if (index == -1) {
                         throw SqlException.invalidColumn(node.position, node.token);
@@ -226,31 +263,9 @@ public class GroupByUtils {
                             lastIndex = index;
                         }
                         outRecordFunctions.set(i, createColumnFunction(baseMetadata, keyColumnIndex, type, index));
-                    } else {
-                        // set this function to null, cursor will replace it with an instance class
-                        // timestamp function returns value of class member which makes it impossible
-                        // to create these columns in advance of cursor instantiation
-                        if (outGroupByMetadata.getTimestampIndex() == -1) {
-                            outGroupByMetadata.setTimestampIndex(i);
-                        }
-                        assert ColumnType.tagOf(type) == ColumnType.TIMESTAMP;
                     }
 
                     // and finish with populating metadata for this factory
-                    if (column.getAlias() == null) {
-                        outGroupByMetadata.add(baseMetadata.getColumnMetadata(index));
-                    } else {
-                        outGroupByMetadata.add(
-                                new TableColumnMetadata(
-                                        Chars.toString(column.getAlias()),
-                                        type,
-                                        baseMetadata.isColumnIndexed(index),
-                                        baseMetadata.getIndexValueBlockCapacity(index),
-                                        baseMetadata.isSymbolTableStatic(index),
-                                        baseMetadata.getMetadata(index)
-                                )
-                        );
-                    }
                     inferredKeyColumnCount++;
                 } else {
                     Function func = outRecordFunctions.getQuick(i);
@@ -264,28 +279,16 @@ public class GroupByUtils {
                             // must be a function key, so we need to cast it to symbol
                             columnRefFunc = new CastStrToSymbolFunctionFactory.Func(columnRefFunc);
                         }
-
                         // override function with column ref function
-                        func = columnRefFunc;
+                        Misc.free(func);
                         outRecordFunctions.set(i, columnRefFunc);
                         inferredKeyColumnCount++;
                     }
-
-                    // and finish with populating metadata for this factory
-                    outGroupByMetadata.add(
-                            new TableColumnMetadata(
-                                    Chars.toString(column.getName()),
-                                    func.getType(),
-                                    false,
-                                    0,
-                                    func instanceof SymbolFunction && (((SymbolFunction) func).isSymbolTableStatic()),
-                                    func.getMetadata()
-                            )
-                    );
                 }
             }
             validateGroupByColumns(sqlNodeStack, model, inferredKeyColumnCount);
         } catch (Throwable e) {
+            Misc.freeObjListAndClear(outRecordFunctions);
             Misc.freeObjList(outGroupByFunctions);
             Misc.freeObjList(outKeyFunctions);
             throw e;
