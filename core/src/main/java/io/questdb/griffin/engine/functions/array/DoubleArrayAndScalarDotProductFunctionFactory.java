@@ -40,7 +40,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "array_dot_product";
+    private static final String FUNCTION_NAME = "dot_product";
 
     @Override
     public String getSignature() {

@@ -153,6 +153,16 @@ public class DerivedArrayView extends ArrayView {
         }
     }
 
+    public void ofNull() {
+        type = ColumnType.NULL;
+        flatView = null;
+        flatViewLength = 0;
+        flatViewOffset = 0;
+        shape.clear();
+        strides.clear();
+        isVanilla = true;
+    }
+
     /**
      * Prepend extra dimensions to the array view.
      * For example, a 1D array [1, 2, 3] with one dimension added becomes a 2D array [[1, 2, 3]].
@@ -246,7 +256,7 @@ public class DerivedArrayView extends ArrayView {
         if (getDimLen(dim) != 0) {
             removeDim(dim);
         } else {
-            shape.set(0, 0);
+            ofNull();
         }
     }
 

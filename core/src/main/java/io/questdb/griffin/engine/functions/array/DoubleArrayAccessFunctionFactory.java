@@ -346,6 +346,9 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                                 .put(']');
                     }
                     derivedArray.subArray(dim, index, argPos);
+                    if (derivedArray.isNull()) {
+                        return derivedArray;
+                    }
                 }
             }
             return derivedArray;
