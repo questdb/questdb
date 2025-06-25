@@ -52,9 +52,7 @@ public class RndIntFunctionFactory implements FunctionFactory {
 
     private static class RndFunction extends IntFunction implements Function {
 
-        private boolean prefetched;
         private Rnd rnd;
-        private int value;
 
         @Override
         public boolean canPrefetch() {
@@ -63,24 +61,17 @@ public class RndIntFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return prefetched ? value : rnd.nextInt();
+            return rnd.nextInt();
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.prefetched = false;
             this.rnd = executionContext.getRandom();
         }
 
         @Override
         public boolean isNonDeterministic() {
             return true;
-        }
-
-        @Override
-        public void prefetch(Record record) {
-            value = rnd.nextInt();
-            prefetched = true;
         }
 
         @Override

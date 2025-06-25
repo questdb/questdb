@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.memoization.LongFunctionMemoizer;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
@@ -335,6 +336,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             assert positionStack.size() == functionStack.size();
             if (function != null && function.isConstant() && function.extendedOps() == null) {
                 return functionToConstant(function);
+            }
+            if (function != null && function.canPrefetch()) {
+                switch (function.getType()) {
+                    case ColumnType.LONG:
+                        return new LongFunctionMemoizer(function);
+                    case ColumnType.INT:
+                        return new LongFunctionMemoizer(function);
+                    // other types do not have memoization yet
+                }
             }
             return function;
         } finally {
