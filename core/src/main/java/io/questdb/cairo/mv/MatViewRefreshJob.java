@@ -210,8 +210,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         long minTs = Long.MAX_VALUE;
         long maxTs = Long.MIN_VALUE;
         if (incrementalRefresh) {
-            // Incremental refresh.
-            // Find min/max timestamps from WAL transactions.
+            // Incremental refresh. This means that there may be a data transaction in the base table
+            // or someone has run REFRESH INCREMENTAL SQL.
+            // Let's find min/max timestamps in the new WAL transactions.
             txnIntervals = intervals;
             txnIntervals.clear();
             txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, Math.max(lastRefreshTxn, 0), lastTxn);
@@ -226,9 +227,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             }
         } else if (rangeRefresh) {
-            // Range refresh.
+            // Range refresh. This means that the timer is triggered on a period mat view
+            // or someone has run REFRESH RANGE SQL.
+            // In both cases we have the range to be refreshed.
             if (rangeFrom == Numbers.LONG_NULL) {
-                // Timer-triggered period refresh.
+                // Period timer has triggered.
                 long periodLo = viewState.getLastPeriodHi();
                 if (periodLo == Numbers.LONG_NULL) {
                     periodLo = baseTableReader.getMinTimestamp();
@@ -240,22 +243,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     refreshIntervals.periodHi = rangeTo + 1;
                 }
             } else {
-                // User-defined range refresh.
-                // Consider actual min/max timestamps in the table data to avoid redundant
-                // query executions.
+                // User-defined range refresh, e.g.
+                // `REFRESH MATERIALIZED VIEW my_view RANGE FROM '2025-05-05T01:00' TO '2025-05-05T02:00';`
+                // Consider actual min/max timestamps in the table data to avoid redundant query executions.
                 minTs = Math.max(rangeFrom, baseTableReader.getMinTimestamp());
                 maxTs = Math.min(rangeTo, baseTableReader.getMaxTimestamp());
             }
         } else {
-            // Full refresh.
-            // When the table is empty, min timestamp is set to Long.MAX_VALUE,
-            // while max timestamp is Long.MIN_VALUE, so we end up skipping the refresh.
+            // Full refresh, i.e. someone has run REFRESH FULL SQL.
+            // When the table is empty, min/max timestamps are set to Long.MAX_VALUE / LONG.MIN_VALUE,
+            // so we end up skipping the refresh.
             minTs = baseTableReader.getMinTimestamp();
             maxTs = baseTableReader.getMaxTimestamp();
         }
 
         // Check if we're doing incremental/full refresh on a period mat view.
-        // If so, we may need to remove the incomplete period from the refresh interval.
+        // If so, we may need to remove incomplete periods from the final refresh interval.
         if (!rangeRefresh && viewDefinition.getPeriodLength() > 0) {
             TimestampSampler periodSampler = viewDefinition.getPeriodSampler();
             if (periodSampler == null) {
@@ -274,7 +277,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     ? periodHiLocal - viewDefinition.getTimerTzRules().getOffset(periodHiLocal)
                     : periodHiLocal;
 
-            // First, remove the incomplete period from both txn intervals and refresh interval.
+            // Remove the incomplete period from both txn intervals and refresh interval.
             if (txnIntervals != null && txnIntervals.size() > 0) {
                 txnIntervals.add(Long.MIN_VALUE, periodHi);
                 IntervalUtils.intersectInPlace(txnIntervals, txnIntervals.size() - 2);
@@ -294,11 +297,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     IntervalUtils.unionInPlace(txnIntervals, txnIntervals.size() - 2);
                     minTs = txnIntervals.getQuick(0);
                     maxTs = txnIntervals.getQuick(txnIntervals.size() - 1);
+                    // Bump lastPeriodHi once we're done.
                     // Period hi is exclusive, but previously we made its value inclusive.
                     refreshIntervals.periodHi = periodHi + 1;
                 }
             } else {
-                // It's a full refresh, so we need to bump lastPeriodHi once we're done.
+                // It's a full refresh, so we'll need to bump lastPeriodHi once we're done.
                 refreshIntervals.periodHi = periodHi + 1;
             }
         }
