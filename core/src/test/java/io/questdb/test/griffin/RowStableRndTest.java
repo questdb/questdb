@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
@@ -56,15 +55,15 @@ public class RowStableRndTest extends AbstractCairoTest {
         // assertQuery does not reset rnd between SQL executions - using assertSql
         assertSql(
                 "i\tk\n" +
-                        "-2296959840\t-2296959830\n" +
+                        "1998007456\t1998007466\n" +
                         "631030236\t631030246\n" +
-                        "3097601666\t3097601676\n" +
+                        "-1197365630\t-1197365620\n" +
                         "-1455449542\t-1455449532\n" +
                         "147151402\t147151412\n" +
                         "-1896526678\t-1896526668\n" +
-                        "2652894484\t2652894494\n" +
+                        "-1642072812\t-1642072802\n" +
                         "1185719342\t1185719352\n" +
-                        "3737447412\t3737447422\n" +
+                        "-557519884\t-557519874\n" +
                         "-1695062096\t-1695062086\n",
                 "select rnd_int() * 2 i, i + 10 k from long_sequence(10)"
         );
