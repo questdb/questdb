@@ -49,11 +49,11 @@ public class ViewCompileTest extends ViewInvalidationTest {
     }
 
     @Override
-    protected void detectInvalidView(String expectedErrorMessage) {
+    protected void detectInvalidView(String viewName, String expectedErrorMessage) {
         // automatic view invalidation is switched off in test, so have to query the view
         // to be able to detect that it does not work anymore.
         // child views are invalidated recursively.
-        try (RecordCursorFactory ignored = select(VIEW1)) {
+        try (RecordCursorFactory ignored = select(viewName)) {
             fail("Expected SqlException");
         } catch (SqlException e) {
             assertContains(e.getFlyweightMessage(), expectedErrorMessage);
@@ -61,11 +61,11 @@ public class ViewCompileTest extends ViewInvalidationTest {
     }
 
     @Override
-    protected void fixInvalidView() throws SqlException {
+    protected void fixInvalidView(String viewName) throws SqlException {
         // automatic view reset is switched off in test, so have to compile
         // the view manually to be able to fix it.
         // if the view successfully compiles and becomes valid, its children
         // will be compiled recursively too.
-        compileView(VIEW1);
+        compileView(viewName);
     }
 }

@@ -27,6 +27,8 @@ package io.questdb.test.cairo.view;
 import io.questdb.griffin.SqlException;
 import org.junit.Test;
 
+import static org.junit.Assert.assertNull;
+
 public class ViewInvalidationTest extends AbstractViewTest {
 
     @Test
@@ -79,7 +81,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
             // to be able to detect that it does not work anymore
             // it is enough to detect the problem with VIEW1, because we invalidate all dependent
             // views recursively too, and VIEW3 depends on VIEW1
-            detectInvalidView(expectedErrorMessage);
+            detectInvalidView(VIEW1, expectedErrorMessage);
             drainViewQueue();
             drainWalQueue();
 
@@ -125,7 +127,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
             // the view manually to be able to fix it.
             // it is enough to compile VIEW1, because VIEW3 is dependent on it, and if
             // VIEW1 compiles successfully, its children will be compiled recursively too
-            fixInvalidView();
+            fixInvalidView(VIEW1);
             drainViewQueue();
             drainWalQueue();
 
@@ -205,6 +207,88 @@ public class ViewInvalidationTest extends AbstractViewTest {
     }
 
     @Test
+    public void testDroppedTableMixedCases() throws Exception {
+        String viewQuery = "select ts, k, max(v) as v_max from " + TABLE1.toLowerCase() + " where v > 4";
+        assertMemoryLeak(() -> {
+            setCurrentMicros(1750327200000000L);
+
+            createTable(TABLE1);
+
+            // creating view
+            createView(VIEW1, viewQuery);
+
+            assertQueryAndPlan(
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
+                            "view1\t" + viewQuery + "\tview1~2\t\tvalid\t2025-06-19T10:00:00.000000Z\n",
+                    "views()",
+                    null,
+                    false,
+                    false,
+                    "QUERY PLAN\n" +
+                            "views()\n"
+            );
+
+            compileView(VIEW1);
+
+            // breaking view
+            execute("DROP TABLE " + TABLE1.toUpperCase());
+            drainWalQueue();
+
+            detectInvalidView(VIEW1, "table does not exist [table=" + TABLE1 + "]");
+            drainViewQueue();
+            drainWalQueue();
+
+            assertViewDefinition(VIEW1, viewQuery);
+            assertViewDefinitionFile(VIEW1, viewQuery);
+            assertViewStateFile(VIEW1, "table does not exist [table=" + TABLE1 + "]");
+
+            assertQueryAndPlan(
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
+                            "view1\t" + viewQuery + "\tview1~2\t" + "table does not exist [table=" + TABLE1 + "]" + "\tinvalid\t2025-06-19T10:00:00.000000Z\n",
+                    "views()",
+                    null,
+                    false,
+                    false,
+                    "QUERY PLAN\n" +
+                            "views()\n"
+            );
+
+            compileView(VIEW1, "table does not exist [table=" + TABLE1 + "]");
+
+            // fixing view
+            execute("create table if not exists " + TABLE1.toUpperCase() +
+                    " (ts timestamp, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
+                    " timestamp(ts) partition by day wal");
+            drainWalQueue();
+
+            fixInvalidView(VIEW1);
+            drainViewQueue();
+            drainWalQueue();
+
+            assertViewDefinition(VIEW1, viewQuery);
+            assertViewDefinitionFile(VIEW1, viewQuery);
+            assertViewStateFile(VIEW1);
+
+            assertQueryAndPlan(
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
+                            "view1\t" + viewQuery + "\tview1~2\t\tvalid\t2025-06-19T10:00:00.000000Z\n",
+                    "views()",
+                    null,
+                    false,
+                    false,
+                    "QUERY PLAN\n" +
+                            "views()\n"
+            );
+
+            compileView(VIEW1);
+
+            execute("DROP VIEW " + VIEW1.toUpperCase());
+            drainWalQueue();
+            assertNull(getViewDefinition(VIEW1.toUpperCase()));
+        });
+    }
+
+    @Test
     public void testRenamedColumnInsideFunctionInvalidatesView() throws Exception {
         testViewInvalidated(
                 "select ts, k, max(sqrt(v)) as v_max from " + TABLE1 + " where v > 4",
@@ -244,6 +328,92 @@ public class ViewInvalidationTest extends AbstractViewTest {
         );
     }
 
+    @Test
+    public void testRenamedTableNonAsciiChars() throws Exception {
+        assertMemoryLeak(() -> {
+            final String TABLE1_1 = "Részvény_áíóúüűöő";
+            final String TABLE1_2 = "RÉSZVÉNY_ÁÍÓÚÜŰÖŐ";
+            final String TABLE2_1 = "Aкции_ягоды_жЙлФэЮ";
+            final String TABLE2_2 = "AКЦИИ_ЯГОДЫ_ЖйЛфЭю";
+            final String VIEW1 = "株式_ウォール街";
+
+            setCurrentMicros(1750327200000000L);
+
+            createTable(TABLE1_1);
+            createTable(TABLE2_1);
+
+            // creating view
+            createView(VIEW1, "select ts, k, max(v) as v_max from (" + TABLE1_2 + " union " + TABLE2_2 + ") where v > 4");
+
+            assertQueryAndPlan(
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
+                            VIEW1 + "\tselect ts, k, max(v) as v_max from (" + TABLE1_2 + " union " + TABLE2_2 + ") where v > 4" + "\t" + VIEW1 + "~3\t\tvalid\t2025-06-19T10:00:00.000000Z\n",
+                    "views()",
+                    null,
+                    false,
+                    false,
+                    "QUERY PLAN\n" +
+                            "views()\n"
+            );
+
+            compileView(VIEW1);
+
+            // breaking view
+            execute("RENAME TABLE " + TABLE1_2 + " TO " + TABLE3);
+            drainWalQueue();
+
+            detectInvalidView(VIEW1, "table does not exist [table=" + TABLE1_2 + "]");
+            drainViewQueue();
+            drainWalQueue();
+
+            assertViewDefinition(VIEW1, "select ts, k, max(v) as v_max from (" + TABLE1_2 + " union " + TABLE2_2 + ") where v > 4");
+            assertViewDefinitionFile(VIEW1, "select ts, k, max(v) as v_max from (" + TABLE1_2 + " union " + TABLE2_2 + ") where v > 4");
+            assertViewStateFile(VIEW1, "table does not exist [table=" + TABLE1_2 + "]");
+
+            assertQueryAndPlan(
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
+                            VIEW1 + "\tselect ts, k, max(v) as v_max from (" + TABLE1_2 + " union " + TABLE2_2 + ") where v > 4" + "\t" + VIEW1 + "~3\t" + "table does not exist [table=" + TABLE1_2 + "]" + "\tinvalid\t2025-06-19T10:00:00.000000Z\n",
+                    "views()",
+                    null,
+                    false,
+                    false,
+                    "QUERY PLAN\n" +
+                            "views()\n"
+            );
+
+            compileView(VIEW1, "table does not exist [table=" + TABLE1_2 + "]");
+
+            // fixing view
+            execute("RENAME TABLE " + TABLE3 + " TO " + TABLE1_2);
+            drainWalQueue();
+
+            fixInvalidView(VIEW1);
+            drainViewQueue();
+            drainWalQueue();
+
+            assertViewDefinition(VIEW1, "select ts, k, max(v) as v_max from (" + TABLE1_2 + " union " + TABLE2_2 + ") where v > 4");
+            assertViewDefinitionFile(VIEW1, "select ts, k, max(v) as v_max from (" + TABLE1_2 + " union " + TABLE2_2 + ") where v > 4");
+            assertViewStateFile(VIEW1);
+
+            assertQueryAndPlan(
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
+                            VIEW1 + "\t" + "select ts, k, max(v) as v_max from (" + TABLE1_2 + " union " + TABLE2_2 + ") where v > 4" + "\t" + VIEW1 + "~3\t\tvalid\t2025-06-19T10:00:00.000000Z\n",
+                    "views()",
+                    null,
+                    false,
+                    false,
+                    "QUERY PLAN\n" +
+                            "views()\n"
+            );
+
+            compileView(VIEW1);
+
+            execute("DROP VIEW " + VIEW1.toUpperCase());
+            drainWalQueue();
+            assertNull(getViewDefinition(VIEW1.toUpperCase()));
+        });
+    }
+
     private void testViewInvalidated(String viewQuery, String breakingSql, String fixingSql, String expectedErrorMessage) throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(1750327200000000L);
@@ -271,7 +441,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
             execute(breakingSql);
             drainWalQueue();
 
-            detectInvalidView(expectedErrorMessage);
+            detectInvalidView(VIEW1, expectedErrorMessage);
             drainViewQueue();
             drainWalQueue();
 
@@ -296,7 +466,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
             execute(fixingSql);
             drainWalQueue();
 
-            fixInvalidView();
+            fixInvalidView(VIEW1);
             drainViewQueue();
             drainWalQueue();
 
@@ -319,12 +489,12 @@ public class ViewInvalidationTest extends AbstractViewTest {
         });
     }
 
-    protected void detectInvalidView(String expectedErrorMessage) {
+    protected void detectInvalidView(String viewName, String expectedErrorMessage) {
         // no-op
         // invalid views are automatically detected by default
     }
 
-    protected void fixInvalidView() throws SqlException {
+    protected void fixInvalidView(String viewName) throws SqlException {
         // no-op
         // invalid views are automatically fixed by default
     }

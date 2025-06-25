@@ -82,6 +82,61 @@ public class ViewQueryTest extends AbstractViewTest {
     }
 
     @Test
+    public void testNonAsciiTableAndViewNames() throws Exception {
+        assertMemoryLeak(() -> {
+            final String TABLE1_1 = "Részvény_áíóúüűöő";
+            final String TABLE1_2 = "RÉSZVÉNY_ÁÍÓÚÜŰÖŐ";
+            final String TABLE2_1 = "Aкции_ягоды";
+            final String TABLE2_2 = "AКЦИИ_ЯГОДЫ";
+            final String VIEW1 = "股票";
+            final String VIEW2 = "स्टॉक_के_शेयर";
+
+            createTable(TABLE1_1);
+            createTable(TABLE2_1);
+
+            final String query1 = "select ts, k, max(v) as v_max from " + TABLE1_2 + " where v > 4";
+            createView(VIEW1, query1, TABLE1_2);
+
+            final String query2 = "select ts, k2, max(v) as v_max from '" + TABLE2_2 + "' where v > 6";
+            createView(VIEW2, query2, TABLE2_2);
+
+            assertQueryAndPlan(
+                    "ts\tv_max\n" +
+                            "1970-01-01T00:00:50.000000Z\t5\n" +
+                            "1970-01-01T00:01:20.000000Z\t8\n",
+                    "with t2 as (" + VIEW2 + " where v_max > 7 union " + VIEW1 + " where k = 'k5') select t1.ts, v_max from " + TABLE1_2 + " t1 join t2 on t1.v = t2.v_max",
+                    "ts",
+                    false,
+                    true,
+                    "QUERY PLAN\n" +
+                            "SelectedRecord\n" +
+                            "    Hash Join\n" +
+                            "      condition: t2.v_max=t1.v\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: Részvény_áíóúüűöő\n" +
+                            "        Hash\n" +
+                            "            Union\n" +
+                            "                Filter filter: 7<v_max\n" +
+                            "                    Async Group By workers: 1\n" +
+                            "                      keys: [ts,k2]\n" +
+                            "                      values: [max(v)]\n" +
+                            "                      filter: 6<v\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: Aкции_ягоды\n" +
+                            "                Async Group By workers: 1\n" +
+                            "                  keys: [ts,k]\n" +
+                            "                  values: [max(v)]\n" +
+                            "                  filter: (4<v and k='k5')\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: Részvény_áíóúüűöő\n"
+            );
+        });
+    }
+
+    @Test
     public void testSelectViewFields() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -122,6 +177,56 @@ public class ViewQueryTest extends AbstractViewTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: table1\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSelectViewMixedCase() throws Exception {
+        assertMemoryLeak(() -> {
+            final String TABLE1_1 = "taBLe1";
+            final String TABLE1_2 = "TABLe1";
+            createTable(TABLE1_1);
+
+            final String query1 = "select ts, k, max(v) as v_max from " + TABLE1_2 + " where v > 5";
+            final String VIEW1_1 = "viEw1";
+            final String VIEW1_2 = "ViEW1";
+            final String VIEW1_3 = "vIeW1";
+            createView(VIEW1_1, query1, TABLE1_2);
+
+            String query = VIEW1_2;
+            assertQueryAndPlan(
+                    "ts\tk\tv_max\n" +
+                            "1970-01-01T00:01:00.000000Z\tk6\t6\n" +
+                            "1970-01-01T00:01:10.000000Z\tk7\t7\n" +
+                            "1970-01-01T00:01:20.000000Z\tk8\t8\n",
+                    query,
+                    "QUERY PLAN\n" +
+                            "Async Group By workers: 1\n" +
+                            "  keys: [ts,k]\n" +
+                            "  values: [max(v)]\n" +
+                            "  filter: 5<v\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: " + TABLE1_1 + "\n"
+            );
+
+            query = "select ts, v_max from " + VIEW1_3;
+            assertQueryAndPlan(
+                    "ts\tv_max\n" +
+                            "1970-01-01T00:01:00.000000Z\t6\n" +
+                            "1970-01-01T00:01:10.000000Z\t7\n" +
+                            "1970-01-01T00:01:20.000000Z\t8\n",
+                    query,
+                    "QUERY PLAN\n" +
+                            "SelectedRecord\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts,k]\n" +
+                            "      values: [max(v)]\n" +
+                            "      filter: 5<v\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: " + TABLE1_1 + "\n"
             );
         });
     }
