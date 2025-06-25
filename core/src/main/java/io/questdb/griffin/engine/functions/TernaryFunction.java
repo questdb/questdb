@@ -30,12 +30,14 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowFunction;
 
 public interface TernaryFunction extends Function {
 
     @Override
     default boolean canPrefetch() {
-        return getLeft().canPrefetch() && getCenter().canPrefetch() && getRight().canPrefetch();
+        return !(this instanceof GroupByFunction) && !(this instanceof WindowFunction) &&
+                getLeft().canPrefetch() && getCenter().canPrefetch() && getRight().canPrefetch();
     }
 
     @Override

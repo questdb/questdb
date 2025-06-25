@@ -30,12 +30,13 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowFunction;
 
 public interface UnaryFunction extends Function {
 
     @Override
     default boolean canPrefetch() {
-        return getArg().canPrefetch();
+        return !(this instanceof GroupByFunction) && !(this instanceof WindowFunction) && getArg().canPrefetch();
     }
 
     @Override
