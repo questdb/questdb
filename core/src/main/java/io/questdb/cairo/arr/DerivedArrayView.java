@@ -107,6 +107,16 @@ public class DerivedArrayView extends ArrayView {
         }
     }
 
+    public void ofNull() {
+        type = ColumnType.NULL;
+        flatView = null;
+        flatViewLength = 0;
+        flatViewOffset = 0;
+        shape.clear();
+        strides.clear();
+        isVanilla = true;
+    }
+
     public void removeDim(int dim) {
         assert dim >= 0 && dim < shape.size() : "dim out of range: " + dim;
         isVanilla = false;
