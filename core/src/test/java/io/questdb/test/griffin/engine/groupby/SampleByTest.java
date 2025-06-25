@@ -13231,8 +13231,8 @@ public class SampleByTest extends AbstractCairoTest {
                     "sample by 1w fill(null)";
             assertQueryNoLeakCheck(
                     "ts\tavg\n" +
-                            "2017-12-28T00:00:00.000000Z\t72.5\n" +
-                            "2018-01-04T00:00:00.000000Z\t312.5\n",
+                            "2018-01-01T00:00:00.000000Z\t168.5\n" +
+                            "2018-01-08T00:00:00.000000Z\t408.5\n",
                     query2,
                     "ts",
                     true
