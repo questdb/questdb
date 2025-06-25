@@ -135,7 +135,7 @@ public class MatViewTimerJob extends SynchronizedJob {
                 timerTzRules = null;
             }
 
-            if (viewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
+            if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_TIMER) {
                 // The view has timer refresh, so add a "normal" timer for it.
                 final int timerInterval = viewDefinition.getTimerInterval();
                 final char timerUnit = viewDefinition.getTimerUnit();

@@ -174,7 +174,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
             sink.put(baseTableName);
         }
         sink.putAscii(" refresh");
-        if (refreshType == MatViewDefinition.TIMER_REFRESH_TYPE) {
+        if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
             sink.putAscii(" every ");
             sink.put(timerInterval);
             sink.putAscii(timerUnit);
@@ -190,12 +190,12 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
                 }
                 sink.putAscii('\'');
             }
-        } else if (refreshType == MatViewDefinition.IMMEDIATE_REFRESH_TYPE) {
+        } else if (refreshType == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
             sink.putAscii(" immediate");
             if (deferred) {
                 sink.putAscii(" deferred");
             }
-        } else if (refreshType == MatViewDefinition.MANUAL_REFRESH_TYPE) {
+        } else if (refreshType == MatViewDefinition.REFRESH_TYPE_MANUAL) {
             sink.putAscii(" manual");
             if (deferred) {
                 sink.putAscii(" deferred");

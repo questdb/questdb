@@ -89,7 +89,7 @@ public class MatViewGraph implements Mutable {
         }
         // Publish a timer task for any non-manually refreshed mat view.
         // We need a dedicated timer in two cases: timer and period refresh.
-        if (viewDefinition.getRefreshType() != MatViewDefinition.MANUAL_REFRESH_TYPE) {
+        if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_MANUAL) {
             final MatViewTimerTask timerTask = tlTimerTask.get();
             timerTaskQueue.enqueue(timerTask.ofAdd(matViewToken));
         }
@@ -165,7 +165,7 @@ public class MatViewGraph implements Mutable {
                     dependentViews.unlockAfterWrite();
                 }
             }
-            if (viewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
+            if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_TIMER) {
                 final MatViewTimerTask timerTask = tlTimerTask.get();
                 timerTaskQueue.enqueue(timerTask.ofDrop(matViewToken));
             }
@@ -198,7 +198,7 @@ public class MatViewGraph implements Mutable {
         if (definitionsByTableDirName.computeIfPresent(viewToken.getDirName(), updateDefinitionRef) == null) {
             throw CairoException.nonCritical().put("previous view definition was not found: ").put(viewToken.getTableName());
         }
-        if (newDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
+        if (newDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_TIMER) {
             final MatViewTimerTask timerTask = tlTimerTask.get();
             timerTaskQueue.enqueue(timerTask.ofUpdate(viewToken));
         }

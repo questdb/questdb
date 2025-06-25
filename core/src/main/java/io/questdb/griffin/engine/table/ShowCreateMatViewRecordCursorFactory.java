@@ -191,7 +191,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                     .putAscii("' WITH BASE '")
                     .put(viewDefinition.getBaseTableName());
             sink.putAscii("' REFRESH");
-            if (viewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE) {
+            if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_TIMER) {
                 sink.putAscii(" EVERY ");
                 sink.put(viewDefinition.getTimerInterval());
                 sink.putAscii(viewDefinition.getTimerUnit());
@@ -207,12 +207,12 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                     }
                     sink.putAscii('\'');
                 }
-            } else if (viewDefinition.getRefreshType() == MatViewDefinition.IMMEDIATE_REFRESH_TYPE) {
+            } else if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
                 sink.putAscii(" IMMEDIATE");
                 if (viewDefinition.isDeferred()) {
                     sink.putAscii(" DEFERRED");
                 }
-            } else if (viewDefinition.getRefreshType() == MatViewDefinition.MANUAL_REFRESH_TYPE) {
+            } else if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_MANUAL) {
                 sink.putAscii(" MANUAL");
                 if (viewDefinition.isDeferred()) {
                     sink.putAscii(" DEFERRED");

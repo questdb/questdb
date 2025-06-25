@@ -929,7 +929,7 @@ public class SqlParser {
         }
 
         boolean refreshDefined = false;
-        int refreshType = MatViewDefinition.IMMEDIATE_REFRESH_TYPE;
+        int refreshType = MatViewDefinition.REFRESH_TYPE_IMMEDIATE;
         boolean deferred = false;
         if (isRefreshKeyword(tok)) {
             refreshDefined = true;
@@ -942,20 +942,20 @@ public class SqlParser {
             } else if (isImmediateKeyword(tok)) {
                 tok = tok(lexer, "'deferred' or 'period' or 'as'");
             } else if (isManualKeyword(tok)) {
-                refreshType = MatViewDefinition.MANUAL_REFRESH_TYPE;
+                refreshType = MatViewDefinition.REFRESH_TYPE_MANUAL;
                 tok = tok(lexer, "'deferred' or 'period' or 'as'");
             } else if (isEveryKeyword(tok)) {
                 tok = tok(lexer, "interval");
                 every = Timestamps.getStrideMultiple(tok);
                 everyUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
-                refreshType = MatViewDefinition.TIMER_REFRESH_TYPE;
+                refreshType = MatViewDefinition.REFRESH_TYPE_TIMER;
                 tok = tok(lexer, "'deferred' or 'start' or 'period' or 'as'");
             }
 
             if (isDeferredKeyword(tok)) {
                 deferred = true;
-                if (refreshType == MatViewDefinition.TIMER_REFRESH_TYPE) {
+                if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
                     tok = tok(lexer, "'start' or 'period' or 'as'");
                 } else {
                     tok = tok(lexer, "'period' or 'as'");
@@ -1014,7 +1014,7 @@ public class SqlParser {
                 tok = tok(lexer, "'as'");
             } else if (!isAsKeyword(tok)) {
                 // REFRESH EVERY <interval> [START '<datetime>' [TIME ZONE '<timezone>']]
-                if (refreshType != MatViewDefinition.TIMER_REFRESH_TYPE) {
+                if (refreshType != MatViewDefinition.REFRESH_TYPE_TIMER) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'as' expected");
                 }
                 // Use the current time as the start timestamp if it wasn't specified.
@@ -1037,7 +1037,7 @@ public class SqlParser {
                     }
                 }
                 mvOpBuilder.setTimer(timeZone, start, every, everyUnit);
-            } else if (refreshType == MatViewDefinition.TIMER_REFRESH_TYPE) {
+            } else if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
                 // REFRESH EVERY <interval> AS
                 // Don't forget to set timer params.
                 final long start = configuration.getMicrosecondClock().getTicks();

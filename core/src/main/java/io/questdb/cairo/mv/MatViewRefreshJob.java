@@ -456,7 +456,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             viewState.tryCloseIfDropped();
         }
 
-        if (viewDefinition.getRefreshType() == MatViewDefinition.IMMEDIATE_REFRESH_TYPE) {
+        if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
             // Kickstart incremental refresh.
             stateStore.enqueueIncrementalRefresh(viewToken);
         }
@@ -953,7 +953,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             TableToken viewToken = childViewSink.get(v);
             final MatViewState viewState = stateStore.getViewState(viewToken);
             if (viewState != null && !viewState.isPendingInvalidation() && !viewState.isInvalid() && !viewState.isDropped()) {
-                if (viewState.getViewDefinition().getRefreshType() != MatViewDefinition.IMMEDIATE_REFRESH_TYPE) {
+                if (viewState.getViewDefinition().getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
                     continue;
                 }
 

@@ -50,12 +50,16 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public class MatViewDefinition implements Mutable {
-    public static final int IMMEDIATE_REFRESH_TYPE = 0;
-    public static final int MANUAL_REFRESH_TYPE = 2;
     public static final String MAT_VIEW_DEFINITION_FILE_NAME = "_mv";
     public static final int MAT_VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE = 1;
     public static final int MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
-    public static final int TIMER_REFRESH_TYPE = 1;
+    // Immediate refresh means that the mat view is refreshed on data transactions in the base table.
+    public static final int REFRESH_TYPE_IMMEDIATE = 0;
+    // Manual refresh means that the mat view is refreshed only when the user runs REFRESH SQL, e.g.
+    // `REFRESH MATERIALIZED VIEW my_manual_view INCREMENTAL;`
+    public static final int REFRESH_TYPE_MANUAL = 2;
+    // Timer refresh means that the mat view is refreshed on time intervals.
+    public static final int REFRESH_TYPE_TIMER = 1;
     private static final Log LOG = LogFactory.getLog(MatViewDefinition.class);
     private String baseTableName;
     private boolean deferred;
@@ -157,9 +161,9 @@ public class MatViewDefinition implements Mutable {
         // Timer settings used to be stored in table meta, but later on we moved them to view definition.
         // So, there may be older mat views with timer refresh type and no interval present in the definition.
         // As a fallback, treat them as manual refresh views.
-        if (destDefinition.refreshType == TIMER_REFRESH_TYPE && destDefinition.timerInterval == 0) {
+        if (destDefinition.refreshType == REFRESH_TYPE_TIMER && destDefinition.timerInterval == 0) {
             LOG.error().$("cannot find timer interval value, falling back to manual refresh [view=").$(viewToken).I$();
-            destDefinition.refreshType = MANUAL_REFRESH_TYPE;
+            destDefinition.refreshType = REFRESH_TYPE_MANUAL;
         }
     }
 
@@ -401,7 +405,7 @@ public class MatViewDefinition implements Mutable {
         final boolean deferred = refreshTypeRaw < 0;
         // Keep pre-deferred definitions compatible with the new refresh type format.
         final int refreshType = deferred ? Math.abs(refreshTypeRaw + 1) : refreshTypeRaw;
-        if (refreshType != IMMEDIATE_REFRESH_TYPE && refreshType != TIMER_REFRESH_TYPE && refreshType != MANUAL_REFRESH_TYPE) {
+        if (refreshType != REFRESH_TYPE_IMMEDIATE && refreshType != REFRESH_TYPE_TIMER && refreshType != REFRESH_TYPE_MANUAL) {
             throw CairoException.critical(0)
                     .put("unsupported refresh type [view=")
                     .put(matViewToken.getTableName())

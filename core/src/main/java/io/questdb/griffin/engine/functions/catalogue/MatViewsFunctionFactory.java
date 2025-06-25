@@ -230,7 +230,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         long timerStart = Numbers.LONG_NULL;
                         int timerInterval = 0;
                         char timerIntervalUnit = 0;
-                        if (viewDefinition.getRefreshType() == MatViewDefinition.TIMER_REFRESH_TYPE || periodLength > 0) {
+                        if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_TIMER || periodLength > 0) {
                             timerStart = viewDefinition.getTimerStart();
                             timerInterval = viewDefinition.getTimerInterval();
                             timerIntervalUnit = viewDefinition.getTimerUnit();
@@ -338,11 +338,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             return viewDefinition.getMatViewToken().getTableName();
                         case COLUMN_REFRESH_TYPE:
                             switch (viewDefinition.getRefreshType()) {
-                                case MatViewDefinition.IMMEDIATE_REFRESH_TYPE:
+                                case MatViewDefinition.REFRESH_TYPE_IMMEDIATE:
                                     return "immediate";
-                                case MatViewDefinition.TIMER_REFRESH_TYPE:
+                                case MatViewDefinition.REFRESH_TYPE_TIMER:
                                     return "timer";
-                                case MatViewDefinition.MANUAL_REFRESH_TYPE:
+                                case MatViewDefinition.REFRESH_TYPE_MANUAL:
                                     return "manual";
                                 default:
                                     return "unknown";
