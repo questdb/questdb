@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -102,10 +103,10 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
-    default void prefetch() {
-        getLeft().prefetch();
-        getCenter().prefetch();
-        getRight().prefetch();
+    default void prefetch(Record record) {
+        getLeft().prefetch(record);
+        getCenter().prefetch(record);
+        getRight().prefetch(record);
     }
 
     @Override

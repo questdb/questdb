@@ -158,7 +158,7 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
 
     private void prefetchRowStableFunctions() {
         for (int i = 0; i < prefetcherCount; i++) {
-            prefetchers.getQuick(i).prefetch();
+            prefetchers.getQuick(i).prefetch(recordA);
         }
     }
 }

@@ -268,7 +268,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     default void offerStateTo(Function that) {
     }
 
-    default void prefetch() {
+    default void prefetch(Record record) {
     }
 
     /**

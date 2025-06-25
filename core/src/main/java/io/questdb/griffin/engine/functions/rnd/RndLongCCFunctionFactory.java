@@ -103,7 +103,7 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void prefetch() {
+        public void prefetch(Record record) {
             this.values = compute();
             this.prefetched = true;
         }

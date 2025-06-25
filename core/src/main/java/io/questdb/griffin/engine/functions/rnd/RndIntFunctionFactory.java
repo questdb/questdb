@@ -78,7 +78,7 @@ public class RndIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void prefetch() {
+        public void prefetch(Record record) {
             value = rnd.nextInt();
             prefetched = true;
         }

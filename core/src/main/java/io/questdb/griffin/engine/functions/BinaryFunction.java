@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -32,6 +33,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 public interface BinaryFunction extends Function {
+
+    @Override
+    default boolean canPrefetch() {
+        return getLeft().canPrefetch() && getRight().canPrefetch();
+    }
 
     @Override
     default void close() {
@@ -43,25 +49,6 @@ public interface BinaryFunction extends Function {
     default void cursorClosed() {
         getLeft().cursorClosed();
         getRight().cursorClosed();
-    }
-
-    @Override
-    default boolean canPrefetch() {
-        return getLeft().canPrefetch() && getRight().canPrefetch();
-    }
-
-    @Override
-    default void prefetch() {
-        getLeft().prefetch();
-        getRight().prefetch();
-    }
-
-    @Override
-    default void offerStateTo(Function that) {
-        if (that instanceof BinaryFunction) {
-            getLeft().offerStateTo(((BinaryFunction) that).getLeft());
-            getRight().offerStateTo(((BinaryFunction) that).getRight());
-        }
     }
 
     Function getLeft();
@@ -99,6 +86,20 @@ public interface BinaryFunction extends Function {
     @Override
     default boolean isThreadSafe() {
         return getLeft().isThreadSafe() && getRight().isThreadSafe();
+    }
+
+    @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof BinaryFunction) {
+            getLeft().offerStateTo(((BinaryFunction) that).getLeft());
+            getRight().offerStateTo(((BinaryFunction) that).getRight());
+        }
+    }
+
+    @Override
+    default void prefetch(Record recordA) {
+        getLeft().prefetch(recordA);
+        getRight().prefetch(recordA);
     }
 
     @Override
