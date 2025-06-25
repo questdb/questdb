@@ -64,7 +64,13 @@ public class DerivedArrayView extends ArrayView {
 
     /**
      * Append extra dimensions to the array view.
-     * For example, a 1D array [1, 2, 3] with one dimension added becomes a 2D array [[1], [2], [3]].
+     * For example, a 1D array [1, 2, 3] with one dimension added becomes a 2D array
+     * [[1], [2], [3]].
+     * <p>
+     * <strong>NOTE:</strong> the new dimensions have stride set to zero. This has no
+     * effect as long as the dimension length is left at 1, and is the correct value for
+     * all dimension lengths in a broadcast operation, causing the same element to appear
+     * at all positions along the dimension.
      *
      * @param count Number of dimensions to add
      */
@@ -151,6 +157,11 @@ public class DerivedArrayView extends ArrayView {
      * Prepend extra dimensions to the array view.
      * For example, a 1D array [1, 2, 3] with one dimension added becomes a 2D array [[1, 2, 3]].
      * New dimensions are added at the beginning with length 1.
+     * <p>
+     * <strong>NOTE:</strong> the new dimensions have stride set to zero. This has no
+     * effect as long as the dimension length is left at 1, and is the correct value for
+     * all dimension lengths in a broadcast operation, causing the same element to appear
+     * at all positions along the dimension.
      *
      * @param count Number of dimensions to add
      */
