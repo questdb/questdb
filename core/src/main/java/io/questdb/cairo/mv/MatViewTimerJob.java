@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.mv;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
@@ -55,8 +54,6 @@ public class MatViewTimerJob extends SynchronizedJob {
     private static final Log LOG = LogFactory.getLog(MatViewTimerJob.class);
     private static final Comparator<Timer> timerComparator = Comparator.comparingLong(Timer::getDeadline);
     private final MicrosecondClock clock;
-    private final CairoConfiguration configuration;
-    private final CairoEngine engine;
     private final ObjList<Timer> expired = new ObjList<>();
     private final Predicate<Timer> filterByDirName;
     private final MatViewGraph matViewGraph;
@@ -67,9 +64,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     private String filteredDirName; // temporary value used by filterByDirName
 
     public MatViewTimerJob(CairoEngine engine) {
-        this.engine = engine;
-        this.configuration = engine.getConfiguration();
-        this.clock = configuration.getMicrosecondClock();
+        this.clock = engine.getConfiguration().getMicrosecondClock();
         this.timerTaskQueue = engine.getMatViewTimerQueue();
         this.matViewGraph = engine.getMatViewGraph();
         this.matViewStateStore = engine.getMatViewStateStore();
