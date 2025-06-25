@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
@@ -31,6 +32,7 @@ import org.junit.Test;
 public class RowStableRndTest extends AbstractCairoTest {
     @Test
     public void testRndInt() throws SqlException {
+        allowFunctionPrefetch();
         // assertQuery does not reset rnd between SQL executions - using assertSql
         assertSql(
                 "i\tk\n" +
@@ -50,6 +52,7 @@ public class RowStableRndTest extends AbstractCairoTest {
 
     @Test
     public void testRndIntBinary() throws SqlException {
+        allowFunctionPrefetch();
         // assertQuery does not reset rnd between SQL executions - using assertSql
         assertSql(
                 "i\tk\n" +
@@ -69,6 +72,7 @@ public class RowStableRndTest extends AbstractCairoTest {
 
     @Test
     public void testRndIntUnary() throws SqlException {
+        allowFunctionPrefetch();
         // assertQuery does not reset rnd between SQL executions - using assertSql
         assertSql(
                 "i\tk\n" +

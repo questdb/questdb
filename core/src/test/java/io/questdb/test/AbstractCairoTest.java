@@ -60,6 +60,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -544,6 +545,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         ParanoiaState.FD_PARANOIA_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
         engine.getMetrics().clear();
         engine.getMatViewStateStore().clear();
+        SqlCodeGenerator.ALLOW_FUNCTION_PREFETCH = false;
     }
 
     @After
@@ -551,6 +553,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         tearDown(true);
         super.tearDown();
         spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
+        SqlCodeGenerator.ALLOW_FUNCTION_PREFETCH = false;
     }
 
     public void tearDown(boolean removeDir) {
@@ -1619,6 +1622,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 walApplyJob.run(0);
             }
         }
+    }
+
+    protected final void allowFunctionPrefetch() {
+        SqlCodeGenerator.ALLOW_FUNCTION_PREFETCH = true;
     }
 
     protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {

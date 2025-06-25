@@ -377,6 +377,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> minConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> nsumConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> sumConstructors = new IntObjHashMap<>();
+    public static boolean ALLOW_FUNCTION_PREFETCH = true;
     private final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final CairoConfiguration configuration;
@@ -4693,7 +4694,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
             }
-            return new VirtualRecordCursorFactory(virtualMetadata, priorityMetadata, functions, factory, virtualColumnReservedSlots);
+            return new VirtualRecordCursorFactory(virtualMetadata, priorityMetadata, functions, factory, virtualColumnReservedSlots, ALLOW_FUNCTION_PREFETCH);
         } catch (SqlException | CairoException e) {
             Misc.freeObjList(functions);
             factory.close();

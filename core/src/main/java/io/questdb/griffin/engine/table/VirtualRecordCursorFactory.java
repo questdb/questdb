@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
@@ -51,7 +52,8 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordMetadata priorityMetadata,
             ObjList<Function> functions,
             RecordCursorFactory base,
-            int virtualColumnReservedSlots
+            int virtualColumnReservedSlots,
+            boolean allowPrefetching
     ) {
         super(virtualMetadata);
         this.base = base;
@@ -65,7 +67,7 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
                 supportsRandomAccess = false;
             }
 
-            if (function.canPrefetch()) {
+            if (allowPrefetching && function.canPrefetch()) {
                 prefetchers.add(function);
             }
         }
