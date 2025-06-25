@@ -33,21 +33,16 @@ import io.questdb.griffin.SqlExecutionContext;
 public interface QuaternaryFunction extends Function {
 
     @Override
+    default boolean canPrefetch() {
+        return getFunc0().canPrefetch() && getFunc1().canPrefetch() && getFunc2().canPrefetch() && getFunc3().canPrefetch();
+    }
+
+    @Override
     default void close() {
         getFunc0().close();
         getFunc1().close();
         getFunc2().close();
         getFunc3().close();
-    }
-
-    @Override
-    default void offerStateTo(Function that) {
-        if (that instanceof QuaternaryFunction) {
-            getFunc0().offerStateTo(((QuaternaryFunction) that).getFunc0());
-            getFunc1().offerStateTo(((QuaternaryFunction) that).getFunc1());
-            getFunc2().offerStateTo(((QuaternaryFunction) that).getFunc2());
-            getFunc3().offerStateTo(((QuaternaryFunction) that).getFunc3());
-        }
     }
 
     @Override
@@ -111,6 +106,24 @@ public interface QuaternaryFunction extends Function {
                 && getFunc1().isThreadSafe()
                 && getFunc2().isThreadSafe()
                 && getFunc3().isThreadSafe();
+    }
+
+    @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof QuaternaryFunction) {
+            getFunc0().offerStateTo(((QuaternaryFunction) that).getFunc0());
+            getFunc1().offerStateTo(((QuaternaryFunction) that).getFunc1());
+            getFunc2().offerStateTo(((QuaternaryFunction) that).getFunc2());
+            getFunc3().offerStateTo(((QuaternaryFunction) that).getFunc3());
+        }
+    }
+
+    @Override
+    default void prefetch() {
+        getFunc0().prefetch();
+        getFunc1().prefetch();
+        getFunc2().prefetch();
+        getFunc3().prefetch();
     }
 
     @Override

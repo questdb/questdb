@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RowStableFunction;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -46,7 +45,13 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final long lo = args.getQuick(0).getLong(null);
         final long hi = args.getQuick(1).getLong(null);
         final int nullRate = args.getQuick(2).getInt(null);
@@ -62,7 +67,7 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
         throw SqlException.$(position, "invalid range");
     }
 
-    private static class Func extends LongFunction implements Function, RowStableFunction {
+    private static class Func extends LongFunction implements Function {
         private final long lo;
         private final int nanRate;
         private final long range;
@@ -74,6 +79,11 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
             this.lo = lo;
             this.range = hi - lo + 1;
             this.nanRate = nanRate + 1;
+        }
+
+        @Override
+        public boolean canPrefetch() {
+            return true;
         }
 
         @Override

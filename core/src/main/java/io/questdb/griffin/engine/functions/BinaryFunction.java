@@ -46,6 +46,17 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
+    default boolean canPrefetch() {
+        return getLeft().canPrefetch() && getRight().canPrefetch();
+    }
+
+    @Override
+    default void prefetch() {
+        getLeft().prefetch();
+        getRight().prefetch();
+    }
+
+    @Override
     default void offerStateTo(Function that) {
         if (that instanceof BinaryFunction) {
             getLeft().offerStateTo(((BinaryFunction) that).getLeft());

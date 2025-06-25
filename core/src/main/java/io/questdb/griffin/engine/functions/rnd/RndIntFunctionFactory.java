@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RowStableFunction;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -51,11 +50,16 @@ public class RndIntFunctionFactory implements FunctionFactory {
         return new RndFunction();
     }
 
-    private static class RndFunction extends IntFunction implements Function, RowStableFunction {
+    private static class RndFunction extends IntFunction implements Function {
 
         private boolean prefetched;
         private Rnd rnd;
         private int value;
+
+        @Override
+        public boolean canPrefetch() {
+            return true;
+        }
 
         @Override
         public int getInt(Record rec) {

@@ -33,19 +33,15 @@ import io.questdb.griffin.SqlExecutionContext;
 public interface TernaryFunction extends Function {
 
     @Override
+    default boolean canPrefetch() {
+        return getLeft().canPrefetch() && getCenter().canPrefetch() && getRight().canPrefetch();
+    }
+
+    @Override
     default void close() {
         getLeft().close();
         getCenter().close();
         getRight().close();
-    }
-
-    @Override
-    default void offerStateTo(Function that) {
-        if (that instanceof TernaryFunction) {
-            getLeft().offerStateTo(((TernaryFunction) that).getLeft());
-            getCenter().offerStateTo(((TernaryFunction) that).getCenter());
-            getRight().offerStateTo(((TernaryFunction) that).getRight());
-        }
     }
 
     @Override
@@ -94,6 +90,22 @@ public interface TernaryFunction extends Function {
     @Override
     default boolean isThreadSafe() {
         return getLeft().isThreadSafe() && getCenter().isThreadSafe() && getRight().isThreadSafe();
+    }
+
+    @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof TernaryFunction) {
+            getLeft().offerStateTo(((TernaryFunction) that).getLeft());
+            getCenter().offerStateTo(((TernaryFunction) that).getCenter());
+            getRight().offerStateTo(((TernaryFunction) that).getRight());
+        }
+    }
+
+    @Override
+    default void prefetch() {
+        getLeft().prefetch();
+        getCenter().prefetch();
+        getRight().prefetch();
     }
 
     @Override

@@ -30,7 +30,7 @@ import org.junit.Test;
 public class ProjectionReferenceTest extends AbstractCairoTest {
 
     @Test
-    public void testPreferBaseColumnOverProjection() throws Exception {
+    public void testPreferBaseColumnOverProjectionVanilla() throws Exception {
         execute("create table temp (x int)");
         execute("insert into temp values (1), (2), (3)");
         assertQuery(

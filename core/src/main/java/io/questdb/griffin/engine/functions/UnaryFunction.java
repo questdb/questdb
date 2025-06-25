@@ -33,6 +33,11 @@ import io.questdb.griffin.SqlExecutionContext;
 public interface UnaryFunction extends Function {
 
     @Override
+    default boolean canPrefetch() {
+        return getArg().canPrefetch();
+    }
+
+    @Override
     default void close() {
         getArg().close();
     }
@@ -40,13 +45,6 @@ public interface UnaryFunction extends Function {
     @Override
     default void cursorClosed() {
         getArg().cursorClosed();
-    }
-
-    @Override
-    default void offerStateTo(Function that) {
-        if (that instanceof UnaryFunction) {
-            getArg().offerStateTo(((UnaryFunction) that).getArg());
-        }
     }
 
     Function getArg();
@@ -74,6 +72,18 @@ public interface UnaryFunction extends Function {
     @Override
     default boolean isThreadSafe() {
         return getArg().isThreadSafe();
+    }
+
+    @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof UnaryFunction) {
+            getArg().offerStateTo(((UnaryFunction) that).getArg());
+        }
+    }
+
+    @Override
+    default void prefetch() {
+        getArg().prefetch();
     }
 
     @Override

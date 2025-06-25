@@ -98,6 +98,10 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         throw new UnsupportedOperationException();
     }
 
+    default boolean canPrefetch() {
+        return false;
+    }
+
     @Override
     default void close() {
     }
@@ -262,6 +266,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     default void offerStateTo(Function that) {
+    }
+
+    default void prefetch() {
     }
 
     /**
