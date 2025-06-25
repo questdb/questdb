@@ -55,6 +55,11 @@ public class RndLongFunctionFactory implements FunctionFactory {
         private Rnd rnd;
 
         @Override
+        public boolean canPrefetch() {
+            return true;
+        }
+
+        @Override
         public long getLong(Record rec) {
             return rnd.nextLong();
         }
