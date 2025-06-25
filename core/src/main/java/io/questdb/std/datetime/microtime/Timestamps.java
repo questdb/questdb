@@ -451,6 +451,9 @@ public final class Timestamps {
     }
 
     public static long floorWW(long micros, int stride, long offset) {
+        if (offset == 0) {
+            return floorWW(micros, stride);
+        }
         if (micros < offset) {
             return offset;
         }
