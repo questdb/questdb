@@ -1254,6 +1254,46 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndexOfAssumeSortedNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[9.0], [10], [12], [20], [22], [22], [100], [1000], [1001]])"
+            );
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\ti8\n" +
+                            "-1\t0\t5\t-7\t8\t9\t-2\t5\n",
+                    "SELECT " +
+                            "index_of_sorted(transpose(arr)[1], 8) i1, " +
+                            "index_of_sorted(transpose(arr)[1], null) i2, " +
+                            "index_of_sorted(transpose(arr)[1], 22) i3, " +
+                            "index_of_sorted(transpose(arr)[1], 23) i4, " +
+                            "index_of_sorted(transpose(arr)[1], 1000) i5, " +
+                            "index_of_sorted(transpose(arr)[1], 1001) i6, " +
+                            "index_of_sorted(transpose(arr)[1, 3:4], 1000) i7, " +
+                            "index_of_sorted(transpose(arr)[1, 3:], 100) i8 " +
+                            "FROM tango");
+        });
+    }
+
+    @Test
+    public void testIndexOfNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0], [9], [10], [12], [8], [null], [20], [12]]) "
+            );
+            assertSql("index_of\tindex_of1\tindex_of2\tindex_of3\n" +
+                            "5\t6\t0\t1\n",
+                    "SELECT " +
+                            "index_of(transpose(arr)[1], 8), " +
+                            "index_of(transpose(arr)[1], null), " +
+                            "index_of(transpose(arr)[1], 11), " +
+                            "index_of(transpose(arr)[1, 2:], 9) " +
+                            "FROM tango");
+        });
+    }
+
+    @Test
     public void testInsertAsSelectDoubleNoWAL() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE blah (a DOUBLE[][])");
@@ -2135,46 +2175,6 @@ public class ArrayTest extends AbstractCairoTest {
                     18,
                     "too many array dimensions [nDims=33, maxNDims=32]"
             );
-        });
-    }
-
-    @Test
-    public void testindex_ofAssumeSortedNonVanilla() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr DOUBLE[][])");
-            execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[[9.0], [10], [12], [20], [22], [22], [100], [1000], [1001]])"
-            );
-            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\ti8\n" +
-                            "-1\t0\t5\t-7\t8\t9\t-2\t5\n",
-                    "SELECT " +
-                            "index_of_sorted(transpose(arr)[1], 8) i1, " +
-                            "index_of_sorted(transpose(arr)[1], null) i2, " +
-                            "index_of_sorted(transpose(arr)[1], 22) i3, " +
-                            "index_of_sorted(transpose(arr)[1], 23) i4, " +
-                            "index_of_sorted(transpose(arr)[1], 1000) i5, " +
-                            "index_of_sorted(transpose(arr)[1], 1001) i6, " +
-                            "index_of_sorted(transpose(arr)[1, 3:4], 1000) i7, " +
-                            "index_of_sorted(transpose(arr)[1, 3:], 100) i8 " +
-                            "FROM tango");
-        });
-    }
-
-    @Test
-    public void testindex_ofNonVanilla() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr DOUBLE[][])");
-            execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[[1.0], [9], [10], [12], [8], [null], [20], [12]]) "
-            );
-            assertSql("index_of\tindex_of1\tindex_of2\tindex_of3\n" +
-                            "5\t6\t0\t1\n",
-                    "SELECT " +
-                            "index_of(transpose(arr)[1], 8), " +
-                            "index_of(transpose(arr)[1], null), " +
-                            "index_of(transpose(arr)[1], 11), " +
-                            "index_of(transpose(arr)[1, 2:], 9) " +
-                            "FROM tango");
         });
     }
 }
