@@ -359,6 +359,32 @@ public class PGArraysTest extends BasePGTest {
     }
 
     @Test
+    public void testArrayViewWithBindingVars() throws Exception {
+        skipInLegacyMode();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("create table tango (arr double[], ts timestamp) timestamp(ts) partition by hour");
+                stmt.execute("insert into tango values ('{1.0, 2.0}', '2000'), ('{3.0, 4.0}', '2001')");
+                stmt.execute("create view v_tango as select arr[1] as x, arr[2] as y from tango");
+            }
+
+            drainWalQueue();
+
+            try (PreparedStatement stmt = connection.prepareStatement("select x, y from v_tango where x = ?")) {
+                stmt.setInt(1, 1);
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("x[DOUBLE],y[DOUBLE]\n" +
+                                    "1.0,2.0\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        }, () -> setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true"));
+    }
+
+    @Test
     public void testExplicitCastInsertStringToArrayColum() throws Exception {
         skipOnWalRun();
 
