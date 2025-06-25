@@ -564,6 +564,67 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testPeriodMatViewsReloadOnServerStart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String startStr = "2024-12-12T00:00:00.000000Z";
+            final long start = TimestampFormatUtils.parseUTCTimestamp(startStr);
+            final TestMicrosecondClock testClock = new TestMicrosecondClock(start);
+
+            final String firstExpected = "sym\tprice\tts\n" +
+                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n";
+
+            try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
+                execute(
+                        main1,
+                        "create table base_price (" +
+                                "sym varchar, price double, ts timestamp" +
+                                ") timestamp(ts) partition by DAY WAL"
+                );
+
+                execute(
+                        main1,
+                        "create materialized view price_1h refresh incremental period(length 1d) as " +
+                                "select sym, last(price) as price, ts from base_price sample by 1h;"
+                );
+
+                execute(
+                        main1,
+                        "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                                ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                                ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                                ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                );
+
+                try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    final MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
+                    drainMatViewTimerQueue(timerJob);
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+
+                    assertSql(
+                            main1,
+                            firstExpected,
+                            "price_1h order by ts, sym"
+                    );
+                }
+            }
+
+            try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
+                assertSql(main2, firstExpected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main2, firstExpected, "price_1h order by ts, sym");
+
+                assertSql(
+                        main2,
+                        "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\trefresh_limit\trefresh_limit_unit\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
+                                "price_1h\timmediate\tbase_price\t\t2024-12-12T00:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tprice_1h~5\t\tvalid\t2024-12-12T00:00:00.000000Z\t1\t1\t0\t\t\t2024-12-12T00:00:00.000000Z\t0\t\t1\tDAY\t0\t\n",
+                        "materialized_views;"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testTimerMatViewsReloadOnServerStart1() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String startStr = "2024-12-12T00:00:00.000000Z";
@@ -612,7 +673,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                             "price_1h order by ts, sym"
                     );
 
-                    MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
+                    final MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
                     drainMatViewTimerQueue(timerJob);
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
 
@@ -645,7 +706,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                 assertSql(main2, secondExpected, "price_1h order by ts, sym");
 
-                MatViewTimerJob timerJob = new MatViewTimerJob(main2.getEngine());
+                final MatViewTimerJob timerJob = new MatViewTimerJob(main2.getEngine());
                 drainMatViewTimerQueue(timerJob);
                 drainWalAndMatViewQueues(main2.getEngine());
 
@@ -690,7 +751,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
 
                 try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
-                    MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
+                    final MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
                     drainMatViewTimerQueue(timerJob);
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
 
@@ -707,7 +768,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
                 assertSql(main2, firstExpected, "price_1h order by ts, sym");
 
-                MatViewTimerJob timerJob = new MatViewTimerJob(main2.getEngine());
+                final MatViewTimerJob timerJob = new MatViewTimerJob(main2.getEngine());
                 drainMatViewTimerQueue(timerJob);
                 drainWalAndMatViewQueues(main2.getEngine());
 

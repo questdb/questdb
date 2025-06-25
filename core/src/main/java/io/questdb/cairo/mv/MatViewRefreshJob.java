@@ -215,9 +215,18 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Let's find min/max timestamps in the new WAL transactions.
             txnIntervals = intervals;
             txnIntervals.clear();
-            txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, Math.max(lastRefreshTxn, 0), lastTxn);
-            minTs = txnRangeLoader.getMinTimestamp();
-            maxTs = txnRangeLoader.getMaxTimestamp();
+            if (lastRefreshTxn > -1) {
+                // It's a subsequent incremental refresh, so WalPurgeJob must be aware of us.
+                txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, lastRefreshTxn, lastTxn);
+                minTs = txnRangeLoader.getMinTimestamp();
+                maxTs = txnRangeLoader.getMaxTimestamp();
+            } else {
+                // It's the first incremental refresh. WAL segments may be already purged,
+                // so let's take min/max timestamps from the reader.
+                minTs = baseTableReader.getMinTimestamp();
+                maxTs = baseTableReader.getMaxTimestamp();
+                txnIntervals.add(minTs, maxTs);
+            }
             // Check if refresh limit should be applied.
             final int refreshLimitHoursOrMonths = viewDefinition.getRefreshLimitHoursOrMonths();
             if (refreshLimitHoursOrMonths != 0) {

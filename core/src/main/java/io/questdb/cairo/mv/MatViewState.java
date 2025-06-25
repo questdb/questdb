@@ -219,6 +219,7 @@ public class MatViewState implements QuietCloseable {
         this.invalid = reader.isInvalid();
         this.lastRefreshBaseTxn = reader.getLastRefreshBaseTxn();
         this.lastRefreshFinishTimestamp = reader.getLastRefreshTimestamp();
+        this.lastPeriodHi = reader.getLastPeriodHi();
     }
 
     public boolean isDropped() {
