@@ -61,7 +61,7 @@ class WalEventWriter implements Closeable {
     private AtomicIntList initialSymbolCounts;
     // used for WAL-E backwards compatibility testing;
     // must not be changed in the middle of writing a WAL-E file
-    private short matViewMsgVersion = WALE_MESSAGE_V2;
+    private short matViewMsgVersion = WALE_FORMAT_MINOR_V2;
     private long startOffset = 0;
     private BoolList symbolMapNullFlags;
     private int txn = 0;
@@ -308,7 +308,7 @@ class WalEventWriter implements Closeable {
             eventMem.putLong(replaceRangeHiTs);
             eventMem.putByte(dedupMode);
         }
-        if (matViewMsgVersion == WALE_MESSAGE_V2 && txnType == WalTxnType.MAT_VIEW_DATA) {
+        if (matViewMsgVersion == WALE_FORMAT_MINOR_V2 && txnType == WalTxnType.MAT_VIEW_DATA) {
             eventMem.putLong(lastPeriodHi);
         }
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
@@ -336,7 +336,7 @@ class WalEventWriter implements Closeable {
         eventMem.putLong(lastRefreshTimestamp);
         eventMem.putBool(invalid);
         eventMem.putStr(invalidationReason);
-        if (matViewMsgVersion == WALE_MESSAGE_V2) {
+        if (matViewMsgVersion == WALE_FORMAT_MINOR_V2) {
             eventMem.putLong(lastPeriodHi);
         }
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));

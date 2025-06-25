@@ -194,15 +194,15 @@ public class WalEventReader implements Closeable {
                         .put(", actual=").put(formatVersion)
                         .put(']');
             }
-            final short messageVersion = Numbers.decodeHighShort(version);
-            if (messageVersion != WALE_MESSAGE_V1 && messageVersion != WALE_MESSAGE_V2) {
+            final short minorVersion = Numbers.decodeHighShort(version);
+            if (minorVersion != WALE_FORMAT_MINOR_V1 && minorVersion != WALE_FORMAT_MINOR_V2) {
                 throw TableUtils.validationException(eventMem)
-                        .put("WAL events message version does not match runtime version [expected=")
-                        .put(WALE_MESSAGE_V1).put(" or ").put(WALE_MESSAGE_V2)
-                        .put(", actual=").put(messageVersion)
+                        .put("WAL events minor version does not match runtime version [expected=")
+                        .put(WALE_FORMAT_MINOR_V1).put(" or ").put(WALE_FORMAT_MINOR_V2)
+                        .put(", actual=").put(minorVersion)
                         .put(']');
             }
-            eventCursor.setMsgVersion(messageVersion);
+            eventCursor.setMinorVersion(minorVersion);
 
             return eventCursor;
         } catch (Throwable e) {

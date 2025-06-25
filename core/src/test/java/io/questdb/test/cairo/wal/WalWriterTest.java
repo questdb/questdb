@@ -1916,7 +1916,7 @@ public class WalWriterTest extends AbstractCairoTest {
             final String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 walName = walWriter.getWalName();
-                walWriter.setMatViewMsgVersion(WALE_MESSAGE_V1);
+                walWriter.setMatViewMsgVersion(WALE_FORMAT_MINOR_V1);
 
                 TableWriter.Row row = walWriter.newRow(4);
                 row.putByte(0, (byte) 1);

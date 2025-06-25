@@ -57,7 +57,7 @@ public class WalEventCursor {
     private final MatViewInvalidationInfo mvInvalidationInfo = new MatViewInvalidationInfo();
     private final SqlInfo sqlInfo = new SqlInfo();
     private long memSize;
-    private short msgVersion = WALE_MESSAGE_V2;
+    private short minorVersion = WALE_FORMAT_MINOR_V2;
     private long nextOffset = Integer.BYTES;
     private long offset = Integer.BYTES; // skip wal meta version
     private long txn = END_OF_EVENTS;
@@ -327,8 +327,8 @@ public class WalEventCursor {
         return entry;
     }
 
-    void setMsgVersion(short msgVersion) {
-        this.msgVersion = msgVersion;
+    void setMinorVersion(short minorVersion) {
+        this.minorVersion = minorVersion;
     }
 
     public class DataInfo implements SymbolMapDiffCursor {
@@ -443,7 +443,7 @@ public class WalEventCursor {
         @Override
         protected int extraFooterSize() {
             // extra 8 bytes stand for mat view refresh period hi
-            return msgVersion == WALE_MESSAGE_V2 ? Long.BYTES : 0;
+            return minorVersion == WALE_FORMAT_MINOR_V2 ? Long.BYTES : 0;
         }
 
         @Override
@@ -453,7 +453,7 @@ public class WalEventCursor {
             // symbol map will start after this
             lastRefreshBaseTableTxn = readLong();
             lastRefreshTimestamp = readLong();
-            if (msgVersion == WALE_MESSAGE_V2) {
+            if (minorVersion == WALE_FORMAT_MINOR_V2) {
                 lastPeriodHi = eventMem.getLong(nextOffset - MAT_VIEW_PERIOD_HI_OFFSET);
             } else {
                 lastPeriodHi = Numbers.LONG_NULL;
@@ -494,7 +494,7 @@ public class WalEventCursor {
             invalid = readBool();
             error.clear();
             error.put(readStr());
-            if (msgVersion == WALE_MESSAGE_V2) {
+            if (minorVersion == WALE_FORMAT_MINOR_V2) {
                 lastPeriodHi = readLong();
             } else {
                 lastPeriodHi = Numbers.LONG_NULL;
