@@ -159,10 +159,26 @@ public class MatViewState implements QuietCloseable {
         cursorFactory = Misc.free(cursorFactory);
     }
 
+    /**
+     * Returns high boundary for all complete time periods up to which a period
+     * mat view is refreshed.
+     * <p>
+     * A period view is a mat view that has REFRESH ... PERIOD (LENGTH ...) clause.
+     * <p>
+     * Each time when a period, e.g. a day, is complete, a range refresh is triggered
+     * on the period mat view (unless it has manual refresh type). This range refresh
+     * runs for the [lastPeriodHi, completePeriodHi) interval. If the refresh is successful,
+     * completePeriodHi is stored as the new lastPeriodHi value.
+     */
     public long getLastPeriodHi() {
         return lastPeriodHi;
     }
 
+    /**
+     * Returns base table txn read by the last incremental or full refresh.
+     * Subsequent incremental refreshes should only refresh base table intervals
+     * (think, slices of table partitions) that correspond to later txns.
+     */
     public long getLastRefreshBaseTxn() {
         return lastRefreshBaseTxn;
     }

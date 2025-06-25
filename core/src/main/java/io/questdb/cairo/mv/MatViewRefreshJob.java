@@ -239,7 +239,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 if (periodLo < rangeTo) {
                     minTs = periodLo;
                     maxTs = rangeTo;
-                    // period hi is exclusive
+                    // Bump lastPeriodHi once we're done. Its value is exclusive.
                     refreshIntervals.periodHi = rangeTo + 1;
                 }
             } else {
@@ -298,7 +298,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     minTs = txnIntervals.getQuick(0);
                     maxTs = txnIntervals.getQuick(txnIntervals.size() - 1);
                     // Bump lastPeriodHi once we're done.
-                    // Period hi is exclusive, but previously we made its value inclusive.
+                    // lastPeriodHi is exclusive, but the local periodHi value is inclusive.
                     refreshIntervals.periodHi = periodHi + 1;
                 }
             } else {
