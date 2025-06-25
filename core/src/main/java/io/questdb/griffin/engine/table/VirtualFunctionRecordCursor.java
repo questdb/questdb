@@ -28,6 +28,7 @@ import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RowStableFunction;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualFunctionRecord;
@@ -41,11 +42,20 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     protected final VirtualFunctionRecord recordA;
     private final ObjList<Function> functions;
     private final VirtualFunctionRecord recordB;
+    private final int rowStableFunctionCount;
+    private final ObjList<RowStableFunction> rowStableFunctions;
     private final boolean supportsRandomAccess;
     protected RecordCursor baseCursor;
 
-    public VirtualFunctionRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess, int virtualColumnReservedSlots) {
+    public VirtualFunctionRecordCursor(
+            ObjList<Function> functions,
+            ObjList<RowStableFunction> rowStableFunctions,
+            boolean supportsRandomAccess,
+            int virtualColumnReservedSlots
+    ) {
         this.functions = functions;
+        this.rowStableFunctions = rowStableFunctions;
+        this.rowStableFunctionCount = rowStableFunctions.size();
         if (supportsRandomAccess) {
             this.recordA = new VirtualFunctionRecord(functions, virtualColumnReservedSlots);
             this.recordB = new VirtualFunctionRecord(functions, virtualColumnReservedSlots);
@@ -93,7 +103,11 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        return baseCursor.hasNext();
+        final boolean result  = baseCursor.hasNext();
+        if (result && rowStableFunctionCount > 0) {
+            prefetchRowStableFunctions();
+        }
+        return result;
     }
 
     @Override
@@ -140,6 +154,12 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         if (baseCursor != null) {
             baseCursor.toTop();
             GroupByUtils.toTop(functions);
+        }
+    }
+
+    private void prefetchRowStableFunctions() {
+        for (int i = 0; i < rowStableFunctionCount; i++) {
+            rowStableFunctions.getQuick(i).prefetch();
         }
     }
 }

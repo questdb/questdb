@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowStableFunction;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
@@ -56,15 +57,23 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         super(virtualMetadata);
         this.base = base;
         this.functions = functions;
+        int functionCount = functions.size();
         boolean supportsRandomAccess = base.recordCursorSupportsRandomAccess();
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            if (!functions.getQuick(i).supportsRandomAccess()) {
+        final ObjList<RowStableFunction> rowStableFunctions = new ObjList<>();
+        for (int i = 0; i < functionCount; i++) {
+            Function function = functions.getQuick(i);
+            if (!function.supportsRandomAccess()) {
                 supportsRandomAccess = false;
                 break;
             }
+
+            if (function instanceof RowStableFunction) {
+                rowStableFunctions.add((RowStableFunction) function);
+            }
+
         }
         this.supportsRandomAccess = supportsRandomAccess;
-        this.cursor = new VirtualFunctionRecordCursor(functions, supportsRandomAccess, virtualColumnReservedSlots);
+        this.cursor = new VirtualFunctionRecordCursor(functions, rowStableFunctions, supportsRandomAccess, virtualColumnReservedSlots);
         this.internalSymbolTableSource = new VirtualRecordCursorFactorySymbolTableSource(cursor, virtualColumnReservedSlots);
         this.priorityMetadata = priorityMetadata;
     }

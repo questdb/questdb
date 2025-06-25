@@ -280,7 +280,6 @@ public class GroupByUtils {
                             columnRefFunc = new CastStrToSymbolFunctionFactory.Func(columnRefFunc);
                         }
                         // override function with column ref function
-                        Misc.free(func);
                         outRecordFunctions.set(i, columnRefFunc);
                         inferredKeyColumnCount++;
                     }
