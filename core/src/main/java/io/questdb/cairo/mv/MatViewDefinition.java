@@ -34,6 +34,8 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -54,6 +56,7 @@ public class MatViewDefinition implements Mutable {
     public static final int MAT_VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE = 1;
     public static final int MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
     public static final int TIMER_REFRESH_TYPE = 1;
+    private static final Log LOG = LogFactory.getLog(MatViewDefinition.class);
     private String baseTableName;
     private boolean deferred;
     // Not persisted, parsed from timeZoneOffset.
@@ -124,9 +127,9 @@ public class MatViewDefinition implements Mutable {
             @NotNull BlockFileReader reader,
             @NotNull Path path,
             int rootLen,
-            @NotNull TableToken matViewToken
+            @NotNull TableToken viewToken
     ) {
-        path.trimTo(rootLen).concat(matViewToken.getDirName()).concat(MAT_VIEW_DEFINITION_FILE_NAME);
+        path.trimTo(rootLen).concat(viewToken.getDirName()).concat(MAT_VIEW_DEFINITION_FILE_NAME);
         reader.of(path.$());
 
         boolean definitionBlockFound = false;
@@ -135,7 +138,7 @@ public class MatViewDefinition implements Mutable {
             final ReadableBlock block = cursor.next();
             if (block.type() == MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE) {
                 definitionBlockFound = true;
-                readDefinitionBlock(destDefinition, block, matViewToken);
+                readDefinitionBlock(destDefinition, block, viewToken);
                 // keep going, because V2 block might follow
                 continue;
             }
@@ -149,6 +152,14 @@ public class MatViewDefinition implements Mutable {
             throw CairoException.critical(0)
                     .put("cannot read materialized view definition, block not found [path=").put(path)
                     .put(']');
+        }
+
+        // Timer settings used to be stored in table meta, but later on we moved them to view definition.
+        // So, there may be older mat views with timer refresh type and no interval present in the definition.
+        // As a fallback, treat them as manual refresh views.
+        if (destDefinition.refreshType == TIMER_REFRESH_TYPE && destDefinition.timerInterval == 0) {
+            LOG.error().$("cannot find timer interval value, falling back to manual refresh [view=").$(viewToken).I$();
+            destDefinition.refreshType = MANUAL_REFRESH_TYPE;
         }
     }
 
