@@ -3167,16 +3167,19 @@ public class SqlOptimiser implements Mutable {
                 String whereClauseColumn = targetModel.getWhereClause().lhs.token.toString();
                 int dot = whereClauseColumn.indexOf('.');
                 String whereClauseColumnName = whereClauseColumn.substring(dot + 1);
+                String whereClauseColumnAlias = dot == -1 ? null : whereClauseColumn.substring(0, dot);
 
                 String whereClauseValue = targetModel.getWhereClause().rhs.token.toString();
-                dot = whereClauseColumn.indexOf('.');
+                dot = whereClauseValue.indexOf('.');
                 String whereClauseActualValue = whereClauseValue.substring(dot + 1);
-                String whereClauseAlias = dot == -1 ? null : whereClauseValue.substring(0, dot);
-                CharSequence joinModelAlias = targetModel.getJoinModels().get(1).getTableNameExpr() == null ?
+                String whereClauseValueAlias = dot == -1 ? null : whereClauseValue.substring(0, dot);
+                CharSequence joinModelAlias = targetModel.getJoinModels().get(1).getAlias() != null ?
                         targetModel.getJoinModels().get(1).getAlias().token : targetModel.getJoinModels().get(1).getTableNameExpr().token;
 
                 //if where clause column is from slave table OR there is a join condition, then ASOF join optimisation will not be applied
-                if (joinModelAlias.toString().equals(whereClauseAlias)  || !targetModel.getAliasToColumnMap().contains(whereClauseColumnName)) {
+                if (joinModelAlias.toString().equals(whereClauseValueAlias) ||
+                        joinModelAlias.toString().equals(whereClauseColumnAlias)
+                        || !targetModel.getAliasToColumnMap().contains(whereClauseColumnName)) {
                     return false;
                 }
             }
