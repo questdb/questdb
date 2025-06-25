@@ -577,8 +577,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         .$(", errno=").$(e.getErrno())
                                         .I$();
                             }
-                            // We've found the latest mat view state, not need to check earlier transactions.
-                            break;
+                            break; // we've found the latest mat view state, not need to check earlier transactions
                         }
                     }
                 }
