@@ -121,7 +121,10 @@ public final class OperatorExpression {
                 add(new OperatorExpression(Operator.BinaryNot, 14, false, UNARY, false));
                 add(new OperatorExpression(Operator.BinaryAnd, 15, true, BINARY, false));
                 add(new OperatorExpression(Operator.BinaryOr, 16, true, BINARY, false));
+                // interval for array slicing
                 add(new OperatorExpression(Operator.Colon, 17, false, BINARY));
+                // lambda function "x -> f(x)"
+                add(new OperatorExpression(Operator.Lambda, 18, false, BINARY));
             }});
     final boolean leftAssociative;
     final OperatorExpression.Operator operator;
@@ -202,7 +205,8 @@ public final class OperatorExpression {
         ILikeSqlStyle("ilike"),
         BinaryNot("not"),
         BinaryAnd("and"),
-        BinaryOr("or");
+        BinaryOr("or"),
+        Lambda("->");
 
         public final String token;
 

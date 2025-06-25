@@ -786,6 +786,16 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterArrayByLambda() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[])");
+            execute("INSERT INTO tango VALUES (ARRAY[2.0, 1, 3, 4]), (ARRAY[10.0, 9, 1, 8])");
+            assertSql("[]\n[2.0,3.0,4.0]\n[10.0,9.0,8.0]\n",
+                    "SELECT arr[i -> i > 1.0] FROM tango");
+        });
+    }
+
+    @Test
     public void testFilterByColumnEqLiteral() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[])");
