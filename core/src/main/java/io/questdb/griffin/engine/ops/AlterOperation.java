@@ -73,6 +73,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short CHANGE_SYMBOL_CAPACITY = SET_TTL + 1; // 22
     public final static short SET_MAT_VIEW_REFRESH_LIMIT = CHANGE_SYMBOL_CAPACITY + 1; // 23
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
+    public final static short EXPORT_PARTITION_TO_PARQUET = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -166,6 +167,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 case CONVERT_PARTITION_TO_NATIVE:
                     applyConvertPartition(svc, false);
+                    break;
+                case EXPORT_PARTITION_TO_PARQUET:
+                    applyExportPartition(svc);
                     break;
                 case DETACH_PARTITION:
                     applyDetachPartition(svc);
@@ -578,6 +582,24 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void applyDropPartitionForce(MetadataService svc) {
         svc.forceRemovePartitions(extraInfo);
+    }
+
+    private void applyExportPartition(MetadataService svc) {
+        // long list is a set of two longs per partition - (timestamp, partitionNamePosition)
+        for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
+            long partitionTimestamp = extraInfo.getQuick(i * 2);
+            final boolean result = svc.exportPartitionNativeToParquet(partitionTimestamp);
+            if (!result) {
+                throw CairoException.partitionManipulationRecoverable()
+                        .put("could not export partition to parquet ")
+                        .put("[table=")
+                        .put(getTableToken().getTableName())
+                        .put(", partitionTimestamp=").ts(partitionTimestamp)
+                        .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
+                        .put(']')
+                        .position((int) extraInfo.getQuick(i * 2 + 1));
+            }
+        }
     }
 
     private void applyMatViewRefreshLimit(MetadataService svc) {

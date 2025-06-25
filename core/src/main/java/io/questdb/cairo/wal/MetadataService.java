@@ -142,6 +142,8 @@ public interface MetadataService {
      */
     boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
 
+    boolean exportPartitionNativeToParquet(long partitionTimestamp);
+
     void forceRemovePartitions(LongList partitionTimestamps);
 
     int getMetaMaxUncommittedRows();

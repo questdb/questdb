@@ -594,6 +594,16 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 'n';
     }
 
+    public static boolean isExportKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'e'
+                && (tok.charAt(1) | 32) == 'x'
+                && (tok.charAt(2) | 32) == 'p'
+                && (tok.charAt(3) | 32) == 'o'
+                && (tok.charAt(4) | 32) == 'r'
+                && (tok.charAt(5) | 32) == 't';
+    }
+
     public static boolean isExtractKeyword(CharSequence tok) {
         return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'e'
