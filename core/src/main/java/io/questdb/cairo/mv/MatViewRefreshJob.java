@@ -219,11 +219,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             minTs = txnRangeLoader.getMinTimestamp();
             maxTs = txnRangeLoader.getMaxTimestamp();
             // Check if refresh limit should be applied.
-            if (viewDefinition.getRefreshLimitHoursOrMonths() != 0) {
-                if (viewDefinition.getRefreshLimitHoursOrMonths() > 0) { // hours
-                    minTs = Math.max(minTs, now - Timestamps.HOUR_MICROS * viewDefinition.getRefreshLimitHoursOrMonths());
+            final int refreshLimitHoursOrMonths = viewDefinition.getRefreshLimitHoursOrMonths();
+            if (refreshLimitHoursOrMonths != 0) {
+                if (refreshLimitHoursOrMonths > 0) { // hours
+                    minTs = Math.max(minTs, now - Timestamps.HOUR_MICROS * refreshLimitHoursOrMonths);
                 } else { // months
-                    minTs = Math.max(minTs, Timestamps.addMonths(now, -viewDefinition.getRefreshLimitHoursOrMonths()));
+                    minTs = Math.max(minTs, Timestamps.addMonths(now, refreshLimitHoursOrMonths));
                 }
             }
         } else if (rangeRefresh) {
