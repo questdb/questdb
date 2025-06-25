@@ -30,14 +30,13 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.Misc;
 
 public interface BinaryFunction extends Function {
 
     @Override
     default boolean canPrefetch() {
-        return !(this instanceof GroupByFunction) && !(this instanceof WindowFunction) && getLeft().canPrefetch() && getRight().canPrefetch();
+        return getLeft().canPrefetch() && getRight().canPrefetch();
     }
 
     @Override

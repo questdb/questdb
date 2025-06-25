@@ -103,6 +103,7 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.engine.functions.memoization.TimestampFunctionMemoizer;
+import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
@@ -339,7 +340,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             if (function != null && function.isConstant() && function.extendedOps() == null) {
                 return functionToConstant(function);
             }
-            if (function != null && function.canPrefetch()) {
+
+            // we don't wrap function in a memoizer if it is a group by or window function
+            // otherwise SqlCodeGen would not recognize the function as a Window or GroupBy function
+            if (function != null && !(function instanceof GroupByFunction) && !(function instanceof WindowFunction) && function.canPrefetch()) {
                 switch (function.getType()) {
                     case ColumnType.LONG:
                         return new LongFunctionMemoizer(function);

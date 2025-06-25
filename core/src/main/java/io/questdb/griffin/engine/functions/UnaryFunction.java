@@ -35,8 +35,7 @@ public interface UnaryFunction extends Function {
 
     @Override
     default boolean canPrefetch() {
-        return //!(this instanceof GroupByFunction) && !(this instanceof WindowFunction) &&
-                getArg().canPrefetch();
+        return getArg().canPrefetch();
     }
 
     @Override
