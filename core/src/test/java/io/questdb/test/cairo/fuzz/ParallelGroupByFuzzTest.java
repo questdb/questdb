@@ -696,7 +696,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         Assume.assumeFalse(convertToParquet);
 
         testParallelGroupByArray(
-                null,
                 "SELECT first(darr), key FROM tab order by key", "first\tkey\n" +
                         "[[0.7675673070796104,0.21583224269349388],[0.15786635599554755,null]]\tk0\n" +
                         "[[null]]\tk1\n" +
@@ -3092,17 +3091,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         testParallelGroupByAllTypes(null, queriesAndExpectedResults);
     }
 
-    private void testParallelGroupByArray(BindVariablesInitializer initializer, String... queriesAndExpectedResults) throws Exception {
+    private void testParallelGroupByArray(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
-                        if (initializer != null) {
-                            initializer.init(sqlExecutionContext);
-                        }
-
                         execute(
                                 compiler,
                                 "create table tab as (select" +

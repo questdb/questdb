@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -88,8 +89,7 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
     public ArrayView getArray(Record rec) {
         final long ptr = rec.getLong(valueIndex + 1);
         if (ptr < 0) {
-            borrowedArray.ofNull();
-            return borrowedArray;
+            return ArrayConstant.NULL;
         }
 
         return ArrayTypeDriver.getPlainValue(ptr, borrowedArray);
