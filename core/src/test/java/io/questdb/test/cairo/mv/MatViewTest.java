@@ -2930,42 +2930,42 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testManualPeriodMatViewFullRefreshNoTimerJob() throws Exception {
-        testPeriodRefresh("manual", "full", false);
+        testPeriodRefresh("manual deferred", "full", false);
     }
 
     @Test
     public void testManualPeriodMatViewFullRefreshRunTimerJob() throws Exception {
-        testPeriodRefresh("manual", "full", true);
+        testPeriodRefresh("manual deferred", "full", true);
     }
 
     @Test
     public void testManualPeriodMatViewIncrementalRefreshNoTimerJob() throws Exception {
-        testPeriodRefresh("manual", "incremental", false);
+        testPeriodRefresh("manual deferred", "incremental", false);
     }
 
     @Test
     public void testManualPeriodMatViewIncrementalRefreshRunTimerJob() throws Exception {
-        testPeriodRefresh("manual", "incremental", true);
+        testPeriodRefresh("manual deferred", "incremental", true);
     }
 
     @Test
     public void testManualPeriodWithTzIncrementalRefreshRunTimerJob() throws Exception {
-        testPeriodWithTzRefresh("manual", "incremental", true);
+        testPeriodWithTzRefresh("manual deferred", "incremental", true);
     }
 
     @Test
     public void testManualPeriodWithTzMatViewFullRefreshNoTimerJob() throws Exception {
-        testPeriodWithTzRefresh("manual", "full", false);
+        testPeriodWithTzRefresh("manual deferred", "full", false);
     }
 
     @Test
     public void testManualPeriodWithTzMatViewFullRefreshRunTimerJob() throws Exception {
-        testPeriodWithTzRefresh("manual", "full", true);
+        testPeriodWithTzRefresh("manual deferred", "full", true);
     }
 
     @Test
     public void testManualPeriodWithTzMatViewIncrementalRefreshNoTimerJob() throws Exception {
-        testPeriodWithTzRefresh("manual", "incremental", false);
+        testPeriodWithTzRefresh("manual deferred", "incremental", false);
     }
 
     @Test
@@ -4681,32 +4681,32 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testTimerPeriodMatView() throws Exception {
-        testPeriodRefresh("every 1h", null, true);
+        testPeriodRefresh("every 1h deferred", null, true);
     }
 
     @Test
     public void testTimerPeriodMatViewFullRefresh() throws Exception {
-        testPeriodRefresh("every 1h", "full", true);
+        testPeriodRefresh("every 1h deferred", "full", true);
     }
 
     @Test
     public void testTimerPeriodMatViewIncrementalRefresh() throws Exception {
-        testPeriodRefresh("every 1h", "incremental", true);
+        testPeriodRefresh("every 1h deferred", "incremental", true);
     }
 
     @Test
     public void testTimerPeriodWithTzMatView() throws Exception {
-        testPeriodWithTzRefresh("every 1h", null, true);
+        testPeriodWithTzRefresh("every 1h deferred", null, true);
     }
 
     @Test
     public void testTimerPeriodWithTzMatViewFullRefresh() throws Exception {
-        testPeriodWithTzRefresh("every 1h", "full", true);
+        testPeriodWithTzRefresh("every 1h deferred", "full", true);
     }
 
     @Test
     public void testTimerPeriodWithTzMatViewIncrementalRefresh() throws Exception {
-        testPeriodWithTzRefresh("every 1h", "incremental", true);
+        testPeriodWithTzRefresh("every 1h deferred", "incremental", true);
     }
 
     @Test
