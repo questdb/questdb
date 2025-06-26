@@ -258,8 +258,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             maxTs = baseTableReader.getMaxTimestamp();
         }
 
-        // In case of incremental or full refresh we may need to include complete periods
-        // and/or remove intervals older than the refresh limit.
+        // In case of incremental or full refresh we may need to do the following:
+        //   * remove incomplete periods from the refresh interval
+        //   * include complete periods into the refresh interval if we never refreshed them (lastPeriodHi)
+        //   * remove intervals older than the refresh limit
         if (!rangeRefresh) {
             // Check if we're doing incremental/full refresh on a period mat view.
             // If so, we may need to remove incomplete periods from the final refresh interval.
@@ -281,7 +283,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         ? periodHiLocal - viewDefinition.getTimerTzRules().getOffset(periodHiLocal)
                         : periodHiLocal;
 
-                // Remove the incomplete period from both txn intervals and refresh interval.
+                // Remove incomplete periods from both txn intervals and refresh interval.
                 if (txnIntervals != null && txnIntervals.size() > 0) {
                     txnIntervals.add(Long.MIN_VALUE, periodHi);
                     IntervalUtils.intersectInPlace(txnIntervals, txnIntervals.size() - 2);
