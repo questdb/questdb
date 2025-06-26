@@ -1909,14 +1909,14 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMatViewMessagesV1() throws Exception {
+    public void testLegacyMatViewMessages() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 walName = walWriter.getWalName();
-                walWriter.setMatViewMsgVersion(WALE_FORMAT_MINOR_V1);
+                walWriter.setLegacyMatViewFormat(true);
 
                 TableWriter.Row row = walWriter.newRow(4);
                 row.putByte(0, (byte) 1);
@@ -1936,8 +1936,8 @@ public class WalWriterTest extends AbstractCairoTest {
                 final WalEventCursor.MatViewDataInfo mvDataInfo = eventCursor.getMatViewDataInfo();
                 assertEquals(1, mvDataInfo.getLastRefreshBaseTableTxn());
                 assertEquals(2, mvDataInfo.getLastRefreshTimestamp());
-                // last period value should be ignored
-                assertEquals(Numbers.LONG_NULL, mvDataInfo.getLastPeriodHi());
+                // last period value should be written along with replace range lo/hi timestamps
+                assertEquals(3, mvDataInfo.getLastPeriodHi());
                 assertEquals(4, mvDataInfo.getReplaceRangeTsLow());
                 assertEquals(5, mvDataInfo.getReplaceRangeTsHi());
 

@@ -174,16 +174,26 @@ public class WalEventReader implements Closeable {
                     // As such, we need this extra `+ Integer.BYTES` here, or we would not be able to read it.
                     final long eventMapSize = size + Integer.BYTES;
                     eventMem.extend(eventMapSize);
-                    readFormatVersions();
                     eventCursor.openOffset(offset);
                 } finally {
                     Misc.free(eventIndexMem);
                 }
             } else {
-                readFormatVersions();
                 eventCursor.openOffset(-1);
             }
 
+            // Check only lower short to match the version
+            // Higher short can be used to make a forward compatible change
+            // by adding more data at the footer of each record
+            final int version = eventMem.getInt(WAL_FORMAT_OFFSET_32);
+            final short formatVersion = Numbers.decodeLowShort(version);
+            if (formatVersion != WALE_FORMAT_VERSION && formatVersion != WALE_MAT_VIEW_FORMAT_VERSION) {
+                throw TableUtils.validationException(eventMem)
+                        .put("WAL events file version does not match runtime version [expected=")
+                        .put(WALE_FORMAT_VERSION).put(" or ").put(WALE_MAT_VIEW_FORMAT_VERSION)
+                        .put(", actual=").put(formatVersion)
+                        .put(']');
+            }
             return eventCursor;
         } catch (Throwable e) {
             close();
@@ -201,29 +211,5 @@ public class WalEventReader implements Closeable {
             return -1;
         }
         return eventIndexMem.getLong(offset);
-    }
-
-    private void readFormatVersions() {
-        // Check only lower short to match the version
-        // Higher short can be used to make a forward compatible change
-        // by adding more data at the footer of each record
-        final int version = eventMem.getInt(WAL_FORMAT_OFFSET_32);
-        final short formatVersion = Numbers.decodeLowShort(version);
-        if (formatVersion != WALE_FORMAT_VERSION && formatVersion != WALE_MAT_VIEW_FORMAT_VERSION) {
-            throw TableUtils.validationException(eventMem)
-                    .put("WAL events file version does not match runtime version [expected=")
-                    .put(WALE_FORMAT_VERSION).put(" or ").put(WALE_MAT_VIEW_FORMAT_VERSION)
-                    .put(", actual=").put(formatVersion)
-                    .put(']');
-        }
-        final short minorVersion = Numbers.decodeHighShort(version);
-        if (minorVersion != WALE_FORMAT_MINOR_V1 && minorVersion != WALE_FORMAT_MINOR_V2) {
-            throw TableUtils.validationException(eventMem)
-                    .put("WAL events minor version does not match runtime version [expected=")
-                    .put(WALE_FORMAT_MINOR_V1).put(" or ").put(WALE_FORMAT_MINOR_V2)
-                    .put(", actual=").put(minorVersion)
-                    .put(']');
-        }
-        eventCursor.setMinorVersion(minorVersion);
     }
 }

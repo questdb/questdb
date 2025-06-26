@@ -70,9 +70,6 @@ public class WalUtils {
     public static final String TXNLOG_FILE_NAME_META_INX = "_txnlog.meta.i";
     public static final String TXNLOG_FILE_NAME_META_VAR = "_txnlog.meta.d";
     public static final String TXNLOG_PARTS_DIR = "_txn_parts";
-    public static final short WALE_FORMAT_MINOR_V1 = 0;
-    // For now, V2 is only used in combination with WALE_MAT_VIEW_FORMAT_VERSION.
-    public static final short WALE_FORMAT_MINOR_V2 = 1;
     public static final int WALE_HEADER_SIZE = Integer.BYTES + Integer.BYTES;
     public static final long WALE_MAX_TXN_OFFSET_32 = 0L;
     // DEFAULT DEDUP mode means following the table definition. If the table has dedup enabled, then

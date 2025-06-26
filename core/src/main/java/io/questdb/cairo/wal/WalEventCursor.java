@@ -47,17 +47,16 @@ import static io.questdb.cairo.wal.WalUtils.*;
 public class WalEventCursor {
     public static final long END_OF_EVENTS = -1L;
     private static final int DEDUP_MODE_OFFSET = Byte.BYTES;
-    private static final int MAT_VIEW_PERIOD_HI_OFFSET = Long.BYTES;
     private static final int REPLACE_RANGE_HI_OFFSET = DEDUP_MODE_OFFSET + Long.BYTES;
     private static final int REPLACE_RANGE_LO_OFFSET = REPLACE_RANGE_HI_OFFSET + Long.BYTES;
-    private static final int DEDUP_FOOTER_SIZE = REPLACE_RANGE_LO_OFFSET;
+    private static final int REPLACE_RANGE_EXTRA_OFFSET = REPLACE_RANGE_LO_OFFSET + Long.BYTES;
+    private static final int DEDUP_FOOTER_SIZE = REPLACE_RANGE_EXTRA_OFFSET;
     private final DataInfo dataInfo = new DataInfo();
     private final MemoryCMR eventMem;
     private final MatViewDataInfo mvDataInfo = new MatViewDataInfo();
     private final MatViewInvalidationInfo mvInvalidationInfo = new MatViewInvalidationInfo();
     private final SqlInfo sqlInfo = new SqlInfo();
     private long memSize;
-    private short minorVersion = WALE_FORMAT_MINOR_V2;
     private long nextOffset = Integer.BYTES;
     private long offset = Integer.BYTES; // skip wal meta version
     private long txn = END_OF_EVENTS;
@@ -327,12 +326,10 @@ public class WalEventCursor {
         return entry;
     }
 
-    void setMinorVersion(short minorVersion) {
-        this.minorVersion = minorVersion;
-    }
-
     public class DataInfo implements SymbolMapDiffCursor {
         private final SymbolMapDiffImpl symbolMapDiff = new SymbolMapDiffImpl(WalEventCursor.this);
+        // extra field, for now used only in mat views
+        protected long replaceRangeExtra;
         private byte dedupMode;
         private long endRowID;
         private long maxTimestamp;
@@ -379,10 +376,6 @@ public class WalEventCursor {
             return readNextSymbolMapDiff(symbolMapDiff);
         }
 
-        protected int extraFooterSize() {
-            return 0;
-        }
-
         protected void read() {
             startRowID = readLong();
             endRowID = readLong();
@@ -399,21 +392,20 @@ public class WalEventCursor {
             replaceRangeTsLow = 0;
             replaceRangeTsHi = 0;
 
-            final int extraFooterSize = extraFooterSize();
-            final int footerSize = DEDUP_FOOTER_SIZE + extraFooterSize;
-            if (nextOffset - offset >= Integer.BYTES + footerSize) {
-                // This is big enough to contain the footer
+            if (nextOffset - offset >= Integer.BYTES + DEDUP_FOOTER_SIZE) {
+                // This is big enough to contain the footer.
                 // But it can be still populated with symbol map values instead of the footer.
-                // Check that the last symbol map diff entry contains the END of symbol diffs marker
+                // Check that the last symbol map diff entry contains the END of symbol diffs marker.
 
-                // Read column index before the footer
-                int symbolColIndex = eventMem.getInt(nextOffset - (Integer.BYTES + footerSize));
+                // Read column index before the footer.
+                int symbolColIndex = eventMem.getInt(nextOffset - (Integer.BYTES + DEDUP_FOOTER_SIZE));
 
                 if (symbolColIndex == SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
-                    dedupMode = eventMem.getByte(nextOffset - DEDUP_MODE_OFFSET - extraFooterSize);
+                    dedupMode = eventMem.getByte(nextOffset - DEDUP_MODE_OFFSET);
                     if (dedupMode >= 0 && dedupMode <= WAL_DEDUP_MODE_MAX) {
-                        replaceRangeTsLow = eventMem.getLong(nextOffset - REPLACE_RANGE_LO_OFFSET - extraFooterSize);
-                        replaceRangeTsHi = eventMem.getLong(nextOffset - REPLACE_RANGE_HI_OFFSET - extraFooterSize);
+                        replaceRangeExtra = eventMem.getLong(nextOffset - REPLACE_RANGE_EXTRA_OFFSET);
+                        replaceRangeTsLow = eventMem.getLong(nextOffset - REPLACE_RANGE_LO_OFFSET);
+                        replaceRangeTsHi = eventMem.getLong(nextOffset - REPLACE_RANGE_HI_OFFSET);
                     } else {
                         // This WAL record does not have dedup mode recognised, clean unrecognised mode value
                         dedupMode = WAL_DEDUP_MODE_DEFAULT;
@@ -424,12 +416,11 @@ public class WalEventCursor {
     }
 
     public class MatViewDataInfo extends DataInfo {
-        private long lastPeriodHi;
         private long lastRefreshBaseTableTxn;
         private long lastRefreshTimestamp;
 
         public long getLastPeriodHi() {
-            return lastPeriodHi;
+            return replaceRangeExtra;
         }
 
         public long getLastRefreshBaseTableTxn() {
@@ -441,23 +432,12 @@ public class WalEventCursor {
         }
 
         @Override
-        protected int extraFooterSize() {
-            // extra 8 bytes stand for mat view refresh period hi
-            return minorVersion == WALE_FORMAT_MINOR_V2 ? Long.BYTES : 0;
-        }
-
-        @Override
         protected void read() {
             super.read();
             // read the extra fields in the fixed part
             // symbol map will start after this
             lastRefreshBaseTableTxn = readLong();
             lastRefreshTimestamp = readLong();
-            if (minorVersion == WALE_FORMAT_MINOR_V2) {
-                lastPeriodHi = eventMem.getLong(nextOffset - MAT_VIEW_PERIOD_HI_OFFSET);
-            } else {
-                lastPeriodHi = Numbers.LONG_NULL;
-            }
         }
     }
 
@@ -494,7 +474,7 @@ public class WalEventCursor {
             invalid = readBool();
             error.clear();
             error.put(readStr());
-            if (minorVersion == WALE_FORMAT_MINOR_V2) {
+            if (nextOffset - offset >= Long.BYTES) {
                 lastPeriodHi = readLong();
             } else {
                 lastPeriodHi = Numbers.LONG_NULL;

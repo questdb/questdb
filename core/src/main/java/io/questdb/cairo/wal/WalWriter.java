@@ -686,8 +686,8 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @TestOnly
-    public void setMatViewMsgVersion(short matViewMsgVersion) {
-        events.setMatViewMinorVersion(matViewMsgVersion);
+    public void setLegacyMatViewFormat(boolean legacyMatViewFormat) {
+        events.setLegacyMatViewFormat(legacyMatViewFormat);
     }
 
     @Override

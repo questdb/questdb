@@ -59,9 +59,8 @@ class WalEventWriter implements Closeable {
     private final FilesFacade ff;
     private final StringSink sink = new StringSink();
     private AtomicIntList initialSymbolCounts;
-    // used for WAL-E backwards compatibility testing;
-    // must not be changed in the middle of writing a WAL-E file
-    private short matViewMinorVersion = WALE_FORMAT_MINOR_V2;
+    // used to test older mat view format
+    private boolean legacyMatViewFormat;
     private long startOffset = 0;
     private BoolList symbolMapNullFlags;
     private int txn = 0;
@@ -83,8 +82,8 @@ class WalEventWriter implements Closeable {
     }
 
     @TestOnly
-    public void setMatViewMinorVersion(short matViewMinorVersion) {
-        this.matViewMinorVersion = matViewMinorVersion;
+    public void setLegacyMatViewFormat(boolean legacyMatViewFormat) {
+        this.legacyMatViewFormat = legacyMatViewFormat;
     }
 
     /**
@@ -299,17 +298,20 @@ class WalEventWriter implements Closeable {
 
         writeSymbolMapDiffs();
 
+        // To test backwards compatibility and ensure that we still can read WALs
+        // written by the old QuestDB version, make the dedup mode
+        // and replace range value optional. It will then not be written for the most transactions,
+        // and it will test the reading WAL-E code to read the old format.
         if (dedupMode != WAL_DEDUP_MODE_DEFAULT) {
-            // To test backwards compatibility and ensure that we still can read WALs
-            // written by the old QuestDB version, make the dedup mode
-            // and replace range value optional. It will then not be written for the most transactions,
-            // and it will test the reading WAL-E code to read the old format.
+            // Always write extra 8 bytes, even for normal tables, to simplify reading the extra footer.
+            if (txnType == WalTxnType.MAT_VIEW_DATA) {
+                eventMem.putLong(lastPeriodHi);
+            } else {
+                eventMem.putLong(Numbers.LONG_NULL);
+            }
             eventMem.putLong(replaceRangeLowTs);
             eventMem.putLong(replaceRangeHiTs);
             eventMem.putByte(dedupMode);
-        }
-        if (matViewMinorVersion == WALE_FORMAT_MINOR_V2 && txnType == WalTxnType.MAT_VIEW_DATA) {
-            eventMem.putLong(lastPeriodHi);
         }
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
@@ -317,7 +319,7 @@ class WalEventWriter implements Closeable {
         appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
         if (txnType == WalTxnType.MAT_VIEW_DATA) {
-            eventMem.putInt(WAL_FORMAT_OFFSET_32, Numbers.encodeLowHighShorts(WALE_MAT_VIEW_FORMAT_VERSION, matViewMinorVersion));
+            eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
         }
         return txn++;
     }
@@ -336,7 +338,7 @@ class WalEventWriter implements Closeable {
         eventMem.putLong(lastRefreshTimestamp);
         eventMem.putBool(invalid);
         eventMem.putStr(invalidationReason);
-        if (matViewMinorVersion == WALE_FORMAT_MINOR_V2) {
+        if (!legacyMatViewFormat) {
             eventMem.putLong(lastPeriodHi);
         }
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
@@ -344,7 +346,7 @@ class WalEventWriter implements Closeable {
 
         appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
-        eventMem.putInt(WAL_FORMAT_OFFSET_32, Numbers.encodeLowHighShorts(WALE_MAT_VIEW_FORMAT_VERSION, matViewMinorVersion));
+        eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
         return txn++;
     }
 
