@@ -290,7 +290,13 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     }
 
     private static class RecordWithArrayElement extends DelegatingRecord {
+        ArrayView array;
         double element;
+
+        @Override
+        public ArrayView getArray(int col, int columnType) {
+            return col == -1 ? array : base.getArray(col, columnType);
+        }
 
         @Override
         public double getDouble(int col) {
@@ -303,24 +309,31 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         private final ObjList<Function> allArgs; // holds [arrayArg, rangeArgs...]
         private final Function arrayArg;
         private final DerivedArrayView derivedArray = new DerivedArrayView();
+        private final DerivedArrayView derivedSubArray = new DerivedArrayView(); // used for filtering
+        private final IntList predicateResults = new IntList(); //  used for filtering
         private final RecordWithArrayElement recWithElem = new RecordWithArrayElement();
-        private DirectArray arrayOut;
+        private DirectArray filteredArray;
 
         public SliceDoubleArrayFunction(Function arrayArg, int resultNDims, ObjList<Function> allArgs, IntList allArgPositions) {
+            int resultType = ColumnType.encodeArrayType(ColumnType.DOUBLE, resultNDims);
+
             this.arrayArg = arrayArg;
             this.allArgs = allArgs;
             this.allArgPositions = allArgPositions;
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, resultNDims);
-            if (allArgs.size() == 2 && resultNDims == 1) {
-                this.arrayOut = new DirectArray();
-                arrayOut.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+            this.type = resultType;
+            for (int i = 1, n = allArgs.size(); i < n; i++) {
+                if (ColumnType.isBoolean(allArgs.getQuick(i).getType())) {
+                    filteredArray = new DirectArray();
+                    filteredArray.setType(resultType);
+                    break;
+                }
             }
         }
 
         @Override
         public void close() {
             MultiArgFunction.super.close();
-            arrayOut = Misc.free(arrayOut);
+            filteredArray = Misc.free(filteredArray);
         }
 
         @Override
@@ -330,8 +343,8 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
 
         @Override
         public ArrayView getArray(Record rec) {
-            ArrayView array = arrayArg.getArray(rec);
-            derivedArray.of(array);
+            ArrayView arrayIn = arrayArg.getArray(rec);
+            derivedArray.of(arrayIn);
             if (derivedArray.isNull()) {
                 return derivedArray;
             }
@@ -358,28 +371,32 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     lo--;
                     derivedArray.slice(dim++, lo, hi, argPos);
                 } else if (ColumnType.isBoolean(argType)) {
-                    if (array.getDimCount() != 1) {
+                    if (dim != 0) {
                         throw CairoException.nonCritical().position(argPos)
-                                .put("array filtering works only for 1D array");
+                                .put("only a sub-array operation can come before array filter operation");
                     }
                     recWithElem.of(rec);
+                    int filteredElemCount = 0;
+                    predicateResults.clear();
+                    for (int j = 0, m = derivedArray.getDimLen(0); j < m; j++) {
+                        boolean predicateResult = applyPredicate(j, arg);
+                        int boolAsInt = predicateResult ? 1 : 0;
+                        predicateResults.add(boolAsInt);
+                        filteredElemCount += boolAsInt;
+                    }
+                    filteredArray.setDimLen(0, filteredElemCount);
+                    for (int j = 1, m = derivedArray.getDimCount(); j < n; j++) {
+                        filteredArray.setDimLen(j, derivedArray.getDimLen(j));
+                    }
+                    filteredArray.applyShape();
                     int outIndex = 0;
-                    for (int j = 0, m = array.getCardinality(); j < m; j++) {
-                        recWithElem.element = array.getDouble(j);
-                        if (arg.getBool(recWithElem)) {
-                            outIndex++;
+                    for (int j = 0, m = predicateResults.size(); j < m; j++) {
+                        if (predicateResults.getQuick(j) != 0) {
+                            //TODO: must copy the entire subarray
+                            filteredArray.putDouble(outIndex++, recWithElem.element);
                         }
                     }
-                    arrayOut.setDimLen(0, outIndex);
-                    arrayOut.applyShape();
-                    outIndex = 0;
-                    for (int j = 0, m = array.getCardinality(); j < m; j++) {
-                        recWithElem.element = array.getDouble(j);
-                        if (arg.getBool(recWithElem)) {
-                            arrayOut.putDouble(outIndex++, recWithElem.element);
-                        }
-                    }
-                    return arrayOut;
+                    derivedArray.of(filteredArray);
                 } else {
                     // Decrement the index in the argument because Postgres uses 1-based array indexing
                     int index = arg.getInt(rec) - 1;
@@ -412,6 +429,19 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 comma = ",";
             }
             sink.val(']');
+        }
+
+        private boolean applyPredicate(int index, Function arg) {
+            if (derivedArray.getDimCount() == 1) {
+                recWithElem.element = derivedArray.getDouble(index);
+                recWithElem.array = null;
+            } else {
+                derivedSubArray.of(derivedArray);
+                derivedSubArray.subArray(0, index, -1);
+                recWithElem.array = derivedSubArray;
+                recWithElem.element = Double.NaN;
+            }
+            return arg.getBool(recWithElem);
         }
     }
 }

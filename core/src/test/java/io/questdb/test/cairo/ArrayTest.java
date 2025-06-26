@@ -778,20 +778,18 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testFilterArray() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr DOUBLE[])");
-            execute("INSERT INTO tango VALUES (ARRAY[2.0, 1, 3, 4]), (ARRAY[10.0, 9, 1, 8])");
+            execute("CREATE TABLE tango (arr DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, 1, 3, 4], ARRAY[[12.0, 11, 13, 14], [22.0, 21, 23, 24]]), " +
+                    "(ARRAY[10.0, 9, 1, 8], ARRAY[[20.0, 19, 11, 18], [20.0, 19, 11, 18]])"
+            );
+
             assertSql("[]\n[2.0,3.0,4.0]\n[10.0,9.0,8.0]\n",
                     "SELECT arr[x() > 1.0] FROM tango");
-        });
-    }
-
-    @Test
-    public void testFilterArrayByLambda() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr DOUBLE[])");
-            execute("INSERT INTO tango VALUES (ARRAY[2.0, 1, 3, 4]), (ARRAY[10.0, 9, 1, 8])");
             assertSql("[]\n[2.0,3.0,4.0]\n[10.0,9.0,8.0]\n",
                     "SELECT arr[i -> i > 1.0] FROM tango");
+            assertSql("[]\n[22.0,21.0,]\n[]\n",
+                    "SELECT arr2[1, i -> i > 20.0] FROM tango");
         });
     }
 
