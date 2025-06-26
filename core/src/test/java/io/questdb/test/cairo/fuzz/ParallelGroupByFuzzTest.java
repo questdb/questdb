@@ -692,6 +692,60 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByArrayFirst() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+
+        testParallelGroupByArray(
+                null,
+                "SELECT first(darr), key FROM tab order by key", "first\tkey\n" +
+                        "[[0.7675673070796104,0.21583224269349388],[0.15786635599554755,null]]\tk0\n" +
+                        "[[null]]\tk1\n" +
+                        "[[0.299199045961845,0.9344604857394011,0.8423410920883345],[null,0.22452340856088226,0.3491070363730514],[0.7611029514995744,0.4217768841969397,null]]\tk2\n" +
+                        "[[0.6276954028373309],[0.6778564558839208]]\tk3\n" +
+                        "[[null],[null],[0.0035983672154330515]]\tk4\n"
+        );
+    }
+
+    @Test
+    public void testParallelGroupByArrayNull() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(
+                                compiler,
+                                "create table tab as (select" +
+                                        " 'k' || ((50 + x) % 5) key," +
+                                        " timestamp_sequence(400000000000, 500000000) ts" +
+                                        " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day",
+                                sqlExecutionContext
+                        );
+                        // Add double[], all values should be null
+                        execute(
+                                compiler,
+                                "alter table tab add column darr double[]",
+                                sqlExecutionContext
+                        );
+
+                        assertQueries(engine, sqlExecutionContext, "SELECT first(darr), key FROM tab order by key", "first\tkey\n" +
+                                "null\tk0\n" +
+                                "null\tk1\n" +
+                                "null\tk2\n" +
+                                "null\tk3\n" +
+                                "null\tk4\n");
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelGroupByCastToSymbol() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -2986,6 +3040,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         });
     }
 
+
     private void testParallelGroupByAllTypes(BindVariablesInitializer initializer, String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -3035,6 +3090,37 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     private void testParallelGroupByAllTypes(String... queriesAndExpectedResults) throws Exception {
         testParallelGroupByAllTypes(null, queriesAndExpectedResults);
+    }
+
+    private void testParallelGroupByArray(BindVariablesInitializer initializer, String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        if (initializer != null) {
+                            initializer.init(sqlExecutionContext);
+                        }
+
+                        execute(
+                                compiler,
+                                "create table tab as (select" +
+                                        " 'k' || ((50 + x) % 5) key," +
+                                        " rnd_double_array(2, 2, 3) darr," +
+                                        " timestamp_sequence(400000000000, 500000000) ts" +
+                                        " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day",
+                                sqlExecutionContext
+                        );
+                        if (convertToParquet) {
+                            execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     private void testParallelGroupByFaultTolerance(String query) throws Exception {
