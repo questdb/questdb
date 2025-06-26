@@ -32,17 +32,18 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class DoubleArrayIndexOfAssumeSortedFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "index_of_sorted";
+public class DoubleArrayInsertionPointFunctionFactory implements FunctionFactory {
+    private static final String FUNCTION_NAME = "insertion_point";
 
     @Override
     public String getSignature() {
-        return FUNCTION_NAME + "(D[]D)";
+        return FUNCTION_NAME + "(D[]DT)";
     }
 
     @Override
@@ -51,55 +52,49 @@ public class DoubleArrayIndexOfAssumeSortedFunctionFactory implements FunctionFa
         if (ColumnType.decodeArrayDimensionality(arrayArg.getType()) != 1) {
             throw SqlException.position(argPositions.getQuick(0)).put("array is not one-dimensional");
         }
-
-        Function valueArg = args.getQuick(1);
-        if (valueArg.isConstant()) {
-            double value = valueArg.getDouble(null);
-            valueArg.close();
-            return new ArrayIndexOfAssumeSortedConstFunction(arrayArg, value);
-        }
-        return new ArrayIndexOfAssumeSortedFunction(arrayArg, valueArg);
+        return new Func(arrayArg, args.get(1), args.get(2));
     }
 
-    static class ArrayIndexOfAssumeSortedConstFunction extends DoubleArrayIndexOfFunctionFactory.ArrayIndexOfConstFunction implements UnaryFunction {
+    static class Func extends IntFunction implements TernaryFunction {
+        private final Function aheadEqual;
+        private final Function arrayArg;
+        private final Function valueArg;
 
-        ArrayIndexOfAssumeSortedConstFunction(Function arrayArg, double value) {
-            super(arrayArg, value);
+        Func(Function arrayArg, Function valueArg, Function afterEqual) {
+            this.arrayArg = arrayArg;
+            this.valueArg = valueArg;
+            this.aheadEqual = afterEqual;
+        }
+
+        @Override
+        public Function getCenter() {
+            return valueArg;
         }
 
         @Override
         public int getInt(Record rec) {
-            ArrayView array = arrayArg.getArray(rec);
-            if (array.isNull()) {
+            ArrayView arr = arrayArg.getArray(rec);
+            if (arr.isNull()) {
                 return Numbers.INT_NULL;
             }
-            return array.binarySearchDoubleValue1DArray(value, true);
+            boolean ahead = aheadEqual.getBool(rec);
+            int index = arr.binarySearchDoubleValue1DArray(valueArg.getDouble(rec), ahead);
+            return index < 0 ? -index : (ahead ? index : index + 1);
+        }
+
+        @Override
+        public Function getLeft() {
+            return arrayArg;
         }
 
         @Override
         public String getName() {
             return FUNCTION_NAME;
         }
-    }
-
-    static class ArrayIndexOfAssumeSortedFunction extends DoubleArrayIndexOfFunctionFactory.ArrayIndexOfFunction {
-
-        ArrayIndexOfAssumeSortedFunction(Function arrayArg, Function valueArg) {
-            super(arrayArg, valueArg);
-        }
 
         @Override
-        public int getInt(Record rec) {
-            ArrayView array = arrayArg.getArray(rec);
-            if (array.isNull()) {
-                return Numbers.INT_NULL;
-            }
-            return array.binarySearchDoubleValue1DArray(valueArg.getDouble(rec), true);
-        }
-
-        @Override
-        public String getName() {
-            return FUNCTION_NAME;
+        public Function getRight() {
+            return aheadEqual;
         }
     }
 }

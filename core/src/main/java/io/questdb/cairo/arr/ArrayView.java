@@ -233,7 +233,7 @@ public abstract class ArrayView implements QuietCloseable {
      * <p>The method automatically detects the sort order by comparing the first and
      * last elements.
      */
-    public final int binarySearchDoubleValue1DArray(double value) {
+    public final int binarySearchDoubleValue1DArray(double value, boolean forwardScan) {
         if (isNull() || isEmpty()) {
             return 0;
         }
@@ -249,20 +249,31 @@ public abstract class ArrayView implements QuietCloseable {
         double last = getDouble(high * stride);
         boolean ascending = first <= last;
         if (isVanilla) {
-            return flatView.binarySearchDouble(value, flatViewOffset, flatViewLength, ascending);
+            return flatView.binarySearchDouble(value, flatViewOffset, flatViewLength, ascending, forwardScan);
         } else {
             while (low <= high) {
                 int mid = low + (high - low) / 2;
                 double midVal = getDouble(mid * stride);
                 if (Math.abs(midVal - value) <= Numbers.DOUBLE_TOLERANCE) {
-                    do {
-                        if (mid > low) {
-                            mid--;
-                        } else {
-                            return mid + 1;
-                        }
-                    } while (Math.abs(getDouble(mid) - value) <= Numbers.DOUBLE_TOLERANCE);
-                    return mid + 2;
+                    if (forwardScan) {
+                        do {
+                            if (mid > low) {
+                                mid--;
+                            } else {
+                                return mid + 1;
+                            }
+                        } while (Math.abs(getDouble(mid) - value) <= Numbers.DOUBLE_TOLERANCE);
+                        return mid + 2;
+                    } else {
+                        do {
+                            if (mid < high) {
+                                mid++;
+                            } else {
+                                return mid + 1;
+                            }
+                        } while (Math.abs(getDouble(mid) - value) <= Numbers.DOUBLE_TOLERANCE);
+                        return mid;
+                    }
                 }
 
                 if (ascending) {

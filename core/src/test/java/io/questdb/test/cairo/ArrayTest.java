@@ -1246,7 +1246,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("index_of\tindex_of1\tindex_of2\tindex_of3\n" +
                             "5\t6\t0\t1\n" +
                             "0\t1\t0\t0\n" +
-                            "0\t0\t0\t0\n",
+                            "null\tnull\tnull\tnull\n",
                     "SELECT " +
                             "index_of(arr1, 8), " +
                             "index_of(arr1, null), " +
@@ -1257,7 +1257,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("index_of\tindex_of1\tindex_of2\tindex_of3\n" +
                             "5\t6\t0\t1\n" +
                             "0\t1\t0\t0\n" +
-                            "0\t0\t0\t0\n",
+                            "null\tnull\tnull\tnull\n",
                     "SELECT " +
                             "index_of(arr2[1], 8), " +
                             "index_of(arr2[1], null), " +
@@ -1268,7 +1268,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("index_of\tindex_of1\tindex_of2\tindex_of3\n" +
                             "1\t2\t3\t1\n" +
                             "1\t1\t1\t0\n" +
-                            "0\t0\t0\t0\n",
+                            "null\tnull\tnull\tnull\n",
                     "SELECT " +
                             "index_of(arr1, arr1[1]), " +
                             "index_of(arr1, arr1[2]), " +
@@ -1276,7 +1276,7 @@ public class ArrayTest extends AbstractCairoTest {
                             "index_of(arr1[2:], arr1[2]) " +
                             "FROM tango");
             assertExceptionNoLeakCheck("SELECT index_of(arr2, 0) len FROM tango",
-                    22, "array is not one-dimensional");
+                    16, "array is not one-dimensional");
         });
     }
 
@@ -1290,9 +1290,9 @@ public class ArrayTest extends AbstractCairoTest {
                     "(null, null)"
             );
             assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\ti8\n" +
-                            "-1\t0\t5\t-7\t8\t9\t-2\t5\n" +
-                            "-10\t0\t4\t-4\t2\t1\t-2\t1\n" +
-                            "0\t0\t0\t0\t0\t0\t0\t0\n",
+                            "-1\t-10\t5\t-7\t8\t9\t-2\t5\n" +
+                            "-10\t-10\t4\t-4\t2\t1\t-2\t1\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n",
                     "SELECT " +
                             "index_of_sorted(arr1, 8) i1, " +
                             "index_of_sorted(arr1, null) i2, " +
@@ -1305,9 +1305,9 @@ public class ArrayTest extends AbstractCairoTest {
                             "FROM tango");
 
             assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
-                            "-1\t0\t5\t7\t8\t-2\t4\n" +
-                            "-9\t0\t4\t2\t1\t-2\t1\n" +
-                            "0\t0\t0\t0\t0\t0\t0\n",
+                            "-1\t-9\t5\t7\t8\t-2\t4\n" +
+                            "-9\t-9\t4\t2\t1\t-2\t1\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
                     "SELECT " +
                             "index_of_sorted(arr2[1], 8) i1, " +
                             "index_of_sorted(arr2[1], null) i2, " +
@@ -1321,7 +1321,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("i1\ti2\ti3\ti4\n" +
                             "1\t2\t3\t1\n" +
                             "1\t2\t3\t1\n" +
-                            "0\t0\t0\t0\n",
+                            "null\tnull\tnull\tnull\n",
                     "SELECT " +
                             "index_of_sorted(arr1, arr1[1]) i1, " +
                             "index_of_sorted(arr1, arr1[2]) i2, " +
@@ -1329,7 +1329,7 @@ public class ArrayTest extends AbstractCairoTest {
                             "index_of_sorted(arr1[2:], arr1[2]) i4 " +
                             "FROM tango");
             assertExceptionNoLeakCheck("SELECT index_of_sorted(arr2, 0) len FROM tango",
-                    29, "array is not one-dimensional");
+                    23, "array is not one-dimensional");
         });
     }
 
@@ -1341,7 +1341,7 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[[9.0], [10], [12], [20], [22], [22], [100], [1000], [1001]])"
             );
             assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\ti8\n" +
-                            "-1\t0\t5\t-7\t8\t9\t-2\t5\n",
+                            "-1\t-1\t5\t-7\t8\t9\t-2\t5\n",
                     "SELECT " +
                             "index_of_sorted(transpose(arr)[1], 8) i1, " +
                             "index_of_sorted(transpose(arr)[1], null) i2, " +
@@ -1456,6 +1456,111 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (arr DOUBLE[])");
             execute("INSERT INTO tango VALUES (ARRAY[1.0, 2, 3][2:])");
             assertSql("arr\n[2.0,3.0]\n", "tango");
+        });
+    }
+
+    @Test
+    public void testInsertPoint() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[9.0, 10, 12, 20, 22, 22, 22, 100, 1000, 1001], ARRAY[[9.0, 10, 12, 20, 22, 22, 22, 100, 1000, 1001]]), " +
+                    "(ARRAY[1001.0, 1000, 100, 22, 22, 22, 20, 12, 10, 9], ARRAY[[1001.0, 1000, 100, 22, 22, 22, 20, 12, 10, 9]])," +
+                    "(null, null)"
+            );
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
+                            "1\t11\t2\t11\t4\t8\t10\n" +
+                            "11\t1\t11\t2\t8\t7\t3\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "insertion_point(arr1, 8, false) i1, " +
+                            "insertion_point(arr1, 2000, false) i2, " +
+                            "insertion_point(arr1, 9, false) i3, " +
+                            "insertion_point(arr1, 1001, false) i4, " +
+                            "insertion_point(arr1, 18, false) i5, " +
+                            "insertion_point(arr1, 22, false) i6, " +
+                            "insertion_point(arr1[1:], 1000, false) i7, " +
+                            "FROM tango");
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
+                            "1\t11\t1\t10\t4\t5\t9\n" +
+                            "11\t1\t10\t1\t8\t4\t2\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "insertion_point(arr1, 8, true) i1, " +
+                            "insertion_point(arr1, 2000, true) i2, " +
+                            "insertion_point(arr1, 9, true) i3, " +
+                            "insertion_point(arr1, 1001, true) i4, " +
+                            "insertion_point(arr1, 18, true) i5, " +
+                            "insertion_point(arr1, 22, true) i6, " +
+                            "insertion_point(arr1[1:], 1000, true) i7, " +
+                            "FROM tango");
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
+                            "1\t11\t2\t11\t4\t8\t10\n" +
+                            "11\t1\t11\t2\t8\t7\t3\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "insertion_point(arr2[1], 8) i1, " +
+                            "insertion_point(arr2[1], 2000) i2, " +
+                            "insertion_point(arr2[1], 9) i3, " +
+                            "insertion_point(arr2[1], 1001) i4, " +
+                            "insertion_point(arr2[1], 18) i5, " +
+                            "insertion_point(arr2[1], 22) i6, " +
+                            "insertion_point(arr2[1, 1:], 1000) i7, " +
+                            "FROM tango");
+
+            assertExceptionNoLeakCheck("SELECT insertion_point(arr2, 0) len FROM tango",
+                    23, "array is not one-dimensional");
+        });
+    }
+
+    @Test
+    public void testInsertPointNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[9.0], [10], [12], [20], [22], [22], [22], [100], [1000], [1001]]), " +
+                    "(ARRAY[[1001.0], [1000], [100], [22], [22], [22], [20], [12], [10], [9]])," +
+                    "(null)"
+            );
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
+                            "1\t11\t2\t11\t4\t8\t10\n" +
+                            "11\t1\t11\t2\t8\t7\t3\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "insertion_point(transpose(arr)[1], 8, false) i1, " +
+                            "insertion_point(transpose(arr)[1], 2000, false) i2, " +
+                            "insertion_point(transpose(arr)[1], 9, false) i3, " +
+                            "insertion_point(transpose(arr)[1], 1001, false) i4, " +
+                            "insertion_point(transpose(arr)[1], 18, false) i5, " +
+                            "insertion_point(transpose(arr)[1], 22, false) i6, " +
+                            "insertion_point(transpose(arr)[1, 1:], 1000, false) i7, " +
+                            "FROM tango");
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
+                            "1\t11\t1\t10\t4\t5\t9\n" +
+                            "11\t1\t10\t1\t8\t4\t2\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "insertion_point(transpose(arr)[1], 8, true) i1, " +
+                            "insertion_point(transpose(arr)[1], 2000, true) i2, " +
+                            "insertion_point(transpose(arr)[1], 9, true) i3, " +
+                            "insertion_point(transpose(arr)[1], 1001, true) i4, " +
+                            "insertion_point(transpose(arr)[1], 18, true) i5, " +
+                            "insertion_point(transpose(arr)[1], 22, true) i6, " +
+                            "insertion_point(transpose(arr)[1][1:], 1000, true) i7, " +
+                            "FROM tango");
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
+                            "1\t11\t2\t11\t4\t8\t10\n" +
+                            "11\t1\t11\t2\t8\t7\t3\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "insertion_point(transpose(arr)[1], 8) i1, " +
+                            "insertion_point(transpose(arr)[1], 2000) i2, " +
+                            "insertion_point(transpose(arr)[1], 9) i3, " +
+                            "insertion_point(transpose(arr)[1], 1001) i4, " +
+                            "insertion_point(transpose(arr)[1], 18) i5, " +
+                            "insertion_point(transpose(arr)[1], 22) i6, " +
+                            "insertion_point(transpose(arr)[1, 1:], 1000) i7, " +
+                            "FROM tango");
         });
     }
 

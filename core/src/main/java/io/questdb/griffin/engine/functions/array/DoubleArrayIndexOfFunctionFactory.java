@@ -51,13 +51,12 @@ public class DoubleArrayIndexOfFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function arrayArg = args.getQuick(0);
+        if (ColumnType.decodeArrayDimensionality(arrayArg.getType()) != 1) {
+            throw SqlException.position(argPositions.getQuick(0)).put("array is not one-dimensional");
+        }
+
         Function valueArg = args.getQuick(1);
-        int arrayArgPos = argPositions.getQuick(1);
         if (valueArg.isConstant()) {
-            int nDims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
-            if (nDims != 1) {
-                throw SqlException.position(arrayArgPos).put("array is not one-dimensional");
-            }
             double value = valueArg.getDouble(null);
             valueArg.close();
             return Numbers.isFinite(value) ? new ArrayIndexOfConstFunction(arrayArg, value) : new ArrayIndexOfConstNaNFunction(arrayArg);
@@ -82,12 +81,16 @@ public class DoubleArrayIndexOfFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return arrayArg.getArray(rec).linearSearchDoubleValue1DArray(value);
+            ArrayView arr = arrayArg.getArray(rec);
+            if (arr.isNull()) {
+                return Numbers.INT_NULL;
+            }
+            return arr.linearSearchDoubleValue1DArray(value);
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(FUNCTION_NAME).val('(').val(arrayArg).val(", ").val(value).val(')');
+        public String getName() {
+            return FUNCTION_NAME;
         }
     }
 
@@ -106,7 +109,11 @@ public class DoubleArrayIndexOfFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return arrayArg.getArray(rec).linearSearchDoubleNull1DArray();
+            ArrayView arr = arrayArg.getArray(rec);
+            if (arr.isNull()) {
+                return Numbers.INT_NULL;
+            }
+            return arr.linearSearchDoubleNull1DArray();
         }
 
         @Override
@@ -128,6 +135,9 @@ public class DoubleArrayIndexOfFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             ArrayView array = arrayArg.getArray(rec);
+            if (array.isNull()) {
+                return Numbers.INT_NULL;
+            }
             double value = valueArg.getDouble(rec);
             return Numbers.isNull(value) ? array.linearSearchDoubleNull1DArray()
                     : array.linearSearchDoubleValue1DArray(value);

@@ -60,15 +60,17 @@ public interface FlatArrayView {
      * Performs a binary search on the block of elements in this flat array. The
      * elements must be sorted in the order specified by the {@code ascending} parameter.
      *
-     * @param offset    the starting offset of the block (in elements)
-     * @param length    the number of elements in the block
-     * @param ascending if true, the elements are expected to be sorted in the ascending order;
-     *                  otherwise, they must be sorted in the descending order
+     * @param offset      the starting offset of the block (in elements)
+     * @param length      the number of elements in the block
+     * @param ascending   if true, the elements are expected to be sorted in the ascending order;
+     *                    otherwise, they must be sorted in the descending order
+     * @param forwardScan if true when array has multiple equal elements, return the position of the first equal element;
+     *                    otherwise, return the position of the last equal element.
      * @return if positive, it's the index of the found element. If negative, its absolute value
      * is the insertion point into the flat array of the element that wasn't found. In both cases,
      * the index is relative to the supplied offset.
      */
-    default int binarySearchDouble(double value, int offset, int length, boolean ascending) {
+    default int binarySearchDouble(double value, int offset, int length, boolean ascending, boolean forwardScan) {
         int low = offset;
         int high = offset + length - 1;
 
@@ -76,14 +78,25 @@ public interface FlatArrayView {
             int mid = low + (high - low) / 2;
             double midVal = getDoubleAtAbsIndex(mid);
             if (Math.abs(midVal - value) <= Numbers.DOUBLE_TOLERANCE) {
-                do {
-                    if (mid > low) {
-                        mid--;
-                    } else {
-                        return mid - offset + 1;
-                    }
-                } while (Math.abs(getDoubleAtAbsIndex(mid) - value) <= Numbers.DOUBLE_TOLERANCE);
-                return mid - offset + 2;
+                if (forwardScan) {
+                    do {
+                        if (mid > low) {
+                            mid--;
+                        } else {
+                            return mid - offset + 1;
+                        }
+                    } while (Math.abs(getDoubleAtAbsIndex(mid) - value) <= Numbers.DOUBLE_TOLERANCE);
+                    return mid - offset + 2;
+                } else {
+                    do {
+                        if (mid < high) {
+                            mid++;
+                        } else {
+                            return mid - offset + 1;
+                        }
+                    } while (Math.abs(getDoubleAtAbsIndex(mid) - value) <= Numbers.DOUBLE_TOLERANCE);
+                    return mid - offset;
+                }
             }
             if (ascending) {
                 if (midVal < value) {

@@ -1473,14 +1473,14 @@ Java_io_questdb_std_Vect_binarySearchIndexT(JNIEnv *env, jclass cl, jlong pData,
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_binarySearchDouble(
     JNIEnv *env, jclass cl, jlong pData, jdouble value, jlong low, jlong high,
-    bool ascend) {
-        if (ascend) {
-          return binary_search<true, double>(reinterpret_cast<double *>(pData),
-                                             value, low, high, -1);
-        } else {
-          return binary_search<false, double>(reinterpret_cast<double *>(pData),
-                                              value, low, high, -1);
-        }
+    bool ascend, jint scan_dir) {
+  if (ascend) {
+    return binary_search<true, double>(reinterpret_cast<double *>(pData), value,
+                                       low, high, scan_dir);
+  } else {
+    return binary_search<false, double>(reinterpret_cast<double *>(pData),
+                                        value, low, high, scan_dir);
+  }
 }
 
 JNIEXPORT void JNICALL
