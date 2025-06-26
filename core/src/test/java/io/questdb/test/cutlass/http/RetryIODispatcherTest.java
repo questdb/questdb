@@ -47,6 +47,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.test.tools.TestUtils.assertEventually;
 import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
 
 // These tests verify retry behaviour of IODispatcher and HttpConnectionContext.
@@ -587,20 +588,8 @@ public class RetryIODispatcherTest extends AbstractTest {
                     // Cairo engine should not allow second writer to be opened on the same table, all requests should wait for the writer to be available
                     writer.close();
 
-                    for (int i = 0; i < 20; i++) {
-                        try {
-                            // check if we have parallelCount x insertCount  records
-                            int nRows = (parallelCount + 1) * validRequestRecordCount;
-                            assertNRowsInserted(nRows);
-                            return;
-                        } catch (AssertionError e) {
-                            if (i < 9) {
-                                Os.sleep(50);
-                            } else {
-                                throw e;
-                            }
-                        }
-                    }
+                    int nRows = (parallelCount + 1) * validRequestRecordCount;
+                    assertEventually(() -> assertNRowsInserted(nRows));
                 });
     }
 
