@@ -453,21 +453,21 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[], ARRAY[[],[]])," +
                     "(null, null)"
             );
-            assertSql("array_shift\tarray_shift1\tarray_shift2\tarray_shift3\n" +
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
                             "[999.0,999.0,999.0,1.0,9.0,10.0,12.0,8.0]\t[999.0,9.0,10.0,12.0,8.0,null,20.0]\t[999.0,999.0]\t[null,null,null,1.0,9.0,10.0,12.0,8.0]\n" +
                             "[]\t[]\t[]\t[]\n" +
                             "null\tnull\tnull\tnull\n",
-                    "SELECT array_shift(arr1, 3, 999.0), array_shift(arr1[2:], 1, 999.0), array_shift(arr1[1:3], 10, 999.0), array_shift(arr1, 3) FROM tango");
-            assertSql("array_shift\tarray_shift1\tarray_shift2\tarray_shift3\n" +
+                    "SELECT shift(arr1, 3, 999.0), shift(arr1[2:], 1, 999.0), shift(arr1[1:3], 10, 999.0), shift(arr1, 3) FROM tango");
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
                             "[12.0,8.0,null,20.0,12.0,999.0,999.0,999.0]\t[10.0,12.0,8.0,null,20.0,12.0,999.0]\t[999.0,999.0]\t[12.0,8.0,null,20.0,12.0,null,null,null]\n" +
                             "[]\t[]\t[]\t[]\n" +
                             "null\tnull\tnull\tnull\n",
-                    "SELECT array_shift(arr1, -3, 999.0), array_shift(arr1[2:], -1, 999.0), array_shift(arr1[1:3], -10, 999.0), array_shift(arr1, -3) FROM tango");
-            assertSql("array_shift\tarray_shift1\tarray_shift2\tarray_shift3\n" +
+                    "SELECT shift(arr1, -3, 999.0), shift(arr1[2:], -1, 999.0), shift(arr1[1:3], -10, 999.0), shift(arr1, -3) FROM tango");
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
                             "[[999.0,1.0,9.0],[999.0,12.0,8.0]]\t[[9.0,10.0,999.0],[8.0,null,999.0]]\t[[999.0,999.0,999.0],[999.0,999.0,999.0]]\t[[10.0,null,null],[null,null,null]]\n" +
                             "[]\t[]\t[]\t[]\n" +
                             "null\tnull\tnull\tnull\n",
-                    "SELECT array_shift(arr2, 1, 999.0), array_shift(arr2[1:], -1, 999.0), array_shift(arr2, 5, 999.0), array_shift(arr2, -2) FROM tango");
+                    "SELECT shift(arr2, 1, 999.0), shift(arr2[1:], -1, 999.0), shift(arr2, 5, 999.0), shift(arr2, -2) FROM tango");
         });
     }
 
@@ -486,22 +486,22 @@ public class ArrayTest extends AbstractCairoTest {
                             "null\n",
                     "SELECT transpose(arr) FROM tango");
 
-            assertSql("array_shift\tarray_shift1\tarray_shift2\tarray_shift3\n" +
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
                             "[999.0,999.0,1.0,10.0]\t[999.0,10.0,8.0]\t[999.0,999.0]\t[null,null,null,1.0]\n" +
                             "null\tnull\tnull\tnull\n" +
                             "null\tnull\tnull\tnull\n",
-                    "SELECT array_shift(transpose(arr)[1], 2, 999.0), array_shift(transpose(arr)[1, 2:], 1, 999.0), array_shift(transpose(arr)[1, 1:3], 10, 999.0), array_shift(transpose(arr)[1], 3) FROM tango");
+                    "SELECT shift(transpose(arr)[1], 2, 999.0), shift(transpose(arr)[1, 2:], 1, 999.0), shift(transpose(arr)[1, 1:3], 10, 999.0), shift(transpose(arr)[1], 3) FROM tango");
 
-            assertSql("array_shift\tarray_shift1\tarray_shift2\tarray_shift3\n" +
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
                             "[8.0,20.0,999.0,999.0]\t[8.0,20.0,999.0]\t[999.0,999.0]\t[20.0,null,null,null]\n" +
                             "null\tnull\tnull\tnull\n" +
                             "null\tnull\tnull\tnull\n",
-                    "SELECT array_shift(transpose(arr)[1], -2, 999.0), array_shift(transpose(arr)[1, 2:], -1, 999.0), array_shift(transpose(arr)[1, 1:3], -10, 999.0), array_shift(transpose(arr)[1], -3) FROM tango");
-            assertSql("array_shift\tarray_shift1\tarray_shift2\tarray_shift3\n" +
+                    "SELECT shift(transpose(arr)[1], -2, 999.0), shift(transpose(arr)[1, 2:], -1, 999.0), shift(transpose(arr)[1, 1:3], -10, 999.0), shift(transpose(arr)[1], -3) FROM tango");
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
                             "[[999.0,1.0,10.0,8.0],[999.0,9.0,12.0,null]]\t[[10.0,8.0,20.0,999.0],[12.0,null,12.0,999.0]]\t[[999.0,999.0,999.0,999.0],[999.0,999.0,999.0,999.0]]\t[[8.0,20.0,null,null],[null,12.0,null,null]]\n" +
                             "[]\t[]\t[]\t[]\n" +
                             "null\tnull\tnull\tnull\n",
-                    "SELECT array_shift(transpose(arr), 1, 999.0), array_shift(transpose(arr)[1:], -1, 999.0), array_shift(transpose(arr), 5, 999.0), array_shift(transpose(arr), -2) FROM tango");
+                    "SELECT shift(transpose(arr), 1, 999.0), shift(transpose(arr)[1:], -1, 999.0), shift(transpose(arr), 5, 999.0), shift(transpose(arr), -2) FROM tango");
         });
     }
 
@@ -1290,8 +1290,8 @@ public class ArrayTest extends AbstractCairoTest {
                     "(null, null)"
             );
             assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\ti8\n" +
-                            "-1\t-10\t5\t-7\t8\t9\t-2\t5\n" +
-                            "-10\t-10\t4\t-4\t2\t1\t-2\t1\n" +
+                            "-1\t-1\t5\t-7\t8\t9\t-2\t5\n" +
+                            "-10\t-1\t4\t-4\t2\t1\t-2\t1\n" +
                             "null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n",
                     "SELECT " +
                             "index_of_sorted(arr1, 8) i1, " +
@@ -1305,8 +1305,8 @@ public class ArrayTest extends AbstractCairoTest {
                             "FROM tango");
 
             assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
-                            "-1\t-9\t5\t7\t8\t-2\t4\n" +
-                            "-9\t-9\t4\t2\t1\t-2\t1\n" +
+                            "-1\t-1\t5\t7\t8\t-2\t4\n" +
+                            "-9\t-1\t4\t2\t1\t-2\t1\n" +
                             "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
                     "SELECT " +
                             "index_of_sorted(arr2[1], 8) i1, " +

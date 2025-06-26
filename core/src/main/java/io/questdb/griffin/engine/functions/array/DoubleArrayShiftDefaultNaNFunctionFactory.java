@@ -40,7 +40,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayShiftDefaultNaNFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "array_shift";
+    private static final String FUNCTION_NAME = "shift";
 
     @Override
     public String getSignature() {
