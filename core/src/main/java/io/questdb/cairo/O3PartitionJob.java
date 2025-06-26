@@ -284,7 +284,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     rowGroupBuffers
             );
         } catch (Throwable th) {
-            LOG.error().$("process partition error [table=").utf8(tableWriter.getTableToken().getTableName())
+            LOG.error().$("process partition error [table=").$safe(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(th)
                     .I$();
             // the file is re-opened here because PartitionUpdater owns the file descriptor
@@ -413,7 +413,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     TableUtils.setPathForNativePartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, txn - 1);
                     createDirsOrFail(ff, path.slash(), tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
-                    LOG.error().$("process new partition error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    LOG.error().$("process new partition error [table=").$safe(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
                     tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
@@ -853,11 +853,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             }
                         }
                     } else {
-                        if (mergeType == O3_BLOCK_O3 && prefixType == O3_BLOCK_DATA && suffixType == O3_BLOCK_DATA) {
-                            // O3 data is supposed to be merged into the middle of an existing partition
-                            // but there is no O3 data, it's a replacing commit with no new rows, just the range.
-                            // At the end we have existing column data prefix, suffix and nothing to insert in between.
-                            // We can finish here without modifying this partition.
+                        // Replacing data with no O3 data, e.g. effectively deleting a part of the partition
+
+                        // O3 data is supposed to be merged into the middle of an existing partition
+                        // but there is no O3 data, it's a replacing commit with no new rows, just the range.
+                        // At the end we have existing column data prefix, suffix and nothing to insert in between.
+                        // We can finish here without modifying this partition.
+                        boolean noop = mergeType == O3_BLOCK_O3 && prefixType == O3_BLOCK_DATA && suffixType == O3_BLOCK_DATA;
+
+                        // No intersection with existing partition data, the whole replace range is before the existing partition
+                        noop |= suffixType == O3_BLOCK_DATA && suffixLo == 0 && suffixHi == srcDataMax - 1;
+
+                        // No intersection with existing partition data, the whole replace range is after the existing partition
+                        noop |= prefixType == O3_BLOCK_DATA && prefixLo == 0 && prefixHi == srcDataMax - 1;
+
+                        if (noop) {
                             updatePartition(ff, srcTimestampAddr, srcTimestampSize, srcTimestampFd, tableWriter, partitionUpdateSinkAddr, partitionTimestamp, newMinPartitionTimestamp, oldPartitionSize, oldPartitionSize, 0);
                             return;
                         }
@@ -1026,7 +1036,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
             } catch (Throwable e) {
-                LOG.error().$("process existing partition error [table=").utf8(tableWriter.getTableToken().getTableName())
+                LOG.error().$("process existing partition error [table=").$safe(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
                         .I$();
                 O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
@@ -2063,7 +2073,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             srcDataNewPartitionSize -= duplicateCount;
                         }
                         LOG.info()
-                                .$("dedup row reduction [table=").utf8(tableWriter.getTableToken().getTableName())
+                                .$("dedup row reduction [table=").$safe(tableWriter.getTableToken().getTableName())
                                 .$(", partition=").$ts(partitionTimestamp)
                                 .$(", duplicateCount=").$(duplicateCount)
                                 .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
@@ -2087,7 +2097,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
             } catch (Throwable e) {
                 tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                LOG.error().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
+                LOG.error().$("open column error [table=").$safe(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
                         .I$();
                 O3CopyJob.closeColumnIdleQuick(
@@ -2262,7 +2272,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                    LOG.critical().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    LOG.critical().$("open column error [table=").$safe(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
                     columnsInFlight = i + 1;

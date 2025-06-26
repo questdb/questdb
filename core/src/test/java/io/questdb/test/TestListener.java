@@ -66,8 +66,8 @@ public class TestListener extends RunListener {
         Description description = failure.getDescription();
         LOG.error()
                 .$("***** Test Assumption Violated ***** ")
-                .utf8(description.getClassName()).$('.')
-                .utf8(description.getMethodName())
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
                 .$(" duration_ms=")
                 .$(getTestDuration())
                 .$(" : ")
@@ -79,8 +79,8 @@ public class TestListener extends RunListener {
         Description description = failure.getDescription();
         LOG.error()
                 .$("***** Test Failed ***** ")
-                .utf8(description.getClassName()).$('.')
-                .utf8(description.getMethodName())
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
                 .$(" duration_ms=").$(getTestDuration())
                 .$(" : ")
                 .$(failure.getException()).$();
@@ -89,8 +89,8 @@ public class TestListener extends RunListener {
     @Override
     public void testFinished(Description description) {
         LOG.infoW().$("<<<< ")
-                .utf8(description.getClassName()).$('.')
-                .utf8(description.getMethodName())
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
                 .$(" duration_ms=").$(getTestDuration()).$();
         System.out.println("<<<<= " + description.getClassName() + '.' + description.getMethodName() + " duration_ms=" + getTestDuration());
     }
@@ -99,8 +99,8 @@ public class TestListener extends RunListener {
     public void testStarted(Description description) {
         testStartMs = System.currentTimeMillis();
         LOG.infoW().$(">>>> ")
-                .utf8(description.getClassName()).$('.')
-                .utf8(description.getMethodName())
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
                 .$();
         System.out.println(">>>>= " + description.getClassName() + '.' + description.getMethodName());
     }

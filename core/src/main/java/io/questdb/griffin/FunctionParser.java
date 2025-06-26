@@ -567,7 +567,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         Function function;
         try {
             LOG.debug().$("call ").$(node)
-                    .$(" -> ").utf8(factory.getSignature())
+                    .$(" -> ").$safe(factory.getSignature())
                     .$("[factory=").$(factory)
                     .I$();
             function = factory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
@@ -582,8 +582,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         if (function == null) {
             LOG.error().$("NULL function")
-                    .$(" [signature=").utf8(factory.getSignature())
-                    .$(", class=").utf8(factory.getClass().getName())
+                    .$(" [signature=").$safe(factory.getSignature())
+                    .$(", class=").$safe(factory.getClass().getName())
                     .I$();
             Misc.freeObjList(args);
             throw SqlException.position(position).put("bad function factory (NULL), check log");
