@@ -227,10 +227,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Incremental refresh. This means that there may be a data transaction in the base table
             // or someone has run REFRESH INCREMENTAL SQL.
             // Let's find min/max timestamps in the new WAL transactions.
-            txnIntervals = intervals;
-            txnIntervals.clear();
             if (lastRefreshTxn > -1) {
                 // It's a subsequent incremental refresh, so WalPurgeJob must be aware of us.
+                txnIntervals = intervals;
+                txnIntervals.clear();
                 txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, lastRefreshTxn, lastTxn);
                 minTs = txnRangeLoader.getMinTimestamp();
                 maxTs = txnRangeLoader.getMaxTimestamp();
@@ -239,7 +239,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // so let's take min/max timestamps from the reader.
                 minTs = baseTableReader.getMinTimestamp();
                 maxTs = baseTableReader.getMaxTimestamp();
-                txnIntervals.add(minTs, maxTs);
             }
         } else if (rangeRefresh) {
             // Range refresh. This means that the timer is triggered on a period mat view
@@ -310,9 +309,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         periodLo = baseTableReader.getMinTimestamp();
                     }
                     if (periodLo < periodHi) {
-                        unionTxnIntervals(txnIntervals, periodLo, periodHi);
-                        minTs = txnIntervals.getQuick(0);
-                        maxTs = txnIntervals.getQuick(txnIntervals.size() - 1);
+                        if (txnIntervals != null) {
+                            unionTxnIntervals(txnIntervals, periodLo, periodHi);
+                            minTs = txnIntervals.getQuick(0);
+                            maxTs = txnIntervals.getQuick(txnIntervals.size() - 1);
+                        } else {
+                            minTs = periodLo;
+                            maxTs = periodHi;
+                        }
                         // Bump lastPeriodHi once we're done.
                         // lastPeriodHi is exclusive, but the local periodHi value is inclusive.
                         refreshIntervals.periodHi = periodHi + 1;
