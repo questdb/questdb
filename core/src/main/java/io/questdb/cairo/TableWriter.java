@@ -10153,7 +10153,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount)) {
             try (Frame commitFrame = openCommitFrame()) {
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
-                    if (!nonDedupOnly) {
+                    if (nonDedupOnly) {
                         // Do not compare dedup keys, already a match
                         if (!metadata.isDedupKey(i) && !FrameAlgebra.isColumnReplaceIdentical(
                                 i,

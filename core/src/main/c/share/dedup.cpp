@@ -563,40 +563,39 @@ inline bool is_column_replace_identical(
         return false;
     }
 
-    int64_t both_nulls_count = std::max<int64_t>(
+    int64_t min_col_top_rel = std::max<int64_t>(
             std::min<int64_t>(column_top1 - lo1, column_top2 - lo2),
             0
     );
 
-    // If first column has column top sticking out of both_nulls_count,
+    // If first column has column top sticking out of min_col_top_rel,
     // check that second column values are nulls in that range
     auto col1_col_top_sticks_out_count = column_top1 - lo1;
-    if (col1_col_top_sticks_out_count > both_nulls_count
+    if (col1_col_top_sticks_out_count > min_col_top_rel
         && is_not_null_lambda(
             1,
-            lo2 - column_top2 + both_nulls_count,
+            lo2 - column_top2 + min_col_top_rel,
             lo2 - column_top2 + col1_col_top_sticks_out_count)) {
         return false;
     }
 
-    // If second column has column top sticking out of both_nulls_count,
+    // If second column has column top sticking out of min_col_top_rel,
     // check that second column values are nulls in that range
     auto col2_col_top_sticks_out_count = column_top2 - lo2;
-    if (col2_col_top_sticks_out_count > both_nulls_count
+    if (col2_col_top_sticks_out_count > min_col_top_rel
         && is_not_null_lambda(
             0,
-            lo1 - column_top1 + both_nulls_count,
+            lo1 - column_top1 + min_col_top_rel,
             lo1 - column_top1 + col2_col_top_sticks_out_count)) {
         return false;
     }
 
-    auto both_not_null = std::max<int64_t>(
-            column_top1 - lo1,
-            column_top2 - lo2
+    auto max_col_top_rel = std::max<int64_t>(
+            std::max<int64_t>(column_top1 - lo1, column_top2 - lo2),
+            0
     );
-    if (are_not_equal_lambda(lo1 - column_top1 - both_not_null,
-                             lo2 - column_top2 - both_not_null,
-                             hi2 - column_top2 - both_not_null)) {
+    auto compare_row_count = row_count - max_col_top_rel;
+    if (compare_row_count > 0 && are_not_equal_lambda(lo1 + max_col_top_rel, lo2 + max_col_top_rel, compare_row_count)) {
         return false;
     }
     return true;
@@ -680,18 +679,18 @@ bool is_varchar_column_merge_identical(
                     auto aux1_cmp = reinterpret_cast<const VarcharAuxEntryBoth *>(aux1 + lo1);
                     auto aux2_cmp = reinterpret_cast<const VarcharAuxEntryBoth *>(aux2 + lo2);
                     for (int64_t i = 0; i < size; i++) {
-                        auto aux1_entry = aux1_cmp[lo1 + i];
-                        auto aux2_entry = aux2_cmp[lo2 + i];
+                        auto aux1_entry = aux1_cmp[i];
+                        auto aux2_entry = aux2_cmp[i];
                         if (aux1_entry.header1 != aux2_entry.header1 ||
                             aux1_entry.header2 != aux2_entry.header2) {
                             return true;
                         }
                     }
                     // Compare data
-                    auto data1_offset_lo = aux1_cmp[lo1].get_data_offset();
-                    auto data1_offset_hi = aux1_cmp[lo1 + size - 1].get_data_offset();
-                    auto data2_offset_lo = aux2_cmp[lo2].get_data_offset();
-                    auto data2_offset_hi = aux2_cmp[lo2 + size - 1].get_data_offset();
+                    auto data1_offset_lo = aux1_cmp[0].get_data_offset();
+                    auto data1_offset_hi = aux1_cmp[size - 1].get_data_offset();
+                    auto data2_offset_lo = aux2_cmp[0].get_data_offset();
+                    auto data2_offset_hi = aux2_cmp[size - 1].get_data_offset();
                     if (data1_offset_hi - data1_offset_lo != data2_offset_hi - data2_offset_lo) {
                         return true;
                     }

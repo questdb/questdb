@@ -648,7 +648,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     dataTimestampHi,
                                     srcOooLo,
                                     srcOooHi,
-                                    tableWriter.isCommitDedupMode() ? Vect.BIN_SEARCH_SCAN_DOWN : Vect.BIN_SEARCH_SCAN_UP
+                                    tableWriter.isCommitDedupMode() || tableWriter.isCommitReplaceMode() ? Vect.BIN_SEARCH_SCAN_DOWN : Vect.BIN_SEARCH_SCAN_UP
                             );
 
                             mergeDataHi = srcDataMax - 1;
@@ -855,10 +855,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             mergeO3Hi - mergeO3Lo,
                                             false
                                     )) {
-                                        LOG.info().$("replace commit resuled in identical data [table=").$safe(tableWriter.getTableToken().getTableName())
+                                        LOG.info().$("replace commit resulted in identical data [table=").$safe(tableWriter.getTableToken().getTableName())
                                                 .$(", partitionTimestamp=").$ts(partitionTimestamp)
                                                 .$(", srcNameTxn=").$(srcNameTxn)
                                                 .I$();
+                                        // No need to update partition, it is identical to the existing one
+                                        updatePartition(ff, srcTimestampAddr, srcTimestampSize, srcTimestampFd, tableWriter, partitionUpdateSinkAddr, partitionTimestamp, newMinPartitionTimestamp, oldPartitionSize, oldPartitionSize, 0);
+                                        return;
                                     }
                                 }
                             }
