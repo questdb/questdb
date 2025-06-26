@@ -133,7 +133,6 @@ public final class ColumnType {
     public static final int TIMESTAMP_MICRO = TIMESTAMP_MICRO_PRECISION_FLAG | TIMESTAMP;
     private static final int TIMESTAMP_NANO_PRECISION_FLAG = 1 << 16;
     public static final int TIMESTAMP_NANO = TIMESTAMP_NANO_PRECISION_FLAG | TIMESTAMP;
-    private static final int TIMESTAMP_PRECISION_MASK = 0xFFFF0000;
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
     private static final IntHashSet arrayTypeSet = new IntHashSet();
