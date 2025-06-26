@@ -61,12 +61,6 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     }
 
     @Override
-    public int binarySearchDouble(double value, int offset, int length, boolean ascending, boolean forwardScan) {
-        long v = Vect.binarySearchDouble(this.ptr + (long) offset * Double.BYTES, value, 0, length - 1, ascending, forwardScan ? -1 : 1);
-        return v < 0 ? (int) v : (int) (v + 1);
-    }
-
-    @Override
     public int countDouble(int offset, int length) {
         return (int) Vect.countDouble(this.ptr + (long) offset * Double.BYTES, length);
     }
