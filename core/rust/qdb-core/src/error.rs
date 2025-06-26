@@ -234,7 +234,7 @@ mod tests {
         assert!(matches!(reason, CoreErrorReason::Io(_)));
         let display = err.to_string();
         assert_eq!(display, "wider_context: context_msg: io_error");
-        let debug = format!("{:?}", err);
+        let debug = format!("{err:?}");
         assert!(debug.starts_with(concat!(
             "CoreError\n",
             "    Reason: Io(Custom { kind: Other, error: \"io_error\" })\n",
@@ -273,7 +273,7 @@ mod tests {
     #[test]
     pub fn format_with_backtrace() {
         let err = fmt_err!(InvalidType, "message");
-        let alternate = format!("{:#}", err);
+        let alternate = format!("{err:#}");
         assert!(alternate.starts_with("message"));
 
         let backtraces_enabled = Backtrace::capture().status() == BacktraceStatus::Captured;
