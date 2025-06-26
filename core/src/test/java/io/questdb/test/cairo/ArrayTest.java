@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.DirectArray;
@@ -37,6 +38,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -56,6 +58,13 @@ public class ArrayTest extends AbstractCairoTest {
         int flatSize = array.borrowedFlatView().size();
         Vect.memcpy(addr + offset, array.ptr(), flatSize);
         return offset + flatSize;
+    }
+
+    @Override
+    @Before
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf("true"));
+        super.setUp();
     }
 
     @Test
@@ -418,6 +427,112 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("dot_product\tdot_product1\tdot_product2\n" +
                     "11.0\t30.0\t30.0\n" +
                     "2.0\t10.0\t10.0\n", "SELECT dot_product(transpose(left), 1.0), dot_product(transpose(right), 2.0), dot_product(2.0, transpose(right)) FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayFunctionInAggregation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tango (ts timestamp, a double, arr double[]) timestamp(ts) partition by DAY");
+            execute("insert into tango values " +
+                    "('2025-06-26', 1.0, ARRAY[1.0,2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])," +
+                    "('2025-06-26', 10.0, null)," +
+                    "('2025-06-27', 18.0, ARRAY[11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0])," +
+                    "('2025-06-27', 25.0, ARRAY[21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 30.0])");
+            assertQueryAndPlan(
+                    "ts\tv\n" +
+                            "2025-06-26T00:00:00.000000Z\t1\n" +
+                            "2025-06-27T00:00:00.000000Z\t8\n",
+                    "Radix sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts]\n" +
+                            "      values: [max(index_of(arr, a))]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tango\n",
+                    "select ts, max(index_of(arr, a)) as v from tango sample by 1d",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryAndPlan(
+                    "ts\tv\n" +
+                            "2025-06-26T00:00:00.000000Z\t1\n" +
+                            "2025-06-27T00:00:00.000000Z\t13\n",
+                    "Radix sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts]\n" +
+                            "      values: [sum(index_of(arr, a))]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tango\n",
+                    "select ts, sum(index_of_sorted(arr, a)) as v from tango sample by 1d",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryAndPlan(
+                    "ts\tv\n" +
+                            "2025-06-26T00:00:00.000000Z\t2\n" +
+                            "2025-06-27T00:00:00.000000Z\t6\n",
+                    "Radix sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts]\n" +
+                            "      values: [min(insertion_point(arr,a))]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tango\n",
+                    "select ts, min(insertion_point(arr, a)) as v from tango sample by 1d",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryAndPlan(
+                    "ts\tv\n" +
+                            "2025-06-26T00:00:00.000000Z\t10\n" +
+                            "2025-06-27T00:00:00.000000Z\t20\n",
+                    "Radix sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts]\n" +
+                            "      values: [sum(array_count(arr))]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tango\n",
+                    "select ts, sum(array_count(arr)) as v from tango sample by 1d",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryAndPlan(
+                    "ts\tv\n" +
+                            "2025-06-26T00:00:00.000000Z\t5.5\n" +
+                            "2025-06-27T00:00:00.000000Z\t41.0\n",
+                    "Radix sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts]\n" +
+                            "      values: [sum(array_avg(arr))]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tango\n",
+                    "select ts, sum(array_avg(arr)) as v from tango sample by 1d",
+                    "ts",
+                    true,
+                    true
+            );
         });
     }
 

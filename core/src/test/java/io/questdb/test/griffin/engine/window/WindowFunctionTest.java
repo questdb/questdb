@@ -6096,7 +6096,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
         }
     }
 
-    private void assertQueryAndPlan(String query, String plan, String expectedResult, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
+    private void assertWindowException(String query, int position, CharSequence errorMessage) throws Exception {
+        for (String frameType : FRAME_TYPES) {
+            assertExceptionNoLeakCheck(query.replace("#FRAME", frameType), position, errorMessage);
+        }
+    }
+
+    protected void assertQueryAndPlan(String query, String plan, String expectedResult, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertPlanNoLeakCheck(query, plan);
 
         assertQueryNoLeakCheck(
@@ -6106,12 +6112,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 supportsRandomAccess,
                 expectSize
         );
-    }
-
-    private void assertWindowException(String query, int position, CharSequence errorMessage) throws Exception {
-        for (String frameType : FRAME_TYPES) {
-            assertExceptionNoLeakCheck(query.replace("#FRAME", frameType), position, errorMessage);
-        }
     }
 
     static {
