@@ -54,7 +54,7 @@ public final class TimestampFunctionMemoizer extends TimestampFunction implement
 
     @Override
     public long getTimestamp(Record rec) {
-        return memoized ? value : fn.getLong(rec);
+        return memoized ? value : fn.getTimestamp(rec);
     }
 
     @Override
@@ -65,7 +65,7 @@ public final class TimestampFunctionMemoizer extends TimestampFunction implement
 
     @Override
     public void prefetch(Record record) {
-        value = fn.getLong(record);
+        value = fn.getTimestamp(record);
         memoized = true;
     }
 
