@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
@@ -45,9 +46,9 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
     private GroupByAllocator allocator;
     private int valueIndex;
 
-    public FirstArrayGroupByFunction(@NotNull Function arg, int arrayType) {
+    public FirstArrayGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
-        this.type = arrayType;
+        this.type = arg.getType();
     }
 
     @Override
@@ -56,6 +57,7 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
 
     @Override
     public void close() {
+        Misc.free(arg);
     }
 
     @Override

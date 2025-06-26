@@ -50,6 +50,6 @@ public class FirstArrayGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new FirstArrayGroupByFunction(args.getQuick(0), args.getQuick(0).getType());
+        return new FirstArrayGroupByFunction(args.getQuick(0));
     }
 }
