@@ -214,26 +214,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
-    public int getPeriodDelay() {
-        return periodDelay;
-    }
-
-    @Override
-    public char getPeriodDelayUnit() {
-        return periodLengthUnit;
-    }
-
-    @Override
-    public int getPeriodLength() {
-        return periodLength;
-    }
-
-    @Override
-    public char getPeriodLengthUnit() {
-        return periodLengthUnit;
-    }
-
-    @Override
     public int getRefreshType() {
         return refreshType;
     }
@@ -261,26 +241,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public int getTableNamePosition() {
         return createTableOperation.getTableNamePosition();
-    }
-
-    @Override
-    public int getTimerInterval() {
-        return 0;
-    }
-
-    @Override
-    public long getTimerStart() {
-        return 0;
-    }
-
-    @Override
-    public @Nullable CharSequence getTimerTimeZone() {
-        return null;
-    }
-
-    @Override
-    public char getTimerUnit() {
-        return 0;
     }
 
     @Override
