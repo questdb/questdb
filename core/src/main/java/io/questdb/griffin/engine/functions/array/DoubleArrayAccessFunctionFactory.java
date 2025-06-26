@@ -349,8 +349,8 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 } else {
                     // Decrement the index in the argument because Postgres uses 1-based array indexing
                     int index = rangeFn.getInt(rec) - 1;
-                    int dimLen = derivedArray.getDimLen(dim);
                     if (index < 0) {
+                        int dimLen = derivedArray.getDimLen(dim);
                         throw CairoException.nonCritical()
                                 .position(argPos)
                                 .put("array index must be positive [dim=").put(dim + 1)
