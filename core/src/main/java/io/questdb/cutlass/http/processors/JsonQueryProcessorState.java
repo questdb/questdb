@@ -315,7 +315,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 .$("[compiler: ").$(compilerNanos)
                 .$(", count: ").$(recordCountNanos)
                 .$(", execute: ").$(nanosecondClock.getTicks() - executeStartNanos)
-                .$(", q=`").utf8(getQueryOrHidden())
+                .$(", q=`").$safe(getQueryOrHidden())
                 .$("`]").$();
     }
 
@@ -512,7 +512,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             int hi
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (start == hi) {
-            info().$("empty column in list '").utf8(columnNames).$('\'').$();
+            info().$("empty column in list '").$safe(columnNames).$('\'').$();
             HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
             JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
             response.putAscii('{')

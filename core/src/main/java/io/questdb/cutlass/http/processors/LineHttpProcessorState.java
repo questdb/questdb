@@ -283,7 +283,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
         errorRec.$('[').$(fd).$("] could not commit [table=").$(parser.getMeasurementName())
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
-                .$(", ex=").utf8(ex.getMessage())
+                .$(", ex=").$safe(ex.getMessage())
                 .I$();
         return status;
     }
@@ -367,7 +367,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         if (logMessageOnError) {
             errorRec.$(", mangledLine=`").$safe(recvBuffer.getBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');
         }
-        errorRec.$(", ex=").utf8(ex.getMessage()).I$();
+        errorRec.$(", ex=").$safe(ex.getMessage()).I$();
 
         error.put("write error: ").put(parser.getMeasurementName())
                 .put(", error: ").put(ex.getClass().getCanonicalName());
@@ -385,7 +385,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         errorRec.$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
                 .$(", table=").$safe(parser.getMeasurementName())
                 .$(", line=").$(errorLine)
-                .$(", error=").utf8(error.subSequence(errorPos, error.length()))
+                .$(", error=").$safe(error.subSequence(errorPos, error.length()))
                 .$(", fd=").$(fd);
         if (logMessageOnError) {
             errorRec.$(", mangledLine=`").$safe(recvBuffer.getBufStartOfMeasurement(), parser.getBufferAddress()).$('`');
@@ -396,7 +396,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private void logError() {
         errorId = ERROR_COUNT.incrementAndGet();
         LOG.info().$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
-                .$(", error=").utf8(error)
+                .$(", error=").$safe(error)
                 .$(", fd=").$(fd)
                 .I$();
     }

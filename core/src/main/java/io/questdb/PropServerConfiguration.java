@@ -1579,7 +1579,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 defaultTcpPartitionByProperty = getString(properties, env, PropertyKey.LINE_DEFAULT_PARTITION_BY, defaultTcpPartitionByProperty);
                 this.lineTcpDefaultPartitionBy = PartitionBy.fromString(defaultTcpPartitionByProperty);
                 if (this.lineTcpDefaultPartitionBy == -1) {
-                    log.info().$("invalid partition by ").utf8(defaultTcpPartitionByProperty).$("), will use DAY for TCP").$();
+                    log.info().$("invalid partition by ").$safe(defaultTcpPartitionByProperty).$("), will use DAY for TCP").$();
                     this.lineTcpDefaultPartitionBy = PartitionBy.DAY;
                 }
                 this.minIdleMsBeforeWriterRelease = getMillis(properties, env, PropertyKey.LINE_TCP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE, 500);
@@ -1601,13 +1601,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                 String floatDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_FLOAT_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.DOUBLE));
                 this.floatDefaultColumnType = ColumnType.tagOf(floatDefaultColumnTypeName);
                 if (floatDefaultColumnType != ColumnType.DOUBLE && floatDefaultColumnType != ColumnType.FLOAT) {
-                    log.info().$("invalid default column type for float ").utf8(floatDefaultColumnTypeName).$(", will use DOUBLE").$();
+                    log.info().$("invalid default column type for float ").$safe(floatDefaultColumnTypeName).$(", will use DOUBLE").$();
                     this.floatDefaultColumnType = ColumnType.DOUBLE;
                 }
                 String integerDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_INTEGER_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.LONG));
                 this.integerDefaultColumnType = ColumnType.tagOf(integerDefaultColumnTypeName);
                 if (integerDefaultColumnType != ColumnType.LONG && integerDefaultColumnType != ColumnType.INT && integerDefaultColumnType != ColumnType.SHORT && integerDefaultColumnType != ColumnType.BYTE) {
-                    log.info().$("invalid default column type for integer ").utf8(integerDefaultColumnTypeName).$(", will use LONG").$();
+                    log.info().$("invalid default column type for integer ").$safe(integerDefaultColumnTypeName).$(", will use LONG").$();
                     this.integerDefaultColumnType = ColumnType.LONG;
                 }
 

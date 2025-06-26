@@ -166,7 +166,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                             if (retries == maxSqlRecompileAttempts) {
                                 throw SqlException.$(0, e.getFlyweightMessage());
                             }
-                            info(state).utf8(e.getFlyweightMessage()).$();
+                            info(state).$safe(e.getFlyweightMessage()).$();
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);
                             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
@@ -477,27 +477,27 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         if (e instanceof CairoException) {
             CairoException ce = (CairoException) e;
             if (ce.isInterruption()) {
-                info(state).$("query cancelled [reason=`").utf8(((CairoException) e).getFlyweightMessage())
-                        .$("`, q=`").utf8(state.query)
+                info(state).$("query cancelled [reason=`").$safe(((CairoException) e).getFlyweightMessage())
+                        .$("`, q=`").$safe(state.query)
                         .$("`]").$();
             } else if (ce.isCritical()) {
-                critical(state).$("error [msg=`").utf8(ce.getFlyweightMessage())
+                critical(state).$("error [msg=`").$safe(ce.getFlyweightMessage())
                         .$("`, errno=").$(ce.getErrno())
-                        .$("`, q=`").utf8(state.query)
+                        .$("`, q=`").$safe(state.query)
                         .$("`]").$();
             } else {
-                error(state).$("error [msg=`").utf8(ce.getFlyweightMessage())
+                error(state).$("error [msg=`").$safe(ce.getFlyweightMessage())
                         .$("`, errno=").$(ce.getErrno())
-                        .$("`, q=`").utf8(state.query)
+                        .$("`, q=`").$safe(state.query)
                         .$("`]").$();
             }
         } else if (e instanceof HttpException) {
-            error(state).$("internal HTTP server error [reason=`").utf8(((HttpException) e).getFlyweightMessage())
-                    .$("`, q=`").utf8(state.query)
+            error(state).$("internal HTTP server error [reason=`").$safe(((HttpException) e).getFlyweightMessage())
+                    .$("`, q=`").$safe(state.query)
                     .$("`]").$();
         } else {
             critical(state).$("internal error [ex=").$(e)
-                    .$(", q=`").utf8(state.query)
+                    .$(", q=`").$safe(state.query)
                     .$("`]").$();
             // This is a critical error, so we treat it as an unhandled one.
             metrics.healthMetrics().incrementUnhandledErrors();
@@ -732,9 +732,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             TextQueryProcessorState state,
             FlyweightMessageContainer container
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        info(state).$("syntax-error [q=`").utf8(state.query)
+        info(state).$("syntax-error [q=`").$safe(state.query)
                 .$("`, at=").$(container.getPosition())
-                .$(", message=`").utf8(container.getFlyweightMessage()).$('`').I$();
+                .$(", message=`").$safe(container.getFlyweightMessage()).$('`').I$();
         sendException(response, container.getPosition(), container.getFlyweightMessage(), state);
     }
 

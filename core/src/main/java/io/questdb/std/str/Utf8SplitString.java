@@ -73,6 +73,11 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
     }
 
     @Override
+    public int intAt(int offset) {
+        return Unsafe.getUnsafe().getInt(dataLo + offset);
+    }
+
+    @Override
     public boolean isAscii() {
         return ascii;
     }
@@ -119,6 +124,11 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
     @Override
     public long ptr() {
         return dataLo;
+    }
+
+    @Override
+    public short shortAt(int offset) {
+        return Unsafe.getUnsafe().getShort(dataLo + offset);
     }
 
     @Override

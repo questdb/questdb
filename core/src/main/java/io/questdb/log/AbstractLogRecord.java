@@ -294,6 +294,16 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $safe(@Nullable CharSequence sequence) {
+        if (sequence == null) {
+            sink().putAscii("null");
+        } else {
+            sink().put(sequence);
+        }
+        return this;
+    }
+
+    @Override
     public LogRecord $size(long memoryBytes) {
         sink().putSize(memoryBytes);
         return this;
@@ -426,16 +436,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
             sink().putISODate(us);
         }
 
-        return this;
-    }
-
-    @Override
-    public LogRecord utf8(@Nullable CharSequence sequence) {
-        if (sequence == null) {
-            sink().putAscii("null");
-        } else {
-            sink().put(sequence);
-        }
         return this;
     }
 

@@ -45,7 +45,7 @@ public interface LogRecord extends Utf8Sink {
      * validate it. It puts only the lower byte of each char to the record, so if this ends
      * up being a non-ASCII byte, the record's UTF-8 output breaks.
      * <p>
-     * If the sequence may contain non-ASCII chars, use {@link #utf8(CharSequence)} instead.
+     * If the sequence may contain non-ASCII chars, use {@link #$safe(CharSequence)} instead.
      */
     LogRecord $(@Nullable CharSequence sequence);
 
@@ -100,6 +100,8 @@ public interface LogRecord extends Utf8Sink {
 
     LogRecord $safe(long lo, long hi);
 
+    LogRecord $safe(@Nullable CharSequence sequence);
+
     LogRecord $size(long memoryBytes);
 
     LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence);
@@ -119,8 +121,4 @@ public interface LogRecord extends Utf8Sink {
     LogRecord microTime(long x);
 
     LogRecord ts();
-
-    // TODO: rename to $safe(). The name should start with $, and the argument is UTF8-encoded.
-    // It is a variant of $(CharSequence) which doesn't assume all chars are ASCII.
-    LogRecord utf8(@Nullable CharSequence sequence);
 }

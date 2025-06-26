@@ -418,7 +418,7 @@ public class ColumnTypeConverter {
             }
         } catch (CairoException ex) {
             LOG.error().$("cannot read STRING column data vector size, column data is corrupt will fall back reading file sizes [srcFixFd=").$(srcFixFd)
-                    .$(", msg=").utf8(ex.getFlyweightMessage())
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             return false;
@@ -1103,5 +1103,3 @@ public class ColumnTypeConverter {
         void convert(T srcVar, MemoryA dstFixMem);
     }
 }
-
-

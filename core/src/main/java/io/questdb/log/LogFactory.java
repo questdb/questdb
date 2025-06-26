@@ -1019,6 +1019,11 @@ public class LogFactory implements Closeable {
         }
 
         @Override
+        public LogRecord $safe(@Nullable CharSequence sequence) {
+            return this;
+        }
+
+        @Override
         public LogRecord $size(long memoryBytes) {
             return this;
         }
@@ -1075,11 +1080,6 @@ public class LogFactory implements Closeable {
 
         @Override
         public LogRecord ts() {
-            return this;
-        }
-
-        @Override
-        public LogRecord utf8(@Nullable CharSequence sequence) {
             return this;
         }
     }

@@ -673,6 +673,11 @@ public class LogAlertSocketTest {
         }
 
         @Override
+        public LogRecord $safe(@Nullable CharSequence sequence) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public LogRecord $size(long memoryBytes) {
             sink.putSize(memoryBytes);
             return this;
@@ -735,11 +740,6 @@ public class LogAlertSocketTest {
 
         @Override
         public LogRecord ts() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public LogRecord utf8(@Nullable CharSequence sequence) {
             throw new UnsupportedOperationException();
         }
     }

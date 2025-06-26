@@ -250,7 +250,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             this.tableToken = tableToken;
             this.tableName = tableName.getCacheAddress();
             createState(entry);
-            LOG.info().$("cached writer [name=").utf8(tableName).$(']').$();
+            LOG.info().$("cached writer [name=").$safe(tableName).$(']').$();
         } catch (CairoException ex) {
             LOG.error().$((Sinkable) ex).$();
             switchModeToSkipLine();
@@ -272,7 +272,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             try {
                 return writer.newRow(timestampDriver.from(Numbers.parseLong(cache.get(columnValues.getQuick(valueCount - 1))), timestampUnit));
             } catch (NumericException e) {
-                LOG.error().$("invalid timestamp: ").utf8(cache.get(columnValues.getQuick(valueCount - 1))).$();
+                LOG.error().$("invalid timestamp: ").$safe(cache.get(columnValues.getQuick(valueCount - 1))).$();
                 return null;
             }
         }
@@ -360,7 +360,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     private void parseFieldNameNewTable(CachedCharSequence token) {
         if (!TableUtils.isValidColumnName(token, udpConfiguration.getMaxFileNameLength())) {
-            LOG.error().$("invalid column name [columnName=").utf8(token).I$();
+            LOG.error().$("invalid column name [columnName=").$safe(token).I$();
             switchModeToSkipLine();
             return;
         }
@@ -460,8 +460,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 columnValues.add(value.getCacheAddress());
                 geoHashBitsSizeByColIdx.add(geoHashBits);
             } else {
-                LOG.error().$("mismatched column and value types [table=").utf8(writer.getTableToken().getTableName())
-                        .$(", column=").utf8(metadata.getColumnName(columnIndex))
+                LOG.error().$("mismatched column and value types [table=").$safe(writer.getTableToken().getTableName())
+                        .$(", column=").$safe(metadata.getColumnName(columnIndex))
                         .$(", columnType=").$(ColumnType.nameOf(columnType))
                         .$(", valueType=").$(ColumnType.nameOf(valueType))
                         .$(']').$();
@@ -482,8 +482,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                         .put(", columnName=").put(colNameAsChars)
                         .put(']');
             } else {
-                LOG.error().$("invalid column name [table=").utf8(writer.getTableToken().getTableName())
-                        .$(", columnName=").utf8(colNameAsChars)
+                LOG.error().$("invalid column name [table=").$safe(writer.getTableToken().getTableName())
+                        .$(", columnName=").$safe(colNameAsChars)
                         .$(']').$();
                 switchModeToSkipLine();
             }

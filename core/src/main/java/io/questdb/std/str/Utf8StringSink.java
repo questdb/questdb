@@ -77,6 +77,11 @@ public class Utf8StringSink implements MutableUtf8Sink {
     }
 
     @Override
+    public int intAt(int offset) {
+        return Unsafe.byteArrayGetInt(buffer, offset);
+    }
+
+    @Override
     public boolean isAscii() {
         return ascii;
     }
@@ -150,6 +155,11 @@ public class Utf8StringSink implements MutableUtf8Sink {
     public void resetCapacity() {
         this.buffer = new byte[initialCapacity];
         clear();
+    }
+
+    @Override
+    public short shortAt(int offset) {
+        return Unsafe.byteArrayGetShort(buffer, offset);
     }
 
     @Override
