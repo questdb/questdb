@@ -195,6 +195,25 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAccessWithNullIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (n INT, arr DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES (null, ARRAY[1.0, 2], ARRAY[[1.0, 2], [3.0, 4]])");
+            assertSql("[]\nnull\n", "SELECT arr[null::int] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr[n] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr[1:null] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr[null:2] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr[1:n] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr[n:2] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr2[1, null::int] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr2[1, n] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr2[1, n:2] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr2[1, 1:n] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr2[1:2, 1:n] FROM tango");
+        });
+    }
+
+    @Test
     public void testAddColumnUnsupportedType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (n LONG)");
