@@ -3144,7 +3144,7 @@ public class SqlOptimiser implements Mutable {
   "select a.x, b.y from (select x,z from tab1 where x = 'Z' order by z) a " +
                         "asof join (select y,z,s from tab2 where s ~ 'K' order by s) b where a.x = b.z"
  */
-    private boolean isModelEligibleForOptimisation(SqlExecutionContext executionContext , QueryModel targetModel) {
+    private boolean isModelEligibleForOptimisation(SqlExecutionContext executionContext , QueryModel targetModel, QueryModel parent) {
         boolean isOrderByPresent = false;
         boolean isLimitPresent = false;
         boolean isWhereClausePresent = false;
@@ -3164,27 +3164,29 @@ public class SqlOptimiser implements Mutable {
 
             if (targetModel.getWhereClause() != null) {
                 isWhereClausePresent = true;
-                String whereClauseColumn = targetModel.getWhereClause().lhs.token.toString();
-                int dot = whereClauseColumn.indexOf('.');
-                String whereClauseColumnName = whereClauseColumn.substring(dot + 1);
-                String whereClauseColumnAlias = dot == -1 ? null : whereClauseColumn.substring(0, dot);
+                if(targetModel.getWhereClause().token.toString().equals("between")){
+                    ObjList<ExpressionNode> whereClauseArgs = targetModel.getWhereClause().args;
+                    if(whereClauseArgs.get(0).type != CONSTANT || whereClauseArgs.get(1).type != CONSTANT) {
+                        return false;
+                    }
+                }
 
-                String whereClauseValue = targetModel.getWhereClause().rhs.token.toString();
-                dot = whereClauseValue.indexOf('.');
-                String whereClauseActualValue = whereClauseValue.substring(dot + 1);
-                String whereClauseValueAlias = dot == -1 ? null : whereClauseValue.substring(0, dot);
-                CharSequence joinModelAlias = targetModel.getJoinModels().get(1).getAlias() != null ?
-                        targetModel.getJoinModels().get(1).getAlias().token : targetModel.getJoinModels().get(1).getTableNameExpr().token;
+                else {
+                    String whereClauseColumn = targetModel.getWhereClause().lhs.token.toString();
+                    int dot = whereClauseColumn.indexOf('.');
+                    String whereClauseColumnName = whereClauseColumn.substring(dot + 1);
 
-                //if where clause column is from slave table OR there is a join condition, then ASOF join optimisation will not be applied
-                if (joinModelAlias.toString().equals(whereClauseValueAlias) ||
-                        joinModelAlias.toString().equals(whereClauseColumnAlias)
-                        || !targetModel.getAliasToColumnMap().contains(whereClauseColumnName)) {
-                    return false;
+                    int whereClauseValueType = targetModel.getWhereClause().rhs.type;
+
+                    //if where clause column is from slave table OR there is a join condition, then ASOF join optimisation will not be applied
+                    if ( whereClauseValueType != CONSTANT
+                            || !targetModel.getAliasToColumnMap().contains(whereClauseColumnName)) {
+                        return false;
+                    }
                 }
             }
 
-            isLimitPresent = targetModel.getLimitLo() != null;
+            isLimitPresent = parent.getLimitLo() != null;
             return isWhereClausePresent || (isOrderByPresent && isLimitPresent);
         }
         return false;
@@ -3209,7 +3211,7 @@ public class SqlOptimiser implements Mutable {
             targetModel = targetModel.getNestedModel();
         }
 
-        if(!isModelEligibleForOptimisation(executionContext, targetModel))
+        if(!isModelEligibleForOptimisation(executionContext, targetModel, parentModel))
             return;
 
         ObjList<QueryModel> joinModels = model.getJoinModels();
@@ -3273,10 +3275,10 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0; i < targetModel.getOrderBy().size(); i++) {
                 ExpressionNode aliasNode = expressionNodePool.next();
                 CharSequence truncateAlias = targetModel.getTableNameExpr() != null ?
-                        model.getNestedModel().getTableNameExpr().token + "." : model.getNestedModel().getAlias().token + ".";
-                String originalAlias = model.getNestedModel().getOrderBy().get(i).token.toString();
+                        targetModel.getTableNameExpr().token + "." : targetModel.getAlias().token + ".";
+                String originalAlias = targetModel.getOrderBy().get(i).token.toString();
                 aliasNode.token = originalAlias.replace(truncateAlias, "");
-                level1.addOrderBy(aliasNode, model.getNestedModel().getOrderByDirection().getQuick(i));
+                level1.addOrderBy(aliasNode, targetModel.getOrderByDirection().getQuick(i));
             }
             createAndAddTimestampColumn(baseTableModel, level1);
             level1.setNestedModel(level0);
