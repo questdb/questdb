@@ -616,9 +616,13 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                 assertSql(
                         main2,
-                        "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\trefresh_limit\trefresh_limit_unit\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
-                                "price_1h\timmediate\tbase_price\t\t2024-12-12T00:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tprice_1h~5\t\tvalid\t2024-12-12T00:00:00.000000Z\t1\t1\t0\t\t\t2024-12-12T00:00:00.000000Z\t0\t\t1\tDAY\t0\t\n",
-                        "materialized_views;"
+                        "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\tinvalidation_reason\trefresh_period_hi\trefresh_base_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
+                                "price_1h\timmediate\tbase_price\t\t2024-12-12T00:00:00.000000Z\tvalid\t\t2024-12-12T00:00:00.000000Z\t1\t\t2024-12-12T00:00:00.000000Z\t0\t\t1\tDAY\t0\t\n",
+                        "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                                "view_status, invalidation_reason, refresh_period_hi, refresh_base_table_txn, " +
+                                "timer_time_zone, timer_start, timer_interval, timer_interval_unit, " +
+                                "period_length, period_length_unit, period_delay, period_delay_unit " +
+                                "from materialized_views();"
                 );
             }
         });
