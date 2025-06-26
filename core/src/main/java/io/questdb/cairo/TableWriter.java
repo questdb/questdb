@@ -10145,8 +10145,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long mergeIndexRows,
             boolean nonDedupOnly
     ) {
-        LOG.info().$("checking dedup insert results in noop [table=").$(getTableToken()).I$();
-
         // This code is thread safe, e.g. can be triggered from multiple partition merge tasks
         TableRecordMetadata metadata = getMetadata();
         FrameFactory frameFactory = engine.getFrameFactory();

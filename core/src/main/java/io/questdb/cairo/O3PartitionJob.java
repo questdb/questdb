@@ -648,7 +648,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     dataTimestampHi,
                                     srcOooLo,
                                     srcOooHi,
-                                    tableWriter.isCommitDedupMode() || tableWriter.isCommitReplaceMode() ? Vect.BIN_SEARCH_SCAN_DOWN : Vect.BIN_SEARCH_SCAN_UP
+                                    tableWriter.isCommitDedupMode() ? Vect.BIN_SEARCH_SCAN_DOWN : Vect.BIN_SEARCH_SCAN_UP
                             );
 
                             mergeDataHi = srcDataMax - 1;
@@ -836,21 +836,57 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (srcOooLo <= srcOooHi) {
                         if (mergeType == O3_BLOCK_MERGE) {
 
-                            if (mergeDataHi - mergeDataLo == mergeO3Hi - mergeO3Lo) {
-                                if (Unsafe.getUnsafe().getLong(srcTimestampAddr + mergeDataLo * Long.BYTES)
-                                        == getTimestampIndexValue(sortedTimestampsAddr, mergeO3Lo)
-                                        && Unsafe.getUnsafe().getLong(srcTimestampAddr + mergeDataHi * Long.BYTES)
-                                        == getTimestampIndexValue(sortedTimestampsAddr, mergeO3Hi)) {
+                            long removedDataRangeLo, removedDataRangeHi, o3RangeLo, o3RangeHi;
+                            if (prefixType == O3_BLOCK_O3) {
+                                // O3 in prefix, partition data in the suffix.
+                                prefixHi = mergeO3Hi;
+                                mergeType = O3_BLOCK_NONE;
+                                mergeO3Hi = -1;
+                                mergeO3Lo = -1;
+                                mergeDataHi = -1;
+                                mergeDataLo = -1;
+
+                                removedDataRangeLo = 0;
+                                removedDataRangeHi = suffixLo - 1;
+                                o3RangeLo = prefixLo;
+                                o3RangeHi = prefixHi;
+                            } else if (suffixType == O3_BLOCK_O3) {
+                                // Partition data in the prefix, O3 in suffix.
+                                suffixLo = mergeO3Lo;
+                                mergeType = O3_BLOCK_NONE;
+                                mergeO3Hi = -1;
+                                mergeO3Lo = -1;
+                                mergeDataHi = -1;
+                                mergeDataLo = -1;
+
+                                removedDataRangeLo = prefixHi + 1;
+                                removedDataRangeHi = srcDataMax - 1;
+                                o3RangeLo = suffixLo;
+                                o3RangeHi = suffixHi;
+                            } else {
+                                // Replacing partition data with new data in the middle of the partition.
+                                removedDataRangeLo = mergeDataLo;
+                                removedDataRangeHi = mergeDataHi;
+                                o3RangeLo = mergeO3Lo;
+                                o3RangeHi = mergeO3Hi;
+                            }
+
+                            if (removedDataRangeHi - removedDataRangeLo > 0 && removedDataRangeHi - removedDataRangeLo == o3RangeHi - o3RangeLo) {
+
+                                if (Unsafe.getUnsafe().getLong(srcTimestampAddr + removedDataRangeLo * Long.BYTES)
+                                        == getTimestampIndexValue(sortedTimestampsAddr, o3RangeLo)
+                                        && Unsafe.getUnsafe().getLong(srcTimestampAddr + removedDataRangeHi * Long.BYTES)
+                                        == getTimestampIndexValue(sortedTimestampsAddr, o3RangeHi)) {
                                     // We are replacing with exactly the same number of rows
                                     // Maybe the rows are of the same data, then we don't need to rewrite the partition
                                     if (tableWriter.checkCommitIdenticalToPartition(
                                             partitionTimestamp,
                                             srcNameTxn,
                                             srcDataMax,
-                                            mergeDataLo,
-                                            mergeDataHi,
-                                            mergeO3Lo,
-                                            mergeO3Hi,
+                                            removedDataRangeLo,
+                                            removedDataRangeHi,
+                                            o3RangeLo,
+                                            o3RangeHi,
                                             0,
                                             mergeO3Hi - mergeO3Lo,
                                             false
@@ -864,22 +900,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         return;
                                     }
                                 }
-                            }
-
-                            if (prefixType == O3_BLOCK_O3) {
-                                prefixHi = mergeO3Hi;
-                                mergeType = O3_BLOCK_NONE;
-                                mergeO3Hi = -1;
-                                mergeO3Lo = -1;
-                                mergeDataHi = -1;
-                                mergeDataLo = -1;
-                            } else if (suffixType == O3_BLOCK_O3) {
-                                suffixLo = mergeO3Lo;
-                                mergeType = O3_BLOCK_NONE;
-                                mergeO3Hi = -1;
-                                mergeO3Lo = -1;
-                                mergeDataHi = -1;
-                                mergeDataLo = -1;
                             }
                         }
                     } else {
