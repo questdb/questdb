@@ -157,6 +157,20 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return 1;
     }
 
+    private static void intersectTxnIntervals(LongList txnIntervals, long lo, long hi) {
+        if (txnIntervals != null && txnIntervals.size() > 0) {
+            txnIntervals.add(lo, hi);
+            IntervalUtils.intersectInPlace(txnIntervals, txnIntervals.size() - 2);
+        }
+    }
+
+    private static void unionTxnIntervals(LongList txnIntervals, long lo, long hi) {
+        if (txnIntervals != null) {
+            txnIntervals.add(lo, hi);
+            IntervalUtils.unionInPlace(txnIntervals, txnIntervals.size() - 2);
+        }
+    }
+
     private boolean checkIfBaseTableDropped(MatViewRefreshTask refreshTask) {
         final TableToken baseTableToken = refreshTask.baseTableToken;
         final TableToken viewToken = refreshTask.matViewToken;
@@ -284,10 +298,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         : periodHiLocal;
 
                 // Remove incomplete periods from both txn intervals and refresh interval.
-                if (txnIntervals != null && txnIntervals.size() > 0) {
-                    txnIntervals.add(Long.MIN_VALUE, periodHi);
-                    IntervalUtils.intersectInPlace(txnIntervals, txnIntervals.size() - 2);
-                }
+                intersectTxnIntervals(txnIntervals, Long.MIN_VALUE, periodHi);
                 maxTs = Math.min(maxTs, periodHi);
 
                 if (incrementalRefresh) {
@@ -299,8 +310,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         periodLo = baseTableReader.getMinTimestamp();
                     }
                     if (periodLo < periodHi) {
-                        txnIntervals.add(periodLo, periodHi);
-                        IntervalUtils.unionInPlace(txnIntervals, txnIntervals.size() - 2);
+                        unionTxnIntervals(txnIntervals, periodLo, periodHi);
                         minTs = txnIntervals.getQuick(0);
                         maxTs = txnIntervals.getQuick(txnIntervals.size() - 1);
                         // Bump lastPeriodHi once we're done.
@@ -321,10 +331,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 } else { // months
                     minTs = Math.max(minTs, Timestamps.addMonths(now, refreshLimitHoursOrMonths));
                 }
-                if (txnIntervals != null && txnIntervals.size() > 0) {
-                    txnIntervals.add(minTs, Long.MAX_VALUE);
-                    IntervalUtils.intersectInPlace(txnIntervals, txnIntervals.size() - 2);
-                }
+                intersectTxnIntervals(txnIntervals, minTs, Long.MAX_VALUE);
             }
         }
 
