@@ -2670,7 +2670,7 @@ public class SqlOptimiser implements Mutable {
         return result;
     }
 
-    private QueryModel moveOrderByFunctionsIntoOuterSelect(QueryModel model) {
+    private QueryModel moveOrderByFunctionsIntoOuterSelect(QueryModel model) throws SqlException {
         // at this point order by should be on the nested model of this model :)
         QueryModel unionModel = model.getUnionModel();
         if (unionModel != null) {
@@ -2693,7 +2693,6 @@ public class SqlOptimiser implements Mutable {
 
             final ObjList<ExpressionNode> orderBy = nested.getOrderBy();
             final int n = orderBy.size();
-            final int columnCount = model.getBottomUpColumns().size();
             boolean moved = false;
             for (int i = 0; i < n; i++) {
                 ExpressionNode node = orderBy.getQuick(i);
@@ -2709,14 +2708,17 @@ public class SqlOptimiser implements Mutable {
                         );
                         model.getAliasToColumnMap().put(alias, qc);
                         model.getBottomUpColumns().add(qc);
+                        moved = true;
                     }
+                    // on "else" branch, when order by expression matched projection
+                    // we can just replace order by with projection alias without having to
+                    // add an extra model
                     orderBy.setQuick(i, nextLiteral(alias));
-                    moved = true;
                 }
             }
 
             if (moved) {
-                return wrapWithSelectModel(model, columnCount);
+                return wrapWithSelectWildcard(model);
             }
         }
         return model;
@@ -6039,6 +6041,9 @@ public class SqlOptimiser implements Mutable {
                         // outer model supporting arithmetic such as:
                         // select sum(a)+sum(b) ...
                         QueryColumn ref = nextColumn(qc.getAlias());
+                        // it is possible to order by a group-by column, which isn't referenced by
+                        // the SQL projection. In this case we need to preserve the wildcard visibility
+                        ref.setIncludeIntoWildcard(qc.isIncludeIntoWildcard());
                         outerVirtualModel.addBottomUpColumn(ref);
                         distinctModel.addBottomUpColumn(ref);
                         // sample-by implementation requires innerVirtualModel
@@ -6810,13 +6815,13 @@ public class SqlOptimiser implements Mutable {
 
     @NotNull
     private QueryModel wrapWithSelectModel(QueryModel model, int columnCount) {
-        final QueryModel _model = createWrapperModel(model);
+        final QueryModel outerModel = createWrapperModel(model);
         // then create columns on the outermost model
         for (int i = 0; i < columnCount; i++) {
             QueryColumn qcFrom = model.getBottomUpColumns().getQuick(i);
-            _model.addBottomUpColumnIfNotExists(nextColumn(qcFrom.getAlias()));
+            outerModel.addBottomUpColumnIfNotExists(nextColumn(qcFrom.getAlias()));
         }
-        return _model;
+        return outerModel;
     }
 
     @NotNull
@@ -6846,6 +6851,12 @@ public class SqlOptimiser implements Mutable {
         }
 
         return _model;
+    }
+
+    private QueryModel wrapWithSelectWildcard(QueryModel model) throws SqlException {
+        final QueryModel outerModel = createWrapperModel(model);
+        outerModel.addBottomUpColumn(nextColumn("*"));
+        return outerModel;
     }
 
     @SuppressWarnings("unused")

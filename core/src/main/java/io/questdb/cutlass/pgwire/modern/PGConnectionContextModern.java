@@ -461,7 +461,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             try {
                 parseMessage(recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
             } catch (BadProtocolException e) {
-                LOG.error().$("failed to parse message [err: `").$(e.getFlyweightMessage()).$("`]").$();
+                LOG.error().$("failed to parse message [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
                 // ignore, we are interrupting the current message processing, but have to continue processing other
                 // messages
             }
@@ -633,7 +633,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     securityContext.checkEntityEnabled();
                     r = authenticator.loginOK();
                 } catch (CairoException e) {
-                    LOG.error().$("failed to authenticate [error=").$(e.getFlyweightMessage()).I$();
+                    LOG.error().$("failed to authenticate [error=").$safe(e.getFlyweightMessage()).I$();
                     r = authenticator.denyAccess(e.getFlyweightMessage());
                 }
             }
@@ -1223,7 +1223,12 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         final int msgLen = getIntUnsafe(address + 1);
         LOG.debug().$("received msg [type=").$((char) type).$(", len=").$(msgLen).I$();
         if (msgLen < 1) {
-            LOG.error().$("invalid message length [type=").$(type).$(", msgLen=").$(msgLen).$(", recvBufferReadOffset=").$(recvBufferReadOffset).$(", recvBufferWriteOffset=").$(recvBufferWriteOffset).$(", totalReceived=").$(totalReceived).I$();
+            LOG.error().$("invalid message length [type=").$(type)
+                    .$(", msgLen=").$(msgLen)
+                    .$(", recvBufferReadOffset=").$(recvBufferReadOffset)
+                    .$(", recvBufferWriteOffset=").$(recvBufferWriteOffset)
+                    .$(", totalReceived=").$(totalReceived)
+                    .I$();
             throw BadProtocolException.INSTANCE;
         }
 
@@ -1453,9 +1458,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 pipelineCurrentEntry = nextEntry;
             } else {
                 LOG.debug().$("pipeline entry not consumed [instance=)").$(pipelineCurrentEntry)
-                        .$(", sql=").$(pipelineCurrentEntry.getSqlText())
-                        .$(", stmt=").$(pipelineCurrentEntry.getNamedStatement())
-                        .$(", portal=").$(pipelineCurrentEntry.getNamedPortal())
+                        .$(", sql=").$safe(pipelineCurrentEntry.getSqlText())
+                        .$(", stmt=").$safe(pipelineCurrentEntry.getNamedStatement())
+                        .$(", portal=").$safe(pipelineCurrentEntry.getNamedPortal())
                         .I$();
                 break;
             }

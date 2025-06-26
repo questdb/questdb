@@ -396,7 +396,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 final int cleanSymbolCount = txWriter.getSymbolValueCount(tableMetadata.getDenseSymbolIndex(i));
                 final String columnName = tableMetadata.getColumnName(i);
                 LOG.info().$("rebuilding symbol files [table=").$(tablePath)
-                        .$(", column=").utf8(columnName)
+                        .$(", column=").$safe(columnName)
                         .$(", count=").$(cleanSymbolCount)
                         .I$();
 

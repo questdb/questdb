@@ -24,13 +24,23 @@
 
 package io.questdb.test.log;
 
-import io.questdb.log.*;
+import io.questdb.log.HttpLogRecordUtf8Sink;
+import io.questdb.log.Log;
+import io.questdb.log.LogAlertSocket;
+import io.questdb.log.LogError;
+import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
+import io.questdb.log.LogRecordUtf8Sink;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -572,12 +582,6 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
-            sink.put(sequence, lo, hi);
-            return this;
-        }
-
-        @Override
         public LogRecord $(int x) {
             sink.put(x);
             return this;
@@ -647,6 +651,32 @@ public class LogAlertSocketTest {
         }
 
         @Override
+        public LogRecord $safe(@NotNull CharSequence sequence, int lo, int hi) {
+            sink.put(sequence, lo, hi);
+            return this;
+        }
+
+        @Override
+        public LogRecord $safe(@Nullable DirectUtf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $safe(@Nullable Utf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $safe(long lo, long hi) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $safe(@Nullable CharSequence sequence) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public LogRecord $size(long memoryBytes) {
             sink.putSize(memoryBytes);
             return this;
@@ -659,11 +689,6 @@ public class LogAlertSocketTest {
 
         @Override
         public LogRecord $ts(long x) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public LogRecord $utf8(long lo, long hi) {
             throw new UnsupportedOperationException();
         }
 
@@ -709,11 +734,6 @@ public class LogAlertSocketTest {
 
         @Override
         public LogRecord ts() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public LogRecord utf8(@Nullable CharSequence sequence) {
             throw new UnsupportedOperationException();
         }
     }

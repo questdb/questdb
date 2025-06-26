@@ -364,7 +364,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             if (th instanceof CairoException) {
                 CairoException ce = (CairoException) th;
                 if (ce.isInterruption() || ce.isCancellation()) {
-                    LOG.error().$("filter error [ex=").$(((CairoException) th).getFlyweightMessage()).I$();
+                    LOG.error().$("filter error [ex=").$safe(((CairoException) th).getFlyweightMessage()).I$();
                     throwTimeoutException();
                 } else {
                     LOG.error().$("filter error [ex=").$(th).I$();
