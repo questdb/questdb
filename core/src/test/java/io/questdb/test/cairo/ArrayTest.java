@@ -261,6 +261,19 @@ public class ArrayTest extends AbstractCairoTest {
                     true,
                     true
             );
+
+            assertPlanNoLeakCheck(
+                    "select ts, x, first(v) as v from test sample by 1s",
+                    "Radix sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts,x]\n" +
+                            "      values: [first(v)]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n"
+            );
         });
     }
 
