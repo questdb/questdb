@@ -149,7 +149,6 @@ class AbstractViewTest extends AbstractCairoTest {
     void compileView(String viewName) throws SqlException {
         execute("COMPILE VIEW " + viewName);
         drainViewQueue();
-        drainWalQueue();
     }
 
     void compileView(String viewName, String expectedErrorMessage) throws Exception {
@@ -171,7 +170,6 @@ class AbstractViewTest extends AbstractCairoTest {
     void createView(String viewName, String viewQuery, String... expectedDependencies) throws SqlException {
         execute("CREATE VIEW " + viewName + " AS (" + viewQuery + ")");
         drainViewQueue();
-        drainWalQueue();
         assertViewDefinition(viewName, viewQuery, expectedDependencies);
         assertViewDefinitionFile(viewName, viewQuery);
         assertViewStateFile(viewName);

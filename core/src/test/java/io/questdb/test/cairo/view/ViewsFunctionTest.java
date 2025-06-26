@@ -29,7 +29,7 @@ import org.junit.Test;
 public class ViewsFunctionTest extends AbstractViewTest {
 
     @Test
-    public void testViews() throws Exception {
+    public void testViewsStatement() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(1750345200000000L);
 

@@ -83,7 +83,6 @@ public class ViewInvalidationTest extends AbstractViewTest {
             // views recursively too, and VIEW3 depends on VIEW1
             detectInvalidView(VIEW1, expectedErrorMessage);
             drainViewQueue();
-            drainWalQueue();
 
             assertViewDefinition(VIEW1, viewQuery1);
             assertViewDefinitionFile(VIEW1, viewQuery1);
@@ -129,7 +128,6 @@ public class ViewInvalidationTest extends AbstractViewTest {
             // VIEW1 compiles successfully, its children will be compiled recursively too
             fixInvalidView(VIEW1);
             drainViewQueue();
-            drainWalQueue();
 
             assertViewDefinition(VIEW1, viewQuery1);
             assertViewDefinitionFile(VIEW1, viewQuery1);
@@ -236,7 +234,6 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
             detectInvalidView(VIEW1, "table does not exist [table=" + TABLE1 + "]");
             drainViewQueue();
-            drainWalQueue();
 
             assertViewDefinition(VIEW1, viewQuery);
             assertViewDefinitionFile(VIEW1, viewQuery);
@@ -263,7 +260,6 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
             fixInvalidView(VIEW1);
             drainViewQueue();
-            drainWalQueue();
 
             assertViewDefinition(VIEW1, viewQuery);
             assertViewDefinitionFile(VIEW1, viewQuery);
@@ -364,7 +360,6 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
             detectInvalidView(VIEW1, "table does not exist [table=" + TABLE1_2 + "]");
             drainViewQueue();
-            drainWalQueue();
 
             assertViewDefinition(VIEW1, "select ts, k, max(v) as v_max from (" + TABLE1_2 + " union " + TABLE2_2 + ") where v > 4");
             assertViewDefinitionFile(VIEW1, "select ts, k, max(v) as v_max from (" + TABLE1_2 + " union " + TABLE2_2 + ") where v > 4");
@@ -389,7 +384,6 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
             fixInvalidView(VIEW1);
             drainViewQueue();
-            drainWalQueue();
 
             assertViewDefinition(VIEW1, "select ts, k, max(v) as v_max from (" + TABLE1_2 + " union " + TABLE2_2 + ") where v > 4");
             assertViewDefinitionFile(VIEW1, "select ts, k, max(v) as v_max from (" + TABLE1_2 + " union " + TABLE2_2 + ") where v > 4");
@@ -443,7 +437,6 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
             detectInvalidView(VIEW1, expectedErrorMessage);
             drainViewQueue();
-            drainWalQueue();
 
             assertViewDefinition(VIEW1, viewQuery);
             assertViewDefinitionFile(VIEW1, viewQuery);
@@ -468,7 +461,6 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
             fixInvalidView(VIEW1);
             drainViewQueue();
-            drainWalQueue();
 
             assertViewDefinition(VIEW1, viewQuery);
             assertViewDefinitionFile(VIEW1, viewQuery);

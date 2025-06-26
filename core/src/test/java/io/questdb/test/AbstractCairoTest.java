@@ -1354,6 +1354,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void drainViewQueue() {
         drainViewQueue(engine);
+        drainWalQueue(engine);
     }
 
     protected static void drainWalAndMatViewQueues() {

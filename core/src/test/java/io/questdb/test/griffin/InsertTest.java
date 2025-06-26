@@ -87,6 +87,7 @@ public class InsertTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
+        node1.setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
         engine.getMatViewStateStore().clear();
     }
@@ -137,6 +138,25 @@ public class InsertTest extends AbstractCairoTest {
                 Assert.fail("INSERT should fail");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify materialized view [view=curr_view]");
+                Assert.assertEquals(12, e.getPosition());
+            }
+        });
+    }
+
+    @Test
+    public void testCannotInsertIntoView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
+            execute("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies");
+            execute("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
+
+            execute("create view curr_view as (select ts, max(id) as id from currencies sample by 1h)");
+            try {
+                execute("insert into curr_view values ('JPY', 4, '2019-03-10T03:00:00.000000Z')");
+                Assert.fail("INSERT should fail");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify view [view=curr_view]");
                 Assert.assertEquals(12, e.getPosition());
             }
         });
@@ -401,7 +421,7 @@ public class InsertTest extends AbstractCairoTest {
                 CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', :bal)", sqlExecutionContext);
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
 
-                try (InsertOperation insertOperation = cq.popInsertOperation();) {
+                try (InsertOperation insertOperation = cq.popInsertOperation()) {
                     try (InsertMethod method = insertOperation.createMethod(sqlExecutionContext)) {
                         method.execute(sqlExecutionContext);
                         method.commit();
@@ -491,7 +511,7 @@ public class InsertTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', 356.12)", sqlExecutionContext);
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-                try (InsertOperation insertOperation = cq.popInsertOperation();) {
+                try (InsertOperation insertOperation = cq.popInsertOperation()) {
                     execute("alter table balances drop column ccy", sqlExecutionContext);
                     insertOperation.createMethod(sqlExecutionContext);
                 }

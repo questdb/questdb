@@ -32,10 +32,12 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewState;
+import io.questdb.client.Sender;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
+import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.ThreadLocal;
@@ -46,6 +48,7 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.cutlass.pgwire.BasePGTest;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -59,6 +62,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
 import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
@@ -70,6 +74,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     private static final String TABLE2 = "table2";
     private static final String VIEW1 = "view1";
     private static final String VIEW2 = "view2";
+    private static final LogCapture capture = new LogCapture();
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
     private boolean isViewEnabled = true;
     private ServerMain questdb;
@@ -79,11 +84,13 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     public void setUp() {
         super.setUp();
         startQuestDB();
+        capture.start();
     }
 
     @After
     @Override
     public void tearDown() throws Exception {
+        capture.stop();
         stopQuestDB();
         super.tearDown();
     }
@@ -180,6 +187,36 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testHttpOverIlpCannotIngestIntoView() throws Exception {
+        runSqlViaPG(
+                "create table prices (" +
+                        "sym varchar, price double, ts timestamp" +
+                        ") timestamp(ts) partition by day wal"
+        );
+        runSqlViaPG(
+                "insert into prices values ('sym1', 1.12, 10000000)",
+                "insert into prices values ('sym1', 1.33, 30000000)"
+        );
+        drainWalQueue();
+
+        runSqlViaPG(
+                "create view instruments as (select distinct sym from prices)"
+        );
+        drainWalQueue();
+        drainViewQueue();
+
+        try (Sender sender = Sender.builder("http::addr=localhost:" + HTTP_PORT).protocolVersion(PROTOCOL_VERSION_V2).build()) {
+            sender.table("instruments")
+                    .stringColumn("sym", "gbpusd")
+                    .atNow();
+            sender.flush();
+            fail("exception expected");
+        } catch (LineSenderException e) {
+            assertContains(e.getMessage(), "cannot modify view");
+        }
+    }
+
+    @Test
     public void testPGWire() throws SQLException {
         runSqlViaPG(
                 "create table if not exists " + TABLE1 +
@@ -241,6 +278,37 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testTcpOverIlpCannotIngestIntoView() throws Exception {
+        runSqlViaPG(
+                "create table prices (" +
+                        "sym varchar, price double, ts timestamp" +
+                        ") timestamp(ts) partition by day wal"
+        );
+        runSqlViaPG(
+                "insert into prices values ('sym1', 1.12, 10000000)",
+                "insert into prices values ('sym1', 1.33, 30000000)"
+        );
+        drainWalQueue();
+
+        runSqlViaPG(
+                "create view instruments as (select distinct sym from prices)"
+        );
+        drainWalQueue();
+        drainViewQueue();
+
+        try (Sender sender = Sender.builder("tcp::addr=localhost:" + ILP_PORT).protocolVersion(PROTOCOL_VERSION_V2).build()) {
+            sender.table("instruments")
+                    .stringColumn("sym", "gbpusd")
+                    .atNow();
+            sender.flush();
+        }
+
+        // TCP disconnects the client when error is detected
+        capture.waitFor("tcp-line-server disconnected");
+        capture.assertLogged("could not process line data 1 [table=instruments, msg=cannot modify view [view=instruments], errno=-1]");
+    }
+
+    @Test
     public void testViewStateAfterRestart() {
         final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4";
         final String query2 = "select ts, k2, min(v) as v_min from " + TABLE2 + " where v > 6";
@@ -254,7 +322,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             createView(httpClient, VIEW2, query2);
             drainWalQueue();
             drainViewQueue();
-            drainWalQueue();
 
             final ViewState state1 = getViewState(VIEW1);
             final ViewState state2 = getViewState(VIEW2);
@@ -307,7 +374,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             );
             drainWalQueue();
             drainViewQueue();
-            drainWalQueue();
 
             assertNotNull(state1);
             assertTrue(state1.isInvalid());
@@ -584,6 +650,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
     private void drainViewQueue() {
         drainViewQueue(questdb.getEngine());
+        drainWalQueue(questdb.getEngine());
     }
 
     private void drainWalQueue() {

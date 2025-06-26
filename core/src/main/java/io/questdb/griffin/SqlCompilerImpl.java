@@ -1575,6 +1575,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    private void checkViewModification(ExecutionModel executionModel) throws SqlException {
+        final CharSequence name = executionModel.getTableName();
+        final TableToken tableToken = engine.getTableTokenIfExists(name);
+        if (tableToken != null && tableToken.isView()) {
+            throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify view [view=").put(name).put(']');
+        }
+    }
+
+    private void checkViewModification(TableToken tableToken) throws SqlException {
+        if (tableToken != null && tableToken.isView()) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("cannot modify view [view=").put(tableToken.getTableName()).put(']');
+        }
+    }
+
     private void clearExceptSqlText() {
         sqlNodePool.clear();
         characterStore.clear();
@@ -1736,6 +1750,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok = expectToken(lexer, "table name");
         assertNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
         final TableToken tableToken = tableExistsOrFail(tableNamePosition, GenericLexer.unquote(tok), executionContext);
+        checkViewModification(tableToken);
         checkMatViewModification(tableToken);
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
@@ -2773,6 +2788,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             tok = GenericLexer.unquote(tok);
         }
         final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+        checkViewModification(tableToken);
         checkMatViewModification(tableToken);
         try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
             indexBuilder.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()));
@@ -2866,6 +2882,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = GenericLexer.unquote(tok);
                 }
                 final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+                checkViewModification(tableToken);
                 checkMatViewModification(tableToken);
                 executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
                 try {
@@ -2983,6 +3000,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     break;
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    checkViewModification(executionModel);
                     checkMatViewModification(executionModel);
                     copy(executionContext, (CopyModel) executionModel);
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
@@ -2990,6 +3008,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 case ExecutionModel.RENAME_TABLE:
                     sqlId = queryRegistry.register(sqlText, executionContext);
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    checkViewModification(executionModel);
                     checkMatViewModification(executionModel);
                     final RenameTableModel rtm = (RenameTableModel) executionModel;
                     engine.rename(
@@ -3005,6 +3024,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     break;
                 case ExecutionModel.UPDATE:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    checkViewModification(executionModel);
                     checkMatViewModification(executionModel);
                     final QueryModel updateQueryModel = (QueryModel) executionModel;
                     TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
@@ -3026,6 +3046,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
                 default:
+                    checkViewModification(executionModel);
                     checkMatViewModification(executionModel);
                     final InsertModel insertModel = (InsertModel) executionModel;
                     // we use SQL Compiler state (reusing objects) to generate InsertOperation
@@ -3070,6 +3091,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             CharSequence eol = SqlUtil.fetchNext(lexer);
             if (eol == null || Chars.equals(eol, ';')) {
                 final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
+                checkViewModification(tableToken);
                 checkMatViewModification(tableToken);
                 try (TableReader rdr = executionContext.getReader(tableToken)) {
                     int partitionBy = rdr.getMetadata().getPartitionBy();
