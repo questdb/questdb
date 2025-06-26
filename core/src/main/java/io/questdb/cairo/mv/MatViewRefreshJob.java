@@ -227,15 +227,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 maxTs = baseTableReader.getMaxTimestamp();
                 txnIntervals.add(minTs, maxTs);
             }
-            // Check if refresh limit should be applied.
-            final int refreshLimitHoursOrMonths = viewDefinition.getRefreshLimitHoursOrMonths();
-            if (refreshLimitHoursOrMonths != 0) {
-                if (refreshLimitHoursOrMonths > 0) { // hours
-                    minTs = Math.max(minTs, now - Timestamps.HOUR_MICROS * refreshLimitHoursOrMonths);
-                } else { // months
-                    minTs = Math.max(minTs, Timestamps.addMonths(now, refreshLimitHoursOrMonths));
-                }
-            }
         } else if (rangeRefresh) {
             // Range refresh. This means that the timer is triggered on a period mat view
             // or someone has run REFRESH RANGE SQL.
@@ -267,53 +258,71 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             maxTs = baseTableReader.getMaxTimestamp();
         }
 
-        // Check if we're doing incremental/full refresh on a period mat view.
-        // If so, we may need to remove incomplete periods from the final refresh interval.
-        if (!rangeRefresh && viewDefinition.getPeriodLength() > 0) {
-            TimestampSampler periodSampler = viewDefinition.getPeriodSampler();
-            if (periodSampler == null) {
-                periodSampler = TimestampSamplerFactory.getInstance(viewDefinition.getPeriodLength(), viewDefinition.getPeriodLengthUnit(), -1);
-                viewDefinition.setPeriodSampler(periodSampler);
-            }
-            periodSampler.setStart(viewDefinition.getTimerStart());
-
-            final long delay = MatViewTimerJob.periodDelayMicros(viewDefinition.getPeriodDelay(), viewDefinition.getPeriodDelayUnit());
-            long nowLocal = viewDefinition.getTimerTzRules() != null
-                    ? now + viewDefinition.getTimerTzRules().getOffset(now)
-                    : now;
-            // Period hi is exclusive, but maxTs is inclusive, so we align them.
-            final long periodHiLocal = periodSampler.round(nowLocal - delay) - 1;
-            final long periodHi = viewDefinition.getTimerTzRules() != null
-                    ? periodHiLocal - viewDefinition.getTimerTzRules().getOffset(periodHiLocal)
-                    : periodHiLocal;
-
-            // Remove the incomplete period from both txn intervals and refresh interval.
-            if (txnIntervals != null && txnIntervals.size() > 0) {
-                txnIntervals.add(Long.MIN_VALUE, periodHi);
-                IntervalUtils.intersectInPlace(txnIntervals, txnIntervals.size() - 2);
-            }
-            maxTs = Math.min(maxTs, periodHi);
-
-            if (incrementalRefresh) {
-                // Incremental refresh on a period mat view works in a special way.
-                // We need to refresh whatever is in the txn intervals and all periods
-                // that became complete since the last refresh.
-                long periodLo = viewState.getLastPeriodHi();
-                if (periodLo == Numbers.LONG_NULL) {
-                    periodLo = baseTableReader.getMinTimestamp();
+        // In case of incremental or full refresh we may need to include complete periods
+        // and/or remove intervals older than the refresh limit.
+        if (!rangeRefresh) {
+            // Check if we're doing incremental/full refresh on a period mat view.
+            // If so, we may need to remove incomplete periods from the final refresh interval.
+            if (viewDefinition.getPeriodLength() > 0) {
+                TimestampSampler periodSampler = viewDefinition.getPeriodSampler();
+                if (periodSampler == null) {
+                    periodSampler = TimestampSamplerFactory.getInstance(viewDefinition.getPeriodLength(), viewDefinition.getPeriodLengthUnit(), -1);
+                    viewDefinition.setPeriodSampler(periodSampler);
                 }
-                if (periodLo < periodHi) {
-                    txnIntervals.add(periodLo, periodHi);
-                    IntervalUtils.unionInPlace(txnIntervals, txnIntervals.size() - 2);
-                    minTs = txnIntervals.getQuick(0);
-                    maxTs = txnIntervals.getQuick(txnIntervals.size() - 1);
-                    // Bump lastPeriodHi once we're done.
-                    // lastPeriodHi is exclusive, but the local periodHi value is inclusive.
+                periodSampler.setStart(viewDefinition.getTimerStart());
+
+                final long delay = MatViewTimerJob.periodDelayMicros(viewDefinition.getPeriodDelay(), viewDefinition.getPeriodDelayUnit());
+                long nowLocal = viewDefinition.getTimerTzRules() != null
+                        ? now + viewDefinition.getTimerTzRules().getOffset(now)
+                        : now;
+                // Period hi is exclusive, but maxTs is inclusive, so we align them.
+                final long periodHiLocal = periodSampler.round(nowLocal - delay) - 1;
+                final long periodHi = viewDefinition.getTimerTzRules() != null
+                        ? periodHiLocal - viewDefinition.getTimerTzRules().getOffset(periodHiLocal)
+                        : periodHiLocal;
+
+                // Remove the incomplete period from both txn intervals and refresh interval.
+                if (txnIntervals != null && txnIntervals.size() > 0) {
+                    txnIntervals.add(Long.MIN_VALUE, periodHi);
+                    IntervalUtils.intersectInPlace(txnIntervals, txnIntervals.size() - 2);
+                }
+                maxTs = Math.min(maxTs, periodHi);
+
+                if (incrementalRefresh) {
+                    // Incremental refresh on a period mat view works in a special way.
+                    // We need to refresh whatever is in the txn intervals and all periods
+                    // that became complete since the last refresh.
+                    long periodLo = viewState.getLastPeriodHi();
+                    if (periodLo == Numbers.LONG_NULL) {
+                        periodLo = baseTableReader.getMinTimestamp();
+                    }
+                    if (periodLo < periodHi) {
+                        txnIntervals.add(periodLo, periodHi);
+                        IntervalUtils.unionInPlace(txnIntervals, txnIntervals.size() - 2);
+                        minTs = txnIntervals.getQuick(0);
+                        maxTs = txnIntervals.getQuick(txnIntervals.size() - 1);
+                        // Bump lastPeriodHi once we're done.
+                        // lastPeriodHi is exclusive, but the local periodHi value is inclusive.
+                        refreshIntervals.periodHi = periodHi + 1;
+                    }
+                } else {
+                    // It's a full refresh, so we'll need to bump lastPeriodHi once we're done.
                     refreshIntervals.periodHi = periodHi + 1;
                 }
-            } else {
-                // It's a full refresh, so we'll need to bump lastPeriodHi once we're done.
-                refreshIntervals.periodHi = periodHi + 1;
+            }
+
+            // Check if refresh limit should be applied.
+            final int refreshLimitHoursOrMonths = viewDefinition.getRefreshLimitHoursOrMonths();
+            if (refreshLimitHoursOrMonths != 0) {
+                if (refreshLimitHoursOrMonths > 0) { // hours
+                    minTs = Math.max(minTs, now - Timestamps.HOUR_MICROS * refreshLimitHoursOrMonths);
+                } else { // months
+                    minTs = Math.max(minTs, Timestamps.addMonths(now, refreshLimitHoursOrMonths));
+                }
+                if (txnIntervals != null && txnIntervals.size() > 0) {
+                    txnIntervals.add(minTs, Long.MAX_VALUE);
+                    IntervalUtils.intersectInPlace(txnIntervals, txnIntervals.size() - 2);
+                }
             }
         }
 
