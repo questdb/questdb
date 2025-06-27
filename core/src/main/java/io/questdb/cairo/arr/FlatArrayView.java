@@ -123,10 +123,6 @@ public interface FlatArrayView {
      * @param length the number of elements in the block
      */
     default int countDouble(int offset, int length) {
-        // Optimization idea: store the number of nulls (or a null bitmap) as metadata.
-        // Then the array's count could be obtained directly from the metadata.
-        // Similarly, knowing from the metadata that a set of data contains no nulls could
-        // also offer optimizations for other aggregate operators (sum, avg etc.).
         int count = 0;
         for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
