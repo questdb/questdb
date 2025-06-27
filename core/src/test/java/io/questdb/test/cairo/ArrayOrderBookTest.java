@@ -46,11 +46,15 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
             assertSql("ask_vol\tbid_vol\tratio\n" +
                             "38.0\t68.0\t1.7894736842105263\n" +
                             "37.0\t81.0\t2.189189189189189\n",
-                    "SELECT " +
+                    "WITH q1 AS (" +
+                            "SELECT " +
                             "array_sum(asks[2, 1:4]) ask_vol, " +
-                            "array_sum(bids[2, 1:4]) bid_vol, " +
-                            "array_sum(bids[2, 1:4]) / array_sum(asks[2, 1:4]) ratio " +
-                            "FROM order_book");
+                            "array_sum(bids[2, 1:4]) bid_vol " +
+                            "FROM order_book" +
+                            ")" +
+                            "SELECT ask_vol, bid_vol, bid_vol / ask_vol ratio " +
+                            "FROM q1"
+            );
         });
     }
 
