@@ -193,7 +193,7 @@ mod tests {
 
         // out of range
         let err = StringDriver.col_sizes_for_row_count(&col, 6).unwrap_err();
-        let msg = format!("{:#}", err);
+        let msg = format!("{err:#}");
         // eprintln!("{}", &msg);
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("string entry index 6 not found in aux for column s1 in"));
@@ -234,7 +234,7 @@ mod tests {
 
         // out of range
         let err = StringDriver.col_sizes_for_row_count(&col, 6).unwrap_err();
-        let msg = format!("{:#}", err);
+        let msg = format!("{err:#}");
         // eprintln!("{}", &msg);
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("string entry index 6 not found in aux for column s2 in"));
@@ -250,7 +250,7 @@ mod tests {
 
         // out of range
         let err = StringDriver.col_sizes_for_row_count(&col, 1).unwrap_err();
-        let msg = format!("{:#}", err);
+        let msg = format!("{err:#}");
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         // eprintln!("{msg}");
         assert!(msg.contains("string entry index 1 not found in aux for column sempty in"));

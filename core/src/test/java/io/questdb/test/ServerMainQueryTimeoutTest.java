@@ -40,6 +40,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.HashMap;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -75,7 +76,9 @@ public class ServerMainQueryTimeoutTest extends AbstractBootstrapTest {
 
     @Test
     public void testQueryTimeout() throws Exception {
-        try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+            put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
+        }})) {
             serverMain.start();
 
             final long rowCount = 10_000_000;
