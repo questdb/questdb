@@ -960,6 +960,47 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
+    private @Nullable ObjList<ObjList<Function>> compilePerWorkerInnerProjectionFunctions(
+            SqlExecutionContext executionContext,
+            ObjList<QueryColumn> queryColumns,
+            ObjList<Function> innerProjectionFunctions,
+            int workerCount,
+            RecordMetadata metadata
+    ) throws SqlException {
+        boolean threadSafe = true;
+
+        assert innerProjectionFunctions.size() == queryColumns.size();
+
+        for (int i = 0, n = innerProjectionFunctions.size(); i < n; i++) {
+            if (!innerProjectionFunctions.getQuick(i).isThreadSafe()) {
+                threadSafe = false;
+                break;
+            }
+        }
+        if (!threadSafe) {
+            ObjList<ObjList<Function>> allWorkerKeyFunctions = new ObjList<>();
+            int columnCount = queryColumns.size();
+            for (int i = 0; i < workerCount; i++) {
+                ObjList<Function> workerKeyFunctions = new ObjList<>(columnCount);
+                allWorkerKeyFunctions.add(workerKeyFunctions);
+                for (int j = 0; j < columnCount; j++) {
+                    final Function func = functionParser.parseFunction(
+                            queryColumns.getQuick(j).getAst(),
+                            metadata,
+                            executionContext
+                    );
+                    if (func instanceof GroupByFunction) {
+                        // ensure value indexes are set correctly
+                        ((GroupByFunction) func).initValueIndex(((GroupByFunction) innerProjectionFunctions.getQuick(j)).getValueIndex());
+                    }
+                    workerKeyFunctions.add(func);
+                }
+            }
+            return allWorkerKeyFunctions;
+        }
+        return null;
+    }
+
     private @Nullable ObjList<Function> compileWorkerFilterConditionally(
             SqlExecutionContext executionContext,
             @Nullable Function filter,
@@ -1010,47 +1051,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
             return allWorkerGroupByFunctions;
-        }
-        return null;
-    }
-
-    private @Nullable ObjList<ObjList<Function>> compilePerWorkerInnerProjectionFunctions(
-            SqlExecutionContext executionContext,
-            ObjList<QueryColumn> queryColumns,
-            ObjList<Function> innerProjectionFunctions,
-            int workerCount,
-            RecordMetadata metadata
-    ) throws SqlException {
-        boolean threadSafe = true;
-
-        assert innerProjectionFunctions.size() == queryColumns.size();
-
-        for (int i = 0, n = innerProjectionFunctions.size(); i < n; i++) {
-            if (!innerProjectionFunctions.getQuick(i).isThreadSafe()) {
-                threadSafe = false;
-                break;
-            }
-        }
-        if (!threadSafe) {
-            ObjList<ObjList<Function>> allWorkerKeyFunctions = new ObjList<>();
-            int columnCount = queryColumns.size();
-            for (int i = 0; i < workerCount; i++) {
-                ObjList<Function> workerKeyFunctions = new ObjList<>(columnCount);
-                allWorkerKeyFunctions.add(workerKeyFunctions);
-                for (int j = 0; j < columnCount; j++) {
-                    final Function func = functionParser.parseFunction(
-                            queryColumns.getQuick(j).getAst(),
-                            metadata,
-                            executionContext
-                    );
-                    if (func instanceof GroupByFunction) {
-                        // ensure value indexes are set correctly
-                        ((GroupByFunction) func).initValueIndex(((GroupByFunction)innerProjectionFunctions.getQuick(j)).getValueIndex());
-                    }
-                    workerKeyFunctions.add(func);
-                }
-            }
-            return allWorkerKeyFunctions;
         }
         return null;
     }
