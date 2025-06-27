@@ -129,5 +129,10 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
         public Function getRight() {
             return rightArg;
         }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
     }
 }

@@ -26,77 +26,54 @@ package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class DoubleArraySumFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "array_sum";
+public class DoubleScalarDivArrayFunctionFactory implements FunctionFactory {
+    private static final String OPERATOR_NAME = "/";
 
     @Override
     public String getSignature() {
-        return FUNCTION_NAME + "(D[])";
+        return OPERATOR_NAME + "(DD[])";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0));
+        return new Func(args.getQuick(0), args.getQuick(1), configuration);
     }
 
-    static class Func extends DoubleFunction implements UnaryFunction, DoubleUnaryArrayAccessor {
+    private static class Func extends DoubleArrayAndScalarArrayOperator {
 
-        protected final Function arrayArg;
-        protected double sum = 0d;
-
-        Func(Function arrayArg) {
-            this.arrayArg = arrayArg;
+        public Func(Function scalarArg, Function arrayArg, CairoConfiguration configuration) {
+            super(OPERATOR_NAME, arrayArg, scalarArg, configuration);
         }
 
         @Override
         public void applyToElement(ArrayView view, int index) {
-            double v = view.getDouble(index);
-            if (Numbers.isFinite(v)) {
-                sum += v;
-            }
+            memory.putDouble(scalarValue / view.getDouble(index));
         }
 
         @Override
         public void applyToEntireVanillaArray(ArrayView view) {
-            double res = view.flatView().sumDouble(view.getFlatViewOffset(), view.getFlatViewLength());
-            sum = Numbers.isNull(res) ? 0 : res;
+            FlatArrayView flatView = view.flatView();
+            for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
+                memory.putDouble(scalarValue / flatView.getDoubleAtAbsIndex(i));
+            }
         }
 
         @Override
-        public void applyToNullArray() {
+        public Function getLeft() {
+            return scalarArg;
         }
 
         @Override
-        public Function getArg() {
+        public Function getRight() {
             return arrayArg;
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            sum = 0d;
-            calculate(arrayArg.getArray(rec));
-            return sum;
-        }
-
-        @Override
-        public String getName() {
-            return FUNCTION_NAME;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
         }
     }
 }

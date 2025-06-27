@@ -93,5 +93,10 @@ public class DoubleArrayCountFunctionFactory implements FunctionFactory {
         public String getName() {
             return FUNCTION_NAME;
         }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
     }
 }

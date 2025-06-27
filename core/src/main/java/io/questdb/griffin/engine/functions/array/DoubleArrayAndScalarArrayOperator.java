@@ -35,10 +35,10 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.Misc;
 
 abstract class DoubleArrayAndScalarArrayOperator extends ArrayFunction implements DoubleUnaryArrayAccessor, BinaryFunction {
+    protected final Function arrayArg;
+    protected final Function scalarArg;
     private final DirectArray array;
-    private final Function arrayArg;
     private final String name;
-    private final Function scalarArg;
     protected MemoryA memory;
     protected double scalarValue;
 

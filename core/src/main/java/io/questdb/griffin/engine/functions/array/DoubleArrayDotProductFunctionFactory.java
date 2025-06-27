@@ -125,6 +125,11 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
             return rightArg;
         }
 
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
         private void applyRecursive(
                 int dim,
                 ArrayView left,

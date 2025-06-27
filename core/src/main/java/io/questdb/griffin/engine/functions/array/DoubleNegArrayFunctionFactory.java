@@ -26,55 +26,64 @@ package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DirectArray;
+import io.questdb.cairo.arr.FlatArrayView;
+import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class DoubleArraySumFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "array_sum";
+public class DoubleNegArrayFunctionFactory implements FunctionFactory {
+    private static final String OPERATOR_NAME = "-";
 
     @Override
     public String getSignature() {
-        return FUNCTION_NAME + "(D[])";
+        return OPERATOR_NAME + "(D[])";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0));
+        return new Func(args.getQuick(0), configuration);
     }
 
-    static class Func extends DoubleFunction implements UnaryFunction, DoubleUnaryArrayAccessor {
+    private static class Func extends ArrayFunction implements DoubleUnaryArrayAccessor, UnaryFunction {
+        private final DirectArray array;
+        protected Function arrayArg;
+        protected MemoryA memory;
 
-        protected final Function arrayArg;
-        protected double sum = 0d;
-
-        Func(Function arrayArg) {
+        public Func(Function arrayArg, CairoConfiguration configuration) {
             this.arrayArg = arrayArg;
+            this.array = new DirectArray(configuration);
+            this.type = arrayArg.getType();
         }
 
         @Override
         public void applyToElement(ArrayView view, int index) {
-            double v = view.getDouble(index);
-            if (Numbers.isFinite(v)) {
-                sum += v;
-            }
+            memory.putDouble(-view.getDouble(index));
         }
 
         @Override
         public void applyToEntireVanillaArray(ArrayView view) {
-            double res = view.flatView().sumDouble(view.getFlatViewOffset(), view.getFlatViewLength());
-            sum = Numbers.isNull(res) ? 0 : res;
+            FlatArrayView flatView = view.flatView();
+            for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
+                memory.putDouble(-flatView.getDoubleAtAbsIndex(i));
+            }
         }
 
         @Override
         public void applyToNullArray() {
+        }
+
+        @Override
+        public void close() {
+            UnaryFunction.super.close();
+            array.close();
         }
 
         @Override
@@ -83,15 +92,19 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public double getDouble(Record rec) {
-            sum = 0d;
-            calculate(arrayArg.getArray(rec));
-            return sum;
-        }
+        public ArrayView getArray(Record rec) {
+            ArrayView arr = arrayArg.getArray(rec);
+            if (arr.isNull()) {
+                array.ofNull();
+                return array;
+            }
 
-        @Override
-        public String getName() {
-            return FUNCTION_NAME;
+            array.setType(getType());
+            array.copyShapeFrom(arr);
+            array.applyShape();
+            memory = array.startMemoryA();
+            calculate(arr);
+            return array;
         }
 
         @Override
