@@ -2870,18 +2870,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             final MatViewDefinition newDefinition = oldDefinition.updateRefreshLimit(limitHoursOrMonths);
-            if (blockFileWriter == null) {
-                blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
-            }
-            try (BlockFileWriter definitionWriter = blockFileWriter) {
-                definitionWriter.of(path.concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                MatViewDefinition.append(newDefinition, definitionWriter);
-            }
-
-            // Unlike mat view state write-through behavior, we update the in-memory definition
-            // object here, after updating the definition file.
-            engine.getMatViewStateStore().updateViewDefinition(tableToken, newDefinition);
-            engine.getMatViewGraph().updateViewDefinition(tableToken, newDefinition);
+            updateMatViewDefinition(newDefinition);
         } finally {
             path.trimTo(pathSize);
         }
@@ -2898,18 +2887,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             final MatViewDefinition newDefinition = oldDefinition.updateTimer(interval, unit, start);
-            if (blockFileWriter == null) {
-                blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
-            }
-            try (BlockFileWriter definitionWriter = blockFileWriter) {
-                definitionWriter.of(path.concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                MatViewDefinition.append(newDefinition, definitionWriter);
-            }
-
-            // Unlike mat view state write-through behavior, we update the in-memory definition
-            // object here, after updating the definition file.
-            engine.getMatViewStateStore().updateViewDefinition(tableToken, newDefinition);
-            engine.getMatViewGraph().updateViewDefinition(tableToken, newDefinition);
+            updateMatViewDefinition(newDefinition);
         } finally {
             path.trimTo(pathSize);
         }
@@ -10015,6 +9993,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } else {
             updateIndexesSerially(lo, hi);
         }
+    }
+
+    private void updateMatViewDefinition(MatViewDefinition newDefinition) {
+        if (blockFileWriter == null) {
+            blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
+        }
+        try (BlockFileWriter definitionWriter = blockFileWriter) {
+            definitionWriter.of(path.concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+            MatViewDefinition.append(newDefinition, definitionWriter);
+        }
+
+        // Unlike mat view state write-through behavior, we update the in-memory definition
+        // object here, after updating the definition file.
+        engine.getMatViewStateStore().updateViewDefinition(tableToken, newDefinition);
+        engine.getMatViewGraph().updateViewDefinition(tableToken, newDefinition);
     }
 
     private void updateMaxTimestamp(long timestamp) {
