@@ -44,6 +44,75 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionAll() throws Exception {
+        // note: different types in union all -> it also exercises type coercion
+        execute("create table temp (x int)");
+        execute("create table temp2 (x long)");
+        execute("insert into temp values (1), (2), (3)");
+        execute("insert into temp2 values (4), (5), (6)");
+
+        assertQuery(
+                "x\tdec\n" +
+                        "2\t0\n" +
+                        "3\t1\n" +
+                        "4\t2\n" +
+                        "5\t3\n" +
+                        "6\t4\n" +
+                        "7\t5\n",
+                "select x + 1 as x, x - 1 as dec from temp union all select x + 1 as x, x - 1 from temp2",
+                null,
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testUnion_overlappingOnAllColumns() throws Exception {
+        execute("create table temp (x int)");
+        execute("create table temp2 (x long)");
+        execute("insert into temp values (1), (2), (3)");
+        execute("insert into temp2 values (2), (3), (4)");
+
+        assertQuery(
+                "x\tdec\n" +
+                        "2\t0\n" +
+                        "3\t1\n" +
+                        "4\t2\n" +
+                        "5\t3\n",
+                "select x + 1 as x, x - 1 as dec from temp union select x + 1 as x, x - 1 from temp2",
+                null,
+                null,
+                false,
+                false
+        );
+    }
+
+    @Test
+    public void testUnion_overlappingOnProjectedColumnOnly() throws Exception {
+        execute("create table temp (x int)");
+        execute("create table temp2 (x long)");
+        execute("insert into temp values (1), (2), (3)");
+        execute("insert into temp2 values (4), (5), (6)");
+
+        // overlapping rows with different types
+        assertQuery(
+                "x\tb\n" +
+                        "-1\ttrue\n" +
+                        "-2\ttrue\n" +
+                        "-3\ttrue\n" +
+                        "-4\ttrue\n" +
+                        "-5\ttrue\n" +
+                        "-6\ttrue\n",
+                "select -x as x, x > 0 as b from temp union select -x as x, x > 0 from temp2",
+                null,
+                null,
+                false,
+                false
+        );
+    }
+
+    @Test
     public void testVanilla() throws Exception {
         execute("create table tmp as" +
                 " (select" +
