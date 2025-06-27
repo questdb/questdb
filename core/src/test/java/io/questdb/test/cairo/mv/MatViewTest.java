@@ -3315,7 +3315,7 @@ public class MatViewTest extends AbstractCairoTest {
                             "  sym varchar, price long, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
-            final String viewQuery = "select sym, sum(price) as sum_price, ts from base_price sample by 1h";
+            final String viewQuery = "select sym, sum(price) as sum_price, ts from base_price sample by 1m";
             execute("create materialized view price_1h refresh period(length 5m) as " + viewQuery);
 
             final int iterations = 100;
