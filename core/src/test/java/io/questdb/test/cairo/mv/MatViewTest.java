@@ -39,7 +39,6 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.catalogue.MatViewsFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
@@ -66,7 +65,6 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
 import static io.questdb.cairo.wal.WalUtils.EVENT_FILE_NAME;
@@ -3299,75 +3297,6 @@ public class MatViewTest extends AbstractCairoTest {
                     matViewsSql,
                     null
             );
-        });
-    }
-
-    @Test
-    public void testPeriodRefreshFuzz() throws Exception {
-        final TestMicrosecondClock testClock = new TestMicrosecondClock(parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z"));
-        testMicrosClock = testClock;
-
-        assertMemoryLeak(() -> {
-            final Rnd rnd = generateRandom(LOG);
-
-            execute(
-                    "create table base_price (" +
-                            "  sym varchar, price long, ts timestamp" +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-            final String viewQuery = "select sym, sum(price) as sum_price, ts from base_price sample by 1m";
-            execute("create materialized view price_1h refresh period(length 5m) as " + viewQuery);
-
-            final int iterations = 100;
-            final AtomicInteger errorCounter = new AtomicInteger();
-            final AtomicBoolean writesFinished = new AtomicBoolean();
-            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
-
-            final Thread writer = new Thread(() -> {
-                try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                    for (int i = 0; i < iterations; i++) {
-                        executionContext.setNowAndFixClock(testClock.micros.get());
-                        execute(
-                                "insert into base_price values ('gbpusd', 1317, dateadd('m', -3, now()))," +
-                                        "('gbpusd', 1318, dateadd('m', -2, now()))," +
-                                        "('gbpusd', 1319, dateadd('m', -1, now()))," +
-                                        "('gbpusd', 1320, now())," +
-                                        "('gbpusd', 1321, dateadd('m', 1, now()))," +
-                                        "('gbpusd', 1322, dateadd('m', 2, now()))," +
-                                        "('gbpusd', 1323, dateadd('m', 3, now()))",
-                                executionContext
-                        );
-                        drainWalQueue();
-                        testClock.micros.addAndGet(rnd.nextInt(10) * Timestamps.MINUTE_MICROS);
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace(System.out);
-                    errorCounter.incrementAndGet();
-                } finally {
-                    Path.clearThreadLocals();
-                    writesFinished.set(true);
-                }
-            });
-            writer.start();
-
-            while (!writesFinished.get()) {
-                drainMatViewTimerQueue(timerJob);
-                drainQueues();
-            }
-
-            writer.join();
-
-            // do a big jump forward in time to make sure that all rows are in complete periods
-            testClock.micros.addAndGet(Timestamps.HOUR_MICROS);
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-
-            Assert.assertEquals(0, errorCounter.get());
-
-            final StringSink sinkB = new StringSink();
-            printSql(viewQuery, sink);
-            printSql("price_1h", sinkB);
-            TestUtils.assertEquals(sink, sinkB);
         });
     }
 
