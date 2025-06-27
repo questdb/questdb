@@ -78,6 +78,11 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 public class GroupByUtils {
 
+    public static final int PROJECTION_FUNCTION_FLAG_ANY = -1;
+    public static final int PROJECTION_FUNCTION_FLAG_COLUMN = 0;
+    public static final int PROJECTION_FUNCTION_FLAG_GROUP_BY = 2;
+    public static final int PROJECTION_FUNCTION_FLAG_VIRTUAL = 1;
+
     public static void assembleGroupByFunctions(
             @NotNull FunctionParser functionParser,
             @NotNull ArrayDeque<ExpressionNode> sqlNodeStack,
@@ -138,19 +143,19 @@ public class GroupByUtils {
                                 func.getMetadata()
                         );
                         if (func instanceof GroupByFunction) {
-                            projectionFunctionFlags.add(2);
+                            projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_GROUP_BY);
                         } else {
-                            projectionFunctionFlags.add(1);
+                            projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_VIRTUAL);
                         }
                     } else {
-                        projectionFunctionFlags.add(0);
+                        projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_COLUMN);
                     }
                 } else {
                     // set this function to null, cursor will replace it with an instance class
                     // timestamp function returns value of class member which makes it impossible
                     // to create these columns in advance of cursor instantiation
                     outerProjectionFunctions.add(null);
-                    projectionFunctionFlags.add(0);
+                    projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_COLUMN);
                 }
 
                 if (node.type == LITERAL) {

@@ -40,12 +40,15 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.async.PageFrameProjectionRecord;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.sql.async.PageFrameReducer;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -75,7 +78,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private final AsyncGroupByRecordCursor cursor;
     private final PageFrameSequence<AsyncGroupByAtom> frameSequence;
     private final ObjList<GroupByFunction> groupByFunctions;
-    private final ObjList<Function> recordFunctions; // includes groupByFunctions
+    private final ObjList<Function> outerProjectionFunctions; // includes groupByFunctions
     private final int workerCount;
 
     public AsyncGroupByRecordCursorFactory(
@@ -83,7 +86,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
             @NotNull RecordCursorFactory base,
-            @NotNull RecordMetadata groupByMetadata,
+            @NotNull RecordMetadata outerProjectionMetadata,
+            @NotNull PriorityMetadata priorityMetadata,
             @Transient @NotNull ListColumnFilter listColumnFilter,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
@@ -91,7 +95,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @NotNull ObjList<Function> keyFunctions,
             @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
-            @NotNull ObjList<Function> recordFunctions,
+            @NotNull ObjList<Function> outerProjectionFunctions,
+            @NotNull VirtualRecord innerProjectionRecord,
+            @Nullable ObjList<VirtualRecord> perWorkerInnerProjectionRecords,
             @Nullable CompiledFilter compiledFilter,
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
@@ -100,15 +106,15 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @Nullable ObjList<Function> perWorkerFilters,
             int workerCount
     ) {
-        super(groupByMetadata);
+        super(outerProjectionMetadata);
         try {
             this.base = base;
             this.groupByFunctions = groupByFunctions;
-            this.recordFunctions = recordFunctions;
+            this.outerProjectionFunctions = outerProjectionFunctions;
             AsyncGroupByAtom atom = new AsyncGroupByAtom(
                     asm,
                     configuration,
-                    base.getMetadata(),
+                    priorityMetadata,
                     keyTypes,
                     valueTypes,
                     listColumnFilter,
@@ -116,6 +122,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     perWorkerGroupByFunctions,
                     keyFunctions,
                     perWorkerKeyFunctions,
+                    innerProjectionRecord,
+                    perWorkerInnerProjectionRecords,
                     compiledFilter,
                     bindVarMemory,
                     bindVarFunctions,
@@ -144,7 +152,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                         PageFrameReduceTask.TYPE_GROUP_BY
                 );
             }
-            this.cursor = new AsyncGroupByRecordCursor(groupByFunctions, recordFunctions, messageBus);
+            this.cursor = new AsyncGroupByRecordCursor(groupByFunctions, outerProjectionFunctions, messageBus);
             this.workerCount = workerCount;
         } catch (Throwable e) {
             close();
@@ -192,7 +200,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             sink.type("Async Group By");
         }
         sink.meta("workers").val(workerCount);
-        sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
+        sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(outerProjectionFunctions, getMetadata()));
         sink.optAttr("values", groupByFunctions, true);
         sink.optAttr("filter", frameSequence.getAtom(), true);
         sink.child(base);
@@ -235,11 +243,12 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
                 record.setRowIndex(0);
                 long baseRowId = record.getRowId();
+                PageFrameProjectionRecord projectionRecord = atom.getProjectionRecord(slotId, record);
 
                 if (fragment.isNotSharded()) {
-                    aggregateNonSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+                    aggregateNonSharded(projectionRecord, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
                 } else {
-                    aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+                    aggregateSharded(projectionRecord, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
                 }
 
                 atom.requestSharding(fragment);
@@ -313,7 +322,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     private static void aggregateNonSharded(
-            PageFrameMemoryRecord record,
+            PageFrameProjectionRecord record,
             long frameRowCount,
             long baseRowId,
             GroupByFunctionsUpdater functionUpdater,
@@ -336,7 +345,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     private static void aggregateSharded(
-            PageFrameMemoryRecord record,
+            PageFrameProjectionRecord record,
             long frameRowCount,
             long baseRowId,
             GroupByFunctionsUpdater functionUpdater,
@@ -433,6 +442,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         Misc.free(base);
         Misc.free(cursor);
         Misc.free(frameSequence);
-        Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
+        Misc.freeObjList(outerProjectionFunctions); // groupByFunctions are included in recordFunctions
     }
 }

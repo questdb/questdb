@@ -38,13 +38,17 @@ import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.async.PageFrameProjectionRecord;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
+import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
@@ -88,6 +92,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     // to properly initialize group by functions' allocator.
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
+    private final PageFrameProjectionRecord ownerInternalRecord;
     private final ObjList<Function> ownerKeyFunctions;
     private final RecordSink ownerMapSink;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
@@ -95,6 +100,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<MapFragment> perWorkerFragments;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
+    private final ObjList<VirtualRecord> perWorkerInnerProjectionRecords;
+    private final ObjList<PageFrameProjectionRecord> perWorkerInternalRecords;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<RecordSink> perWorkerMapSinks;
@@ -108,7 +115,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     public AsyncGroupByAtom(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
-            @Transient @NotNull ColumnTypes columnTypes,
+            @Transient @NotNull PriorityMetadata priorityMetadata,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Transient @NotNull ListColumnFilter listColumnFilter,
@@ -116,6 +123,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @NotNull ObjList<Function> ownerKeyFunctions,
             @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
+            @NotNull VirtualRecord ownerInnerProjectionRecord,
+            @Nullable ObjList<VirtualRecord> perWorkerInnerProjectionRecords,
             @Nullable CompiledFilter compiledFilter,
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
@@ -140,6 +149,17 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             this.perWorkerKeyFunctions = perWorkerKeyFunctions;
             this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
+            this.perWorkerInnerProjectionRecords = perWorkerInnerProjectionRecords;
+
+            this.ownerInternalRecord = new PageFrameProjectionRecord(ownerInnerProjectionRecord);
+            if (perWorkerInnerProjectionRecords != null) {
+                this.perWorkerInternalRecords = new ObjList<>();
+                for (int i = 0; i < perWorkerInnerProjectionRecords.size(); ++i) {
+                    this.perWorkerInternalRecords.add(new PageFrameProjectionRecord(perWorkerInnerProjectionRecords.getQuick(i)));
+                }
+            } else {
+                this.perWorkerInternalRecords = null;
+            }
 
             final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
             ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
@@ -170,7 +190,14 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             destShards = new ObjList<>(shardCount);
             destShards.setPos(shardCount);
 
-            final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(asm, columnTypes, listColumnFilter, ownerKeyFunctions, null);
+            final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(
+                    asm,
+                    priorityMetadata,
+                    listColumnFilter,
+                    ownerKeyFunctions,
+
+                    null
+            );
             ownerMapSink = RecordSinkFactory.getInstance(sinkClass, ownerKeyFunctions);
             if (perWorkerKeyFunctions != null) {
                 perWorkerMapSinks = new ObjList<>(slotCount);
@@ -291,6 +318,13 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             return ownerMapSink;
         }
         return perWorkerMapSinks.getQuick(slotId);
+    }
+
+    public PageFrameProjectionRecord getProjectionRecord(int slotId, PageFrameMemoryRecord pageFrameMemoryRecord) {
+        if (slotId == -1 || perWorkerInnerProjectionRecords == null) {
+            return ownerInternalRecord.of(pageFrameMemoryRecord);
+        }
+        return perWorkerInternalRecords.getQuick(slotId).of(pageFrameMemoryRecord);
     }
 
     public int getShardCount() {
