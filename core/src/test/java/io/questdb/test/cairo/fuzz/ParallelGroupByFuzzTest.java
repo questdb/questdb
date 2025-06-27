@@ -877,8 +877,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "            Frame forward scan on: tango\n",
                                 "select ts, dot_product(arr, 2), first(a) from tango sample by 1d order by ts, dot_product",
                                 "ts\tdot_product\tfirst\n" +
-                                        "2025-06-26T00:00:00.000000Z\t0.0\t10.0\n" +
                                         "2025-06-26T00:00:00.000000Z\t110.0\t1.0\n" +
+                                        "2025-06-26T00:00:00.000000Z\tnull\t10.0\n" +
                                         "2025-06-27T00:00:00.000000Z\t310.0\t18.0\n" +
                                         "2025-06-27T00:00:00.000000Z\t510.0\t25.0\n" +
                                         "2025-06-28T00:00:00.000000Z\t310.0\t38.0\n" +

@@ -35,7 +35,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -80,7 +79,7 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
         @Override
         public void applyToElement(ArrayView view, int index) {
             double v = view.getDouble(index);
-            if (Numbers.isFinite(v)) {
+            if (v == v) {
                 value += v * scalar;
             }
         }
@@ -90,7 +89,7 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
             FlatArrayView flatView = view.flatView();
             for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
                 double v = flatView.getDoubleAtAbsIndex(i);
-                if (Numbers.isFinite(v)) {
+                if (v == v) {
                     value += v * scalar;
                 }
             }
@@ -104,11 +103,11 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
         public double getDouble(Record rec) {
             ArrayView arr = leftArg.getArray(rec);
             if (arr.isNull()) {
-                return 0d;
+                return Double.NaN;
             }
             scalar = rightArg.getDouble(rec);
-            if (Numbers.isNull(scalar)) {
-                return 0d;
+            if (scalar != scalar) {
+                return Double.NaN;
             }
             value = 0d;
             calculate(arr);

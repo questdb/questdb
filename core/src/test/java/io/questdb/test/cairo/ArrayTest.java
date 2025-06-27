@@ -422,8 +422,8 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[[1.0, 3], [2.0, 5.0]], ARRAY[[1.0, 5.0], [7.0, 2.0]]), " +
                     "(ARRAY[[1.0, 1]], ARRAY[[5.0, null]])");
             assertSql("dot_product\tdot_product1\tdot_product2\n" +
-                    "11.0\t30.0\t0.0\n" +
-                    "2.0\t10.0\t0.0\n", "SELECT dot_product(left, 1.0), dot_product(right, 2.0), dot_product(left, null::double) FROM tango");
+                    "11.0\t30.0\tnull\n" +
+                    "2.0\t10.0\tnull\n", "SELECT dot_product(left, 1.0), dot_product(right, 2.0), dot_product(left, null::double) FROM tango");
             assertSql("dot_product\tdot_product1\tdot_product2\n" +
                     "11.0\t30.0\t30.0\n" +
                     "2.0\t10.0\t10.0\n", "SELECT dot_product(transpose(left), 1.0), dot_product(transpose(right), 2.0), dot_product(2.0, transpose(right)) FROM tango");
@@ -571,7 +571,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     "ts\tdot_product\tfirst\n" +
                             "2025-06-26T00:00:00.000000Z\t110.0\t1.0\n" +
-                            "2025-06-26T00:00:00.000000Z\t0.0\t10.0\n" +
+                            "2025-06-26T00:00:00.000000Z\tnull\t10.0\n" +
                             "2025-06-27T00:00:00.000000Z\t310.0\t18.0\n" +
                             "2025-06-27T00:00:00.000000Z\t510.0\t25.0\n",
                     "Radix sort light\n" +

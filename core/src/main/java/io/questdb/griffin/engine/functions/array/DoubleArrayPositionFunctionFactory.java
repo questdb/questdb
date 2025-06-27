@@ -59,7 +59,7 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
         if (valueArg.isConstant()) {
             double value = valueArg.getDouble(null);
             valueArg.close();
-            return Numbers.isFinite(value) ? new ArrayPositionConstFunction(arrayArg, value) : new ArrayPositionConstNaNFunction(arrayArg);
+            return value == value ? new ArrayPositionConstFunction(arrayArg, value) : new ArrayPositionConstNaNFunction(arrayArg);
         }
         return new ArrayIndexOfFunction(arrayArg, valueArg);
     }
@@ -81,7 +81,7 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
                 return Numbers.INT_NULL;
             }
             double value = valueArg.getDouble(rec);
-            return Numbers.isNull(value) ? array.linearSearchDoubleNull1DArray()
+            return value != value ? array.linearSearchDoubleNull1DArray()
                     : array.linearSearchDoubleValue1DArray(value);
         }
 

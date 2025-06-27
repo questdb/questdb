@@ -484,7 +484,8 @@ public abstract class ArrayView implements QuietCloseable {
             return Numbers.INT_NULL;
         }
         for (int i = 0, dimLen = getDimLen(0); i < dimLen; i++) {
-            if (Numbers.isNull(getDouble(i))) {
+            double val = getDouble(i);
+            if (val != val) {
                 return i + 1;
             }
         }
