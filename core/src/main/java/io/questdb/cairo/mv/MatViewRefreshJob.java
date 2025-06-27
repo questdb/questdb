@@ -82,7 +82,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final MatViewGraph graph;
     private final LongList intervals = new LongList();
     private final MicrosecondClock microsecondClock;
-    private final RefreshIntervals refreshIntervals = new RefreshIntervals();
+    private final RefreshContext refreshContext = new RefreshContext();
     private final MatViewRefreshSqlExecutionContext refreshSqlExecutionContext;
     private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
     private final MatViewStateStore stateStore;
@@ -194,7 +194,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    private MatViewRefreshJob.RefreshIntervals findRefreshIntervals(
+    private RefreshContext findRefreshIntervals(
             @NotNull TableReader baseTableReader,
             @NotNull MatViewState viewState,
             long lastRefreshTxn
@@ -202,14 +202,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return findRefreshIntervals(baseTableReader, viewState, lastRefreshTxn, Numbers.LONG_NULL, Numbers.LONG_NULL);
     }
 
-    private MatViewRefreshJob.RefreshIntervals findRefreshIntervals(
+    private RefreshContext findRefreshIntervals(
             @NotNull TableReader baseTableReader,
             @NotNull MatViewState viewState,
             long lastRefreshTxn,
             long rangeFrom,
             long rangeTo
     ) throws SqlException {
-        refreshIntervals.clear();
+        refreshContext.clear();
 
         final long lastTxn = baseTableReader.getSeqTxn();
         final TableToken baseTableToken = baseTableReader.getTableToken();
@@ -240,6 +240,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 minTs = baseTableReader.getMinTimestamp();
                 maxTs = baseTableReader.getMaxTimestamp();
             }
+            refreshContext.toBaseTxn = lastTxn;
         } else if (rangeRefresh) {
             // Range refresh. This means that the timer is triggered on a period mat view
             // or someone has run REFRESH RANGE SQL.
@@ -254,7 +255,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     minTs = periodLo;
                     maxTs = rangeTo;
                     // Bump lastPeriodHi once we're done. Its value is exclusive.
-                    refreshIntervals.periodHi = rangeTo + 1;
+                    refreshContext.periodHi = rangeTo + 1;
                 }
             } else {
                 // User-defined range refresh, e.g.
@@ -269,6 +270,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // so we end up skipping the refresh.
             minTs = baseTableReader.getMinTimestamp();
             maxTs = baseTableReader.getMaxTimestamp();
+            refreshContext.toBaseTxn = lastTxn;
         }
 
         // In case of incremental or full refresh we may need to do the following:
@@ -319,11 +321,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         }
                         // Bump lastPeriodHi once we're done.
                         // lastPeriodHi is exclusive, but the local periodHi value is inclusive.
-                        refreshIntervals.periodHi = periodHi + 1;
+                        refreshContext.periodHi = periodHi + 1;
                     }
                 } else {
                     // It's a full refresh, so we'll need to bump lastPeriodHi once we're done.
-                    refreshIntervals.periodHi = periodHi + 1;
+                    refreshContext.periodHi = periodHi + 1;
                 }
             }
 
@@ -379,16 +381,23 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             LOG.info().$("refreshing materialized view [view=").$(viewToken)
                     .$(", baseTable=").$(baseTableToken)
                     .$(", fromTxn=").$(lastRefreshTxn)
-                    .$(", toTxn=").$(lastTxn)
+                    .$(", toTxn=").$(refreshContext.toBaseTxn)
+                    .$(", periodHi=").$ts(refreshContext.periodHi)
                     .$(", iteratorMinTs>=").$ts(iteratorMinTs)
                     .$(", iteratorMaxTs<").$ts(iteratorMaxTs)
                     .I$();
 
-            refreshIntervals.intervalIterator = intervalIterator;
-            return refreshIntervals;
+            refreshContext.intervalIterator = intervalIterator;
+        } else {
+            LOG.info().$("no intervals to refresh in materialized view [view=").$(viewToken)
+                    .$(", baseTable=").$(baseTableToken)
+                    .$(", fromTxn=").$(lastRefreshTxn)
+                    .$(", toTxn=").$(refreshContext.toBaseTxn)
+                    .$(", periodHi=").$ts(refreshContext.periodHi)
+                    .I$();
         }
 
-        return null;
+        return refreshContext;
     }
 
     private boolean fullRefresh(MatViewRefreshTask refreshTask) {
@@ -447,19 +456,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     walWriter.truncateSoft();
                     resetInvalidState(viewState, walWriter);
 
-                    final long toBaseTxn = baseTableReader.getSeqTxn();
-                    // Specify -1 as the last refresh txn, so that we scan all partitions.
-                    final RefreshIntervals refreshIntervals = findRefreshIntervals(baseTableReader, viewState, Numbers.LONG_NULL);
-                    if (refreshIntervals != null) {
-                        insertAsSelect(
-                                viewState,
-                                walWriter,
-                                refreshIntervals.intervalIterator,
-                                toBaseTxn,
-                                refreshTriggerTimestamp,
-                                refreshIntervals.periodHi
-                        );
-                    }
+                    final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewState, Numbers.LONG_NULL);
+                    insertAsSelect(viewState, walWriter, refreshContext, refreshTriggerTimestamp);
                 } finally {
                     refreshSqlExecutionContext.clearReader();
                     engine.attachReader(baseTableReader);
@@ -556,10 +554,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private boolean insertAsSelect(
             @NotNull MatViewState viewState,
             @NotNull WalWriter walWriter,
-            @NotNull SampleByIntervalIterator intervalIterator,
-            long baseTableTxn, // set to -1 in case of range refresh
-            long refreshTriggerTimestamp,
-            long periodHi
+            @NotNull MatViewRefreshJob.RefreshContext refreshContext,
+            long refreshTriggerTimestamp
     ) {
         assert viewState.isLocked();
 
@@ -569,15 +565,32 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         RecordCursorFactory factory = null;
         RecordToRowCopier copier;
-        int intervalStep = intervalIterator.getStep();
         final long refreshStartTimestamp = microsecondClock.getTicks();
         viewState.setLastRefreshStartTimestamp(refreshStartTimestamp);
         final MatViewDefinition viewDefinition = viewState.getViewDefinition();
         final TableToken viewTableToken = viewDefinition.getMatViewToken();
-        long refreshFinishTimestamp = 0;
-        final long commitBaseTableTxn = baseTableTxn != -1 ? baseTableTxn : viewState.getLastRefreshBaseTxn();
-        final long commitPeriodHi = periodHi != Numbers.LONG_NULL ? periodHi : viewState.getLastPeriodHi();
+        final long commitBaseTxn = refreshContext.toBaseTxn != -1 ? refreshContext.toBaseTxn : viewState.getLastRefreshBaseTxn();
+        final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
 
+        final SampleByIntervalIterator intervalIterator = refreshContext.intervalIterator;
+        if (intervalIterator == null) {
+            // We don't have intervals to query, but we may need to bump base table txn or last period hi.
+            if (refreshContext.toBaseTxn != -1 || refreshContext.periodHi != Numbers.LONG_NULL) {
+                refreshSuccessNoRows(
+                        viewState,
+                        walWriter,
+                        microsecondClock.getTicks(),
+                        refreshTriggerTimestamp,
+                        commitBaseTxn,
+                        commitPeriodHi
+                );
+                return true;
+            }
+            return false;
+        }
+
+        long refreshFinishTimestamp = 0;
+        int intervalStep = intervalIterator.getStep();
         try {
             factory = viewState.acquireRecordFactory();
             copier = viewState.getRecordToRowCopier();
@@ -661,7 +674,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 if (isLastInterval) {
                                     refreshFinishTimestamp = microsecondClock.getTicks();
                                     walWriter.commitMatView(
-                                            commitBaseTableTxn,
+                                            commitBaseTxn,
                                             refreshFinishTimestamp,
                                             commitPeriodHi,
                                             replacementTimestampLo,
@@ -684,7 +697,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     if (replacementTimestampHi > replacementTimestampLo) {
                         refreshFinishTimestamp = microsecondClock.getTicks();
                         walWriter.commitMatView(
-                                commitBaseTableTxn,
+                                commitBaseTxn,
                                 refreshFinishTimestamp,
                                 commitPeriodHi,
                                 replacementTimestampLo,
@@ -718,7 +731,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
 
             final long recordRowCopierMetadataVersion = walWriter.getMetadata().getMetadataVersion();
-            if (baseTableTxn == -1) {
+            if (refreshContext.toBaseTxn == -1) {
                 // It's a range refresh, so we don't bump last refresh base table txn.
                 // Keep the last refresh txn as is and only update the finish timestamp.
                 viewState.rangeRefreshSuccess(
@@ -737,7 +750,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         recordRowCopierMetadataVersion,
                         refreshFinishTimestamp,
                         refreshTriggerTimestamp,
-                        baseTableTxn,
+                        commitBaseTxn,
                         commitPeriodHi
                 );
             }
@@ -925,18 +938,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 engine.detachReader(baseTableReader);
                 refreshSqlExecutionContext.of(baseTableReader);
                 try {
-                    // Specify -1 as the last refresh txn, so that we scan all partitions.
-                    final RefreshIntervals refreshIntervals = findRefreshIntervals(baseTableReader, viewState, Numbers.LONG_NULL, rangeFrom, rangeTo);
-                    if (refreshIntervals != null) {
-                        insertAsSelect(
-                                viewState,
-                                walWriter,
-                                refreshIntervals.intervalIterator,
-                                -1,
-                                refreshTriggerTimestamp,
-                                refreshIntervals.periodHi
-                        );
-                    }
+                    final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewState, Numbers.LONG_NULL, rangeFrom, rangeTo);
+                    insertAsSelect(viewState, walWriter, refreshContext, refreshTriggerTimestamp);
                 } finally {
                     refreshSqlExecutionContext.clearReader();
                     engine.attachReader(baseTableReader);
@@ -1154,23 +1157,38 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             engine.detachReader(baseTableReader);
             refreshSqlExecutionContext.of(baseTableReader);
             try {
-                final RefreshIntervals refreshIntervals = findRefreshIntervals(baseTableReader, viewState, fromBaseTxn);
-                if (refreshIntervals != null) {
-                    return insertAsSelect(
-                            viewState,
-                            walWriter,
-                            refreshIntervals.intervalIterator,
-                            baseTableReader.getSeqTxn(),
-                            refreshTriggerTimestamp,
-                            refreshIntervals.periodHi
-                    );
-                }
+                final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewState, fromBaseTxn);
+                return insertAsSelect(viewState, walWriter, refreshContext, refreshTriggerTimestamp);
             } finally {
                 refreshSqlExecutionContext.clearReader();
                 engine.attachReader(baseTableReader);
             }
         }
-        return false;
+    }
+
+    private void refreshSuccessNoRows(
+            MatViewState viewState,
+            @Nullable WalWriter walWriter,
+            long refreshFinishedTimestamp,
+            long refreshTriggeredTimestamp,
+            long baseTableTxn,
+            long periodHi
+    ) {
+        viewState.refreshSuccessNoRows(
+                refreshFinishedTimestamp,
+                refreshTriggeredTimestamp,
+                baseTableTxn,
+                periodHi
+        );
+        if (walWriter != null) {
+            walWriter.resetMatViewState(
+                    baseTableTxn,
+                    refreshFinishedTimestamp,
+                    false,
+                    null,
+                    periodHi
+            );
+        }
     }
 
     private void resetInvalidState(MatViewState viewState, WalWriter walWriter) {
@@ -1200,14 +1218,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         );
     }
 
-    private static class RefreshIntervals implements Mutable {
+    private static class RefreshContext implements Mutable {
         public SampleByIntervalIterator intervalIterator;
         public long periodHi = Numbers.LONG_NULL;
+        public long toBaseTxn = -1;
 
         @Override
         public void clear() {
             intervalIterator = null;
             periodHi = Numbers.LONG_NULL;
+            toBaseTxn = -1;
         }
     }
 }

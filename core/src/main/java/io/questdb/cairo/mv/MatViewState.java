@@ -314,6 +314,25 @@ public class MatViewState implements QuietCloseable {
         );
     }
 
+    public void refreshSuccessNoRows(
+            long refreshFinishedTimestamp,
+            long refreshTriggeredTimestamp,
+            long baseTableTxn,
+            long periodHi
+    ) {
+        assert latch.get();
+        this.lastRefreshFinishTimestamp = refreshFinishedTimestamp;
+        this.lastRefreshBaseTxn = baseTableTxn;
+        this.lastPeriodHi = periodHi;
+        telemetryFacade.store(
+                MAT_VIEW_REFRESH_SUCCESS,
+                viewDefinition.getMatViewToken(),
+                baseTableTxn,
+                null,
+                refreshFinishedTimestamp - refreshTriggeredTimestamp
+        );
+    }
+
     public void setLastPeriodHi(long lastPeriodHi) {
         this.lastPeriodHi = lastPeriodHi;
     }
