@@ -48,12 +48,12 @@ public interface FlatArrayView {
         int count = 0;
         for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
-            if (Numbers.isFinite(v)) {
+            if (v == v) {
                 sum += v;
                 count++;
             }
         }
-        return count == 0 ? Double.NaN : sum / count;
+        return sum / count;
     }
 
     /**
@@ -126,7 +126,7 @@ public interface FlatArrayView {
         int count = 0;
         for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
-            if (Numbers.isFinite(v)) {
+            if (v == v) {
                 count++;
             }
         }
@@ -167,7 +167,7 @@ public interface FlatArrayView {
         double sum = 0d;
         for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
-            if (Numbers.isFinite(v)) {
+            if (v == v) {
                 sum += v;
             }
         }

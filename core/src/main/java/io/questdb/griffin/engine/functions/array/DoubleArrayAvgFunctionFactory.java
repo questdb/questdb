@@ -32,7 +32,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
@@ -58,7 +57,7 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
         @Override
         public void applyToElement(ArrayView view, int index) {
             double v = view.getDouble(index);
-            if (Numbers.isFinite(v)) {
+            if (v == v) {
                 sum += v;
                 count++;
             }
@@ -81,7 +80,7 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
             sum = 0d;
             boolean vanilla = arr.isVanilla();
             calculate(arr);
-            return vanilla ? sum : (count == 0 ? Double.NaN : sum / count);
+            return vanilla ? sum : sum / count;
         }
 
         @Override

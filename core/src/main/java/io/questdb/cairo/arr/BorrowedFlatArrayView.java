@@ -26,7 +26,6 @@ package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
@@ -50,13 +49,7 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     @Override
     public double avgDouble(int offset, int length) {
         long count = Vect.countDouble(this.ptr + (long) offset * Double.BYTES, length);
-        if (count == 0) {
-            return Double.NaN;
-        }
         double sum = Vect.sumDouble(this.ptr + (long) offset * Double.BYTES, length);
-        if (Numbers.isNull(sum)) {
-            return Double.NaN;
-        }
         return sum / count;
     }
 

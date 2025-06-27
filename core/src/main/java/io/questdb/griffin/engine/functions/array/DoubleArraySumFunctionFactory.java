@@ -34,7 +34,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class DoubleArraySumFunctionFactory implements FunctionFactory {
@@ -62,7 +61,7 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
         @Override
         public void applyToElement(ArrayView view, int index) {
             double v = view.getDouble(index);
-            if (Numbers.isFinite(v)) {
+            if (v == v) {
                 sum += v;
             }
         }
@@ -70,7 +69,7 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
         @Override
         public void applyToEntireVanillaArray(ArrayView view) {
             double res = view.flatView().sumDouble(view.getFlatViewOffset(), view.getFlatViewLength());
-            sum = Numbers.isNull(res) ? 0 : res;
+            sum = res != res ? 0 : res;
         }
 
         @Override
