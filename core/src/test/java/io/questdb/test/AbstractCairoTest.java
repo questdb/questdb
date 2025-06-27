@@ -1360,6 +1360,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
         TestUtils.drainPurgeJob(engine);
     }
 
+    protected static void drainViewQueue() {
+        drainViewQueue(engine);
+        drainWalQueue(engine);
+    }
+
     protected static void drainWalAndMatViewQueues() {
         drainWalAndMatViewQueues(engine);
     }
