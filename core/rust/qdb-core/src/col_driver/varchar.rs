@@ -323,7 +323,7 @@ mod tests {
 
         // out of range
         let err = VarcharDriver.col_sizes_for_row_count(&col, 6).unwrap_err();
-        let msg = format!("{err:#}");G366
+        let msg = format!("{err:#}");
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("varchar entry index 5 not found in aux for column v3 in"));
     }
