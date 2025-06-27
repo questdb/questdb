@@ -107,6 +107,15 @@ public class DoubleNegArrayFunctionFactory implements FunctionFactory {
             return array;
         }
 
+        public String getName() {
+            return OPERATOR_NAME;
+        }
+
+        @Override
+        public boolean isOperator() {
+            return true;
+        }
+
         @Override
         public boolean isThreadSafe() {
             return false;
