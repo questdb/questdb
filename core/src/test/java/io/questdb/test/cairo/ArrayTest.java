@@ -492,25 +492,6 @@ public class ArrayTest extends AbstractCairoTest {
 
             assertQueryAndPlan(
                     "ts\tv\n" +
-                            "2025-06-26T00:00:00.000000Z\t1\n" +
-                            "2025-06-27T00:00:00.000000Z\t13\n",
-                    "Radix sort light\n" +
-                            "  keys: [ts]\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [ts]\n" +
-                            "      values: [sum(index_of(arr, a))]\n" +
-                            "      filter: null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tango\n",
-                    "select ts, sum(index_of_sorted(arr, a)) as v from tango sample by 1d",
-                    "ts",
-                    true,
-                    true
-            );
-
-            assertQueryAndPlan(
-                    "ts\tv\n" +
                             "2025-06-26T00:00:00.000000Z\t2\n" +
                             "2025-06-27T00:00:00.000000Z\t6\n",
                     "Radix sort light\n" +
@@ -1485,81 +1466,6 @@ public class ArrayTest extends AbstractCairoTest {
                             "FROM tango");
             assertExceptionNoLeakCheck("SELECT index_of(arr2, 0) len FROM tango",
                     16, "array is not one-dimensional");
-        });
-    }
-
-    @Test
-    public void testIndexOfAssumeSorted() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
-            execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[9.0, 10, 12, 20, 22, 22, 100, 1000, 1001], ARRAY[[9.0, 10, 12, 20, 22, 100, 1000,1001]]), " +
-                    "(ARRAY[1001.0, 1000, 100, 22, 22, 20, 12, 10, 9], ARRAY[[1001.0, 1000, 100, 22, 20, 12, 10, 9]])," +
-                    "(null, null)"
-            );
-            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\ti8\n" +
-                            "-1\t-1\t5\t-7\t8\t9\t-2\t5\n" +
-                            "-10\t-1\t4\t-4\t2\t1\t-2\t1\n" +
-                            "null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n",
-                    "SELECT " +
-                            "index_of_sorted(arr1, 8) i1, " +
-                            "index_of_sorted(arr1, null) i2, " +
-                            "index_of_sorted(arr1, 22) i3, " +
-                            "index_of_sorted(arr1, 23) i4, " +
-                            "index_of_sorted(arr1, 1000) i5, " +
-                            "index_of_sorted(arr1, 1001) i6, " +
-                            "index_of_sorted(arr1[3:4], 1000) i7, " +
-                            "index_of_sorted(arr1[3:], 100) i8 " +
-                            "FROM tango");
-
-            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
-                            "-1\t-1\t5\t7\t8\t-2\t4\n" +
-                            "-9\t-1\t4\t2\t1\t-2\t1\n" +
-                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
-                    "SELECT " +
-                            "index_of_sorted(arr2[1], 8) i1, " +
-                            "index_of_sorted(arr2[1], null) i2, " +
-                            "index_of_sorted(arr2[1], 22) i3, " +
-                            "index_of_sorted(arr2[1], 1000) i4, " +
-                            "index_of_sorted(arr2[1], 1001) i5, " +
-                            "index_of_sorted(arr2[1][3:4], 1000) i6, " +
-                            "index_of_sorted(arr2[1][3:], 100) i7 " +
-                            "FROM tango");
-
-            assertSql("i1\ti2\ti3\ti4\n" +
-                            "1\t2\t3\t1\n" +
-                            "1\t2\t3\t1\n" +
-                            "null\tnull\tnull\tnull\n",
-                    "SELECT " +
-                            "index_of_sorted(arr1, arr1[1]) i1, " +
-                            "index_of_sorted(arr1, arr1[2]) i2, " +
-                            "index_of_sorted(arr1, arr1[3]) i3, " +
-                            "index_of_sorted(arr1[2:], arr1[2]) i4 " +
-                            "FROM tango");
-            assertExceptionNoLeakCheck("SELECT index_of_sorted(arr2, 0) len FROM tango",
-                    23, "array is not one-dimensional");
-        });
-    }
-
-    @Test
-    public void testIndexOfAssumeSortedNonVanilla() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr DOUBLE[][])");
-            execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[[9.0], [10], [12], [20], [22], [22], [100], [1000], [1001]])"
-            );
-            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\ti8\n" +
-                            "-1\t-1\t5\t-7\t8\t9\t-2\t5\n",
-                    "SELECT " +
-                            "index_of_sorted(transpose(arr)[1], 8) i1, " +
-                            "index_of_sorted(transpose(arr)[1], null) i2, " +
-                            "index_of_sorted(transpose(arr)[1], 22) i3, " +
-                            "index_of_sorted(transpose(arr)[1], 23) i4, " +
-                            "index_of_sorted(transpose(arr)[1], 1000) i5, " +
-                            "index_of_sorted(transpose(arr)[1], 1001) i6, " +
-                            "index_of_sorted(transpose(arr)[1, 3:4], 1000) i7, " +
-                            "index_of_sorted(transpose(arr)[1, 3:], 100) i8 " +
-                            "FROM tango");
         });
     }
 

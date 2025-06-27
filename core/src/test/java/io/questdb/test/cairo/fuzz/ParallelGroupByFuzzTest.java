@@ -775,27 +775,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         );
 
                         assertQueries(engine, sqlExecutionContext,
-                                "explain select ts, sum(index_of_sorted(arr, a)) as v from tango sample by 1d",
-                                "QUERY PLAN\n" +
-                                        "Radix sort light\n" +
-                                        "  keys: [ts]\n" +
-                                        "    Async Group By workers: 4\n" +
-                                        "      keys: [ts]\n" +
-                                        "      values: [sum(index_of(arr, a))]\n" +
-                                        "      filter: null\n" +
-                                        "        PageFrame\n" +
-                                        "            Row forward scan\n" +
-                                        "            Frame forward scan on: tango\n",
-                                "select ts, sum(index_of_sorted(arr, a)) as v from tango sample by 1d",
-                                "ts\tv\n" +
-                                        "2025-06-26T00:00:00.000000Z\t1\n" +
-                                        "2025-06-27T00:00:00.000000Z\t13\n" +
-                                        "2025-06-28T00:00:00.000000Z\t-22\n" +
-                                        "2025-06-29T00:00:00.000000Z\t-22\n" +
-                                        "2025-06-30T00:00:00.000000Z\t-22\n"
-                        );
-
-                        assertQueries(engine, sqlExecutionContext,
                                 "explain select ts, min(insertion_point(arr, a)) as v from tango sample by 1d",
                                 "QUERY PLAN\n" +
                                         "Radix sort light\n" +
