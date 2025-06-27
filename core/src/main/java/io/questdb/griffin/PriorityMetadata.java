@@ -37,11 +37,11 @@ import io.questdb.cairo.sql.RecordMetadata;
  * base table columns. Such collisions are resolved by preferring the base table. As is the case with
  * other major databases.
  */
-public class VirtualPriorityMetadata extends AbstractRecordMetadata {
+public class PriorityMetadata extends AbstractRecordMetadata {
     private final RecordMetadata baseMetadata;
     private final int virtualColumnReservedSlots;
 
-    public VirtualPriorityMetadata(int virtualColumnReservedSlots, RecordMetadata baseMetadata) {
+    public PriorityMetadata(int virtualColumnReservedSlots, RecordMetadata baseMetadata) {
         this.virtualColumnReservedSlots = virtualColumnReservedSlots;
         // hold on to the base metadata, in case this is a join metadata, and it is able to
         // resolve column names containing table aliases.

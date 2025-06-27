@@ -32,6 +32,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -87,11 +88,12 @@ public class GroupByUtils {
             boolean timestampUnimportant,
             ObjList<GroupByFunction> outGroupByFunctions,
             IntList outGroupByFunctionPositions,
-            ObjList<Function> outRecordFunctions,
-            IntList outRecordFunctionPositions,
-            GenericRecordMetadata outGroupByMetadata,
-            @Nullable ObjList<Function> outKeyFunctions,
-            @Nullable ObjList<ExpressionNode> outKeyFunctionNodes,
+            ObjList<Function> outerProjectionFunctions, // projection presented by the group-by execution, values are typically read from the map
+            ObjList<Function> innerProjectionFunctions, // projection used by the group-by function to build maps
+            IntList projectionFunctionPositions,
+            IntList projectionFunctionFlags,
+            GenericRecordMetadata projectionMetadata,
+            PriorityMetadata outPriorityMetadata,
             ArrayColumnTypes outValueTypes,
             ArrayColumnTypes outKeyTypes,
             ListColumnFilter outColumnFilter,
@@ -100,7 +102,7 @@ public class GroupByUtils {
     ) throws SqlException {
         try {
             outGroupByFunctionPositions.clear();
-            outRecordFunctionPositions.clear();
+            projectionFunctionPositions.clear();
             int fillCount = sampleByFill != null ? sampleByFill.size() : 0;
 
             int columnKeyCount = 0;
@@ -112,54 +114,64 @@ public class GroupByUtils {
                 final QueryColumn column = columns.getQuick(i);
                 final ExpressionNode node = column.getAst();
                 final int index = baseMetadata.getColumnIndexQuiet(node.token);
+                TableColumnMetadata m = null;
                 if (node.type != LITERAL || index != timestampIndex || timestampUnimportant) {
                     Function func = functionParser.parseFunction(
                             node,
                             baseMetadata,
                             executionContext
                     );
-                    outRecordFunctions.add(func);
+
+                    // functions added to the outer projections will later be replaced by column refences
+                    outerProjectionFunctions.add(func);
+                    innerProjectionFunctions.add(func);
 
                     if (node.type != LITERAL) {
-                        outGroupByMetadata.add(
-                                new TableColumnMetadata(
-                                        Chars.toString(column.getName()),
-                                        func.getType(),
-                                        false,
-                                        0,
-                                        func instanceof SymbolFunction && (((SymbolFunction) func).isSymbolTableStatic()),
-                                        func.getMetadata()
-                                )
+                        m = new TableColumnMetadata(
+                                Chars.toString(column.getName()),
+                                func.getType(),
+                                false,
+                                0,
+                                func instanceof SymbolFunction && (((SymbolFunction) func).isSymbolTableStatic()),
+                                func.getMetadata()
                         );
+                        if (func instanceof GroupByFunction) {
+                            projectionFunctionFlags.add(2);
+                        } else {
+                            projectionFunctionFlags.add(1);
+                        }
+                    } else {
+                        projectionFunctionFlags.add(0);
                     }
                 } else {
                     // set this function to null, cursor will replace it with an instance class
                     // timestamp function returns value of class member which makes it impossible
                     // to create these columns in advance of cursor instantiation
-                    outRecordFunctions.add(null);
+                    outerProjectionFunctions.add(null);
+                    projectionFunctionFlags.add(0);
                 }
 
                 if (node.type == LITERAL) {
                     if (index == timestampIndex && !timestampUnimportant) {
-                        if (outGroupByMetadata.getTimestampIndex() == -1) {
-                            outGroupByMetadata.setTimestampIndex(i);
+                        if (projectionMetadata.getTimestampIndex() == -1) {
+                            projectionMetadata.setTimestampIndex(i);
                         }
                     }
                     if (column.getAlias() == null) {
-                        outGroupByMetadata.add(baseMetadata.getColumnMetadata(index));
+                        m = baseMetadata.getColumnMetadata(index);
                     } else {
-                        outGroupByMetadata.add(
-                                new TableColumnMetadata(
-                                        Chars.toString(column.getAlias()),
-                                        baseMetadata.getColumnType(index),
-                                        baseMetadata.isColumnIndexed(index),
-                                        baseMetadata.getIndexValueBlockCapacity(index),
-                                        baseMetadata.isSymbolTableStatic(index),
-                                        baseMetadata.getMetadata(index)
-                                )
+                        m = new TableColumnMetadata(
+                                Chars.toString(column.getAlias()),
+                                baseMetadata.getColumnType(index),
+                                baseMetadata.isColumnIndexed(index),
+                                baseMetadata.getIndexValueBlockCapacity(index),
+                                baseMetadata.isSymbolTableStatic(index),
+                                baseMetadata.getMetadata(index)
                         );
                     }
                 }
+                projectionMetadata.add(m);
+                outPriorityMetadata.add(m);
             }
 
             // There are two iterations over the model's columns. The first iterations create value
@@ -171,7 +183,7 @@ public class GroupByUtils {
                 final ExpressionNode node = column.getAst();
 
                 if (node.type != LITERAL) {
-                    Function function = outRecordFunctions.getQuick(i);
+                    Function function = outerProjectionFunctions.getQuick(i);
                     if (function instanceof GroupByFunction) {
                         // configure map value columns for group-by functions
                         // some functions may need more than one column in values,
@@ -213,13 +225,6 @@ public class GroupByUtils {
                             }
                         }
                         func.initValueTypes(outValueTypes);
-                    } else {
-                        // it's a key function
-                        if (outKeyFunctions == null || outKeyFunctionNodes == null) {
-                            throw SqlException.$(node.position, "key functions are supported in GROUP BY only [function=").put(node).put(']');
-                        }
-                        outKeyFunctions.add(function);
-                        outKeyFunctionNodes.add(node);
                     }
                 } else {
                     int index = baseMetadata.getColumnIndexQuiet(node.token);
@@ -236,7 +241,7 @@ public class GroupByUtils {
                         }
                     }
                 }
-                outRecordFunctionPositions.add(node.position);
+                projectionFunctionPositions.add(node.position);
             }
 
             int valueCount = outValueTypes.getColumnCount();
@@ -262,13 +267,13 @@ public class GroupByUtils {
                             keyColumnIndex++;
                             lastIndex = index;
                         }
-                        outRecordFunctions.set(i, createColumnFunction(baseMetadata, keyColumnIndex, type, index));
+                        outerProjectionFunctions.set(i, createColumnFunction(baseMetadata, keyColumnIndex, type, index));
                     }
 
                     // and finish with populating metadata for this factory
                     inferredKeyColumnCount++;
                 } else {
-                    Function func = outRecordFunctions.getQuick(i);
+                    Function func = outerProjectionFunctions.getQuick(i);
 
                     if (!(func instanceof GroupByFunction)) {
                         // leave group-by function alone but re-write non-group-by functions as column references
@@ -280,16 +285,16 @@ public class GroupByUtils {
                             columnRefFunc = new CastStrToSymbolFunctionFactory.Func(columnRefFunc);
                         }
                         // override function with column ref function
-                        outRecordFunctions.set(i, columnRefFunc);
+                        outerProjectionFunctions.set(i, columnRefFunc);
                         inferredKeyColumnCount++;
                     }
                 }
             }
             validateGroupByColumns(sqlNodeStack, model, inferredKeyColumnCount);
         } catch (Throwable e) {
-            Misc.freeObjListAndClear(outRecordFunctions);
+            Misc.freeObjListAndClear(outerProjectionFunctions);
             Misc.freeObjList(outGroupByFunctions);
-            Misc.freeObjList(outKeyFunctions);
+            Misc.freeObjList(innerProjectionFunctions);
             throw e;
         }
     }
