@@ -3644,7 +3644,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         keyTypes,
                         listColumnFilterA,
                         sampleByFill,
-                        validateSampleByFillType
+                        validateSampleByFillType,
+                        false
                 );
 
                 return new SampleByInterpolateRecordCursorFactory(
@@ -3699,7 +3700,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     keyTypes,
                     listColumnFilterA,
                     sampleByFill,
-                    validateSampleByFillType
+                    validateSampleByFillType,
+                    false
             );
 
             boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
@@ -4470,7 +4472,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     keyTypes,
                     listColumnFilterA,
                     null,
-                    validateSampleByFillType
+                    validateSampleByFillType,
+                    false
             );
 
             // Check if we have a non-keyed query with all early exit aggregate functions (e.g. count_distinct(symbol))
