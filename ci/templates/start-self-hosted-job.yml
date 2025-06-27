@@ -76,7 +76,7 @@ jobs:
               "pool": "amd64-zfs",
               "buildid": "$(System.StageName)$(Build.BuildId)",
               "instancetype": "c7a.xlarge",
-              "ami": "ami-0625be73ffdecc69c",
+              "ami": "ami-04842997c8fe5df9f",
               "devicename": "/dev/xvdb"
             }
           outputVariable: "functionResult"
