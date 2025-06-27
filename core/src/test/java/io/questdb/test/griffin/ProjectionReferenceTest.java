@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class ProjectionReferenceTest extends AbstractCairoTest {
@@ -68,6 +69,46 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                 null,
                 null,
                 false,
+                true
+        );
+    }
+
+    @Test
+    @Ignore("Broken test, needs investigation")
+    public void testJoinWithProjectionReference() throws Exception {
+        execute("create table orders (id int, amount int)");
+        execute("create table customers (id int, name string)");
+        execute("insert into orders values (1, 100), (2, 200)");
+        execute("insert into customers values (1, 'Alice'), (2, 'Bob')");
+
+        assertQuery(
+                "order_id\tcustomer_name\tamount\ttax\ttotal\n" +
+                        "1\tAlice\t100\t10\t110\n" +
+                        "2\tBob\t200\t20\t220\n",
+                "select o.id as order_id, c.name as customer_name, o.amount, " +
+                        "o.amount * 0.1 as tax, o.amount + tax as total " +
+                        "from orders o join customers c on o.id = c.id",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testMultipleLevelProjections() throws Exception {
+        execute("create table data (x int)");
+        execute("insert into data values (1), (2), (3)");
+
+        assertQuery(
+                "x\ta\tb\tc\td\n" +
+                        "1\t2\t4\t8\t16\n" +
+                        "2\t3\t5\t9\t17\n" +
+                        "3\t4\t6\t10\t18\n",
+                "select x, x + 1 as a, a + 2 as b, b + 4 as c, c + 8 as d from data",
+                null,
+                null,
+                true,
                 true
         );
     }
@@ -174,6 +215,31 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         "20\t40\t60\t20\n" +
                         "30\t60\t90\t30\n",
                 "select n, n * 2 as double_n, double_n + n as triple_n, double_n / 2 as half_of_double from numbers",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testProjectionWithCase() throws Exception {
+        execute("create table grades (score int)");
+        execute("insert into grades values (95), (85), (75), (65)");
+
+        assertQuery(
+                "score\tgrade\tpass_status\n" +
+                        "95\tA\tPASS\n" +
+                        "85\tB\tPASS\n" +
+                        "75\tC\tPASS\n" +
+                        "65\tD\tFAIL\n",
+                "select score, " +
+                        "case when score >= 90 then 'A' " +
+                        "     when score >= 80 then 'B' " +
+                        "     when score >= 70 then 'C' " +
+                        "     else 'D' end as grade, " +
+                        "case when grade in ('A', 'B', 'C') then 'PASS' else 'FAIL' end as pass_status " +
+                        "from grades",
                 null,
                 null,
                 true,
@@ -293,76 +359,4 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                 true
         );
     }
-
-    // NOTE: The following tests demonstrate features that are not yet fully implemented
-    // They are commented out to keep the test suite passing
-
-    /*
-    // Projection references in JOIN queries with column name conflicts
-    @Test
-    public void testJoinWithProjectionReference() throws Exception {
-        execute("create table orders (id int, amount int)");
-        execute("create table customers (id int, name string)");
-        execute("insert into orders values (1, 100), (2, 200)");
-        execute("insert into customers values (1, 'Alice'), (2, 'Bob')");
-
-        assertQuery(
-                "order_id\tcustomer_name\tamount\ttax\ttotal\n" +
-                        "1\tAlice\t100\t10\t110\n" +
-                        "2\tBob\t200\t20\t220\n",
-                "select o.id as order_id, c.name as customer_name, o.amount, " +
-                        "o.amount * 0.1 as tax, o.amount + tax as total " +
-                        "from orders o join customers c on o.id = c.id",
-                null,
-                null,
-                false,
-                true
-        );
-    }
-
-    // Multiple levels of projection references
-    @Test
-    public void testMultipleLevelProjections() throws Exception {
-        execute("create table data (x int)");
-        execute("insert into data values (1), (2), (3)");
-
-        assertQuery(
-                "x\ta\tb\tc\td\n" +
-                        "1\t2\t4\t8\t16\n" +
-                        "2\t3\t5\t9\t17\n" +
-                        "3\t4\t6\t10\t18\n",
-                "select x, x + 1 as a, a + 2 as b, b + 4 as c, c + 8 as d from data",
-                null,
-                null,
-                false,
-                true
-        );
-    }
-
-    // Projection references with CASE expressions
-    @Test
-    public void testProjectionWithCase() throws Exception {
-        execute("create table grades (score int)");
-        execute("insert into grades values (95), (85), (75), (65)");
-
-        assertQuery(
-                "score\tgrade\tpass_status\n" +
-                        "95\tA\tPASS\n" +
-                        "85\tB\tPASS\n" +
-                        "75\tC\tPASS\n" +
-                        "65\tD\tFAIL\n",
-                "select score, " +
-                        "case when score >= 90 then 'A' " +
-                        "     when score >= 80 then 'B' " +
-                        "     when score >= 70 then 'C' " +
-                        "     else 'D' end as grade, " +
-                        "case when grade in ('A', 'B', 'C') then 'PASS' else 'FAIL' end as pass_status " +
-                        "from grades",
-                null,
-                null,
-                false,
-                true
-        );
-    }
-    */
 }
