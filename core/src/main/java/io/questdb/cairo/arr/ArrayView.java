@@ -481,19 +481,19 @@ public abstract class ArrayView implements QuietCloseable {
 
     public final int linearSearchDoubleNull1DArray() {
         if (isNull() || isEmpty()) {
-            return 0;
+            return Numbers.INT_NULL;
         }
         for (int i = 0, dimLen = getDimLen(0); i < dimLen; i++) {
             if (Numbers.isNull(getDouble(i))) {
                 return i + 1;
             }
         }
-        return 0;
+        return Numbers.INT_NULL;
     }
 
     public final int linearSearchDoubleValue1DArray(double value) {
         if (isNull() || isEmpty()) {
-            return 0;
+            return Numbers.INT_NULL;
         }
         if (isVanilla) {
             return flatView.linearSearch(value, flatViewOffset, flatViewLength);
@@ -509,7 +509,7 @@ public abstract class ArrayView implements QuietCloseable {
             }
         }
 
-        return 0;
+        return Numbers.INT_NULL;
     }
 
     /**

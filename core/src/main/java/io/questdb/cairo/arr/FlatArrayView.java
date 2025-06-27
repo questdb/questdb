@@ -158,7 +158,7 @@ public interface FlatArrayView {
                 return i - offset + 1;
             }
         }
-        return 0;
+        return Numbers.INT_NULL;
     }
 
     /**

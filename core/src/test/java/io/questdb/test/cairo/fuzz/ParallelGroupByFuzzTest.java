@@ -733,45 +733,45 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 sqlExecutionContext);
 
                         assertQueries(engine, sqlExecutionContext,
-                                "explain select ts, max(index_of(arr, a)) as v from tango sample by 1d",
+                                "explain select ts, max(array_position(arr, a)) as v from tango sample by 1d",
                                 "QUERY PLAN\n" +
                                         "Radix sort light\n" +
                                         "  keys: [ts]\n" +
                                         "    Async Group By workers: 4\n" +
                                         "      keys: [ts]\n" +
-                                        "      values: [max(index_of(arr, a))]\n" +
+                                        "      values: [max(array_position(arr, a))]\n" +
                                         "      filter: null\n" +
                                         "        PageFrame\n" +
                                         "            Row forward scan\n" +
                                         "            Frame forward scan on: tango\n",
-                                "select ts, max(index_of(arr, a)) as v from tango sample by 1d",
+                                "select ts, max(array_position(arr, a)) as v from tango sample by 1d",
                                 "ts\tv\n" +
                                         "2025-06-26T00:00:00.000000Z\t1\n" +
                                         "2025-06-27T00:00:00.000000Z\t8\n" +
-                                        "2025-06-28T00:00:00.000000Z\t0\n" +
-                                        "2025-06-29T00:00:00.000000Z\t0\n" +
-                                        "2025-06-30T00:00:00.000000Z\t0\n"
+                                        "2025-06-28T00:00:00.000000Z\tnull\n" +
+                                        "2025-06-29T00:00:00.000000Z\tnull\n" +
+                                        "2025-06-30T00:00:00.000000Z\tnull\n"
                         );
 
                         assertQueries(engine, sqlExecutionContext,
-                                "explain select ts, max(index_of(arr, a)) as v from tango sample by 1d",
+                                "explain select ts, max(array_position(arr, a)) as v from tango sample by 1d",
                                 "QUERY PLAN\n" +
                                         "Radix sort light\n" +
                                         "  keys: [ts]\n" +
                                         "    Async Group By workers: 4\n" +
                                         "      keys: [ts]\n" +
-                                        "      values: [max(index_of(arr, a))]\n" +
+                                        "      values: [max(array_position(arr, a))]\n" +
                                         "      filter: null\n" +
                                         "        PageFrame\n" +
                                         "            Row forward scan\n" +
                                         "            Frame forward scan on: tango\n",
-                                "select ts, max(index_of(arr, a)) as v from tango sample by 1d",
+                                "select ts, max(array_position(arr, a)) as v from tango sample by 1d",
                                 "ts\tv\n" +
                                         "2025-06-26T00:00:00.000000Z\t1\n" +
                                         "2025-06-27T00:00:00.000000Z\t8\n" +
-                                        "2025-06-28T00:00:00.000000Z\t0\n" +
-                                        "2025-06-29T00:00:00.000000Z\t0\n" +
-                                        "2025-06-30T00:00:00.000000Z\t0\n"
+                                        "2025-06-28T00:00:00.000000Z\tnull\n" +
+                                        "2025-06-29T00:00:00.000000Z\tnull\n" +
+                                        "2025-06-30T00:00:00.000000Z\tnull\n"
                         );
 
                         assertQueries(engine, sqlExecutionContext,

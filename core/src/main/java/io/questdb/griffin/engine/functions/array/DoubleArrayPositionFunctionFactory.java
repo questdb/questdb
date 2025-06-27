@@ -40,8 +40,8 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class DoubleArrayIndexOfFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "index_of";
+public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
+    private static final String FUNCTION_NAME = "array_position";
 
     @Override
     public String getSignature() {
@@ -59,67 +59,9 @@ public class DoubleArrayIndexOfFunctionFactory implements FunctionFactory {
         if (valueArg.isConstant()) {
             double value = valueArg.getDouble(null);
             valueArg.close();
-            return Numbers.isFinite(value) ? new ArrayIndexOfConstFunction(arrayArg, value) : new ArrayIndexOfConstNaNFunction(arrayArg);
+            return Numbers.isFinite(value) ? new ArrayPositionConstFunction(arrayArg, value) : new ArrayPositionConstNaNFunction(arrayArg);
         }
         return new ArrayIndexOfFunction(arrayArg, valueArg);
-    }
-
-    static class ArrayIndexOfConstFunction extends IntFunction implements UnaryFunction {
-
-        protected final Function arrayArg;
-        protected final double value;
-
-        ArrayIndexOfConstFunction(Function arrayArg, double value) {
-            this.arrayArg = arrayArg;
-            this.value = value;
-        }
-
-        @Override
-        public Function getArg() {
-            return arrayArg;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            ArrayView arr = arrayArg.getArray(rec);
-            if (arr.isNull()) {
-                return Numbers.INT_NULL;
-            }
-            return arr.linearSearchDoubleValue1DArray(value);
-        }
-
-        @Override
-        public String getName() {
-            return FUNCTION_NAME;
-        }
-    }
-
-    static class ArrayIndexOfConstNaNFunction extends IntFunction implements UnaryFunction {
-
-        protected final Function arrayArg;
-
-        ArrayIndexOfConstNaNFunction(Function arrayArg) {
-            this.arrayArg = arrayArg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arrayArg;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            ArrayView arr = arrayArg.getArray(rec);
-            if (arr.isNull()) {
-                return Numbers.INT_NULL;
-            }
-            return arr.linearSearchDoubleNull1DArray();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(FUNCTION_NAME).val('(').val(arrayArg).val(", Null)");
-        }
     }
 
     static class ArrayIndexOfFunction extends IntFunction implements BinaryFunction {
@@ -156,6 +98,64 @@ public class DoubleArrayIndexOfFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(FUNCTION_NAME).val('(').val(arrayArg).val(", ").val(valueArg).val(')');
+        }
+    }
+
+    static class ArrayPositionConstFunction extends IntFunction implements UnaryFunction {
+
+        protected final Function arrayArg;
+        protected final double value;
+
+        ArrayPositionConstFunction(Function arrayArg, double value) {
+            this.arrayArg = arrayArg;
+            this.value = value;
+        }
+
+        @Override
+        public Function getArg() {
+            return arrayArg;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            ArrayView arr = arrayArg.getArray(rec);
+            if (arr.isNull()) {
+                return Numbers.INT_NULL;
+            }
+            return arr.linearSearchDoubleValue1DArray(value);
+        }
+
+        @Override
+        public String getName() {
+            return FUNCTION_NAME;
+        }
+    }
+
+    static class ArrayPositionConstNaNFunction extends IntFunction implements UnaryFunction {
+
+        protected final Function arrayArg;
+
+        ArrayPositionConstNaNFunction(Function arrayArg) {
+            this.arrayArg = arrayArg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arrayArg;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            ArrayView arr = arrayArg.getArray(rec);
+            if (arr.isNull()) {
+                return Numbers.INT_NULL;
+            }
+            return arr.linearSearchDoubleNull1DArray();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(FUNCTION_NAME).val('(').val(arrayArg).val(", Null)");
         }
     }
 }

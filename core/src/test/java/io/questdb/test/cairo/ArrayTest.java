@@ -479,12 +479,12 @@ public class ArrayTest extends AbstractCairoTest {
                             "  keys: [ts]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [ts]\n" +
-                            "      values: [max(index_of(arr, a))]\n" +
+                            "      values: [max(array_position(arr, a))]\n" +
                             "      filter: null\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tango\n",
-                    "select ts, max(index_of(arr, a)) as v from tango sample by 1d",
+                    "select ts, max(array_position(arr, a)) as v from tango sample by 1d",
                     "ts",
                     true,
                     true
@@ -1432,40 +1432,40 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[null], ARRAY[[null]])," +
                     "(null, null)"
             );
-            assertSql("index_of\tindex_of1\tindex_of2\tindex_of3\n" +
-                            "5\t6\t0\t1\n" +
-                            "0\t1\t0\t0\n" +
+            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
+                            "5\t6\tnull\t1\n" +
+                            "null\t1\tnull\tnull\n" +
                             "null\tnull\tnull\tnull\n",
                     "SELECT " +
-                            "index_of(arr1, 8), " +
-                            "index_of(arr1, null), " +
-                            "index_of(arr1, 11), " +
-                            "index_of(arr1[2:], 9) " +
+                            "array_position(arr1, 8), " +
+                            "array_position(arr1, null), " +
+                            "array_position(arr1, 11), " +
+                            "array_position(arr1[2:], 9) " +
                             "FROM tango");
 
-            assertSql("index_of\tindex_of1\tindex_of2\tindex_of3\n" +
-                            "5\t6\t0\t1\n" +
-                            "0\t1\t0\t0\n" +
+            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
+                            "5\t6\tnull\t1\n" +
+                            "null\t1\tnull\tnull\n" +
                             "null\tnull\tnull\tnull\n",
                     "SELECT " +
-                            "index_of(arr2[1], 8), " +
-                            "index_of(arr2[1], null), " +
-                            "index_of(arr2[1], 11), " +
-                            "index_of(arr2[1][2:], 9) " +
+                            "array_position(arr2[1], 8), " +
+                            "array_position(arr2[1], null), " +
+                            "array_position(arr2[1], 11), " +
+                            "array_position(arr2[1][2:], 9) " +
                             "FROM tango");
 
-            assertSql("index_of\tindex_of1\tindex_of2\tindex_of3\n" +
+            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
                             "1\t2\t3\t1\n" +
-                            "1\t1\t1\t0\n" +
+                            "1\t1\t1\tnull\n" +
                             "null\tnull\tnull\tnull\n",
                     "SELECT " +
-                            "index_of(arr1, arr1[1]), " +
-                            "index_of(arr1, arr1[2]), " +
-                            "index_of(arr1, arr1[3]), " +
-                            "index_of(arr1[2:], arr1[2]) " +
+                            "array_position(arr1, arr1[1]), " +
+                            "array_position(arr1, arr1[2]), " +
+                            "array_position(arr1, arr1[3]), " +
+                            "array_position(arr1[2:], arr1[2]) " +
                             "FROM tango");
-            assertExceptionNoLeakCheck("SELECT index_of(arr2, 0) len FROM tango",
-                    16, "array is not one-dimensional");
+            assertExceptionNoLeakCheck("SELECT array_position(arr2, 0) len FROM tango",
+                    22, "array is not one-dimensional");
         });
     }
 
@@ -1476,13 +1476,13 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[1.0], [9], [10], [12], [8], [null], [20], [12]]) "
             );
-            assertSql("index_of\tindex_of1\tindex_of2\tindex_of3\n" +
-                            "5\t6\t0\t1\n",
+            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
+                            "5\t6\tnull\t1\n",
                     "SELECT " +
-                            "index_of(transpose(arr)[1], 8), " +
-                            "index_of(transpose(arr)[1], null), " +
-                            "index_of(transpose(arr)[1], 11), " +
-                            "index_of(transpose(arr)[1, 2:], 9) " +
+                            "array_position(transpose(arr)[1], 8), " +
+                            "array_position(transpose(arr)[1], null), " +
+                            "array_position(transpose(arr)[1], 11), " +
+                            "array_position(transpose(arr)[1, 2:], 9) " +
                             "FROM tango");
         });
     }
