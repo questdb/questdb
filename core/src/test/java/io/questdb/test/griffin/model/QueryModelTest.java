@@ -103,7 +103,7 @@ public class QueryModelTest {
 
     private static QueryColumn newQueryColumn() {
         QueryColumn column = new QueryColumn();
-        column.of("foobar", newExpressionNode());
+        column.of("foobar", false, newExpressionNode());
         return column;
     }
 }

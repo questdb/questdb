@@ -30,10 +30,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.ObjList;
 
-public abstract class AbstractSplitVirtualRecordSampleByCursor extends AbstractNoRecordSampleByCursor {
-    protected final SplitVirtualRecord record;
+public abstract class AbstractSampleByFillRecordCursor extends AbstractNoRecordSampleByCursor {
+    protected final SampleByFillRecord record;
 
-    public AbstractSplitVirtualRecordSampleByCursor(
+    public AbstractSampleByFillRecordCursor(
             CairoConfiguration configuration,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
@@ -66,7 +66,7 @@ public abstract class AbstractSplitVirtualRecordSampleByCursor extends AbstractN
                 sampleToFunc,
                 sampleToFuncPos
         );
-        record = new SplitVirtualRecord(recordFunctions, placeholderFunctions);
+        record = new SampleByFillRecord(recordFunctions, placeholderFunctions);
         assert recordFunctions.size() == placeholderFunctions.size();
         final TimestampFunc timestampFunc = new TimestampFunc();
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {

@@ -45,7 +45,13 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final long lo = args.getQuick(0).getLong(null);
         final long hi = args.getQuick(1).getLong(null);
         final int nullRate = args.getQuick(2).getInt(null);
@@ -65,7 +71,9 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
         private final long lo;
         private final int nanRate;
         private final long range;
+        private boolean prefetched;
         private Rnd rnd;
+        private long values;
 
         public Func(long lo, long hi, int nanRate) {
             this.lo = lo;
@@ -74,15 +82,18 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean canPrefetch() {
+            return true;
+        }
+
+        @Override
         public long getLong(Record rec) {
-            if ((rnd.nextInt() % nanRate) == 1) {
-                return Numbers.LONG_NULL;
-            }
-            return lo + rnd.nextPositiveLong() % range;
+            return prefetched ? values : compute();
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            prefetched = false;
             this.rnd = executionContext.getRandom();
         }
 
@@ -92,8 +103,21 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void prefetch(Record record) {
+            this.values = compute();
+            this.prefetched = true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_long(").val(lo).val(',').val(range + lo - 1).val(',').val(nanRate - 1).val(')');
+        }
+
+        private long compute() {
+            if ((rnd.nextInt() % nanRate) == 1) {
+                return Numbers.LONG_NULL;
+            }
+            return lo + rnd.nextPositiveLong() % range;
         }
     }
 }

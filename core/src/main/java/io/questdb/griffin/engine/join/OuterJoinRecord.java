@@ -35,6 +35,11 @@ public class OuterJoinRecord extends JoinRecord {
         this.nullRecord = nullRecord;
     }
 
+    public void of(Record master, Record slave) {
+        super.of(master, slave);
+        this.flappingSlave = slave;
+    }
+
     void hasSlave(boolean value) {
         if (value) {
             if (flappingSlave != slave) {
@@ -49,10 +54,5 @@ public class OuterJoinRecord extends JoinRecord {
 
     boolean hasSlave() {
         return slave != nullRecord;
-    }
-
-    void of(Record master, Record slave) {
-        super.of(master, slave);
-        this.flappingSlave = slave;
     }
 }

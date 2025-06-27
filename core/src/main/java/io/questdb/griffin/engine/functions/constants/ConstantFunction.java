@@ -28,6 +28,11 @@ import io.questdb.cairo.sql.Function;
 
 public interface ConstantFunction extends Function {
     @Override
+    default boolean canPrefetch() {
+        return true;
+    }
+
+    @Override
     default boolean isConstant() {
         return true;
     }

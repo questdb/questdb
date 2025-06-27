@@ -39,7 +39,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCursor implements Reopenable {
+class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor implements Reopenable {
     private final RecordSink keyMapSink;
     private final Map map;
     private final RecordCursor mapCursor;

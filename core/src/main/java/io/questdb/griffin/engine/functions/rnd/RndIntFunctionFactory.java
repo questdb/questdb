@@ -55,6 +55,11 @@ public class RndIntFunctionFactory implements FunctionFactory {
         private Rnd rnd;
 
         @Override
+        public boolean canPrefetch() {
+            return true;
+        }
+
+        @Override
         public int getInt(Record rec) {
             return rnd.nextInt();
         }

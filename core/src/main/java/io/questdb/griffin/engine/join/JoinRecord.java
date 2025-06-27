@@ -316,7 +316,7 @@ public class JoinRecord implements Record {
         return slave.getVarcharSize(col - split);
     }
 
-    void of(Record master, Record slave) {
+    public void of(Record master, Record slave) {
         this.master = master;
         this.slave = slave;
     }

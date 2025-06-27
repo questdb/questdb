@@ -61,6 +61,35 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStableProjection() throws Exception {
+        // test that output of timestamp_sequence() does not change
+        // within the same row.
+        // in other words: timestamps on the same row must differ exactly by 1 hour due to the dateadd()
+
+        allowFunctionPrefetch();
+
+        final String expected = "ts\tdateadd\n" +
+                "2021-04-25T00:00:00.000000Z\t2021-04-25T01:00:00.000000Z\n" +
+                "2021-04-25T00:05:00.000000Z\t2021-04-25T01:05:00.000000Z\n" +
+                "2021-04-25T00:10:00.000000Z\t2021-04-25T01:10:00.000000Z\n" +
+                "2021-04-25T00:15:00.000000Z\t2021-04-25T01:15:00.000000Z\n" +
+                "2021-04-25T00:20:00.000000Z\t2021-04-25T01:20:00.000000Z\n" +
+                "2021-04-25T00:25:00.000000Z\t2021-04-25T01:25:00.000000Z\n" +
+                "2021-04-25T00:30:00.000000Z\t2021-04-25T01:30:00.000000Z\n" +
+                "2021-04-25T00:35:00.000000Z\t2021-04-25T01:35:00.000000Z\n" +
+                "2021-04-25T00:40:00.000000Z\t2021-04-25T01:40:00.000000Z\n" +
+                "2021-04-25T00:45:00.000000Z\t2021-04-25T01:45:00.000000Z\n";
+
+        assertSql(
+                expected,
+                "SELECT timestamp_sequence(\n" +
+                        "         to_timestamp('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
+                        "         300_000_000L\n" +
+                        ") ts, dateadd('h', 1, ts) from long_sequence(10)"
+        );
+    }
+
+    @Test
     public void testTimestampSequenceWithSystimestampCall() throws Exception {
         final String expected = "ac\tts\n" +
                 "1\t1970-01-01T00:00:00.000000Z\n" +

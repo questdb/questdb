@@ -25,12 +25,18 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public interface UnaryFunction extends Function {
+
+    @Override
+    default boolean canPrefetch() {
+        return getArg().canPrefetch();
+    }
 
     @Override
     default void close() {
@@ -40,13 +46,6 @@ public interface UnaryFunction extends Function {
     @Override
     default void cursorClosed() {
         getArg().cursorClosed();
-    }
-
-    @Override
-    default void offerStateTo(Function that) {
-        if (that instanceof UnaryFunction) {
-            getArg().offerStateTo(((UnaryFunction) that).getArg());
-        }
     }
 
     Function getArg();
@@ -74,6 +73,18 @@ public interface UnaryFunction extends Function {
     @Override
     default boolean isThreadSafe() {
         return getArg().isThreadSafe();
+    }
+
+    @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof UnaryFunction) {
+            getArg().offerStateTo(((UnaryFunction) that).getArg());
+        }
+    }
+
+    @Override
+    default void prefetch(Record record) {
+        getArg().prefetch(record);
     }
 
     @Override
