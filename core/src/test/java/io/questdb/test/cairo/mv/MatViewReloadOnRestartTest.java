@@ -691,6 +691,19 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
             testClock.micros.addAndGet(Timestamps.HOUR_MICROS);
             try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
+                assertSql(
+                        main2,
+                        "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\tinvalidation_reason\trefresh_period_hi\trefresh_base_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
+                                "price_1h\timmediate\tbase_price\t\t2024-12-12T00:00:00.000000Z\tvalid\t\t\t1\t\t\t0\t\t0\t\t0\t\n" +
+                                "price_1h_t\ttimer\tbase_price\t\t2024-12-12T00:00:00.000000Z\tvalid\t\t\t1\t\t2024-12-12T00:00:00.000000Z\t1\tHOUR\t0\t\t0\t\n",
+                        "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                                "view_status, invalidation_reason, refresh_period_hi, refresh_base_table_txn, " +
+                                "timer_time_zone, timer_start, timer_interval, timer_interval_unit, " +
+                                "period_length, period_length_unit, period_delay, period_delay_unit " +
+                                "from materialized_views() " +
+                                "order by view_name;"
+                );
+
                 assertSql(main2, firstExpected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
                 assertSql(main2, firstExpected, "price_1h order by ts, sym");
                 assertSql(main2, firstExpected, "price_1h_t order by ts, sym");
