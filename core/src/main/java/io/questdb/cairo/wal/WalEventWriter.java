@@ -46,6 +46,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -58,6 +59,8 @@ class WalEventWriter implements Closeable {
     private final FilesFacade ff;
     private final StringSink sink = new StringSink();
     private AtomicIntList initialSymbolCounts;
+    // used to test older mat view format
+    private boolean legacyMatViewFormat;
     private long startOffset = 0;
     private BoolList symbolMapNullFlags;
     private int txn = 0;
@@ -76,6 +79,11 @@ class WalEventWriter implements Closeable {
     public void close(boolean truncate, byte truncateMode) {
         eventMem.close(truncate, truncateMode);
         eventIndexMem.close(truncate, truncateMode);
+    }
+
+    @TestOnly
+    public void setLegacyMatViewFormat(boolean legacyMatViewFormat) {
+        this.legacyMatViewFormat = legacyMatViewFormat;
     }
 
     /**
@@ -107,67 +115,6 @@ class WalEventWriter implements Closeable {
                 appendFunctionValue(bindVariableService.getFunction(sink));
             }
         }
-    }
-
-    private int appendData(
-            byte txnType,
-            long startRowID,
-            long endRowID,
-            long minTimestamp,
-            long maxTimestamp,
-            boolean outOfOrder,
-            long lastRefreshBaseTxn,
-            long lastRefreshTimestamp,
-            long replaceRangeLowTs,
-            long replaceRangeHiTs,
-            byte dedupMode
-    ) {
-        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
-        eventMem.putLong(txn);
-        eventMem.putByte(txnType);
-        eventMem.putLong(startRowID);
-        eventMem.putLong(endRowID);
-        eventMem.putLong(minTimestamp);
-        eventMem.putLong(maxTimestamp);
-        eventMem.putBool(outOfOrder);
-        if (txnType == WalTxnType.MAT_VIEW_DATA) {
-            assert lastRefreshBaseTxn != Numbers.LONG_NULL;
-            eventMem.putLong(lastRefreshBaseTxn);
-            eventMem.putLong(lastRefreshTimestamp);
-        }
-
-        if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
-            if (replaceRangeLowTs >= replaceRangeHiTs) {
-                throw CairoException.nonCritical().put("Replace range low timestamp must be less than replace range high timestamp.");
-            }
-            if (replaceRangeLowTs > minTimestamp) {
-                throw CairoException.nonCritical().put("Replace range low timestamp must be less than or equal to the minimum timestamp.");
-            }
-            if (replaceRangeHiTs <= maxTimestamp) {
-                throw CairoException.nonCritical().put("Replace range high timestamp must be greater than the maximum timestamp.");
-            }
-        }
-
-        writeSymbolMapDiffs();
-
-        if (dedupMode != WAL_DEDUP_MODE_DEFAULT) {
-            // To test backwards compatibility and ensure that we still can read WALs
-            // written by the old QuestDB version, make the dedup mode
-            // and replace range value optional. It will then not be written for the most transactions,
-            // and it will test the reading WAL-E code to read the old format.
-            eventMem.putLong(replaceRangeLowTs);
-            eventMem.putLong(replaceRangeHiTs);
-            eventMem.putByte(dedupMode);
-        }
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
-        if (txnType == WalTxnType.MAT_VIEW_DATA) {
-            eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
-        }
-        return txn++;
     }
 
     private void appendFunctionValue(Function function) {
@@ -303,11 +250,13 @@ class WalEventWriter implements Closeable {
      * @param outOfOrder           indicates if the data is out of order
      * @param lastRefreshBaseTxn   seqTxn of base transaction ID when refresh is performed
      * @param lastRefreshTimestamp wall clock mat view refresh timestamp
+     * @param lastPeriodHi         the high timestamp for the last mat view period refresh
      * @param replaceRangeLowTs    the low timestamp for the range to be replaced, inclusive
      * @param replaceRangeHiTs     the high timestamp for the range to be replaced, exclusive
      * @param dedupMode            deduplication mode, can be DEFAULT, NO_DEDUP, UPSERT_NEW or REPLACE_RANGE.
      */
     int appendData(
+            byte txnType,
             long startRowID,
             long endRowID,
             long minTimestamp,
@@ -315,27 +264,73 @@ class WalEventWriter implements Closeable {
             boolean outOfOrder,
             long lastRefreshBaseTxn,
             long lastRefreshTimestamp,
+            long lastPeriodHi,
             long replaceRangeLowTs,
             long replaceRangeHiTs,
             byte dedupMode
     ) {
-        byte msgType = lastRefreshBaseTxn != WAL_DEFAULT_BASE_TABLE_TXN ? WalTxnType.MAT_VIEW_DATA : WalTxnType.DATA;
-        return appendData(
-                msgType,
-                startRowID,
-                endRowID,
-                minTimestamp,
-                maxTimestamp,
-                outOfOrder,
-                lastRefreshBaseTxn,
-                lastRefreshTimestamp,
-                replaceRangeLowTs,
-                replaceRangeHiTs,
-                dedupMode
-        );
+        assert txnType == WalTxnType.MAT_VIEW_DATA || txnType == WalTxnType.DATA : "unexpected txn type: " + txnType;
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(txnType);
+        eventMem.putLong(startRowID);
+        eventMem.putLong(endRowID);
+        eventMem.putLong(minTimestamp);
+        eventMem.putLong(maxTimestamp);
+        eventMem.putBool(outOfOrder);
+        if (txnType == WalTxnType.MAT_VIEW_DATA) {
+            assert lastRefreshBaseTxn != Numbers.LONG_NULL;
+            eventMem.putLong(lastRefreshBaseTxn);
+            eventMem.putLong(lastRefreshTimestamp);
+        }
+
+        if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            if (replaceRangeLowTs >= replaceRangeHiTs) {
+                throw CairoException.nonCritical().put("Replace range low timestamp must be less than replace range high timestamp.");
+            }
+            if (replaceRangeLowTs > minTimestamp) {
+                throw CairoException.nonCritical().put("Replace range low timestamp must be less than or equal to the minimum timestamp.");
+            }
+            if (replaceRangeHiTs <= maxTimestamp) {
+                throw CairoException.nonCritical().put("Replace range high timestamp must be greater than the maximum timestamp.");
+            }
+        }
+
+        writeSymbolMapDiffs();
+
+        // To test backwards compatibility and ensure that we still can read WALs
+        // written by the old QuestDB version, make the dedup mode
+        // and replace range value optional. It will then not be written for the most transactions,
+        // and it will test the reading WAL-E code to read the old format.
+        if (dedupMode != WAL_DEDUP_MODE_DEFAULT) {
+            // Always write extra 8 bytes, even for normal tables, to simplify reading the extra footer.
+            if (txnType == WalTxnType.MAT_VIEW_DATA) {
+                eventMem.putLong(lastPeriodHi);
+            } else {
+                eventMem.putLong(Numbers.LONG_NULL);
+            }
+            eventMem.putLong(replaceRangeLowTs);
+            eventMem.putLong(replaceRangeHiTs);
+            eventMem.putByte(dedupMode);
+        }
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        if (txnType == WalTxnType.MAT_VIEW_DATA) {
+            eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
+        }
+        return txn++;
     }
 
-    int appendMatViewInvalidate(long lastRefreshBaseTxn, long lastRefreshTimestamp, boolean invalid, @Nullable CharSequence invalidationReason) {
+    int appendMatViewInvalidate(
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            boolean invalid,
+            @Nullable CharSequence invalidationReason,
+            long lastPeriodHi
+    ) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.MAT_VIEW_INVALIDATE);
@@ -343,6 +338,9 @@ class WalEventWriter implements Closeable {
         eventMem.putLong(lastRefreshTimestamp);
         eventMem.putBool(invalid);
         eventMem.putStr(invalidationReason);
+        if (!legacyMatViewFormat) {
+            eventMem.putLong(lastPeriodHi);
+        }
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
 

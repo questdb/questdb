@@ -38,6 +38,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TelemetryMatViewTask;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -123,16 +124,6 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     @Override
     public void createViewState(MatViewDefinition viewDefinition) {
         addViewState(viewDefinition).init();
-        if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
-            enqueueMatViewTask(
-                    viewDefinition.getMatViewToken(),
-                    null,
-                    MatViewRefreshTask.INCREMENTAL_REFRESH,
-                    null,
-                    Numbers.LONG_NULL,
-                    Numbers.LONG_NULL
-            );
-        }
     }
 
     @Override
@@ -251,6 +242,14 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     @Override
     public boolean tryDequeueRefreshTask(MatViewRefreshTask task) {
         return taskQueue.tryDequeue(task);
+    }
+
+    @Override
+    public void updateViewDefinition(@NotNull TableToken matViewToken, @NotNull MatViewDefinition newDefinition) {
+        final MatViewState state = stateByTableDirName.get(matViewToken.getDirName());
+        if (state != null) {
+            state.setViewDefinition(newDefinition);
+        }
     }
 
     private void enqueueMatViewTask(

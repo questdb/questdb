@@ -42,6 +42,7 @@ import org.jetbrains.annotations.Nullable;
 public class MatViewStateReader implements Mutable {
     private final StringSink invalidationReason = new StringSink();
     private boolean invalid;
+    private long lastPeriodHi = Numbers.LONG_NULL;
     private long lastRefreshBaseTxn = -1;
     private long lastRefreshTimestamp = Numbers.LONG_NULL;
 
@@ -51,11 +52,16 @@ public class MatViewStateReader implements Mutable {
         invalidationReason.clear();
         lastRefreshBaseTxn = -1;
         lastRefreshTimestamp = Numbers.LONG_NULL;
+        lastPeriodHi = Numbers.LONG_NULL;
     }
 
     @Nullable
     public CharSequence getInvalidationReason() {
         return invalidationReason.length() > 0 ? invalidationReason : null;
+    }
+
+    public long getLastPeriodHi() {
+        return lastPeriodHi;
     }
 
     public long getLastRefreshBaseTxn() {
@@ -75,6 +81,7 @@ public class MatViewStateReader implements Mutable {
         invalidationReason.clear();
         lastRefreshBaseTxn = info.getLastRefreshBaseTableTxn();
         lastRefreshTimestamp = info.getLastRefreshTimestamp();
+        lastPeriodHi = info.getLastPeriodHi();
         return this;
     }
 
@@ -84,6 +91,7 @@ public class MatViewStateReader implements Mutable {
         invalidationReason.put(info.getInvalidationReason());
         lastRefreshBaseTxn = info.getLastRefreshBaseTableTxn();
         lastRefreshTimestamp = info.getLastRefreshTimestamp();
+        lastPeriodHi = info.getLastPeriodHi();
         return this;
     }
 
@@ -102,11 +110,16 @@ public class MatViewStateReader implements Mutable {
                 invalidationReason.clear();
                 invalidationReason.put(block.getStr(Long.BYTES + Byte.BYTES));
                 lastRefreshTimestamp = Numbers.LONG_NULL;
-                // keep going, because V2 block might follow
+                // keep going, because V2/V3 block might follow
                 continue;
             }
             if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE) {
                 lastRefreshTimestamp = block.getLong(0);
+                // keep going, because V1/V3 block might follow
+                continue;
+            }
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_PERIOD_MSG_TYPE) {
+                lastPeriodHi = block.getLong(0);
                 return this;
             }
         }

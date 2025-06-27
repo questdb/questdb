@@ -408,8 +408,8 @@ public class CairoEngine implements Closeable, WriterSource {
                                         .$(", baseTableTxn=").$(baseTableLastTxn)
                                         .I$();
                                 matViewStateStore.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
-                            } else if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
-                                // Kickstart incremental refresh.
+                            } else if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
+                                // Kickstart immediate refresh.
                                 matViewStateStore.enqueueIncrementalRefresh(tableToken);
                             }
                         }
@@ -511,6 +511,9 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             if (matViewGraph.addView(matViewDefinition)) {
                 matViewStateStore.createViewState(matViewDefinition);
+                if (!matViewDefinition.isDeferred()) {
+                    matViewStateStore.enqueueIncrementalRefresh(matViewToken);
+                }
             }
         } catch (CairoException e) {
             dropTableOrMatView(path, matViewToken);

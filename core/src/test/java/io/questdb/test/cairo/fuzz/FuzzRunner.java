@@ -495,8 +495,7 @@ public class FuzzRunner {
         return generateTransactions(tableName, rnd, start, end);
     }
 
-    public ObjList<FuzzTransaction> generateTransactions(
-            String tableName, Rnd rnd) throws NumericException {
+    public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd) throws NumericException {
         long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
         long end = start + partitionCount * Timestamps.DAY_MICROS;
         return generateTransactions(tableName, rnd, start, end);

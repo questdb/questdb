@@ -38,8 +38,8 @@ public class CairoTable implements Sinkable {
     private boolean dedup;
     private int matViewRefreshLimitHoursOrMonths;
     private int matViewTimerInterval;
-    private char matViewTimerIntervalUnit;
     private long matViewTimerStart;
+    private char matViewTimerUnit;
     private int maxUncommittedRows;
     private long metadataVersion = -1;
     private long o3MaxLag;
@@ -75,7 +75,7 @@ public class CairoTable implements Sinkable {
         matViewRefreshLimitHoursOrMonths = fromTab.getMatViewRefreshLimitHoursOrMonths();
         matViewTimerStart = fromTab.getMatViewTimerStart();
         matViewTimerInterval = fromTab.getMatViewTimerInterval();
-        matViewTimerIntervalUnit = fromTab.getMatViewTimerIntervalUnit();
+        matViewTimerUnit = fromTab.getMatViewTimerUnit();
     }
 
     public int getColumnCount() {
@@ -115,12 +115,12 @@ public class CairoTable implements Sinkable {
         return matViewTimerInterval;
     }
 
-    public char getMatViewTimerIntervalUnit() {
-        return matViewTimerIntervalUnit;
-    }
-
     public long getMatViewTimerStart() {
         return matViewTimerStart;
+    }
+
+    public char getMatViewTimerUnit() {
+        return matViewTimerUnit;
     }
 
     public int getMaxUncommittedRows() {
@@ -197,12 +197,12 @@ public class CairoTable implements Sinkable {
         this.matViewTimerInterval = matViewTimerInterval;
     }
 
-    public void setMatViewTimerIntervalUnit(char matViewTimerIntervalUnit) {
-        this.matViewTimerIntervalUnit = matViewTimerIntervalUnit;
-    }
-
     public void setMatViewTimerStart(long matViewTimerStart) {
         this.matViewTimerStart = matViewTimerStart;
+    }
+
+    public void setMatViewTimerUnit(char matViewTimerUnit) {
+        this.matViewTimerUnit = matViewTimerUnit;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {

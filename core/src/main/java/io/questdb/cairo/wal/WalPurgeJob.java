@@ -396,7 +396,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             final TableToken viewToken = childViewSink.get(v);
             final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
             if (state != null && !state.isPendingInvalidation() && !state.isInvalid() && !state.isDropped()) {
-                final long appliedToViewTxn = Math.max(1, state.getLastRefreshBaseTxn());
+                final long appliedToViewTxn = Math.max(state.getLastRefreshBaseTxn(), 0);
                 safeToPurgeTxn = Math.min(safeToPurgeTxn, appliedToViewTxn);
             }
         }

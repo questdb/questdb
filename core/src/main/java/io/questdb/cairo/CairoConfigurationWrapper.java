@@ -462,11 +462,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getMatViewTimerStartEpsilon() {
-        return getDelegate().getMatViewTimerStartEpsilon();
-    }
-
-    @Override
     public int getMaxCrashFiles() {
         return getDelegate().getMaxCrashFiles();
     }
@@ -1214,6 +1209,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return getDelegate().isIOURingEnabled();
+    }
+
+    @Override
+    public boolean isMatViewDebugEnabled() {
+        return getDelegate().isMatViewDebugEnabled();
     }
 
     @Override

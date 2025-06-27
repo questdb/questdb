@@ -39,6 +39,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 
 /**
@@ -46,6 +47,7 @@ import java.util.function.Function;
  * This object is always in-use, even when mat views are disabled or the node is a read-only replica.
  */
 public class MatViewGraph implements Mutable {
+    private static final java.lang.ThreadLocal<MatViewDefinition> tlDefinitionTask = new java.lang.ThreadLocal<>();
     private static final ThreadLocal<LowerCaseCharSequenceHashSet> tlSeen = new ThreadLocal<>(LowerCaseCharSequenceHashSet::new);
     private static final ThreadLocal<ArrayDeque<CharSequence>> tlStack = new ThreadLocal<>(ArrayDeque::new);
     private static final ThreadLocal<MatViewTimerTask> tlTimerTask = new ThreadLocal<>(MatViewTimerTask::new);
@@ -54,10 +56,12 @@ public class MatViewGraph implements Mutable {
     // Note: this map is grow-only, i.e. keys are never removed.
     private final ConcurrentHashMap<MatViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
     private final Queue<MatViewTimerTask> timerTaskQueue;
+    private final BiFunction<CharSequence, MatViewDefinition, MatViewDefinition> updateDefinitionRef;
 
     public MatViewGraph(Queue<MatViewTimerTask> timerTaskQueue) {
         this.createDependencyList = name -> new MatViewDependencyList();
         this.timerTaskQueue = timerTaskQueue;
+        this.updateDefinitionRef = this::updateDefinition;
     }
 
     public boolean addView(MatViewDefinition viewDefinition) {
@@ -83,7 +87,9 @@ public class MatViewGraph implements Mutable {
                 list.unlockAfterWrite();
             }
         }
-        if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
+        // Publish a timer task for any non-manually refreshed mat view.
+        // We need a dedicated timer in two cases: timer and period refresh.
+        if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_MANUAL) {
             final MatViewTimerTask timerTask = tlTimerTask.get();
             timerTaskQueue.enqueue(timerTask.ofAdd(matViewToken));
         }
@@ -115,13 +121,6 @@ public class MatViewGraph implements Mutable {
         for (MatViewDefinition viewDefinition : definitionsByTableDirName.values()) {
             sink.add(viewDefinition.getMatViewToken());
         }
-    }
-
-    public void onAlterRefreshTimer(TableToken matViewToken) {
-        final MatViewDefinition viewDefinition = definitionsByTableDirName.get(matViewToken.getDirName());
-        assert viewDefinition == null || viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE;
-        final MatViewTimerTask timerTask = tlTimerTask.get();
-        timerTaskQueue.enqueue(timerTask.ofUpdate(matViewToken));
     }
 
     /**
@@ -166,7 +165,7 @@ public class MatViewGraph implements Mutable {
                     dependentViews.unlockAfterWrite();
                 }
             }
-            if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
+            if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_TIMER) {
                 final MatViewTimerTask timerTask = tlTimerTask.get();
                 timerTaskQueue.enqueue(timerTask.ofDrop(matViewToken));
             }
@@ -191,6 +190,17 @@ public class MatViewGraph implements Mutable {
                     viewList.unlockAfterWrite();
                 }
             }
+        }
+    }
+
+    public void updateViewDefinition(@NotNull TableToken viewToken, @NotNull MatViewDefinition newDefinition) {
+        tlDefinitionTask.set(newDefinition);
+        if (definitionsByTableDirName.computeIfPresent(viewToken.getDirName(), updateDefinitionRef) == null) {
+            throw CairoException.nonCritical().put("previous view definition was not found: ").put(viewToken.getTableName());
+        }
+        if (newDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_TIMER) {
+            final MatViewTimerTask timerTask = tlTimerTask.get();
+            timerTaskQueue.enqueue(timerTask.ofUpdate(viewToken));
         }
     }
 
@@ -276,5 +286,16 @@ public class MatViewGraph implements Mutable {
                 stack.pop();
             }
         }
+    }
+
+    private MatViewDefinition updateDefinition(CharSequence tableDirName, MatViewDefinition existingDefinition) {
+        if (existingDefinition == null) {
+            return null;
+        }
+        MatViewDefinition newDefinition = tlDefinitionTask.get();
+        assert newDefinition != null;
+        // no, this won't produce a mem leak since we don't spawn short-lived threads in runtime
+        tlDefinitionTask.set(null);
+        return newDefinition;
     }
 }

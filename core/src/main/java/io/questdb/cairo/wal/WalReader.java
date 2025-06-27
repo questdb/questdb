@@ -84,7 +84,7 @@ public class WalReader implements Closeable {
             events = new WalEventReader(ff);
             LOG.debug().$("open [table=").$safe(tableName).I$();
             int pathLen = path.size();
-            eventCursor = events.of(path.slash().put(segmentId), -1L);
+            eventCursor = events.of(path.slash().put(segmentId), -1);
             path.trimTo(pathLen);
             openSymbolMaps(eventCursor, configuration);
             path.slash().put(segmentId);
