@@ -57,7 +57,6 @@ import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.test.tools.TestUtils.assertContains;
@@ -930,18 +929,5 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         HTTP,
         UDP,
         TCP
-    }
-
-    private static class TestMicrosecondClock implements MicrosecondClock {
-        AtomicLong micros;
-
-        public TestMicrosecondClock(long micros) {
-            this.micros = new AtomicLong(micros);
-        }
-
-        @Override
-        public long getTicks() {
-            return micros.get();
-        }
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -46,6 +47,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -57,6 +59,12 @@ import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
 public class SqlParserTest extends AbstractSqlParserTest {
     private static final List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        setProperty(PropertyKey.MAT_VIEW_DEBUG_ENABLED, "true");
+    }
 
     @Test
     public void test2Between() throws Exception {
