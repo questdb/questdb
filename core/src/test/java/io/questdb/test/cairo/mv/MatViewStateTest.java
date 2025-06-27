@@ -1,5 +1,6 @@
 package io.questdb.test.cairo.mv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileReader;
@@ -15,6 +16,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -23,6 +25,12 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
 public class MatViewStateTest extends AbstractCairoTest {
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        setProperty(PropertyKey.MAT_VIEW_DEBUG_ENABLED, "true");
+    }
 
     @Test
     public void testMatViewNoStateFile() throws Exception {

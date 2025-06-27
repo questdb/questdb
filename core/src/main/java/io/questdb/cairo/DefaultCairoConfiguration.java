@@ -1236,6 +1236,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewDebugEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isMatViewEnabled() {
         return true;
     }

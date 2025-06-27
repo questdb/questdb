@@ -53,6 +53,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     public void setUp() {
         super.setUp();
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        setProperty(PropertyKey.MAT_VIEW_DEBUG_ENABLED, "true");
     }
 
     @Test
