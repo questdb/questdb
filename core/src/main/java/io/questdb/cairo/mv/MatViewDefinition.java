@@ -93,8 +93,7 @@ public class MatViewDefinition implements Mutable {
     private TimestampSampler timestampSampler;
 
     public static void append(@NotNull MatViewDefinition matViewDefinition, @NotNull AppendableBlock block) {
-        // Keep pre-deferred definitions compatible with the new refresh type format.
-        final int refreshTypeRaw = matViewDefinition.deferred ? -(matViewDefinition.refreshType + 1) : matViewDefinition.refreshType;
+        final int refreshTypeRaw = encodeRefreshTypeAndDeferred(matViewDefinition.refreshType, matViewDefinition.deferred);
         block.putInt(refreshTypeRaw);
         block.putStr(matViewDefinition.baseTableName);
         block.putLong(matViewDefinition.samplingInterval);
@@ -393,6 +392,19 @@ public class MatViewDefinition implements Mutable {
         this.matViewToken = updatedToken;
     }
 
+    private static boolean decodeDeferred(int refreshTypeRaw) {
+        return refreshTypeRaw < 0;
+    }
+
+    private static int decodeRefreshType(int refreshTypeRaw) {
+        return refreshTypeRaw < 0 ? Math.abs(refreshTypeRaw + 1) : refreshTypeRaw;
+    }
+
+    private static int encodeRefreshTypeAndDeferred(int refreshType, boolean deferred) {
+        // Keep pre-deferred definitions compatible with the new refresh type format.
+        return deferred ? -(refreshType + 1) : refreshType;
+    }
+
     private static void readDefinitionBlock(
             MatViewDefinition destDefinition,
             ReadableBlock block,
@@ -402,9 +414,8 @@ public class MatViewDefinition implements Mutable {
 
         long offset = 0;
         final int refreshTypeRaw = block.getInt(offset);
-        final boolean deferred = refreshTypeRaw < 0;
-        // Keep pre-deferred definitions compatible with the new refresh type format.
-        final int refreshType = deferred ? Math.abs(refreshTypeRaw + 1) : refreshTypeRaw;
+        final boolean deferred = decodeDeferred(refreshTypeRaw);
+        final int refreshType = decodeRefreshType(refreshTypeRaw);
         if (refreshType != REFRESH_TYPE_IMMEDIATE && refreshType != REFRESH_TYPE_TIMER && refreshType != REFRESH_TYPE_MANUAL) {
             throw CairoException.critical(0)
                     .put("unsupported refresh type [view=")
