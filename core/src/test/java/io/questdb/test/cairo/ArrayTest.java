@@ -313,6 +313,38 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayFirstFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (ts timestamp, x int, v double[]) timestamp(ts) partition by DAY");
+            execute("insert into test(ts,x,v) values ('2022-02-24', 1, ARRAY[1.0,1.0]), ('2022-02-24', 2, null), ('2022-02-24', 3, ARRAY[2.0,2.0])");
+
+            assertQuery(
+                    "ts\tx\tv\n" +
+                            "2022-02-24T00:00:00.000000Z\t1\t[1.0,1.0]\n" +
+                            "2022-02-24T00:00:00.000000Z\t2\tnull\n" +
+                            "2022-02-24T00:00:00.000000Z\t3\t[2.0,2.0]\n",
+                    "select ts, x, first(v) as v from test sample by 1s",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertPlanNoLeakCheck(
+                    "select ts, x, first(v) as v from test sample by 1s",
+                    "Radix sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts,x]\n" +
+                            "      values: [first(v)]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n"
+            );
+        });
+    }
+
+    @Test
     public void testArrayCount() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
@@ -1735,6 +1767,25 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES (ARRAY[[1.0, 1], [1.0, 2]])");
             assertSql("l2\n1.0\n", "SELECT l2price(1.0, ask[1], ask[2]) l2 FROM tango");
             assertSql("l2\n1.5\n", "SELECT l2price(2.0, ask[1], ask[2]) l2 FROM tango");
+        });
+    }
+
+    @Test
+    public void testMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (ts timestamp, x int, v double[]) timestamp(ts) partition by DAY WAL dedup upsert keys (ts, x) ");
+            execute("create materialized view test_mv as select ts, x, first(v) as v from test sample by 1s");
+            execute("insert into test(ts,x,v) values ('2022-02-24', 1, ARRAY[1.0,1.0]), ('2022-02-24', 2, null), ('2022-02-24', 3, ARRAY[2.0,2.0])");
+
+            drainWalAndMatViewQueues();
+
+            assertSql(
+                    "ts\tx\tv\n" +
+                            "2022-02-24T00:00:00.000000Z\t1\t[1.0,1.0]\n" +
+                            "2022-02-24T00:00:00.000000Z\t2\tnull\n" +
+                            "2022-02-24T00:00:00.000000Z\t3\t[2.0,2.0]\n",
+                    "test"
+            );
         });
     }
 
