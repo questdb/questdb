@@ -67,6 +67,8 @@ import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
+import static io.questdb.cairo.wal.WalUtils.EVENT_FILE_NAME;
+import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 
 
@@ -2283,6 +2285,70 @@ public class MatViewTest extends AbstractCairoTest {
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
                             "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                             "jpyusd\t103.21\t2024-09-10T14:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshRecoversWhenWalSegmentIsGone() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price ( " +
+                            "sym varchar, price double, ts timestamp " +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T14:02')"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            currentMicros = parseFloorPartialTimestamp("2024-12-31T01:01:01.000000Z");
+            drainQueues();
+
+            // we want multiple WAL segments
+            for (int i = 0; i < 10; i++) {
+                execute(
+                        "insert into base_price(sym, price, ts) values('gbpusd', 1.420, '2024-09-10T12:01')" +
+                                ",('gbpusd', 1.423, '2024-09-10T12:02')" +
+                                ",('jpyusd', 103.31, '2024-09-10T12:02')" +
+                                ",('gbpusd', 1.521, '2024-09-10T13:02')" +
+                                ",('jpyusd', 103.51, '2024-09-10T14:02')"
+                );
+            }
+            drainWalQueue();
+
+            // delete one of WAL segments
+            final TableToken baseTableToken = engine.getTableTokenIfExists("base_price");
+            Assert.assertNotNull(baseTableToken);
+            try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(baseTableToken)
+                        .concat(WAL_NAME_BASE).put(1).slash().put(5).concat(EVENT_FILE_NAME);
+                engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
+            }
+
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\timmediate\tbase_price\t2024-12-31T01:01:01.000000Z\t2024-12-31T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t11\t11\n",
+                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                            "from materialized_views",
+                    null
+            );
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.423\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.521\t2024-09-10T13:00:00.000000Z\n" +
+                            "jpyusd\t103.31\t2024-09-10T12:00:00.000000Z\n" +
+                            "jpyusd\t103.51\t2024-09-10T14:00:00.000000Z\n",
                     "price_1h order by sym"
             );
         });

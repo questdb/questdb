@@ -231,9 +231,18 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // It's a subsequent incremental refresh, so WalPurgeJob must be aware of us.
                 txnIntervals = intervals;
                 txnIntervals.clear();
-                txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, lastRefreshTxn, lastTxn);
-                minTs = txnRangeLoader.getMinTimestamp();
-                maxTs = txnRangeLoader.getMaxTimestamp();
+                try {
+                    txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, lastRefreshTxn, lastTxn);
+                    minTs = txnRangeLoader.getMinTimestamp();
+                    maxTs = txnRangeLoader.getMaxTimestamp();
+                } catch (CairoException ex) {
+                    LOG.error().$("could not read WAL transactions, falling back to full refresh [view=").$(viewToken)
+                            .$(", ex=").$safe(ex.getFlyweightMessage())
+                            .$(", errno=").$(ex.getErrno())
+                            .I$();
+                    minTs = baseTableReader.getMinTimestamp();
+                    maxTs = baseTableReader.getMaxTimestamp();
+                }
             } else {
                 // It's the first incremental refresh. WAL segments may be already purged,
                 // so let's take min/max timestamps from the reader.
