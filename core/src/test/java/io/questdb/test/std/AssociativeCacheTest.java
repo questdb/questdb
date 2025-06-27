@@ -151,6 +151,22 @@ public class AssociativeCacheTest {
     }
 
     @Test
+    public void testEmptyValuePromotion() {
+        // just a single row to make sure keys are in the same row
+        try (AssociativeCache<String> cache = createCache(8, 1)) {
+            cache.put("x", "val1");
+            cache.put("y", "val2");
+
+            Assert.assertEquals("val1", cache.poll("x"));
+            Assert.assertNull(cache.poll("x"));
+
+
+            cache.put("x", "val3");
+            Assert.assertEquals("val3", cache.poll("x"));
+        }
+    }
+
+    @Test
     public void testFull() {
         final CharSequenceHashSet all = new CharSequenceHashSet();
         final HashSet<Object> closed = new HashSet<>();
@@ -273,6 +289,29 @@ public class AssociativeCacheTest {
     }
 
     @Test
+    public void testMultiValues() {
+        try (AssociativeCache<String> cache = createCache(8, 8)) {
+            String val1 = "myval1";
+            String val2 = "myval2";
+
+            // put two values under the same key.
+            cache.put("x", val1);
+            cache.put("x", val2);
+
+            // poll should return one of the values.
+            String fromCache1 = cache.poll("x");
+            Assert.assertNotNull(fromCache1);
+            Assert.assertTrue(fromCache1 == val1 || fromCache1 == val2);
+
+            // second poll should return the other value.
+            String fromCache2 = cache.poll("x");
+            Assert.assertNotNull(fromCache2);
+            Assert.assertNotSame(fromCache1, fromCache2);
+            Assert.assertTrue(fromCache2 == val1 || fromCache2 == val2);
+        }
+    }
+
+    @Test
     public void testNoOpCache() {
         Assume.assumeTrue(cacheType == CacheType.SIMPLE);
 
@@ -339,6 +378,29 @@ public class AssociativeCacheTest {
             Assert.assertNull(cache.poll("Y"));
             Assert.assertNull(cache.poll("Z"));
         }
+    }
+
+    @Test
+    public void testSimpleAssociativeCachePutAfterPeekDoesNotDuplicate() {
+        Assume.assumeTrue(cacheType == CacheType.SIMPLE);
+
+        try (SimpleAssociativeCache<Object> cache = new SimpleAssociativeCache<>(8, 1)) {
+            Object o1 = new Object();
+            Object o2 = new Object();
+            Object o3 = new Object();
+            cache.put("X", o1);
+            cache.put("Y", o2);
+            cache.put("Z", o3);
+
+            Object peeked = cache.peek("Y");
+            Assert.assertSame(o2, peeked);
+
+            cache.put("Y", o2);
+
+            Assert.assertNotNull(cache.poll("Y"));
+            Assert.assertNull(cache.poll("Y"));
+        }
+
     }
 
     private <V> AssociativeCache<V> createCache(int blocks, int rows) {
