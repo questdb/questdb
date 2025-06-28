@@ -3325,9 +3325,9 @@ public class SqlOptimiser implements Mutable {
         if(targetModel.getTableNameExpr() != null ){
           ExpressionNode aliasNode = expressionNodePool.next();
           aliasNode.token = targetModel.getTableNameExpr().token;
-//          if(targetModel.getAlias()!=null) {
-//              targetModel.setAlias(aliasNode);
-//          }
+          if(targetModel.getAlias()==null) {
+              targetModel.setAlias(aliasNode);
+          }
           targetModel.setTableNameExpr(null);
           targetModel.setTimestamp(null);
         }
