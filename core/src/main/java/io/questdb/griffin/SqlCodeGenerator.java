@@ -3991,45 +3991,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
             TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
-            int dot = Chars.indexOfLastUnquoted(colMetadata.getColumnName(), '.');
-            if (dot > -1) { // remove inner table alias
-                selectMetadata.add(
-                        new TableColumnMetadata(
-                                Chars.toString(colMetadata.getColumnName(), dot + 1, colMetadata.getColumnName().length()),
-                                colMetadata.getColumnType(),
-                                colMetadata.isSymbolIndexFlag(),
-                                colMetadata.getIndexValueBlockCapacity(),
-                                colMetadata.isSymbolTableStatic(),
-                                metadata
-                        )
-                );
-            } else {
-                if (selectMetadata.getColumnIndexQuiet(colMetadata.getColumnName()) < 0) {
-                    selectMetadata.add(colMetadata);
-                } else {
-                    // avoid clashing with other columns using timestamp column name as alias
-                    StringSink sink = Misc.getThreadLocalSink();
-                    sink.put(colMetadata.getColumnName());
-                    int len = sink.length();
-                    int sequence = 0;
-
-                    do {
-                        sink.trimTo(len);
-                        sink.put(sequence++);
-                    } while (selectMetadata.getColumnIndexQuiet(sink) > -1);
-
-                    selectMetadata.add(
-                            new TableColumnMetadata(
-                                    sink.toString(),
-                                    colMetadata.getColumnType(),
-                                    colMetadata.isSymbolIndexFlag(),
-                                    colMetadata.getIndexValueBlockCapacity(),
-                                    colMetadata.isSymbolTableStatic(),
-                                    metadata
-                            )
-                    );
-                }
-            }
+            selectMetadata.add(
+                    new TableColumnMetadata(
+                            "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
+                            colMetadata.getColumnType(),
+                            colMetadata.isSymbolIndexFlag(),
+                            colMetadata.getIndexValueBlockCapacity(),
+                            colMetadata.isSymbolTableStatic(),
+                            metadata
+                    )
+            );
             selectMetadata.setTimestampIndex(selectMetadata.getColumnCount() - 1);
             columnCrossIndex.add(timestampIndex);
         }
