@@ -34,11 +34,11 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
-public class DoubleArrayAddFunctionFactory implements FunctionFactory {
+public class DoubleArrayDivFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "+(D[]D[])";
+        return "/(D[]D[])";
     }
 
     @Override
@@ -65,12 +65,12 @@ public class DoubleArrayAddFunctionFactory implements FunctionFactory {
                 Function rightArg,
                 int leftArgPos
         ) {
-            super("+", configuration, leftArg, rightArg, leftArgPos);
+            super("/", configuration, leftArg, rightArg, leftArgPos);
         }
 
         @Override
         protected double applyOperation(double leftVal, double rightVal) {
-            return leftVal + rightVal;
+            return leftVal / rightVal;
         }
 
         @Override
@@ -78,7 +78,7 @@ public class DoubleArrayAddFunctionFactory implements FunctionFactory {
             for (int i = 0, n = left.getFlatViewLength(); i < n; i++) {
                 double leftVal = left.getDouble(i);
                 double rightVal = right.getDouble(i);
-                arrayOut.putDouble(i, leftVal + rightVal);
+                arrayOut.putDouble(i, leftVal / rightVal);
             }
         }
     }

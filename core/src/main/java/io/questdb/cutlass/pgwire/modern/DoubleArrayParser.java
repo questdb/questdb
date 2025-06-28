@@ -31,7 +31,6 @@ import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.arr.MutableArray;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.DoubleList;
-import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 
@@ -46,9 +45,9 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
     }
 
     @Override
-    public void appendToMemFlat(MemoryA mem) {
-        for (int i = 0, n = values.size(); i < n; i++) {
-            mem.putDouble(values.getQuick(i));
+    public void appendToMemFlat(MemoryA mem, int offset, int length) {
+        for (int i = 0, n = Math.min(values.size(), length); i < n; i++) {
+            mem.putDouble(values.getQuick(i + offset));
         }
     }
 
@@ -113,7 +112,7 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
 
             if (c == '"') {
                 if (state == STATE_IN_QUOTE) {
-                    parseAndAddNumber(input, numberStart, position, strides);
+                    parseAndAddNumber(input, numberStart, position);
                     state = STATE_IDLE;
                 } else {
                     numberStart = position + 1;
@@ -137,7 +136,7 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
                     // fallthrough
                 case '}': {
                     if (state == STATE_IN_NUMBER) {
-                        parseAndAddNumber(input, numberStart, position, strides);
+                        parseAndAddNumber(input, numberStart, position);
                         state = STATE_IDLE;
                     }
                     int depth = strides.size() - 1;
@@ -152,7 +151,7 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
                 }
                 case ',': {
                     if (state == STATE_IN_NUMBER) {
-                        parseAndAddNumber(input, numberStart, position, strides);
+                        parseAndAddNumber(input, numberStart, position);
                         state = STATE_IDLE;
                     }
                     break;
@@ -173,7 +172,7 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
         }
     }
 
-    private void parseAndAddNumber(CharSequence input, int numberStart, int i, IntList currentDimSizes) {
+    private void parseAndAddNumber(CharSequence input, int numberStart, int i) {
         int len = i - numberStart;
         if (len == 4
                 && (input.charAt(numberStart) | 32) == 'n'

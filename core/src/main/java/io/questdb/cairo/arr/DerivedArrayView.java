@@ -26,6 +26,7 @@ package io.questdb.cairo.arr;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.std.IntList;
 
 /**
  * A view over an array. Does not own the backing flat array. The array contents can't
@@ -34,14 +35,46 @@ import io.questdb.cairo.ColumnType;
  */
 public class DerivedArrayView extends ArrayView {
 
+    public static void computeBroadcastShape(ArrayView left, ArrayView right, IntList out, int leftArgPosition) {
+        out.clear();
+        int nDimsA = left.getDimCount();
+        int nDimsB = right.getDimCount();
+        int maxDims = Math.max(nDimsA, nDimsB);
+        out.setPos(maxDims);
+
+        for (int i = 0; i < maxDims; i++) {
+            int posA = nDimsA - 1 - i;
+            int posB = nDimsB - 1 - i;
+            int dimLenA = (posA >= 0) ? left.shape.get(posA) : 1;
+            int dimLenB = (posB >= 0) ? right.shape.get(posB) : 1;
+            if (dimLenA == dimLenB) {
+                out.setQuick(maxDims - 1 - i, dimLenA);
+            } else if (dimLenA == 1) {
+                out.setQuick(maxDims - 1 - i, dimLenB);
+            } else if (dimLenB == 1) {
+                out.setQuick(maxDims - 1 - i, dimLenA);
+            } else {
+                throw CairoException.nonCritical().position(leftArgPosition)
+                        .put("arrays have incompatible shapes [leftShape=").put(left.shapeToString())
+                        .put(", rightShape=").put(right.shapeToString())
+                        .put(']');
+            }
+        }
+    }
+
     /**
-     * Adds extra dimensions to the array view.
-     * For example, a 1D array [1, 2, 3] with one dimension added becomes a 2D array [[1, 2, 3]].
-     * New dimensions are added at the beginning with length 1.
+     * Append extra dimensions to the array view.
+     * For example, a 1D array [1, 2, 3] with one dimension added becomes a 2D array
+     * [[1], [2], [3]].
+     * <p>
+     * <strong>NOTE:</strong> the new dimensions have stride set to zero. This has no
+     * effect as long as the dimension length is left at 1, and is the correct value for
+     * all dimension lengths in a broadcast operation, causing the same element to appear
+     * at all positions along the dimension.
      *
      * @param count Number of dimensions to add
      */
-    public void addDimensions(int count) {
+    public void appendDimensions(int count) {
         if (count == 0) {
             return;
         }
@@ -54,19 +87,33 @@ public class DerivedArrayView extends ArrayView {
                     .put(ColumnType.ARRAY_NDIMS_LIMIT)
                     .put(")");
         }
-
-        // new stride is the same as the outermost current stride
-        int newStride = getStride(0);
-
-        shape.rshift(count);
-        strides.rshift(count);
         for (int i = 0; i < count; i++) {
-            shape.setQuick(i, 1); // new dimensions have all length 1
-            strides.setQuick(i, newStride); // new dimensions have the same stride as the outermost existing dimension
+            shape.add(1);
+            strides.add(0);
+        }
+        this.type = ColumnType.encodeArrayType(getElemType(), getDimCount() + count);
+    }
+
+    public void broadcast(IntList targetShape) {
+        int targetDims = targetShape.size();
+        int originalDims = getDimCount();
+        assert targetDims >= originalDims;
+        if (originalDims < targetDims) {
+            prependDimensions(targetDims - originalDims);
         }
 
-        // Update the type to reflect the new dimension count
-        type = ColumnType.encodeArrayType(getElemType(), getDimCount() + count);
+        boolean changed = false;
+        for (int i = 0; i < targetDims; i++) {
+            if (shape.getQuick(i) == 1 && targetShape.getQuick(i) != 1) {
+                strides.setQuick(i, 0);
+                shape.setQuick(i, targetShape.getQuick(i));
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            isVanilla = false;
+        }
     }
 
     public void flattenDim(int dim, int argPos) {
@@ -87,7 +134,6 @@ public class DerivedArrayView extends ArrayView {
         } else {
             dimToFlattenInto = getStride(dim - 1) < getStride(dim + 1) ? dim - 1 : dim + 1;
         }
-        isVanilla = false;
         shape.set(dimToFlattenInto, shape.get(dimToFlattenInto) * shape.get(dim));
         removeDim(dim);
     }
@@ -117,9 +163,45 @@ public class DerivedArrayView extends ArrayView {
         isVanilla = true;
     }
 
+    /**
+     * Prepend extra dimensions to the array view.
+     * For example, a 1D array [1, 2, 3] with one dimension added becomes a 2D array [[1, 2, 3]].
+     * New dimensions are added at the beginning with length 1.
+     * <p>
+     * <strong>NOTE:</strong> the new dimensions have stride set to zero. This has no
+     * effect as long as the dimension length is left at 1, and is the correct value for
+     * all dimension lengths in a broadcast operation, causing the same element to appear
+     * at all positions along the dimension.
+     *
+     * @param count Number of dimensions to add
+     */
+    public void prependDimensions(int count) {
+        if (count == 0) {
+            return;
+        }
+
+        if (count + getDimCount() > ColumnType.ARRAY_NDIMS_LIMIT) {
+            throw CairoException.nonCritical()
+                    .put("cannot add ")
+                    .put(count)
+                    .put(" dimensions, would exceed maximum array dimensions (")
+                    .put(ColumnType.ARRAY_NDIMS_LIMIT)
+                    .put(")");
+        }
+
+        shape.rshift(count);
+        strides.rshift(count);
+        for (int i = 0; i < count; i++) {
+            shape.setQuick(i, 1); // all new dimensions have length 1
+            strides.setQuick(i, 0); // all new strides set to 0
+        }
+
+        // Update the type to reflect the new dimension count
+        type = ColumnType.encodeArrayType(getElemType(), getDimCount() + count);
+    }
+
     public void removeDim(int dim) {
         assert dim >= 0 && dim < shape.size() : "dim out of range: " + dim;
-        isVanilla = false;
         shape.removeIndex(dim);
         strides.removeIndex(dim);
         type = ColumnType.encodeArrayType(getElemType(), getDimCount() - 1);
@@ -149,12 +231,23 @@ public class DerivedArrayView extends ArrayView {
         if (lo == 0 && hi == dimLen) {
             return;
         }
-        isVanilla = false;
+
+        if (isVanilla) {
+            for (int i = 0; i < dim; i++) {
+                if (shape.getQuick(i) > 1) {
+                    isVanilla = false;
+                }
+            }
+        }
+
         if (lo < hi) {
             flatViewOffset += lo * getStride(dim);
+            flatViewLength = flatViewLength / dimLen * (hi - lo);
             shape.set(dim, hi - lo);
         } else {
             shape.set(dim, 0);
+            isVanilla = true;
+            flatViewLength = 0;
         }
     }
 
@@ -163,12 +256,14 @@ public class DerivedArrayView extends ArrayView {
         if (getDimLen(dim) != 0) {
             removeDim(dim);
         } else {
-            shape.set(0, 0);
+            ofNull();
         }
     }
 
     public void transpose() {
-        isVanilla = false;
+        if (isVanilla && getDimCount() > 1) {
+            isVanilla = false;
+        }
         strides.reverse();
         shape.reverse();
     }

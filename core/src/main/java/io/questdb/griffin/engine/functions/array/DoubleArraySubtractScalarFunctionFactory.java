@@ -26,59 +26,43 @@ package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
 
-public class DoubleArrayAddFunctionFactory implements FunctionFactory {
+public class DoubleArraySubtractScalarFunctionFactory implements FunctionFactory {
+    private static final String OPERATOR_NAME = "-";
 
     @Override
     public String getSignature() {
-        return "+(D[]D[])";
+        return OPERATOR_NAME + "(D[]D)";
     }
 
     @Override
-    public Function newInstance(
-            int position,
-            @Transient ObjList<Function> args,
-            @Transient IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        return new Func(
-                configuration,
-                args.getQuick(0),
-                args.getQuick(1),
-                argPositions.getQuick(0)
-        );
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return new Func(args.getQuick(0), args.getQuick(1), configuration);
     }
 
-    private static class Func extends DoubleArrayBinaryOperator {
+    private static class Func extends DoubleArrayAndScalarArrayOperator {
 
-        private Func(
-                CairoConfiguration configuration,
-                Function leftArg,
-                Function rightArg,
-                int leftArgPos
-        ) {
-            super("+", configuration, leftArg, rightArg, leftArgPos);
+        public Func(Function arrayArg, Function scalarArg, CairoConfiguration configuration) {
+            super(OPERATOR_NAME, arrayArg, scalarArg, configuration);
         }
 
         @Override
-        protected double applyOperation(double leftVal, double rightVal) {
-            return leftVal + rightVal;
+        public void applyToElement(ArrayView view, int index) {
+            memory.putDouble(view.getDouble(index) - scalarValue);
         }
 
         @Override
-        protected void bulkApplyOperation(ArrayView left, ArrayView right) {
-            for (int i = 0, n = left.getFlatViewLength(); i < n; i++) {
-                double leftVal = left.getDouble(i);
-                double rightVal = right.getDouble(i);
-                arrayOut.putDouble(i, leftVal + rightVal);
+        public void applyToEntireVanillaArray(ArrayView view) {
+            FlatArrayView flatView = view.flatView();
+            for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
+                memory.putDouble(flatView.getDoubleAtAbsIndex(i) - scalarValue);
             }
         }
     }

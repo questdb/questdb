@@ -25,73 +25,77 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IntervalFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.NotNull;
 
-public class IntIntervalRightOpenFunctionFactory implements FunctionFactory {
+public class DoubleArraySumFunctionFactory implements FunctionFactory {
+    private static final String FUNCTION_NAME = "array_sum";
+
     @Override
     public String getSignature() {
-        return ":(I)";
+        return FUNCTION_NAME + "(D[])";
     }
 
     @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        return new IntIntervalFunction(args.getQuick(0));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return new Func(args.getQuick(0));
     }
 
-    static class IntIntervalFunction extends IntervalFunction implements UnaryFunction {
-        private final Function arg;
-        private final Interval interval = new Interval();
+    static class Func extends DoubleFunction implements UnaryFunction, DoubleUnaryArrayAccessor {
 
-        public IntIntervalFunction(Function arg) {
-            this.arg = arg;
+        protected final Function arrayArg;
+        protected double sum = 0d;
+
+        Func(Function arrayArg) {
+            this.arrayArg = arrayArg;
+        }
+
+        @Override
+        public void applyToElement(ArrayView view, int index) {
+            double v = view.getDouble(index);
+            if (v == v) {
+                sum += v;
+            }
+        }
+
+        @Override
+        public void applyToEntireVanillaArray(ArrayView view) {
+            double res = view.flatView().sumDouble(view.getFlatViewOffset(), view.getFlatViewLength());
+            sum = res != res ? 0 : res;
+        }
+
+        @Override
+        public void applyToNullArray() {
         }
 
         @Override
         public Function getArg() {
-            return arg;
+            return arrayArg;
         }
 
         @Override
-        public @NotNull Interval getInterval(Record rec) {
-            interval.of(arg.getInt(rec), Long.MAX_VALUE);
-            return interval;
+        public double getDouble(Record rec) {
+            sum = 0d;
+            calculate(arrayArg.getArray(rec));
+            return sum;
         }
 
         @Override
         public String getName() {
-            return ":";
-        }
-
-        @Override
-        public boolean isOperator() {
-            return true;
+            return FUNCTION_NAME;
         }
 
         @Override
         public boolean isThreadSafe() {
             return false;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(arg).val(':');
         }
     }
 }

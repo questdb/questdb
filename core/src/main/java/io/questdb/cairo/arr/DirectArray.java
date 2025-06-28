@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
@@ -55,6 +56,7 @@ public final class DirectArray extends MutableArray implements Mutable {
         this.flatView = new BorrowedFlatArrayView();
         this.configuration = configuration;
     }
+
 
     public DirectArray() {
         this.flatView = new BorrowedFlatArrayView();
@@ -94,6 +96,10 @@ public final class DirectArray extends MutableArray implements Mutable {
         shape.clear();
         strides.clear();
         assert ptr == 0;
+    }
+
+    public IntList getShape() {
+        return shape;
     }
 
     public void ofNull() {

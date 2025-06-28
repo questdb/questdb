@@ -36,11 +36,11 @@ import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.FunctionFactoryDescriptor.replaceSignatureNameAndSwapArgs;
 
-public class SwappingArgsFunctionFactory implements FunctionFactory {
+public class ArgSwappingFunctionFactory implements FunctionFactory {
     private final FunctionFactory delegate;
     private final String signature;
 
-    public SwappingArgsFunctionFactory(String name, FunctionFactory delegate) throws SqlException {
+    public ArgSwappingFunctionFactory(String name, FunctionFactory delegate) throws SqlException {
         this.signature = replaceSignatureNameAndSwapArgs(name, delegate.getSignature());
         this.delegate = delegate;
     }

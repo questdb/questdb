@@ -25,74 +25,68 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.IntervalFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Interval;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.NotNull;
 
-public class IntIntervalFunctionFactory implements FunctionFactory {
+public class DoubleArrayInsertionPointAfterEqualFunctionFactory implements FunctionFactory {
+    private static final String FUNCTION_NAME = "insertion_point";
+
     @Override
     public String getSignature() {
-        return ":(II)";
+        return FUNCTION_NAME + "(D[]D)";
     }
 
     @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        return new IntIntervalFunction(args.getQuick(0), args.getQuick(1));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        Function arrayArg = args.getQuick(0);
+        if (ColumnType.decodeArrayDimensionality(arrayArg.getType()) != 1) {
+            throw SqlException.position(argPositions.getQuick(0)).put("array is not one-dimensional");
+        }
+        return new Func(arrayArg, args.get(1));
     }
 
-    static class IntIntervalFunction extends IntervalFunction implements BinaryFunction {
-        private final Interval interval = new Interval();
-        private final Function left;
-        private final Function right;
+    static class Func extends IntFunction implements BinaryFunction {
+        private final Function arrayArg;
+        private final Function valueArg;
 
-        public IntIntervalFunction(Function left, Function right) {
-            this.left = left;
-            this.right = right;
+        Func(Function arrayArg, Function valueArg) {
+            this.arrayArg = arrayArg;
+            this.valueArg = valueArg;
         }
 
         @Override
-        public @NotNull Interval getInterval(Record rec) {
-            interval.of(left.getInt(rec), right.getInt(rec));
-            return interval;
+        public int getInt(Record rec) {
+            ArrayView arr = arrayArg.getArray(rec);
+            if (arr.isNull()) {
+                return Numbers.INT_NULL;
+            }
+            int index = arr.binarySearchDoubleValue1DArray(valueArg.getDouble(rec), false);
+            return index < 0 ? -index : index + 1;
         }
 
         @Override
         public Function getLeft() {
-            return left;
+            return arrayArg;
         }
 
         @Override
         public String getName() {
-            return ":";
+            return FUNCTION_NAME;
         }
 
         @Override
         public Function getRight() {
-            return right;
-        }
-
-        @Override
-        public boolean isOperator() {
-            return true;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
+            return valueArg;
         }
     }
 }

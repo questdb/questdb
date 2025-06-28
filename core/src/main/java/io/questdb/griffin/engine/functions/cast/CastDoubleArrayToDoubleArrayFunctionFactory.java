@@ -106,7 +106,7 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
         public ArrayView getArray(Record rec) {
             final ArrayView array = arg.getArray(rec);
             derivedArray.of(array);
-            derivedArray.addDimensions(dimsToAdd);
+            derivedArray.prependDimensions(dimsToAdd);
             return derivedArray;
         }
 

@@ -27,59 +27,65 @@ package io.questdb.griffin.engine.functions.array;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
 
-public class DoubleArrayAddFunctionFactory implements FunctionFactory {
+public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
+    private static final String FUNCTION_NAME = "array_avg";
 
     @Override
     public String getSignature() {
-        return "+(D[]D[])";
+        return FUNCTION_NAME + "(D[])";
     }
 
     @Override
-    public Function newInstance(
-            int position,
-            @Transient ObjList<Function> args,
-            @Transient IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        return new Func(
-                configuration,
-                args.getQuick(0),
-                args.getQuick(1),
-                argPositions.getQuick(0)
-        );
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return new Func(args.getQuick(0));
     }
 
-    private static class Func extends DoubleArrayBinaryOperator {
+    static class Func extends DoubleArraySumFunctionFactory.Func {
+        private int count = 0;
 
-        private Func(
-                CairoConfiguration configuration,
-                Function leftArg,
-                Function rightArg,
-                int leftArgPos
-        ) {
-            super("+", configuration, leftArg, rightArg, leftArgPos);
+        Func(Function arrayArg) {
+            super(arrayArg);
         }
 
         @Override
-        protected double applyOperation(double leftVal, double rightVal) {
-            return leftVal + rightVal;
-        }
-
-        @Override
-        protected void bulkApplyOperation(ArrayView left, ArrayView right) {
-            for (int i = 0, n = left.getFlatViewLength(); i < n; i++) {
-                double leftVal = left.getDouble(i);
-                double rightVal = right.getDouble(i);
-                arrayOut.putDouble(i, leftVal + rightVal);
+        public void applyToElement(ArrayView view, int index) {
+            double v = view.getDouble(index);
+            if (v == v) {
+                sum += v;
+                count++;
             }
+        }
+
+        @Override
+        public void applyToEntireVanillaArray(ArrayView view) {
+            sum = view.flatView().avgDouble(view.getFlatViewOffset(), view.getFlatViewLength());
+        }
+
+        @Override
+        public void applyToNullArray() {
+            sum = Double.NaN;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            ArrayView arr = arrayArg.getArray(rec);
+            count = 0;
+            sum = 0d;
+            boolean vanilla = arr.isVanilla();
+            calculate(arr);
+            return vanilla ? sum : sum / count;
+        }
+
+        @Override
+        public String getName() {
+            return FUNCTION_NAME;
         }
     }
 }
