@@ -284,6 +284,15 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         return -1;
     }
 
+    public void reverse() {
+        int n = size();
+        for (int i = 0, m = n / 2; i < m; i++) {
+            T tmp = buffer[i];
+            buffer[i] = buffer[n - i - 1];
+            buffer[n - i - 1] = tmp;
+        }
+    }
+
     public void set(int from, int to, T value) {
         Arrays.fill(buffer, from, Math.min(buffer.length, to), value);
     }

@@ -325,6 +325,11 @@ public class IntList implements Mutable, Sinkable {
         throw new IllegalStateException("sorting not supported for group size: " + groupSize + ", length: " + pos);
     }
 
+    public IntList thenCheckCapacity(int capacity) {
+        checkCapacity(capacity);
+        return this;
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii('[');

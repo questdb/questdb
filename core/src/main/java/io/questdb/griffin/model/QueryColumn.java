@@ -66,6 +66,10 @@ public class QueryColumn implements Mutable, Sinkable {
         return ast;
     }
 
+    public void setAst(ExpressionNode ast) {
+        this.ast = ast;
+    }
+
     public int getColumnType() {
         return columnType;
     }
@@ -113,6 +117,9 @@ public class QueryColumn implements Mutable, Sinkable {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.put(ast).putAscii(" as ").put(alias);
+        sink.put(ast);
+        if (alias != null) {
+            sink.putAscii(" as ").put(alias);
+        }
     }
 }
