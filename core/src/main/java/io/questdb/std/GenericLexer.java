@@ -28,7 +28,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 import java.util.Comparator;
@@ -383,11 +382,9 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
     private static CharSequence findToken0(char c, CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols) {
         final int index = symbols.keyIndex(c);
-        return index > -1 ? null : findToken00(content, _pos, _len, symbols, index);
-    }
-
-    @Nullable
-    private static CharSequence findToken00(CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols, int index) {
+        if (index > -1) {
+            return null;
+        }
         final ObjList<CharSequence> l = symbols.valueAt(index);
         for (int i = 0, sz = l.size(); i < sz; i++) {
             CharSequence txt = l.getQuick(i);
