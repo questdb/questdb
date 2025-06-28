@@ -24,6 +24,8 @@
 
 package io.questdb.compat;
 
+import com.influxdb.client.InfluxDBClient;
+import com.influxdb.client.InfluxDBClientFactory;
 import io.questdb.ServerMain;
 import io.questdb.std.Chars;
 import org.influxdb.InfluxDB;
@@ -63,5 +65,12 @@ public class InfluxDBUtils {
         int httpPort = serverMain.getHttpServerPort();
         final String serverURL = "http://127.0.0.1:" + httpPort, username = "root", password = "root";
         return InfluxDBFactory.connect(serverURL, username, password);
+    }
+
+    @NotNull
+    public static InfluxDBClient getV2Connection(ServerMain serverMain) {
+        int httpPort = serverMain.getHttpServerPort();
+        final String serverURL = "http://127.0.0.1:" + httpPort;
+        return InfluxDBClientFactory.create(serverURL, "root", "root".toCharArray());
     }
 }
