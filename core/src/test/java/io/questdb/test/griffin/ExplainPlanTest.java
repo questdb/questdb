@@ -4889,7 +4889,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore
     public void testLeftJoinWithPostJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");

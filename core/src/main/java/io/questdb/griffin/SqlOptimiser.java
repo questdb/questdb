@@ -3177,10 +3177,20 @@ public class SqlOptimiser implements Mutable {
                     String whereClauseColumn = targetModel.getWhereClause().lhs.token.toString();
                     int dot = whereClauseColumn.indexOf('.');
                     String whereClauseColumnName = whereClauseColumn.substring(dot + 1);
-
                     int whereClauseValueType = targetModel.getWhereClause().rhs.type;
 
-                    //if where clause column is from slave table OR there is a join condition, then ASOF join optimisation will not be applied
+                    /*if where clause column is not from master table, then ASOF join optimisation will not be applied*/
+
+                    //check with alias of where clause
+                    if(dot!=-1){
+                        String whereClauseAlias = whereClauseColumn.substring(0, dot);
+                        String masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token.toString() :
+                                targetModel.getTableNameExpr().token.toString();
+                        if(!whereClauseAlias.toString().equals(masterTableAlias))
+                            return false;
+                    }
+
+                    //check with column name of where clause
                     if ( whereClauseValueType != CONSTANT
                             || !targetModel.getAliasToColumnMap().contains(whereClauseColumnName)) {
                         return false;
@@ -3259,8 +3269,8 @@ public class SqlOptimiser implements Mutable {
             level1.setLimit(parentModel.getLimitLo(), null);
             level1.setWhereClause(targetModel.getWhereClause());
             final ObjList<CharSequence> aliases = copyModel.getAliasToColumnMap().keys();
-//            if(targetModel.getAlias()!=null)
-//                level1.setAlias(targetModel.getAlias());
+            if(targetModel.getAlias()!=null)
+                level1.setAlias(targetModel.getAlias());
             for (int i = 0, n = aliases.size(); i < n; i++) {
                 final CharSequence alias = aliases.getQuick(i);
                 QueryColumn qc = copyModel.getAliasToColumnMap().get(alias);
