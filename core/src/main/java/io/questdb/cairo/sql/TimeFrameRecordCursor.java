@@ -45,6 +45,9 @@ public interface TimeFrameRecordCursor extends QuietCloseable, SymbolTableSource
      */
     Record getRecordB();
 
+    @Override
+    StaticSymbolTable getSymbolTable(int columnIndex);
+
     /**
      * Time frame should be used only if a previously called {@link #next()} or {@link #prev()}
      * method returned true.

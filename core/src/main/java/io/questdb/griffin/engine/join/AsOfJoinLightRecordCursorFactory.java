@@ -48,6 +48,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
     private final AsOfLightJoinRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
+    private final long toleranceInterval;
 
     public AsOfJoinLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -59,12 +60,14 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             int columnSplit,
-            JoinContext joinContext
+            JoinContext joinContext,
+            long toleranceInterval
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         try {
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
+            this.toleranceInterval = toleranceInterval;
 
             Map joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
             this.cursor = new AsOfLightJoinRecordCursor(
@@ -183,6 +186,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
             if (masterHasNext) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+                final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL ? Long.MIN_VALUE : masterTimestamp - toleranceInterval;
                 MapKey key;
                 MapValue value;
                 long slaveTimestamp = this.slaveTimestamp;
@@ -190,21 +194,33 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 if (slaveTimestamp <= masterTimestamp) {
                     if (lastSlaveRowID != Numbers.LONG_NULL) {
                         slaveCursor.recordAt(slaveRecord, lastSlaveRowID);
-                        key = joinKeyMap.withKey();
-                        key.put(slaveRecord, slaveKeySink);
-                        value = key.createValue();
-                        value.putLong(0, lastSlaveRowID);
+                        slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
+                        if (slaveTimestamp >= minSlaveTimestamp) {
+                            key = joinKeyMap.withKey();
+                            key.put(slaveRecord, slaveKeySink);
+                            value = key.createValue();
+                            value.putLong(0, lastSlaveRowID);
+                        }
                     }
+
+                    // NOTE: unlike full fat ASOF JOIN, we don't evacuate joinKeyMap here.
+                    // Reasoning: The joinKeyMap here contains only rowNo, so evacuation
+                    // would require to dereference rowNo to record to get a timestamp
+                    // to decide whether to keep the record or not. This could be expensive.
+                    // Given map values are just row IDs, I decided not to evacuate
+                    // maps in Light ASOF JOINs
 
                     final Record rec = slaveCursor.getRecord();
                     while (slaveCursor.hasNext()) {
                         slaveTimestamp = rec.getTimestamp(slaveTimestampIndex);
                         slaveRowID = rec.getRowId();
                         if (slaveTimestamp <= masterTimestamp) {
-                            key = joinKeyMap.withKey();
-                            key.put(rec, slaveKeySink);
-                            value = key.createValue();
-                            value.putLong(0, rec.getRowId());
+                            if (slaveTimestamp >= minSlaveTimestamp) {
+                                key = joinKeyMap.withKey();
+                                key.put(rec, slaveKeySink);
+                                value = key.createValue();
+                                value.putLong(0, rec.getRowId());
+                            }
                         } else {
                             break;
                         }
@@ -219,7 +235,8 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 value = key.findValue();
                 if (value != null) {
                     slaveCursor.recordAt(slaveRecord, value.getLong(0));
-                    record.hasSlave(true);
+                    slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
+                    record.hasSlave(toleranceInterval == Numbers.LONG_NULL || slaveTimestamp >= masterTimestamp - toleranceInterval);
                 } else {
                     record.hasSlave(false);
                 }
