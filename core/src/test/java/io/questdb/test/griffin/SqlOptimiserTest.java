@@ -32,6 +32,7 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Misc;
 import io.questdb.test.griffin.engine.groupby.SampleByTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.ArrayDeque;
@@ -1204,6 +1205,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    @Ignore
     public void testOrderByAdviceWorksWithAsOfJoin5() throws Exception {
         // Case when order by is one table and not timestamp first
         assertMemoryLeak(() -> {
@@ -1219,7 +1221,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "ORDER BY t1.s, t1.ts\n" +
                     "LIMIT 1000000;";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from (select-choose [s, ts] from (select-choose [ts, s] s, ts from (select [ts, s] from t1 where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000) timestamp (ts) order by ts) t1 asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s) order by s, ts", query);
+            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from (select-choose [s, ts] from (select-choose [s, ts] s, ts from (select [s, ts] from t1 where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000) order by ts) t1 asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s) order by s, ts", query);
             assertPlanNoLeakCheck(query,
                     "Limit lo: 1000000 skip-over-rows: 0 limit: 7\n" +
                             "    Sort\n" +

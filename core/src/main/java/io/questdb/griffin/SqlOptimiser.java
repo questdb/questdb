@@ -3233,6 +3233,7 @@ public class SqlOptimiser implements Mutable {
         QueryModel level0 = targetModel.getNestedModel();
         QueryModel copyModel = level0 == null ? targetModel : level0;
         QueryModel level1 = QueryModel.FACTORY.newInstance();
+        boolean isLevel2Needed = true;
 
 //         level 0 is the base model
         if(level0 == null){
@@ -3281,40 +3282,54 @@ public class SqlOptimiser implements Mutable {
                 String originalAlias = targetModel.getOrderBy().get(i).token.toString();
                 aliasNode.token = originalAlias.replace(truncateAlias, "");
                 level1.addOrderBy(aliasNode, targetModel.getOrderByDirection().getQuick(i));
+                if(i == targetModel.getOrderBy().size() -1 && targetModel.getOrderBy().size()==1 &&
+                        aliasNode.token.toString().contentEquals(baseTableModel.getTimestamp().token)
+                        && targetModel.getOrderByDirection().get(i) == QueryModel.ORDER_DIRECTION_ASCENDING)
+                {
+                    isLevel2Needed = false;
+                }
             }
             createAndAddTimestampColumn(baseTableModel, level1);
             level1.setNestedModel(level0);
 
 
+           if(isLevel2Needed) {
+               //level 2 model to order by timestamp ASC
+               QueryModel level2 = QueryModel.FACTORY.newInstance();
+               level2.setSelectModelType(1);
+               level2.copyColumnsFrom(level1, queryColumnPool, expressionNodePool);
 
-            //level 2 model to order by timestamp ASC
-            QueryModel level2 = QueryModel.FACTORY.newInstance();
-            level2.setSelectModelType(1);
-            level2.copyColumnsFrom(level1, queryColumnPool, expressionNodePool);
-            level2.setTimestamp(baseTableModel.getTimestamp());
-            createAndAddTimestampColumn(baseTableModel, level1);
-            if(baseTableModel.getTimestamp() != null) {
-                final CharSequence timestampColumn = baseTableModel.getTimestamp().token;
-                final ExpressionNode timestampNode = expressionNodePool.next();
-                timestampNode.token = timestampColumn;
-                level2.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
-            }
-            level2.setNestedModel(level1);
+//             if its concrete table, then we can don't need to set timestamp
+                if(targetModel.getTableNameExpr()== null) {
+                    level2.setTimestamp(baseTableModel.getTimestamp());
+                }
+               createAndAddTimestampColumn(baseTableModel, level1);
+               if (baseTableModel.getTimestamp() != null) {
+                   final CharSequence timestampColumn = baseTableModel.getTimestamp().token;
+                   final ExpressionNode timestampNode = expressionNodePool.next();
+                   timestampNode.token = timestampColumn;
+                   level2.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
+               }
+               level2.setNestedModel(level1);
+               targetModel.setNestedModel(level2);
+           }
+           else {
+               targetModel.setNestedModel(level1);
+           }
 
 
 
         targetModel.setWhereClause(null);
-        targetModel.setNestedModel(level2);
         if(targetModel.getTableNameExpr() != null){
           ExpressionNode aliasNode = expressionNodePool.next();
           aliasNode.token = targetModel.getTableNameExpr().token;
           targetModel.setAlias(aliasNode);
           targetModel.setTableNameExpr(null);
+          targetModel.setTimestamp(null);
         }
 
-        targetModel.setTimestamp(null);
-
         model.setLimit(null, null);
+
     }
 
     private void propagateTimestampColumnFromBaseModelToLevel0(QueryModel baseTableModel, QueryModel targetModel){

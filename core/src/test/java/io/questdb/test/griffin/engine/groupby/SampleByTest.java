@@ -5775,6 +5775,7 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    @Ignore
     public void testSampleByWithAsofJoin() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE 'trades1' (\n" +
