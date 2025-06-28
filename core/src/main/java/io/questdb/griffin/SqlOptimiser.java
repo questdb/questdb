@@ -3259,6 +3259,8 @@ public class SqlOptimiser implements Mutable {
             level1.setLimit(parentModel.getLimitLo(), null);
             level1.setWhereClause(targetModel.getWhereClause());
             final ObjList<CharSequence> aliases = copyModel.getAliasToColumnMap().keys();
+//            if(targetModel.getAlias()!=null)
+//                level1.setAlias(targetModel.getAlias());
             for (int i = 0, n = aliases.size(); i < n; i++) {
                 final CharSequence alias = aliases.getQuick(i);
                 QueryColumn qc = copyModel.getAliasToColumnMap().get(alias);
@@ -3320,10 +3322,12 @@ public class SqlOptimiser implements Mutable {
 
 
         targetModel.setWhereClause(null);
-        if(targetModel.getTableNameExpr() != null){
+        if(targetModel.getTableNameExpr() != null ){
           ExpressionNode aliasNode = expressionNodePool.next();
           aliasNode.token = targetModel.getTableNameExpr().token;
-          targetModel.setAlias(aliasNode);
+//          if(targetModel.getAlias()!=null) {
+//              targetModel.setAlias(aliasNode);
+//          }
           targetModel.setTableNameExpr(null);
           targetModel.setTimestamp(null);
         }
