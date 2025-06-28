@@ -146,6 +146,11 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return frameIndex;
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);

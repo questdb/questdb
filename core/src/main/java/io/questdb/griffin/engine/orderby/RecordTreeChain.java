@@ -143,6 +143,10 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
         mem.reopen();
     }
 
+    public long size() {
+        return recordChain.size();
+    }
+
     private static byte colorOf(long blockAddress) {
         return blockAddress == -1 ? BLACK : Unsafe.getUnsafe().getByte(blockAddress + O_COLOUR);
     }
@@ -368,6 +372,12 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
         @Override
         public long size() {
             return baseCursor.size();
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            // no state to preserve
+            return 0;
         }
 
         @Override

@@ -106,6 +106,11 @@ class SelectedRecordCursor implements RecordCursor {
         baseCursor.toTop();
     }
 
+    @Override
+    public long preComputedStateSize() {
+        return baseCursor.preComputedStateSize();
+    }
+
     void of(RecordCursor cursor) {
         this.baseCursor = cursor;
         recordA.of(cursor.getRecord());

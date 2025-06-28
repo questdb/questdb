@@ -170,6 +170,11 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return 0;
+    }
+
+    @Override
     public long size() throws DataUnavailableException {
         return decoder.metadata().rowCount();
     }

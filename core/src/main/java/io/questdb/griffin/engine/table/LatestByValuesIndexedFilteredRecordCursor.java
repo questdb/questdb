@@ -26,7 +26,12 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -96,6 +101,11 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
         isTreeMapBuilt = false;
         // prepare for page frame iteration
         super.init();
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return isTreeMapBuilt ? 1 : 0;
     }
 
     @Override

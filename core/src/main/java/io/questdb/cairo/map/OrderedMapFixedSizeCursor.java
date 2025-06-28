@@ -109,6 +109,12 @@ class OrderedMapFixedSizeCursor implements OrderedMapCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        // no pre-calculated state
+        return 0;
+    }
+
+    @Override
     public void toTop() {
         heapAddr = heapStart;
         remaining = size;

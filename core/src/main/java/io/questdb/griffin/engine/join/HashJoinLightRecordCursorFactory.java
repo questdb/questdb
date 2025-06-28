@@ -235,6 +235,11 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         }
 
         @Override
+        public long preComputedStateSize() {
+            return isMapBuilt ? 1 : 0;
+        }
+
+        @Override
         public long size() {
             if (size > -1) {
                 return size;

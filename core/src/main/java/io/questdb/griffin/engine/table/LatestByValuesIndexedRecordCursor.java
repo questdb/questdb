@@ -98,6 +98,11 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return (isTreeMapBuilt ? 1 : 0) + rows.size();
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("Index backward scan").meta("on").putColumnName(columnIndex);
     }

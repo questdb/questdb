@@ -96,6 +96,11 @@ public class TestTableReaderRecordCursor implements RecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return 0;
+    }
+
+    @Override
     public void recordAt(Record record, long rowId) {
         ((TestTableReaderRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
     }

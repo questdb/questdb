@@ -130,6 +130,11 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public void toTop() {
             iterator = readerPoolEntries.entrySet().iterator();
             allocationIndex = 0;

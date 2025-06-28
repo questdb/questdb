@@ -96,6 +96,11 @@ class IntersectAllRecordCursor extends AbstractSetRecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return isCursorBHashed ? 1 : 0;
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         cursorA.recordAt(record, atRowId);
     }

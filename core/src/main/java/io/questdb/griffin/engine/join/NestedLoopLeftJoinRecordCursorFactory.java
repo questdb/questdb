@@ -163,6 +163,11 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
         }
 
         @Override
+        public long preComputedStateSize() {
+            return masterCursor.preComputedStateSize() + slaveCursor.preComputedStateSize();
+        }
+
+        @Override
         public long size() {
             return -1;
         }

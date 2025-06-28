@@ -1318,6 +1318,11 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             recordCursor.recordAt(record, atRowId);
         }

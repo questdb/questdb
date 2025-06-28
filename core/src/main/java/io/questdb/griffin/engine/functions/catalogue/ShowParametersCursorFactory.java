@@ -154,6 +154,11 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             return -1L;
         }
