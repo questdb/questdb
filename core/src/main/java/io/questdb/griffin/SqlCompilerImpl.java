@@ -2795,6 +2795,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "table name expected");
         }
 
+        boolean hasIfExists = false;
+        int tableNameStartPosition = lexer.lastTokenPosition();
+
+        if (tok != null) {
+            if (isIfKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isExistsKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected EXISTS");
+                }
+                hasIfExists = true;
+                tableNameStartPosition = lexer.getPosition();
+            } else {
+                lexer.unparseLast(); // tok has table name
+            }
+        }
+
+        tok = expectToken(lexer, "table name");
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
         tableWriters.clear();
         try {
             do {
@@ -2805,7 +2824,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (Chars.isQuoted(tok)) {
                     tok = GenericLexer.unquote(tok);
                 }
-                final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+                final TableToken tableToken = executionContext.getTableTokenIfExists(tok);
+                if (tableToken == null) {
+                    if (!hasIfExists) {
+                        throw SqlException
+                                .$(tableNameStartPosition, "table does not exist [table=")
+                                .put(tok).put(']');
+                    }
+                    // IF EXISTS and table missing just succeed
+                    compiledQuery.ofTruncate();
+                    return;
+                }
                 checkMatViewModification(tableToken);
                 executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
                 try {
