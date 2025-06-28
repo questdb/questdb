@@ -4946,12 +4946,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "Count\n" +
                                 "    " + factoryType + "\n" +
                                 (i == 0 ? "      condition: T2.created=T1.created\n" : "") +
-                                (i==2 ? "        SelectedRecord\n" : "") +
-                                (i==2 ? "    ": "") +"        Async JIT Filter workers: 1\n" +
-                                (i==2 ? "    ": "") +"          filter: value!=1\n" +
-                                (i==2 ? "    ": "") +"            PageFrame\n" +
-                                (i==2 ? "    ": "") +"                Row forward scan\n" +
-                                (i==2 ? "    ": "") +"                Frame forward scan on: tab\n" +
+                                (i == 2 ? "        SelectedRecord\n" : "") +
+                                (i == 2 ? "    " : "") + "        Async JIT Filter workers: 1\n" +
+                                (i == 2 ? "    " : "") + "          filter: value!=1\n" +
+                                (i == 2 ? "    " : "") + "            PageFrame\n" +
+                                (i == 2 ? "    " : "") + "                Row forward scan\n" +
+                                (i == 2 ? "    " : "") + "                Frame forward scan on: tab\n" +
                                 (i == 0 ? "        Hash\n" : "") +
                                 (i == 0 ? "    " : "") + "        PageFrame\n" +
                                 (i == 0 ? "    " : "") + "            Row forward scan\n" +

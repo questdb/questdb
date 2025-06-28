@@ -6942,17 +6942,11 @@ public class SqlOptimiser implements Mutable {
             rewrittenModel = rewriteOrderBy(rewrittenModel);
             optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
             createOrderHash(rewrittenModel);
-            System.out.println("***" + rewrittenModel.toString0() + "***");
             moveWhereInsideSubQueries(rewrittenModel);
-            System.out.println("***" + rewrittenModel.toString0() + "***");
             eraseColumnPrefixInWhereClauses(rewrittenModel);
-            System.out.println("***" + rewrittenModel.toString0() + "***");
             moveTimestampToChooseModel(rewrittenModel);
-            System.out.println("***" + rewrittenModel.toString0() + "***");
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
-            System.out.println("***" + rewrittenModel.toString0() + "***");
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
-            System.out.println("***" + rewrittenModel.toString0() + "***");
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             System.out.println("***" + rewrittenModel.toString0() + "***");
             return rewrittenModel;
