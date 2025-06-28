@@ -5775,7 +5775,6 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore
     public void testSampleByWithAsofJoin() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE 'trades1' (\n" +
@@ -5820,15 +5819,15 @@ public class SampleByTest extends AbstractCairoTest {
                     "2022-02-24T00:09:00.000000Z\t0.7675673070796104\t0.38642336707855873\n";
 
             // First, without table aliases
-//            assertSampleByFlavours(
-//                    expected,
-//                    "SELECT trades1.timestamp,\n" +
-//                            "      avg(trades1.price) AS price1,\n" +
-//                            "      avg(trades2.price) AS price2\n" +
-//                            "FROM  trades1 ASOF JOIN trades2 \n" +
-//                            "WHERE trades1.timestamp BETWEEN '2021-02-23T19' AND '2023-02-23T23'\n" +
-//                            "SAMPLE BY 1s"
-//            );
+            assertSampleByFlavours(
+                    expected,
+                    "SELECT trades1.timestamp,\n" +
+                            "      avg(trades1.price) AS price1,\n" +
+                            "      avg(trades2.price) AS price2\n" +
+                            "FROM  trades1 ASOF JOIN trades2 \n" +
+                            "WHERE trades1.timestamp BETWEEN '2021-02-23T19' AND '2023-02-23T23'\n" +
+                            "SAMPLE BY 1s"
+            );
 
             // Same again, but with table aliases.
             assertSampleByFlavours(
