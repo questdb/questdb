@@ -300,17 +300,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                SelectedRecord\n" +
                     "                    Sort light lo: 6\n" +
                     "                      keys: [size, price, timestamp]\n" +
-                    "                        Async Filter workers: 1\n" +
+                    "                        Async JIT Filter workers: 1\n" +
                     "                          filter: price=184.0\n" +
                     "                            PageFrame\n" +
                     "                                Row forward scan\n" +
                     "                                Frame forward scan on: trades\n" +
                     "                SelectedRecord\n" +
-                    "                    Async Filter workers: 1\n" +
+                    "                    Async JIT Filter workers: 1\n" +
                     "                      filter: bid_price=189.4\n" +
                     "                        PageFrame\n" +
                     "                            Row forward scan\n" +
-                    "                            Frame forward scan on: order_book\n";
+                    "                            Frame forward scan on: order_book";
 
             assertPlanNoLeakCheck(q1, expectedPlan);
         });
