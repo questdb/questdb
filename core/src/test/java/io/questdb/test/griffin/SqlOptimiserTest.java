@@ -1221,21 +1221,24 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "ORDER BY t1.s, t1.ts\n" +
                     "LIMIT 1000000;";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from (select-choose [s, ts] from (select-choose [s, ts] s, ts from (select [s, ts] from t1 where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000) order by ts) t1 asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s) order by s, ts", query);
+            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from (select-choose [s, ts] from (select-choose [s, ts] s, ts from (select [s, ts] from t1 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000) order by ts) t1 asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s) order by s, ts", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 7\n" +
-                            "    Sort\n" +
-                            "      keys: [s, ts]\n" +
-                            "        SelectedRecord\n" +
-                            "            AsOf Join Fast Scan\n" +
-                            "              condition: t2.s=t1.s\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Interval forward scan on: t1\n" +
-                            "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: t2\n");
+                    "Sort\n" +
+                            "  keys: [s, ts]\n" +
+                            "    SelectedRecord\n" +
+                            "        AsOf Join Fast Scan\n" +
+                            "          condition: t2.s=t1.s\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [ts]\n" +
+                            "                Limit lo: 1000000 skip-over-rows: 0 limit: 7\n" +
+                            "                    SortedSymbolIndex\n" +
+                            "                        Index forward scan on: s\n" +
+                            "                          symbolOrder: asc\n" +
+                            "                        Interval forward scan on: t1\n" +
+                            "                          intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
                     "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
                     "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +

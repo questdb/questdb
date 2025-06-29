@@ -3320,6 +3320,7 @@ public class SqlOptimiser implements Mutable {
          */
         if (level0 == null) {
             level0 = QueryModel.FACTORY.newInstance();
+            level0.setTimestamp(baseTableModel.getTimestamp());
             level0.copyColumnsFrom(copyModel, queryColumnPool, expressionNodePool);
             if (copyModel.getTableNameExpr() != null)
                 level0.setTableNameExpr(copyModel.getTableNameExpr());
