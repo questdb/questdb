@@ -32,7 +32,6 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Misc;
 import io.questdb.test.griffin.engine.groupby.SampleByTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.ArrayDeque;
@@ -1205,7 +1204,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    @Ignore
     public void testOrderByAdviceWorksWithAsOfJoin5() throws Exception {
         // Case when order by is one table and not timestamp first
         assertMemoryLeak(() -> {
