@@ -69,18 +69,18 @@ impl CoreError {
         let last_index = self.context.len().saturating_sub(1);
         for (index, context) in self.context.iter().rev().enumerate() {
             if index == last_index {
-                write!(f, "{}", context)?;
+                write!(f, "{context}")?;
             } else {
-                write!(f, "{}: ", context)?;
+                write!(f, "{context}: ")?;
             }
         }
 
         // Then the source's cause, if there is one.
         if let Some(source) = source {
             if self.context.is_empty() {
-                write!(f, "{}", source)?;
+                write!(f, "{source}")?;
             } else {
-                write!(f, ": {}", source)?;
+                write!(f, ": {source}")?;
             }
         }
         Ok(())
@@ -132,7 +132,7 @@ impl Debug for CoreError {
         writeln!(f, "CoreError\n    Reason: {:?}", self.reason)?;
         writeln!(f, "    Context:")?;
         for line in self.context.iter().rev() {
-            writeln!(f, "        {}", line)?;
+            writeln!(f, "        {line}")?;
         }
         if self.backtrace.status() == BacktraceStatus::Captured {
             writeln!(f, "    Backtrace:\n{}", self.backtrace)?;
@@ -234,7 +234,7 @@ mod tests {
         assert!(matches!(reason, CoreErrorReason::Io(_)));
         let display = err.to_string();
         assert_eq!(display, "wider_context: context_msg: io_error");
-        let debug = format!("{:?}", err);
+        let debug = format!("{err:?}");
         assert!(debug.starts_with(concat!(
             "CoreError\n",
             "    Reason: Io(Custom { kind: Other, error: \"io_error\" })\n",
@@ -273,7 +273,7 @@ mod tests {
     #[test]
     pub fn format_with_backtrace() {
         let err = fmt_err!(InvalidType, "message");
-        let alternate = format!("{:#}", err);
+        let alternate = format!("{err:#}");
         assert!(alternate.starts_with("message"));
 
         let backtraces_enabled = Backtrace::capture().status() == BacktraceStatus::Captured;
