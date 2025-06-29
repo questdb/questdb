@@ -271,6 +271,131 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testAsofJoinForNestedAsofJoinQueries() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(" CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp);");
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp);");
+
+            String q1 = "select a.price, b.bid_price from (select price,size, timestamp from trades order by timestamp) a \n" +
+                    "  asof join (select bid_price,bid_size,ask_price from order_book where bid_price = 189.4 " +
+                    "order by timestamp) b \n" +
+                    "  where price = 184.0\n" +
+                    "  order by size, price asc limit 6";
+
+            String expectedPlan = "SelectedRecord\n" +
+                    "    Sort\n" +
+                    "      keys: [size, price]\n" +
+                    "        SelectedRecord\n" +
+                    "            AsOf Join\n" +
+                    "                SelectedRecord\n" +
+                    "                    Sort light lo: 6\n" +
+                    "                      keys: [size, price, timestamp]\n" +
+                    "                        Async Filter workers: 1\n" +
+                    "                          filter: price=184.0\n" +
+                    "                            PageFrame\n" +
+                    "                                Row forward scan\n" +
+                    "                                Frame forward scan on: trades\n" +
+                    "                SelectedRecord\n" +
+                    "                    Async Filter workers: 1\n" +
+                    "                      filter: bid_price=189.4\n" +
+                    "                        PageFrame\n" +
+                    "                            Row forward scan\n" +
+                    "                            Frame forward scan on: order_book\n";
+
+            assertPlanNoLeakCheck(q1, expectedPlan);
+        });
+    }
+
+    @Test
+    public void testAsofJoinLimitAndOrderPushdown() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(" CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp);");
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp);");
+
+            String q1 = "select * from trades ASOF JOIN order_book\n" +
+                    "order by trades.size , trades.timestamp  limit 5";
+
+            String expectedPlan = "Sort\n" +
+                    "  keys: [size, timestamp]\n" +
+                    "    SelectedRecord\n" +
+                    "        AsOf Join Fast Scan\n" +
+                    "            Radix sort light\n" +
+                    "              keys: [timestamp]\n" +
+                    "                Sort light lo: 5\n" +
+                    "                  keys: [size, timestamp]\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: trades\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: order_book\n";
+
+            assertPlanNoLeakCheck(q1, expectedPlan);
+        });
+    }
+
+    @Test
+    public void testAsofJoinWhereAndLimitOrderByClausePushdown() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(" CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp);");
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp);");
+
+            String q1 = "select * from trades ASOF JOIN order_book\n" +
+                    " where price = '184.0'\n" +
+                    "order by trades.size , trades.timestamp  limit 5";
+
+            String expectedPlan = "Sort\n" +
+                    "  keys: [size, timestamp]\n" +
+                    "    SelectedRecord\n" +
+                    "        AsOf Join Fast Scan\n" +
+                    "            Radix sort light\n" +
+                    "              keys: [timestamp]\n" +
+                    "                Sort light lo: 5\n" +
+                    "                  keys: [size, timestamp]\n" +
+                    "                    Async Filter workers: 1\n" +
+                    "                      filter: price='184.0'\n" +
+                    "                        PageFrame\n" +
+                    "                            Row forward scan\n" +
+                    "                            Frame forward scan on: trades\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: order_book\n";
+
+            assertPlanNoLeakCheck(q1, expectedPlan);
+        });
+    }
+
+    @Test
     public void testConstantInGroupByDoesNotPreventOptimisation() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table hits (\n" +
