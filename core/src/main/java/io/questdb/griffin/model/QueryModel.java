@@ -1136,7 +1136,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             QueryColumn thisColumn = bottomUpColumns.getQuick(i);
             if (thisColumn.getAst().type == ExpressionNode.LITERAL) {
                 QueryColumn thatColumn = nested.getAliasToColumnMap().get(thisColumn.getAst().token);
-
                 // We cannot mutate the column on this model, because columns might be shared between
                 // models. The bottomUpColumns are also referenced by `aliasToColumnMap`. Typically,
                 // `thisColumn` alias should let us lookup, the column's reference

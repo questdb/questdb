@@ -5873,18 +5873,39 @@ public class SqlOptimiser implements Mutable {
                                 qc.setAlias(newAlias, false);
                             }
 
-                            createSelectColumn(
-                                    qc.getAlias(),
-                                    qc.getAst(),
-                                    false,
-                                    baseModel,
-                                    translatingModel,
-                                    innerVirtualModel,
-                                    windowModel,
-                                    groupByModel,
-                                    outerVirtualModel,
-                                    useDistinctModel ? distinctModel : null
-                            );
+                            // check what this column would reference to establish the priority
+                            if (
+                                    baseModel.getAliasToColumnMap().excludes(qc.getAst().token) &&
+                                    innerVirtualModel.getAliasToColumnMap().contains(qc.getAst().token)
+                            ) {
+                                // column is referencing another column or function on the same projection
+                                // we must not add it to the translating model. This model is inserted between
+                                // the base table and the virtual model, and will not be able to resolve the reference (we
+                                // are not referencing the base table)
+                                addFunction(
+                                        qc,
+                                        baseModel,
+                                        translatingModel,
+                                        innerVirtualModel,
+                                        windowModel,
+                                        groupByModel,
+                                        outerVirtualModel,
+                                        distinctModel
+                                );
+                            } else {
+                                createSelectColumn(
+                                        qc.getAlias(),
+                                        qc.getAst(),
+                                        false,
+                                        baseModel,
+                                        translatingModel,
+                                        innerVirtualModel,
+                                        windowModel,
+                                        groupByModel,
+                                        outerVirtualModel,
+                                        useDistinctModel ? distinctModel : null
+                                );
+                            }
                         }
                     }
                     break;
@@ -6227,7 +6248,14 @@ public class SqlOptimiser implements Mutable {
             }
             if (!appearsInFuncArgs) {
                 groupByModel.mergePartially(translatingModel, queryColumnPool);
-                translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, true, false, false, false, translatingModel);
+                translationIsRedundant = checkIfTranslatingModelIsRedundant(
+                        useInnerModel,
+                        true,
+                        false,
+                        false,
+                        false,
+                        translatingModel
+                );
             }
         }
 

@@ -45,8 +45,6 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         "A\t200\t20\t220\n",
                 "select e.symbol, e.value, q.quote, e.value + q.quote as sum " +
                         "from events e asof join quotes q on e.symbol = q.symbol",
-                null,
-                null,
                 false,
                 true
         );
@@ -66,8 +64,6 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         "2\t20\t200\t220\n",
                 "select t1.id, t1.val as val1, t2.val as val2, t1.val + t2.val as sum " +
                         "from t1 inner join t2 on t1.id = t2.id",
-                null,
-                null,
                 false,
                 true
         );
@@ -88,9 +84,6 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                 "select o.id as order_id, c.name as customer_name, o.amount, " +
                         "o.amount * 0.1 as tax, o.amount + tax as total " +
                         "from orders o join customers c on o.id = c.id",
-                null,
-                null,
-                true,
                 true
         );
     }
@@ -106,9 +99,6 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         "2\t3\t5\t9\t17\n" +
                         "3\t4\t6\t10\t18\n",
                 "select x, x + 1 as a, a + 2 as b, b + 4 as c, c + 8 as d from data",
-                null,
-                null,
-                true,
                 true
         );
     }
@@ -125,9 +115,6 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         "2\t40\n" +
                         "3\t60\n",
                 "select id, doubled from (select id, value * 2 as doubled from base)",
-                null,
-                null,
-                true,
                 true
         );
     }
@@ -158,9 +145,6 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         "15\t10\t5\n" +
                         "35\t20\t15\n",
                 "select a + b as a, b, a as original_a from test",
-                null,
-                null,
-                true,
                 true
         );
     }
@@ -177,9 +161,6 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         "B\t20\t40\n" +
                         "C\t30\t60\n",
                 "select name, value, value * 2 as doubled from items order by value",
-                null,
-                null,
-                true,
                 true
         );
     }
@@ -196,9 +177,6 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         "33\n" +
                         "44\n",
                 "select x + y as x from data where x > 1",
-                null,
-                null,
-                true,
                 false
         );
     }
@@ -357,6 +335,61 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         "1.0187654003234814\t2.018765400323481\n",
                 "select a * 2 i, i + 1 from tmp;",
                 true
+        );
+    }
+
+    @Test
+    public void testVirtualFunctionAsColumnReference() throws Exception {
+        assertSql(
+                "k\tk1\n" +
+                        "-1148479919\t315515119\n" +
+                        "1548800834\t-727724770\n" +
+                        "73575702\t-948263338\n" +
+                        "1326447243\t592859672\n" +
+                        "1868723707\t-847531047\n" +
+                        "-1191262515\t-2041844971\n" +
+                        "-1436881713\t-1575378702\n" +
+                        "806715482\t1545253513\n" +
+                        "1569490117\t1573662098\n" +
+                        "-409854404\t339631475\n",
+                "select rnd_int() + 1 k, k from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testVirtualFunctionAsColumnReferencePreferBaseTable() throws Exception {
+        assertSql(
+                "x\tx1\n" +
+                        "-1148479919\t1\n" +
+                        "315515119\t2\n" +
+                        "1548800834\t3\n" +
+                        "-727724770\t4\n" +
+                        "73575702\t5\n" +
+                        "-948263338\t6\n" +
+                        "1326447243\t7\n" +
+                        "592859672\t8\n" +
+                        "1868723707\t9\n" +
+                        "-847531047\t10\n",
+                "select rnd_int() + 1 x, x from long_sequence(10)"
+        );
+    }
+
+    @Test
+    @Ignore("bug, needs investigation")
+    public void testColumnAsColumnReference() throws Exception {
+        assertSql(
+                "x\tx1\n" +
+                        "-1148479919\t1\n" +
+                        "315515119\t2\n" +
+                        "1548800834\t3\n" +
+                        "-727724770\t4\n" +
+                        "73575702\t5\n" +
+                        "-948263338\t6\n" +
+                        "1326447243\t7\n" +
+                        "592859672\t8\n" +
+                        "1868723707\t9\n" +
+                        "-847531047\t10\n",
+                "select x k, k from long_sequence(10)"
         );
     }
 }
