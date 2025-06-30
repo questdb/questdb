@@ -1512,6 +1512,26 @@ Java_io_questdb_cairo_frm_FrameAlgebra_isColumnReplaceIdentical(
             return false;
     }
 }
+
+JNIEXPORT bool JNICALL
+Java_io_questdb_cairo_frm_FrameAlgebra_isDesignatedTimestampColumnReplaceIdentical0(
+        JNIEnv *env, jclass cl,
+        jlong partitionColumnAddr,
+        jlong commitColumnAddr,
+        jlong rowCount
+) {
+    auto data1 = reinterpret_cast<int64_t *>(partitionColumnAddr);
+    auto data2 = reinterpret_cast<index_l *>(commitColumnAddr);
+    auto row_count = __JLONG_REINTERPRET_CAST__(int64_t, rowCount);
+
+    for(int64_t i = 0; i < row_count; i++) {
+        if (data1[i] != data2[i].ts) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // extern C
 
 
