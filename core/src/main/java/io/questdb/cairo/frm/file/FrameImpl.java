@@ -92,7 +92,7 @@ public class FrameImpl implements Frame {
         }
     }
 
-    public void createFromMemoryColumns(ReadOnlyObjList<? extends MemoryCR> columns, TableWriterMetadata metadata, long size) {
+    public void createROFromMemoryColumns(ReadOnlyObjList<? extends MemoryCR> columns, TableWriterMetadata metadata, long size) {
         this.metadata = metadata;
         this.crv = null;
         this.rowCount = size;

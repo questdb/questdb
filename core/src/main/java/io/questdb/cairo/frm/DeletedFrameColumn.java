@@ -79,7 +79,7 @@ public class DeletedFrameColumn implements FrameColumn {
     }
 
     @Override
-    public void recycle(RecycleBin<FrameColumn> pool) {
+    public void setRecycleBin(RecycleBin<FrameColumn> pool) {
     }
 
     @Override

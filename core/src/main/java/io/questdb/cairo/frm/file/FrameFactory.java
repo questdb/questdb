@@ -121,9 +121,9 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
      * @param rowCount the number of rows in the frame
      * @return a new frame created from the memory columns
      */
-    public Frame openFromMemoryColumns(ReadOnlyObjList<? extends MemoryCR> columns, TableWriterMetadata metadata, long rowCount) {
+    public Frame openROFromMemoryColumns(ReadOnlyObjList<? extends MemoryCR> columns, TableWriterMetadata metadata, long rowCount) {
         FrameImpl frame = getOrCreate();
-        frame.createFromMemoryColumns(columns, metadata, rowCount);
+        frame.createROFromMemoryColumns(columns, metadata, rowCount);
         return frame;
     }
 

@@ -1495,7 +1495,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         int plen = pathToOldPartition.size();
 
         final Path pathToNewPartition = Path.getThreadLocal2(pathToTable);
-        boolean partitionAppend = openColumnMode == OPEN_MID_PARTITION_FOR_APPEND || openColumnMode == OPEN_NEW_PARTITION_FOR_APPEND || openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND;
+        boolean partitionAppend = isOpenColumnModeForAppend(openColumnMode);
         TableUtils.setPathForNativePartition(pathToNewPartition, tableWriter.getPartitionBy(), partitionTimestamp, partitionAppend ? srcNameTxn : txn);
         int pplen = pathToNewPartition.size();
         final long colTopSinkAddr = columnTopAddress(partitionUpdateSinkAddr, columnIndex);

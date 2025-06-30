@@ -2551,7 +2551,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public Frame openCommitFrame() {
-        return engine.getFrameFactory().openFromMemoryColumns(o3Columns, metadata, commitRowCount);
+        return engine.getFrameFactory().openROFromMemoryColumns(o3Columns, metadata, commitRowCount);
     }
 
     public void openLastPartition() {

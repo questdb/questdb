@@ -373,7 +373,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         }
     }
 
-    public void recycle(RecycleBin<FrameColumn> recycleBin) {
+    public void setRecycleBin(RecycleBin<FrameColumn> recycleBin) {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
     }
@@ -400,15 +400,8 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 return;
             }
 
-            // We can handle remaps, but so far we will not use it
+            // We can handle remaps, but so far there was no case for it.
             throw new UnsupportedOperationException("Remap not supported for frame columns yet");
-//            int mode = isReadOnly ? Files.MAP_RO : Files.MAP_RW;
-//            auxMapAddr = TableUtils.mremap(ff, auxFd, auxMapAddr, auxMapSize, newAuxMemSize, mode, MEMORY_TAG);
-//            auxMapSize = newAuxMemSize;
-//
-//            long newDataSize = columnTypeDriver.getDataVectorSize(auxMapAddr, 0, rowHi - columnTop);
-//            dataMapAddr = TableUtils.mremap(ff, dataFd, dataMapAddr, dataMapSize, newDataSize, mode, MEMORY_TAG);
-//            dataMapSize = newDataSize;
         }
 
         auxMapSize = newAuxMemSize;

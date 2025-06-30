@@ -123,7 +123,7 @@ public class MemoryVarFrameColumn implements FrameColumn {
         this.closed = false;
     }
 
-    public void recycle(RecycleBin<FrameColumn> recycleBin) {
+    public void setRecycleBin(RecycleBin<FrameColumn> recycleBin) {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
     }

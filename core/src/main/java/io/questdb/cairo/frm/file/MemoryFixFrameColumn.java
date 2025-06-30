@@ -54,10 +54,10 @@ public class MemoryFixFrameColumn implements FrameColumn {
     @Override
     public void close() {
         if (!closed) {
+            closed = true;
             if (!recycleBin.isClosed()) {
                 recycleBin.put(this);
             }
-            closed = true;
         }
     }
 
@@ -117,7 +117,7 @@ public class MemoryFixFrameColumn implements FrameColumn {
         this.closed = false;
     }
 
-    public void recycle(RecycleBin<FrameColumn> recycleBin) {
+    public void setRecycleBin(RecycleBin<FrameColumn> recycleBin) {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
     }

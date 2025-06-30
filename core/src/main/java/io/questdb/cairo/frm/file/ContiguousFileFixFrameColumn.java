@@ -254,7 +254,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         }
     }
 
-    public void recycle(RecycleBin<FrameColumn> recycleBin) {
+    public void setRecycleBin(RecycleBin<FrameColumn> recycleBin) {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
     }
@@ -272,7 +272,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                 return;
             }
 
-            // We can handle remaps, but so far we will not use it
+            // We can handle remaps, but so far there was no case for it.
             throw new UnsupportedOperationException("Remap not supported for frame columns yet");
         }
 

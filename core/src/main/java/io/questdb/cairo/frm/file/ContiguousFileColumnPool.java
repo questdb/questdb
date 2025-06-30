@@ -179,7 +179,7 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
             }
             item = factory.newInstance();
             //noinspection unchecked
-            item.recycle((RecycleBin<FrameColumn>) this);
+            item.setRecycleBin((RecycleBin<FrameColumn>) this);
             return item;
         }
 
