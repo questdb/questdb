@@ -530,7 +530,9 @@ public class WalWriter implements TableWriterAPI {
             long lastRefreshTimestamp,
             boolean invalid,
             @Nullable CharSequence invalidationReason,
-            long lastPeriodHi
+            long lastPeriodHi,
+            @Nullable LongList cachedTxnIntervals,
+            long cachedIntervalsBaseTxn
     ) {
         try {
             lastSegmentTxn = events.appendMatViewInvalidate(
@@ -538,7 +540,9 @@ public class WalWriter implements TableWriterAPI {
                     lastRefreshTimestamp,
                     invalid,
                     invalidationReason,
-                    lastPeriodHi
+                    lastPeriodHi,
+                    cachedTxnIntervals,
+                    cachedIntervalsBaseTxn
             );
             getSequencerTxn();
         } catch (Throwable th) {

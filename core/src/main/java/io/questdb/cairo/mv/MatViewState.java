@@ -28,6 +28,7 @@ import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
@@ -48,15 +49,25 @@ import static io.questdb.TelemetrySystemEvent.*;
  */
 public class MatViewState implements QuietCloseable {
     public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
+    public static final int MAT_VIEW_STATE_FORMAT_EXTRA_INTERVALS_MSG_TYPE = 3;
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_PERIOD_MSG_TYPE = 2;
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE = 1;
     public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
-    // used to avoid concurrent refresh runs
+    // Protected via latch.
+    // Holds cached txn intervals read from WAL transactions (_event files).
+    // Lets WalPurgeJob to make progress and delete applied WAL segments of a base table
+    // without having to wait for all dependent mat views to be refreshed.
+    private final LongList cachedTxnIntervals = new LongList();
+    // Used to avoid concurrent refresh runs.
     private final AtomicBoolean latch = new AtomicBoolean(false);
     // Incremented each time an incremental/full refresh finishes.
     // Used by MatViewTimerJob to avoid queueing redundant refresh tasks.
     private final AtomicLong refreshSeq = new AtomicLong();
     private final MatViewTelemetryFacade telemetryFacade;
+    // Protected via latch.
+    // Base table txn that corresponds to cachedTxnIntervals.
+    private volatile long cachedIntervalsBaseTxn = -1;
+    // Protected by latch.
     private RecordCursorFactory cursorFactory;
     private volatile boolean dropped;
     private volatile boolean invalid;
@@ -69,7 +80,9 @@ public class MatViewState implements QuietCloseable {
     private volatile long lastRefreshFinishTimestamp = Numbers.LONG_NULL;
     private volatile long lastRefreshStartTimestamp = Numbers.LONG_NULL;
     private volatile boolean pendingInvalidation;
+    // Protected by latch.
     private long recordRowCopierMetadataVersion;
+    // Protected by latch.
     private RecordToRowCopier recordToRowCopier;
     private volatile MatViewDefinition viewDefinition;
 
@@ -87,6 +100,8 @@ public class MatViewState implements QuietCloseable {
             boolean invalid,
             @Nullable CharSequence invalidationReason,
             long lastPeriodHi,
+            @Nullable LongList cachedTxnIntervals,
+            long cachedIntervalsBaseTxn,
             @NotNull BlockFileWriter writer
     ) {
         AppendableBlock block = writer.append();
@@ -98,6 +113,9 @@ public class MatViewState implements QuietCloseable {
         block = writer.append();
         appendPeriodHi(lastPeriodHi, block);
         block.commit(MAT_VIEW_STATE_FORMAT_EXTRA_PERIOD_MSG_TYPE);
+        block = writer.append();
+        appendTxnIntervals(cachedTxnIntervals, cachedIntervalsBaseTxn, block);
+        block.commit(MAT_VIEW_STATE_FORMAT_EXTRA_INTERVALS_MSG_TYPE);
         writer.commit();
     }
 
@@ -110,6 +128,8 @@ public class MatViewState implements QuietCloseable {
                     refreshState.isInvalid(),
                     refreshState.getInvalidationReason(),
                     refreshState.getLastPeriodHi(),
+                    refreshState.getCachedTxnIntervals(),
+                    refreshState.getCachedIntervalsBaseTxn(),
                     writer
             );
         } else {
@@ -119,6 +139,8 @@ public class MatViewState implements QuietCloseable {
                     false,
                     null,
                     Numbers.LONG_NULL,
+                    null,
+                    -1,
                     writer
             );
         }
@@ -146,6 +168,23 @@ public class MatViewState implements QuietCloseable {
         block.putLong(lastRefreshTimestamp);
     }
 
+    // kept public for tests
+    public static void appendTxnIntervals(
+            @Nullable LongList cachedTxnIntervals,
+            long cachedIntervalsBaseTxn,
+            @NotNull AppendableBlock block
+    ) {
+        block.putLong(cachedIntervalsBaseTxn);
+        if (cachedTxnIntervals != null) {
+            block.putInt(cachedTxnIntervals.size());
+            for (int i = 0, n = cachedTxnIntervals.size(); i < n; i++) {
+                block.putLong(cachedTxnIntervals.getQuick(i));
+            }
+        } else {
+            block.putInt(-1);
+        }
+    }
+
     public RecordCursorFactory acquireRecordFactory() {
         assert latch.get();
         RecordCursorFactory factory = cursorFactory;
@@ -156,6 +195,14 @@ public class MatViewState implements QuietCloseable {
     @Override
     public void close() {
         cursorFactory = Misc.free(cursorFactory);
+    }
+
+    public long getCachedIntervalsBaseTxn() {
+        return cachedIntervalsBaseTxn;
+    }
+
+    public LongList getCachedTxnIntervals() {
+        return cachedTxnIntervals;
     }
 
     /**
@@ -219,6 +266,9 @@ public class MatViewState implements QuietCloseable {
         this.lastRefreshBaseTxn = reader.getLastRefreshBaseTxn();
         this.lastRefreshFinishTimestamp = reader.getLastRefreshTimestamp();
         this.lastPeriodHi = reader.getLastPeriodHi();
+        this.cachedIntervalsBaseTxn = reader.getCachedIntervalsBaseTxn();
+        cachedTxnIntervals.clear();
+        cachedTxnIntervals.addAll(reader.getCachedTxnIntervals());
     }
 
     public boolean isDropped() {
@@ -304,6 +354,9 @@ public class MatViewState implements QuietCloseable {
         this.lastRefreshFinishTimestamp = refreshFinishedTimestamp;
         this.lastRefreshBaseTxn = baseTableTxn;
         this.lastPeriodHi = periodHi;
+        // Successful incremental refresh means that cached intervals were applied and should be evicted.
+        cachedIntervalsBaseTxn = -1;
+        cachedTxnIntervals.clear();
         telemetryFacade.store(
                 MAT_VIEW_REFRESH_SUCCESS,
                 viewDefinition.getMatViewToken(),
@@ -323,6 +376,9 @@ public class MatViewState implements QuietCloseable {
         this.lastRefreshFinishTimestamp = refreshFinishedTimestamp;
         this.lastRefreshBaseTxn = baseTableTxn;
         this.lastPeriodHi = periodHi;
+        // Successful incremental refresh means that cached intervals were applied and should be evicted.
+        cachedIntervalsBaseTxn = -1;
+        cachedTxnIntervals.clear();
         telemetryFacade.store(
                 MAT_VIEW_REFRESH_SUCCESS,
                 viewDefinition.getMatViewToken(),
@@ -330,6 +386,10 @@ public class MatViewState implements QuietCloseable {
                 null,
                 refreshFinishedTimestamp - refreshTriggeredTimestamp
         );
+    }
+
+    public void setCachedIntervalsBaseTxn(long cachedIntervalsBaseTxn) {
+        this.cachedIntervalsBaseTxn = cachedIntervalsBaseTxn;
     }
 
     public void setLastPeriodHi(long lastPeriodHi) {

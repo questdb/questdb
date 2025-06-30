@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.cairo.wal.WalEventCursor;
+import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
@@ -40,7 +41,9 @@ import org.jetbrains.annotations.Nullable;
  * invalidation reason string.
  */
 public class MatViewStateReader implements Mutable {
+    private final LongList cachedTxnIntervals = new LongList();
     private final StringSink invalidationReason = new StringSink();
+    private long cachedIntervalsBaseTxn = -1;
     private boolean invalid;
     private long lastPeriodHi = Numbers.LONG_NULL;
     private long lastRefreshBaseTxn = -1;
@@ -53,6 +56,16 @@ public class MatViewStateReader implements Mutable {
         lastRefreshBaseTxn = -1;
         lastRefreshTimestamp = Numbers.LONG_NULL;
         lastPeriodHi = Numbers.LONG_NULL;
+        cachedIntervalsBaseTxn = -1;
+        cachedTxnIntervals.clear();
+    }
+
+    public long getCachedIntervalsBaseTxn() {
+        return cachedIntervalsBaseTxn;
+    }
+
+    public LongList getCachedTxnIntervals() {
+        return cachedTxnIntervals;
     }
 
     @Nullable
@@ -82,6 +95,9 @@ public class MatViewStateReader implements Mutable {
         lastRefreshBaseTxn = info.getLastRefreshBaseTableTxn();
         lastRefreshTimestamp = info.getLastRefreshTimestamp();
         lastPeriodHi = info.getLastPeriodHi();
+        // Mat view data commit means that cached intervals were applied and should be evicted.
+        cachedIntervalsBaseTxn = -1;
+        cachedTxnIntervals.clear();
         return this;
     }
 
@@ -92,6 +108,9 @@ public class MatViewStateReader implements Mutable {
         lastRefreshBaseTxn = info.getLastRefreshBaseTableTxn();
         lastRefreshTimestamp = info.getLastRefreshTimestamp();
         lastPeriodHi = info.getLastPeriodHi();
+        cachedIntervalsBaseTxn = info.getCachedIntervalsBaseTxn();
+        cachedTxnIntervals.clear();
+        cachedTxnIntervals.addAll(info.getCachedTxnIntervals());
         return this;
     }
 
@@ -115,11 +134,25 @@ public class MatViewStateReader implements Mutable {
             }
             if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE) {
                 lastRefreshTimestamp = block.getLong(0);
-                // keep going, because V1/V3 block might follow
+                // keep going, because V3 block might follow
                 continue;
             }
             if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_PERIOD_MSG_TYPE) {
                 lastPeriodHi = block.getLong(0);
+                // keep going, because V4 block might follow
+                continue;
+            }
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_INTERVALS_MSG_TYPE) {
+                long offset = 0;
+                cachedIntervalsBaseTxn = block.getLong(offset);
+                offset += Long.BYTES;
+                final int intervalsLen = block.getInt(offset);
+                offset += Integer.BYTES;
+                cachedTxnIntervals.clear();
+                for (int i = 0; i < intervalsLen; i++) {
+                    cachedTxnIntervals.add(block.getLong(offset));
+                    offset += Long.BYTES;
+                }
                 return this;
             }
         }

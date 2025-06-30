@@ -1054,7 +1054,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     viewState.getLastRefreshFinishTimestamp(),
                     true,
                     errorMessage,
-                    viewState.getLastPeriodHi()
+                    viewState.getLastPeriodHi(),
+                    viewState.getCachedTxnIntervals(),
+                    viewState.getCachedIntervalsBaseTxn()
             );
         }
         // Invalidate dependent views recursively.
@@ -1195,7 +1197,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     refreshFinishedTimestamp,
                     false,
                     null,
-                    periodHi
+                    periodHi,
+                    null,
+                    -1
             );
         }
     }
@@ -1203,6 +1207,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private void resetInvalidState(MatViewState viewState, WalWriter walWriter) {
         viewState.markAsValid();
         viewState.setLastRefreshBaseTableTxn(-1);
+        viewState.setCachedIntervalsBaseTxn(-1);
+        viewState.getCachedTxnIntervals().clear();
         viewState.setLastRefreshTimestamp(Numbers.LONG_NULL);
         viewState.setLastPeriodHi(Numbers.LONG_NULL);
         walWriter.resetMatViewState(
@@ -1210,7 +1216,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 viewState.getLastRefreshFinishTimestamp(),
                 false,
                 null,
-                viewState.getLastPeriodHi()
+                viewState.getLastPeriodHi(),
+                null,
+                -1
         );
     }
 
@@ -1223,7 +1231,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 viewState.getLastRefreshFinishTimestamp(),
                 true,
                 invalidationReason,
-                viewState.getLastPeriodHi()
+                viewState.getLastPeriodHi(),
+                viewState.getCachedTxnIntervals(),
+                viewState.getCachedIntervalsBaseTxn()
         );
     }
 

@@ -39,6 +39,7 @@ import io.questdb.std.BoolList;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -329,7 +330,9 @@ class WalEventWriter implements Closeable {
             long lastRefreshTimestamp,
             boolean invalid,
             @Nullable CharSequence invalidationReason,
-            long lastPeriodHi
+            long lastPeriodHi,
+            @Nullable LongList cachedTxnIntervals,
+            long cachedIntervalsBaseTxn
     ) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
@@ -340,6 +343,15 @@ class WalEventWriter implements Closeable {
         eventMem.putStr(invalidationReason);
         if (!legacyMatViewFormat) {
             eventMem.putLong(lastPeriodHi);
+            eventMem.putLong(cachedIntervalsBaseTxn);
+            if (cachedTxnIntervals != null) {
+                eventMem.putInt(cachedTxnIntervals.size());
+                for (int i = 0, n = cachedTxnIntervals.size(); i < n; i++) {
+                    eventMem.putLong(cachedTxnIntervals.getQuick(i));
+                }
+            } else {
+                eventMem.putInt(-1);
+            }
         }
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
