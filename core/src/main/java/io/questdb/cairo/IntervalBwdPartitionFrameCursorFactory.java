@@ -54,6 +54,8 @@ public class IntervalBwdPartitionFrameCursorFactory extends AbstractPartitionFra
         super.close();
         Misc.free(cursor);
         Misc.free(intervalModel);
+        Misc.free(fwdCursor);
+        fwdCursor = null;
     }
 
     @Override
