@@ -836,20 +836,70 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (srcOooLo <= srcOooHi) {
                         if (mergeType == O3_BLOCK_MERGE) {
 
+                            long removedDataRangeLo, removedDataRangeHi, o3RangeLo, o3RangeHi;
                             if (prefixType == O3_BLOCK_O3) {
+                                // O3 in prefix, partition data in the suffix.
                                 prefixHi = mergeO3Hi;
                                 mergeType = O3_BLOCK_NONE;
                                 mergeO3Hi = -1;
                                 mergeO3Lo = -1;
                                 mergeDataHi = -1;
                                 mergeDataLo = -1;
+
+                                removedDataRangeLo = 0;
+                                removedDataRangeHi = suffixLo - 1;
+                                o3RangeLo = prefixLo;
+                                o3RangeHi = prefixHi;
                             } else if (suffixType == O3_BLOCK_O3) {
+                                // Partition data in the prefix, O3 in suffix.
                                 suffixLo = mergeO3Lo;
                                 mergeType = O3_BLOCK_NONE;
                                 mergeO3Hi = -1;
                                 mergeO3Lo = -1;
                                 mergeDataHi = -1;
                                 mergeDataLo = -1;
+
+                                removedDataRangeLo = prefixHi + 1;
+                                removedDataRangeHi = srcDataMax - 1;
+                                o3RangeLo = suffixLo;
+                                o3RangeHi = suffixHi;
+                            } else {
+                                // Replacing partition data with new data in the middle of the partition.
+                                removedDataRangeLo = mergeDataLo;
+                                removedDataRangeHi = mergeDataHi;
+                                o3RangeLo = mergeO3Lo;
+                                o3RangeHi = mergeO3Hi;
+                            }
+
+                            if (removedDataRangeHi - removedDataRangeLo > 0 && removedDataRangeHi - removedDataRangeLo == o3RangeHi - o3RangeLo) {
+
+                                if (Unsafe.getUnsafe().getLong(srcTimestampAddr + removedDataRangeLo * Long.BYTES)
+                                        == getTimestampIndexValue(sortedTimestampsAddr, o3RangeLo)
+                                        && Unsafe.getUnsafe().getLong(srcTimestampAddr + removedDataRangeHi * Long.BYTES)
+                                        == getTimestampIndexValue(sortedTimestampsAddr, o3RangeHi)) {
+                                    // We are replacing with exactly the same number of rows
+                                    // Maybe the rows are of the same data, then we don't need to rewrite the partition
+                                    if (tableWriter.checkCommitIdenticalToPartition(
+                                            partitionTimestamp,
+                                            srcNameTxn,
+                                            srcDataMax,
+                                            removedDataRangeLo,
+                                            removedDataRangeHi,
+                                            o3RangeLo,
+                                            o3RangeHi,
+                                            0,
+                                            mergeO3Hi - mergeO3Lo,
+                                            false
+                                    )) {
+                                        LOG.info().$("replace commit resulted in identical data [table=").$safe(tableWriter.getTableToken().getTableName())
+                                                .$(", partitionTimestamp=").$ts(partitionTimestamp)
+                                                .$(", srcNameTxn=").$(srcNameTxn)
+                                                .I$();
+                                        // No need to update partition, it is identical to the existing one
+                                        updatePartition(ff, srcTimestampAddr, srcTimestampSize, srcTimestampFd, tableWriter, partitionUpdateSinkAddr, partitionTimestamp, newMinPartitionTimestamp, oldPartitionSize, oldPartitionSize, 0);
+                                        return;
+                                    }
+                                }
                             }
                         }
                     } else {
@@ -2064,7 +2114,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             // All the rows are duplicates
                             // check if all non-key rows are dups
-                            if (tableWriter.checkCommitValueColumnsIdenticalToPartition(
+                            if (tableWriter.checkCommitIdenticalToPartition(
                                     oldPartitionTimestamp,
                                     srcNameTxn,
                                     srcDataOldPartitionSize,
@@ -2073,7 +2123,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     mergeOOOLo,
                                     mergeOOOHi,
                                     timestampMergeIndexAddr,
-                                    dedupRows
+                                    dedupRows,
+                                    true
                             )) {
 
                                 if (suffixType != O3_BLOCK_O3) {

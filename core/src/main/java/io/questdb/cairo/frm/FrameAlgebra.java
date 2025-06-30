@@ -26,6 +26,7 @@ package io.questdb.cairo.frm;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.std.Unsafe;
 
 /**
  * Used for partition squashing in {@link io.questdb.cairo.TableWriter}.
@@ -120,6 +121,37 @@ public class FrameAlgebra {
                         mergeIndexAddr,
                         mergeIndexRows
                 );
+            }
+        }
+        return true;
+    }
+
+    public static boolean isDesignatedTimestampColumnReplaceIdentical(
+            int columnIndex,
+            Frame partitionFrame,
+            long partitionLo,
+            long partitionHi,
+            Frame commitFrame,
+            long commitLo,
+            long commitHi
+    ) {
+        try (
+                FrameColumn partitionColumn = partitionFrame.createColumn(columnIndex);
+                FrameColumn commitColumn = commitFrame.createColumn(columnIndex)
+        ) {
+            assert partitionColumn.getColumnTop() == 0;
+
+            long partitionDataAddr = partitionColumn.getContiguousDataAddr(partitionHi);
+            long commitDataAddr = commitColumn.getContiguousDataAddr(commitHi);
+
+            for (long o = partitionLo; o < partitionHi; o++) {
+                long partitionValue = Unsafe.getUnsafe().getLong(partitionDataAddr + o * Long.BYTES);
+
+                // Commit is 16-byte index, first long is the timestamp value
+                long commitValue = Unsafe.getUnsafe().getLong(commitDataAddr + (commitLo + o - partitionLo) * Long.BYTES * 2);
+                if (partitionValue != commitValue) {
+                    return false;
+                }
             }
         }
         return true;
