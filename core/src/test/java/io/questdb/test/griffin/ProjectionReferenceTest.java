@@ -424,21 +424,38 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore("bug, needs investigation")
     public void testColumnAsColumnReference() throws Exception {
         assertSql(
-                "x\tx1\n" +
-                        "-1148479919\t1\n" +
-                        "315515119\t2\n" +
-                        "1548800834\t3\n" +
-                        "-727724770\t4\n" +
-                        "73575702\t5\n" +
-                        "-948263338\t6\n" +
-                        "1326447243\t7\n" +
-                        "592859672\t8\n" +
-                        "1868723707\t9\n" +
-                        "-847531047\t10\n",
+                "k\tk1\n" +
+                        "1\t1\n" +
+                        "2\t2\n" +
+                        "3\t3\n" +
+                        "4\t4\n" +
+                        "5\t5\n" +
+                        "6\t6\n" +
+                        "7\t7\n" +
+                        "8\t8\n" +
+                        "9\t9\n" +
+                        "10\t10\n",
                 "select x k, k from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testColumnAsColumnReferencePreferBaseTable() throws Exception {
+        assertSql(
+                "x\tx1\n" +
+                        "1\t1\n" +
+                        "2\t2\n" +
+                        "3\t3\n" +
+                        "4\t4\n" +
+                        "5\t5\n" +
+                        "6\t6\n" +
+                        "7\t7\n" +
+                        "8\t8\n" +
+                        "9\t9\n" +
+                        "10\t10\n",
+                "select a x, x from (select x a, x b, x from long_sequence(10))"
         );
     }
 }

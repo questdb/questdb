@@ -81,12 +81,20 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
 import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlOptimiser implements Mutable {
+    public static final int REWRITE_STATUS_FORCE_INNER_MODEL = 64;
+    public static final int REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE = 32;
+    public static final int REWRITE_STATUS_USE_DISTINCT_MODEL = 16;
+    public static final int REWRITE_STATUS_USE_GROUP_BY_MODEL = 4;
+    public static final int REWRITE_STATUS_USE_INNER_MODEL = 1;
+    public static final int REWRITE_STATUS_USE_OUTER_MODEL = 8;
+    public static final int REWRITE_STATUS_USE_WINDOW_MODEL = 2;
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
@@ -101,7 +109,6 @@ public class SqlOptimiser implements Mutable {
     private static final int NOT_OP_NOT = 1;
     private static final int NOT_OP_NOT_EQ = 9;
     private static final int NOT_OP_OR = 3;
-
     // these are bit flags
     private static final int SAMPLE_BY_REWRITE_NO_WRAP = 0;
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 2;
@@ -5560,6 +5567,274 @@ public class SqlOptimiser implements Mutable {
         rewriteSampleByFromTo(model.getUnionModel());
     }
 
+    private @Nullable QueryColumn rewriteSelect0HandleFunction(
+            SqlExecutionContext sqlExecutionContext,
+            SqlParserCallback sqlParserCallback,
+            QueryColumn qc,
+            QueryModel windowModel,
+            QueryModel outerVirtualModel,
+            QueryModel distinctModel,
+            QueryModel translatingModel,
+            QueryModel innerVirtualModel,
+            QueryModel baseModel,
+            boolean useOuterModel,
+            QueryModel groupByModel,
+            ExpressionNode sampleBy,
+            QueryModel cursorModel
+    ) throws SqlException {
+        // when column is direct call to aggregation function, such as
+        // select sum(x) ...
+        // we can add it to group-by model right away
+        if (qc.isWindowColumn()) {
+            windowModel.addBottomUpColumn(qc);
+            QueryColumn ref = nextColumn(qc.getAlias(), qc.isAliasOrganic());
+            outerVirtualModel.addBottomUpColumn(ref);
+            distinctModel.addBottomUpColumn(ref);
+            // ensure literals referenced by window column are present in nested models
+            emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, true, baseModel, true);
+            return null;
+        } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+            addMissingTablePrefixes(qc.getAst(), baseModel, innerVirtualModel);
+            CharSequence matchingCol = findColumnByAst(groupByNodes, groupByAliases, qc.getAst());
+            if (useOuterModel && matchingCol != null) {
+                QueryColumn ref = nextColumn(qc.getAlias(), qc.isAliasOrganic(), matchingCol);
+                ref = ensureAliasUniqueness(outerVirtualModel, ref);
+                outerVirtualModel.addBottomUpColumn(ref);
+                distinctModel.addBottomUpColumn(ref);
+                emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, true, baseModel, false);
+                return null;
+            }
+
+            qc = ensureAliasUniqueness(groupByModel, qc);
+            groupByModel.addBottomUpColumn(qc);
+
+            groupByNodes.add(deepClone(expressionNodePool, qc.getAst()));
+            groupByAliases.add(qc.getAlias());
+
+            // group-by column references might be needed when we have
+            // outer model supporting arithmetic such as:
+            // select sum(a)+sum(b) ...
+            QueryColumn ref = nextColumn(qc.getAlias(), qc.isAliasOrganic());
+            // it is possible to order by a group-by column, which isn't referenced by
+            // the SQL projection. In this case we need to preserve the wildcard visibility
+            ref.setIncludeIntoWildcard(qc.isIncludeIntoWildcard());
+            outerVirtualModel.addBottomUpColumn(ref);
+            distinctModel.addBottomUpColumn(ref);
+            // sample-by implementation requires innerVirtualModel
+            emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, sampleBy != null, baseModel, false);
+            return null;
+        } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
+            // this is a select on projection, e.g. something like
+            // select a, b, c, (select 1 from tab) from tab2
+            addCursorFunctionAsCrossJoin(
+                    qc.getAst(),
+                    qc.getAlias(),
+                    qc.isAliasOrganic(),
+                    cursorModel,
+                    innerVirtualModel,
+                    translatingModel,
+                    baseModel,
+                    sqlExecutionContext,
+                    sqlParserCallback
+            );
+            return null;
+        }
+        return qc;
+    }
+
+    private int rewriteSelect0HandleOperation(
+            SqlExecutionContext sqlExecutionContext,
+            SqlParserCallback sqlParserCallback,
+            QueryColumn qc,
+            boolean explicitGroupBy,
+            AtomicInteger nonAggSelectCount,
+            int rewriteStatus,
+            QueryModel outerVirtualModel,
+            QueryModel distinctModel,
+            QueryModel groupByModel,
+            QueryModel baseModel,
+            QueryModel innerVirtualModel,
+            int columnIndex,
+            QueryModel cursorModel,
+            QueryModel translatingModel,
+            ExpressionNode sampleBy,
+            QueryModel windowModel
+    ) throws SqlException {
+        // dealing with OPERATIONs here (and FUNCTIONS that have not bailed out yet)
+        if (explicitGroupBy) {
+            nonAggSelectCount.incrementAndGet();
+            if (isEffectivelyConstantExpression(qc.getAst())) {
+                rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
+                rewriteStatus &= ~REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE;
+                outerVirtualModel.addBottomUpColumn(qc);
+                distinctModel.addBottomUpColumn(qc);
+                return rewriteStatus;
+            }
+
+            final int beforeSplit = groupByModel.getBottomUpColumns().size();
+
+            final ExpressionNode originalNode = qc.getAst();
+            // if the alias is in groupByAliases, it means that we've already seen
+            // the column in the GROUP BY clause and emitted literals for it to
+            // the inner models; in this case, if we add a missing table prefix to
+            // column's nodes, it may break the references; to avoid that, clone the node
+            ExpressionNode node = groupByAliases.indexOf(qc.getAlias()) != -1
+                    ? deepClone(expressionNodePool, originalNode)
+                    : originalNode;
+
+            // add table or alias prefix to the literal arguments of this function or operator
+            addMissingTablePrefixes(node, baseModel, innerVirtualModel);
+
+            // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in outer virtual model
+            node = rewriteGroupBySelectExpression(node, groupByModel, groupByNodes, groupByAliases);
+            if (originalNode == node) {
+                rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
+            } else {
+                if (Chars.equalsIgnoreCase(originalNode.token, qc.getAlias())) {
+                    int idx = groupByAliases.indexOf(originalNode.token);
+                    if (columnIndex != idx) {
+                        rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
+                    }
+                    groupByUsed.set(idx, true);
+                } else {
+                    rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
+                }
+                qc.of(qc.getAlias(), qc.isAliasOrganic(), node, qc.isIncludeIntoWildcard(), qc.getColumnType());
+            }
+
+            emitCursors(
+                    qc.getAst(),
+                    cursorModel,
+                    innerVirtualModel,
+                    translatingModel,
+                    baseModel,
+                    sqlExecutionContext,
+                    sqlParserCallback
+            );
+            qc = ensureAliasUniqueness(outerVirtualModel, qc);
+            outerVirtualModel.addBottomUpColumn(qc);
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isAliasOrganic()));
+
+            // group-by column could have spit out a function call, e.g.
+            // select sum(f(x)) from t -> select sum(col) from (select f(x) col) from t)
+            for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
+                emitLiterals(
+                        groupByModel.getBottomUpColumns().getQuick(j).getAst(),
+                        translatingModel,
+                        innerVirtualModel,
+                        true,
+                        baseModel,
+                        false
+                );
+            }
+            return rewriteStatus;
+        }
+
+        // this is not a direct call to aggregation function, in which case
+        // we emit aggregation function into group-by model and leave the rest in outer model
+        // more specifically we are dealing with something like
+        // select sum(f(x)) - sum(f(y)) from tab
+        // we don't know if "f(x)" is a function call or a literal, e.g. sum(x)
+        final int beforeSplit = groupByModel.getBottomUpColumns().size();
+        if (checkForChildAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp()))) {
+            // push aggregates and literals outside aggregate functions
+            emitAggregatesAndLiterals(
+                    qc.getAst(),
+                    groupByModel,
+                    translatingModel,
+                    innerVirtualModel,
+                    baseModel,
+                    groupByNodes,
+                    groupByAliases
+            );
+            emitCursors(
+                    qc.getAst(),
+                    cursorModel,
+                    innerVirtualModel,
+                    translatingModel,
+                    baseModel,
+                    sqlExecutionContext,
+                    sqlParserCallback
+            );
+
+            qc = ensureAliasUniqueness(outerVirtualModel, qc);
+            outerVirtualModel.addBottomUpColumn(qc);
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isAliasOrganic()));
+            for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
+                emitLiterals(
+                        groupByModel.getBottomUpColumns().getQuick(j).getAst(),
+                        translatingModel,
+                        innerVirtualModel,
+                        true,
+                        baseModel,
+                        false
+                );
+            }
+            rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
+        } else {
+            emitCursors(
+                    qc.getAst(),
+                    cursorModel,
+                    null,
+                    translatingModel,
+                    baseModel,
+                    sqlExecutionContext,
+                    sqlParserCallback
+            );
+            if ((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
+                // exclude constant columns from group-by, for example:
+                // select 1, id, sum(x) from ...
+                // keying map on constant '1' is unnecessary; this column can be selected
+                // after the group-by in the "outerVirtualModel"
+                if (isEffectivelyConstantExpression(qc.getAst())) {
+                    rewriteStatus &= ~REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE;
+                    outerVirtualModel.addBottomUpColumn(qc);
+                    distinctModel.addBottomUpColumn(qc);
+                    return rewriteStatus;
+                }
+
+                // sample-by queries will still require innerVirtualModel
+                if (sampleBy == null) {
+                    qc = ensureAliasUniqueness(groupByModel, qc);
+                    groupByModel.addBottomUpColumn(qc);
+                    // group-by column references might be needed when we have
+                    // outer model supporting arithmetic such as:
+                    // select sum(a)+sum(b) ...
+                    QueryColumn ref = nextColumn(qc.getAlias(), qc.isAliasOrganic());
+                    outerVirtualModel.addBottomUpColumn(ref);
+                    distinctModel.addBottomUpColumn(ref);
+                    emitLiterals(
+                            qc.getAst(),
+                            translatingModel,
+                            innerVirtualModel,
+                            false,
+                            baseModel,
+                            false
+                    );
+                    // this model won't be used in group-by case; this is because
+                    // group-by can process virtual functions by itself. However,
+                    // we need innerVirtualModel complete to do the projection validation
+                    // We add column after literal emission/validation to avoid allowing expression
+                    // self-referencing and passing validation
+                    innerVirtualModel.addBottomUpColumn(qc);
+                    return rewriteStatus;
+                }
+            }
+
+            addFunction(
+                    qc,
+                    baseModel,
+                    translatingModel,
+                    innerVirtualModel,
+                    windowModel,
+                    groupByModel,
+                    outerVirtualModel,
+                    distinctModel
+            );
+        }
+        return rewriteStatus;
+    }
+
     // flatParent = true means that parent model does not have selected columns
     private QueryModel rewriteSelectClause(
             QueryModel model,
@@ -5632,12 +5907,10 @@ public class SqlOptimiser implements Mutable {
         // this is a dangling model, which isn't chained with any other
         // we use it to ensure expression and alias uniqueness
         final QueryModel cursorModel = queryModelPool.next();
-
-        boolean useInnerModel = false;
-        boolean useWindowModel = false;
-        boolean useGroupByModel = false;
-        boolean useOuterModel = false;
-        final boolean useDistinctModel = model.isDistinct();
+        int rewriteStatus = 0;
+        if (model.isDistinct()) {
+            rewriteStatus |= REWRITE_STATUS_USE_DISTINCT_MODEL;
+        }
 
         final ObjList<QueryColumn> columns = model.getBottomUpColumns();
         final QueryModel baseModel = model.getNestedModel();
@@ -5652,7 +5925,8 @@ public class SqlOptimiser implements Mutable {
 
         if (baseModel.getGroupBy().size() > 0) {
             groupByModel.moveGroupByFrom(baseModel);
-            useGroupByModel = true; // group by should be implemented even if there are no aggregate functions
+            // group by should be implemented even if there are no aggregate functions
+            rewriteStatus |= REWRITE_STATUS_USE_GROUP_BY_MODEL;
         }
 
         // cursor model should have all columns that base model has to properly resolve duplicate names
@@ -5669,14 +5943,14 @@ public class SqlOptimiser implements Mutable {
             }
 
             if (qc.getAst().type == BIND_VARIABLE) {
-                useInnerModel = true;
+                rewriteStatus |= REWRITE_STATUS_USE_INNER_MODEL;
             } else if (qc.getAst().type != LITERAL) {
                 if (qc.getAst().type == FUNCTION) {
                     if (window) {
-                        useWindowModel = true;
+                        rewriteStatus |= REWRITE_STATUS_USE_WINDOW_MODEL;
                         continue;
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
-                        useGroupByModel = true;
+                        rewriteStatus |= REWRITE_STATUS_USE_GROUP_BY_MODEL;
 
                         if (groupByModel.getSampleByFill().size() > 0) { // fill breaks if column is de-duplicated
                             continue;
@@ -5686,10 +5960,10 @@ public class SqlOptimiser implements Mutable {
                         // the underlying table(s) or sub-queries
                         ExpressionNode repl = rewriteAggregate(qc.getAst(), baseModel);
                         if (repl == qc.getAst()) { // no rewrite
-                            if (!useOuterModel) { // so try to push duplicate aggregates to nested model
+                            if ((rewriteStatus & REWRITE_STATUS_USE_OUTER_MODEL) == 0) { // so try to push duplicate aggregates to nested model
                                 for (int j = i + 1; j < k; j++) {
                                     if (compareNodesExact(qc.getAst(), columns.get(j).getAst())) {
-                                        useOuterModel = true;
+                                        rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
                                         break;
                                     }
                                 }
@@ -5697,7 +5971,7 @@ public class SqlOptimiser implements Mutable {
                             continue;
                         }
 
-                        useOuterModel = true;
+                        rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
                         qc.of(qc.getAlias(), qc.isAliasOrganic(), repl);
                     } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
                         continue;
@@ -5705,21 +5979,21 @@ public class SqlOptimiser implements Mutable {
                 }
 
                 if (checkForChildAggregates(qc.getAst())) {
-                    useGroupByModel = true;
-                    useOuterModel = true;
+                    rewriteStatus |= REWRITE_STATUS_USE_GROUP_BY_MODEL;
+                    rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
                 } else {
-                    useInnerModel = true;
+                    rewriteStatus |= REWRITE_STATUS_USE_INNER_MODEL;
                 }
             }
         }
 
         // group-by generator can cope with virtual columns, it does not require virtual model to be its base
         // however, sample-by single-threaded implementation still relies on the innerVirtualModel, hence the fork
-        if (useGroupByModel && sampleBy == null) {
-            useInnerModel = false;
+        if ((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0 && sampleBy == null) {
+            rewriteStatus &= ~REWRITE_STATUS_USE_INNER_MODEL;
         }
 
-        boolean outerVirtualIsSelectChoose = true;
+        rewriteStatus |= REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE;
         // if there are explicit group by columns then nothing else should go to group by model
         // select columns should either match group by columns exactly or go to outer virtual model
         ObjList<ExpressionNode> groupBy = groupByModel.getGroupBy();
@@ -5818,7 +6092,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         groupByUsed.setAll(groupBy.size(), false);
-        int nonAggSelectCount = 0;
+        AtomicInteger nonAggSelectCount = new AtomicInteger(0);
 
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {
@@ -5842,7 +6116,7 @@ public class SqlOptimiser implements Mutable {
                         );
                     } else {
                         if (explicitGroupBy) {
-                            nonAggSelectCount++;
+                            nonAggSelectCount.incrementAndGet();
                             addMissingTablePrefixes(qc.getAst(), baseModel, innerVirtualModel);
                             int matchingColIdx = findColumnIdxByAst(groupByNodes, qc.getAst());
                             if (matchingColIdx == -1) {
@@ -5855,12 +6129,12 @@ public class SqlOptimiser implements Mutable {
                                     groupByAliases.get(matchingColIdx),
                                     groupByModel,
                                     outerVirtualModel,
-                                    useDistinctModel ? distinctModel : null
+                                    (rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0 ? distinctModel : null
                             );
                             if (sameAlias && i == matchingColIdx) {
                                 groupByUsed.set(matchingColIdx, true);
                             } else {
-                                useOuterModel = true;
+                                rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
                             }
                         } else {
                             // groupByModel is populated in createSelectColumn.
@@ -5876,7 +6150,7 @@ public class SqlOptimiser implements Mutable {
                             // check what this column would reference to establish the priority
                             if (
                                     baseModel.getAliasToColumnMap().excludes(qc.getAst().token) &&
-                                    innerVirtualModel.getAliasToColumnMap().contains(qc.getAst().token)
+                                            innerVirtualModel.getAliasToColumnMap().contains(qc.getAst().token)
                             ) {
                                 // column is referencing another column or function on the same projection
                                 // we must not add it to the translating model. This model is inserted between
@@ -5892,6 +6166,8 @@ public class SqlOptimiser implements Mutable {
                                         outerVirtualModel,
                                         distinctModel
                                 );
+                                rewriteStatus |= REWRITE_STATUS_USE_INNER_MODEL;
+                                rewriteStatus |= REWRITE_STATUS_FORCE_INNER_MODEL;
                             } else {
                                 createSelectColumn(
                                         qc.getAlias(),
@@ -5903,7 +6179,7 @@ public class SqlOptimiser implements Mutable {
                                         windowModel,
                                         groupByModel,
                                         outerVirtualModel,
-                                        useDistinctModel ? distinctModel : null
+                                        (rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0 ? distinctModel : null
                                 );
                             }
                         }
@@ -5911,8 +6187,8 @@ public class SqlOptimiser implements Mutable {
                     break;
                 case BIND_VARIABLE:
                     if (explicitGroupBy) {
-                        useOuterModel = true;
-                        outerVirtualIsSelectChoose = false;
+                        rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
+                        rewriteStatus &= ~REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE;
                         outerVirtualModel.addBottomUpColumn(qc);
                         distinctModel.addBottomUpColumn(qc);
                     } else {
@@ -5927,257 +6203,62 @@ public class SqlOptimiser implements Mutable {
                                 outerVirtualModel,
                                 distinctModel
                         );
+                        rewriteStatus |= REWRITE_STATUS_USE_INNER_MODEL;
                     }
                     break;
                 case FUNCTION:
-                    // when column is direct call to aggregation function, such as
-                    // select sum(x) ...
-                    // we can add it to group-by model right away
-                    if (qc.isWindowColumn()) {
-                        windowModel.addBottomUpColumn(qc);
-                        QueryColumn ref = nextColumn(qc.getAlias(), qc.isAliasOrganic());
-                        outerVirtualModel.addBottomUpColumn(ref);
-                        distinctModel.addBottomUpColumn(ref);
-                        // ensure literals referenced by window column are present in nested models
-                        emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, true, baseModel, true);
-                        continue;
-                    } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
-                        addMissingTablePrefixes(qc.getAst(), baseModel, innerVirtualModel);
-                        CharSequence matchingCol = findColumnByAst(groupByNodes, groupByAliases, qc.getAst());
-                        if (useOuterModel && matchingCol != null) {
-                            QueryColumn ref = nextColumn(qc.getAlias(), qc.isAliasOrganic(), matchingCol);
-                            ref = ensureAliasUniqueness(outerVirtualModel, ref);
-                            outerVirtualModel.addBottomUpColumn(ref);
-                            distinctModel.addBottomUpColumn(ref);
-                            // todo: group-by expressions cannot be referenced by the same projection
-                            emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, true, baseModel, false);
-                            continue;
-                        }
-
-                        qc = ensureAliasUniqueness(groupByModel, qc);
-                        groupByModel.addBottomUpColumn(qc);
-
-                        groupByNodes.add(deepClone(expressionNodePool, qc.getAst()));
-                        groupByAliases.add(qc.getAlias());
-
-                        // group-by column references might be needed when we have
-                        // outer model supporting arithmetic such as:
-                        // select sum(a)+sum(b) ...
-                        QueryColumn ref = nextColumn(qc.getAlias(), qc.isAliasOrganic());
-                        // it is possible to order by a group-by column, which isn't referenced by
-                        // the SQL projection. In this case we need to preserve the wildcard visibility
-                        ref.setIncludeIntoWildcard(qc.isIncludeIntoWildcard());
-                        outerVirtualModel.addBottomUpColumn(ref);
-                        distinctModel.addBottomUpColumn(ref);
-                        // sample-by implementation requires innerVirtualModel
-                        emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, sampleBy != null, baseModel, false);
-                        continue;
-                    } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
-                        // this is a select on projection, e.g. something like
-                        // select a, b, c, (select 1 from tab) from tab2
-                        addCursorFunctionAsCrossJoin(
-                                qc.getAst(),
-                                qc.getAlias(),
-                                qc.isAliasOrganic(),
-                                cursorModel,
-                                innerVirtualModel,
-                                translatingModel,
-                                baseModel,
-                                sqlExecutionContext,
-                                sqlParserCallback
-                        );
-                        continue;
-                    }
+                    qc = rewriteSelect0HandleFunction(
+                            sqlExecutionContext,
+                            sqlParserCallback,
+                            qc,
+                            windowModel,
+                            outerVirtualModel,
+                            distinctModel,
+                            translatingModel,
+                            innerVirtualModel,
+                            baseModel,
+                            (rewriteStatus & REWRITE_STATUS_USE_OUTER_MODEL) != 0,
+                            groupByModel,
+                            sampleBy,
+                            cursorModel
+                    );
+                    if (qc == null) continue;
                     // fall through and do the same thing as for OPERATIONS (default)
-                default:
-                    // dealing with OPERATIONs here (and FUNCTIONS that have not bailed out yet)
-                    if (explicitGroupBy) {
-                        nonAggSelectCount++;
-                        if (isEffectivelyConstantExpression(qc.getAst())) {
-                            useOuterModel = true;
-                            outerVirtualIsSelectChoose = false;
-                            outerVirtualModel.addBottomUpColumn(qc);
-                            distinctModel.addBottomUpColumn(qc);
-                            continue;
-                        }
-
-                        final int beforeSplit = groupByModel.getBottomUpColumns().size();
-
-                        final ExpressionNode originalNode = qc.getAst();
-                        // if the alias is in groupByAliases, it means that we've already seen
-                        // the column in the GROUP BY clause and emitted literals for it to
-                        // the inner models; in this case, if we add a missing table prefix to
-                        // column's nodes, it may break the references; to avoid that, clone the node
-                        ExpressionNode node = groupByAliases.indexOf(qc.getAlias()) != -1
-                                ? deepClone(expressionNodePool, originalNode)
-                                : originalNode;
-
-                        // add table or alias prefix to the literal arguments of this function or operator
-                        addMissingTablePrefixes(node, baseModel, innerVirtualModel);
-
-                        // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in outer virtual model
-                        node = rewriteGroupBySelectExpression(node, groupByModel, groupByNodes, groupByAliases);
-                        if (originalNode == node) {
-                            useOuterModel = true;
-                        } else {
-                            if (Chars.equalsIgnoreCase(originalNode.token, qc.getAlias())) {
-                                int idx = groupByAliases.indexOf(originalNode.token);
-                                if (i != idx) {
-                                    useOuterModel = true;
-                                }
-                                groupByUsed.set(idx, true);
-                            } else {
-                                useOuterModel = true;
-                            }
-                            qc.of(qc.getAlias(), qc.isAliasOrganic(), node, qc.isIncludeIntoWildcard(), qc.getColumnType());
-                        }
-
-                        emitCursors(
-                                qc.getAst(),
-                                cursorModel,
-                                innerVirtualModel,
-                                translatingModel,
-                                baseModel,
-                                sqlExecutionContext,
-                                sqlParserCallback
-                        );
-                        qc = ensureAliasUniqueness(outerVirtualModel, qc);
-                        outerVirtualModel.addBottomUpColumn(qc);
-                        distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isAliasOrganic()));
-
-                        // group-by column could have spit out a function call, e.g.
-                        // select sum(f(x)) from t -> select sum(col) from (select f(x) col) from t)
-                        // todo: 'x' here could reference another projection column, so the validation has to be done
-                        //    against the existing projection too
-                        for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
-                            emitLiterals(
-                                    groupByModel.getBottomUpColumns().getQuick(j).getAst(),
-                                    translatingModel,
-                                    innerVirtualModel,
-                                    true,
-                                    baseModel,
-                                    false
-                            );
-                        }
-                        continue;
-                    }
-
-                    // this is not a direct call to aggregation function, in which case
-                    // we emit aggregation function into group-by model and leave the rest in outer model
-                    // more specifically we are dealing with something like
-                    // select sum(f(x)) - sum(f(y)) from tab
-                    // we don't know if "f(x)" is a function call or a literal, e.g. sum(x)
-                    final int beforeSplit = groupByModel.getBottomUpColumns().size();
-                    if (checkForChildAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp()))) {
-                        // push aggregates and literals outside aggregate functions
-                        emitAggregatesAndLiterals(
-                                qc.getAst(),
-                                groupByModel,
-                                translatingModel,
-                                innerVirtualModel,
-                                baseModel,
-                                groupByNodes,
-                                groupByAliases
-                        );
-                        emitCursors(
-                                qc.getAst(),
-                                cursorModel,
-                                innerVirtualModel,
-                                translatingModel,
-                                baseModel,
-                                sqlExecutionContext,
-                                sqlParserCallback
-                        );
-
-                        qc = ensureAliasUniqueness(outerVirtualModel, qc);
-                        outerVirtualModel.addBottomUpColumn(qc);
-                        distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isAliasOrganic()));
-                        for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
-                            emitLiterals(
-                                    groupByModel.getBottomUpColumns().getQuick(j).getAst(),
-                                    translatingModel,
-                                    innerVirtualModel,
-                                    true,
-                                    baseModel,
-                                    false
-                            );
-                        }
-                        useOuterModel = true;
-                    } else {
-                        emitCursors(
-                                qc.getAst(),
-                                cursorModel,
-                                null,
-                                translatingModel,
-                                baseModel,
-                                sqlExecutionContext,
-                                sqlParserCallback
-                        );
-                        if (useGroupByModel) {
-                            // exclude constant columns from group-by, for example:
-                            // select 1, id, sum(x) from ...
-                            // keying map on constant '1' is unnecessary; this column can be selected
-                            // after the group-by in the "outerVirtualModel"
-                            if (isEffectivelyConstantExpression(qc.getAst())) {
-                                outerVirtualIsSelectChoose = false;
-                                outerVirtualModel.addBottomUpColumn(qc);
-                                distinctModel.addBottomUpColumn(qc);
-                                continue;
-                            }
-
-                            // sample-by queries will still require innerVirtualModel
-                            if (sampleBy == null) {
-                                qc = ensureAliasUniqueness(groupByModel, qc);
-                                groupByModel.addBottomUpColumn(qc);
-                                // group-by column references might be needed when we have
-                                // outer model supporting arithmetic such as:
-                                // select sum(a)+sum(b) ...
-                                QueryColumn ref = nextColumn(qc.getAlias(), qc.isAliasOrganic());
-                                outerVirtualModel.addBottomUpColumn(ref);
-                                distinctModel.addBottomUpColumn(ref);
-                                emitLiterals(
-                                        qc.getAst(),
-                                        translatingModel,
-                                        innerVirtualModel,
-                                        false,
-                                        baseModel,
-                                        false
-                                );
-                                // this model won't be used in group-by case; this is because
-                                // group-by can process virtual functions by itself. However,
-                                // we need innerVirtualModel complete to do the projection validation
-                                // We add column after literal emission/validation to avoid allowing expression
-                                // self-referencing and passing validation
-                                innerVirtualModel.addBottomUpColumn(qc);
-                                continue;
-                            }
-                        }
-
-                        addFunction(
-                                qc,
-                                baseModel,
-                                translatingModel,
-                                innerVirtualModel,
-                                windowModel,
-                                groupByModel,
-                                outerVirtualModel,
-                                distinctModel
-                        );
-                    }
+                default: {
+                    rewriteStatus = rewriteSelect0HandleOperation(
+                            sqlExecutionContext,
+                            sqlParserCallback,
+                            qc,
+                            explicitGroupBy,
+                            nonAggSelectCount,
+                            rewriteStatus,
+                            outerVirtualModel,
+                            distinctModel,
+                            groupByModel,
+                            baseModel,
+                            innerVirtualModel,
+                            i,
+                            cursorModel,
+                            translatingModel,
+                            sampleBy,
+                            windowModel
+                    );
+                    break;
+                }
             }
         }
 
-        if (explicitGroupBy && !useOuterModel && (nonAggSelectCount != groupBy.size() || groupByUsed.getTrueCount() != groupBy.size())) {
-            useOuterModel = true;
+        if (explicitGroupBy && (rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) == 0 && (nonAggSelectCount.get() != groupBy.size() || groupByUsed.getTrueCount() != groupBy.size())) {
+            rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
         }
 
         // fail if we have both window and group-by models
-        if (useWindowModel && useGroupByModel) {
+        if ((rewriteStatus & REWRITE_STATUS_USE_WINDOW_MODEL) != 0 && (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
             throw SqlException.$(0, "Window function is not allowed in context of aggregation. Use sub-query.");
         }
 
         boolean forceTranslatingModel = false;
-        if (useWindowModel) {
+        if ((rewriteStatus & REWRITE_STATUS_USE_WINDOW_MODEL) != 0) {
             // We need one more pass for window model to emit potentially missing columns.
             // For example, 'SELECT row_number() over (partition by col_c order by col_c), col_a, col_b FROM tab'
             // needs col_c to be emitted.
@@ -6209,26 +6290,29 @@ public class SqlOptimiser implements Mutable {
         }
 
         // check if innerVirtualModel is trivial, e.g, it does not contain any arithmetic
-        if (useInnerModel) {
-            useInnerModel = false;
+        // we must not "cancel" the inner model if inner virtual model columns reference
+        // their own projection
+        if ((rewriteStatus & REWRITE_STATUS_USE_INNER_MODEL) != 0 && (rewriteStatus & REWRITE_STATUS_FORCE_INNER_MODEL) == 0) {
+            rewriteStatus &= ~REWRITE_STATUS_USE_INNER_MODEL;
             final ObjList<QueryColumn> innerColumns = innerVirtualModel.getBottomUpColumns();
             for (int i = 0, k = innerColumns.size(); i < k; i++) {
                 QueryColumn qc = innerColumns.getQuick(i);
                 if (qc.getAst().type != LITERAL) {
-                    useInnerModel = true;
+                    rewriteStatus |= REWRITE_STATUS_USE_INNER_MODEL;
                     break;
                 }
             }
         }
 
         boolean translationIsRedundant = checkIfTranslatingModelIsRedundant(
-                useInnerModel,
-                useGroupByModel,
-                useWindowModel,
+                (rewriteStatus & REWRITE_STATUS_USE_INNER_MODEL) != 0,
+                (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0,
+                (rewriteStatus & REWRITE_STATUS_USE_WINDOW_MODEL) != 0,
                 forceTranslatingModel,
                 true,
                 translatingModel
         );
+
         // If it wasn't redundant, we might be able to make it redundant.
         // Taking the query:
         // select a, b, c as z, count(*) as views from x where a = 1 group by a,b,z
@@ -6237,7 +6321,7 @@ public class SqlOptimiser implements Mutable {
         // Since the select-choose node's purpose is just to alias the column c, this can be lifted into the parent node in this case, the group by node.
         // This makes the final query like        (select-group-by a, b, c z, count views from (select-choose a, b, c from x))
         // The translation model is now vestigial and can be elided.
-        if (useGroupByModel && sampleBy == null && !translationIsRedundant && !model.containsJoin() && SqlUtil.isPlainSelect(model.getNestedModel())) {
+        if ((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0 && sampleBy == null && !translationIsRedundant && !model.containsJoin() && SqlUtil.isPlainSelect(model.getNestedModel())) {
             ObjList<QueryColumn> translationColumns = translatingModel.getColumns();
             boolean appearsInFuncArgs = false;
             for (int i = 0, n = translationColumns.size(); i < n; i++) {
@@ -6249,7 +6333,7 @@ public class SqlOptimiser implements Mutable {
             if (!appearsInFuncArgs) {
                 groupByModel.mergePartially(translatingModel, queryColumnPool);
                 translationIsRedundant = checkIfTranslatingModelIsRedundant(
-                        useInnerModel,
+                        (rewriteStatus & REWRITE_STATUS_USE_INNER_MODEL) != 0,
                         true,
                         false,
                         false,
@@ -6325,7 +6409,7 @@ public class SqlOptimiser implements Mutable {
             // when parent model is order by or join.
             // The only exception is when order by is by designated timestamp because
             // it'll be implemented as forward or backward scan (no sorting required).
-            pushDownLimitAdvice(model, baseModel, useDistinctModel);
+            pushDownLimitAdvice(model, baseModel, (rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0);
 
             translatingModel.moveLimitFrom(model);
             translatingModel.moveJoinAliasFrom(model);
@@ -6333,27 +6417,27 @@ public class SqlOptimiser implements Mutable {
             translatingModel.copyHints(model.getHints());
         }
 
-        if (useInnerModel) {
+        if ((rewriteStatus & REWRITE_STATUS_USE_INNER_MODEL) != 0) {
             innerVirtualModel.setNestedModel(root);
             innerVirtualModel.moveLimitFrom(limitSource);
             innerVirtualModel.moveJoinAliasFrom(limitSource);
             innerVirtualModel.copyHints(model.getHints());
 
             // Set limit hint if applicable.
-            pushDownLimitAdvice(innerVirtualModel, root, useDistinctModel);
+            pushDownLimitAdvice(innerVirtualModel, root, (rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0);
 
             root = innerVirtualModel;
             limitSource = innerVirtualModel;
         }
 
-        if (useWindowModel) {
+        if ((rewriteStatus & REWRITE_STATUS_USE_WINDOW_MODEL) != 0) {
             windowModel.setNestedModel(root);
             windowModel.moveLimitFrom(limitSource);
             windowModel.moveJoinAliasFrom(limitSource);
             windowModel.copyHints(model.getHints());
             root = windowModel;
             limitSource = windowModel;
-        } else if (useGroupByModel) {
+        } else if ((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
             groupByModel.setNestedModel(root);
             groupByModel.moveLimitFrom(limitSource);
             groupByModel.moveJoinAliasFrom(limitSource);
@@ -6362,7 +6446,7 @@ public class SqlOptimiser implements Mutable {
             limitSource = groupByModel;
         }
 
-        if (useOuterModel) {
+        if ((rewriteStatus & REWRITE_STATUS_USE_OUTER_MODEL) != 0) {
             outerVirtualModel.setNestedModel(root);
             outerVirtualModel.moveLimitFrom(limitSource);
             outerVirtualModel.moveJoinAliasFrom(limitSource);
@@ -6372,19 +6456,19 @@ public class SqlOptimiser implements Mutable {
             outerVirtualModel.setNestedModel(root);
             outerVirtualModel.moveLimitFrom(limitSource);
             outerVirtualModel.moveJoinAliasFrom(limitSource);
-            outerVirtualModel.setSelectModelType(outerVirtualIsSelectChoose ? QueryModel.SELECT_MODEL_CHOOSE : QueryModel.SELECT_MODEL_VIRTUAL);
+            outerVirtualModel.setSelectModelType((rewriteStatus & REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE) != 0 ? QueryModel.SELECT_MODEL_CHOOSE : QueryModel.SELECT_MODEL_VIRTUAL);
             outerVirtualModel.copyHints(model.getHints());
             root = outerVirtualModel;
         }
 
-        if (useDistinctModel) {
+        if ((rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0) {
             distinctModel.setNestedModel(root);
             distinctModel.moveLimitFrom(root);
             distinctModel.copyHints(model.getHints());
             root = distinctModel;
         }
 
-        if (!useGroupByModel && groupByModel.getSampleBy() != null) {
+        if ((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) == 0 && groupByModel.getSampleBy() != null) {
             throw SqlException.$(groupByModel.getSampleBy().position, "at least one aggregation function must be present in 'select' clause");
         }
 
