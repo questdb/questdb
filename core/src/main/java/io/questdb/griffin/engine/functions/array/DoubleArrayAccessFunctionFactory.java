@@ -385,7 +385,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                         filteredElemCount += boolAsInt;
                     }
                     filteredArray.setDimLen(0, filteredElemCount);
-                    for (int j = 1, m = derivedArray.getDimCount(); j < n; j++) {
+                    for (int j = 1, m = derivedArray.getDimCount(); j < m; j++) {
                         filteredArray.setDimLen(j, derivedArray.getDimLen(j));
                     }
                     filteredArray.applyShape();
@@ -393,7 +393,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     for (int j = 0, m = predicateResults.size(); j < m; j++) {
                         if (predicateResults.getQuick(j) != 0) {
                             //TODO: must copy the entire subarray
-                            filteredArray.putDouble(outIndex++, recWithElem.element);
+                            filteredArray.putDouble(outIndex++, derivedArray.getDouble(j));
                         }
                     }
                     derivedArray.of(filteredArray);
