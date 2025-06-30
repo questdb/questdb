@@ -256,23 +256,25 @@ public abstract class ArrayView implements QuietCloseable {
                 double midVal = getDouble(mid * stride);
                 if (Math.abs(midVal - value) <= Numbers.DOUBLE_TOLERANCE) {
                     if (forwardScan) {
-                        do {
-                            if (mid > low) {
-                                mid--;
+                        while (low < mid) {
+                            int m = low + (mid - low) / 2;
+                            if (Math.abs(getDouble(m * stride) - value) <= Numbers.DOUBLE_TOLERANCE) {
+                                mid = m;
                             } else {
-                                return mid + 1;
+                                low = m + 1;
                             }
-                        } while (Math.abs(getDouble(mid) - value) <= Numbers.DOUBLE_TOLERANCE);
-                        return mid + 2;
+                        }
+                        return low + 1;
                     } else {
-                        do {
-                            if (mid < high) {
-                                mid++;
+                        while (mid < high) {
+                            int m = mid + (high - mid + 1) / 2;
+                            if (Math.abs(getDouble(m * stride) - value) <= Numbers.DOUBLE_TOLERANCE) {
+                                mid = m;
                             } else {
-                                return mid + 1;
+                                high = m - 1;
                             }
-                        } while (Math.abs(getDouble(mid) - value) <= Numbers.DOUBLE_TOLERANCE);
-                        return mid;
+                        }
+                        return mid + 1;
                     }
                 }
 
