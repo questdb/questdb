@@ -103,8 +103,7 @@ public class GroupByUtils {
             ArrayColumnTypes outKeyTypes,
             ListColumnFilter outColumnFilter,
             @Nullable ObjList<ExpressionNode> sampleByFill, // fill mode for sample by functions, for validation
-            boolean validateFill,
-            boolean metadataFlag // temp flag to indicate which metadata to use while compiling functions, true = will use the priority metadata (new approach) and false will default to the original behaviour
+            boolean validateFill
     ) throws SqlException {
         try {
             outGroupByFunctionPositions.clear();
@@ -114,18 +113,17 @@ public class GroupByUtils {
             int columnKeyCount = 0;
             int lastIndex = -1;
             final ObjList<QueryColumn> columns = model.getColumns();
-            final RecordMetadata compilationMetadata = metadataFlag ? outPriorityMetadata : baseMetadata;
 
             // compile functions upfront and assemble the metadata for group-by
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 final ExpressionNode node = column.getAst();
-                final int index = compilationMetadata.getColumnIndexQuiet(node.token);
+                final int index = baseMetadata.getColumnIndexQuiet(node.token);
                 TableColumnMetadata m = null;
                 if (node.type != LITERAL || index != timestampIndex || timestampUnimportant) {
                     Function func = functionParser.parseFunction(
                             node,
-                            compilationMetadata,
+                            baseMetadata,
                             executionContext
                     );
 
@@ -165,15 +163,15 @@ public class GroupByUtils {
                         }
                     }
                     if (column.getAlias() == null) {
-                        m = compilationMetadata.getColumnMetadata(index);
+                        m = baseMetadata.getColumnMetadata(index);
                     } else {
                         m = new TableColumnMetadata(
                                 Chars.toString(column.getAlias()),
-                                compilationMetadata.getColumnType(index),
-                                compilationMetadata.isColumnIndexed(index),
-                                compilationMetadata.getIndexValueBlockCapacity(index),
-                                compilationMetadata.isSymbolTableStatic(index),
-                                compilationMetadata.getMetadata(index)
+                                baseMetadata.getColumnType(index),
+                                baseMetadata.isColumnIndexed(index),
+                                baseMetadata.getIndexValueBlockCapacity(index),
+                                baseMetadata.isSymbolTableStatic(index),
+                                baseMetadata.getMetadata(index)
                         );
                     }
                 }
@@ -235,7 +233,7 @@ public class GroupByUtils {
                         func.initValueTypes(outValueTypes);
                     }
                 } else {
-                    int index = compilationMetadata.getColumnIndexQuiet(node.token);
+                    int index = baseMetadata.getColumnIndexQuiet(node.token);
                     if (index == -1) {
                         throw SqlException.invalidColumn(node.position, node.token);
                     }
@@ -265,8 +263,8 @@ public class GroupByUtils {
 
                 if (node.type == LITERAL) {
                     // column index has already been validated
-                    int index = compilationMetadata.getColumnIndexQuiet(node.token);
-                    type = compilationMetadata.getColumnType(index);
+                    int index = baseMetadata.getColumnIndexQuiet(node.token);
+                    type = baseMetadata.getColumnType(index);
 
                     if (index != timestampIndex || timestampUnimportant) {
                         if (lastIndex != index) {
@@ -275,7 +273,7 @@ public class GroupByUtils {
                             keyColumnIndex++;
                             lastIndex = index;
                         }
-                        outerProjectionFunctions.set(i, createColumnFunction(compilationMetadata, keyColumnIndex, type, index));
+                        outerProjectionFunctions.set(i, createColumnFunction(baseMetadata, keyColumnIndex, type, index));
                     }
 
                     // and finish with populating metadata for this factory

@@ -1427,10 +1427,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
-    private @NotNull ObjList<Function> extractFunctions(ObjList<Function> recordFunctions, IntList recordBitSet, int flag) {
+    private @NotNull ObjList<Function> extractFunctions(ObjList<Function> recordFunctions, IntList projectionFunctionFlags) {
         final ObjList<Function> result = new ObjList<>();
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
-            if (recordBitSet.getQuick(i) == flag) {
+            if (projectionFunctionFlags.getQuick(i) == GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL) {
                 result.add(recordFunctions.getQuick(i));
             }
         }
@@ -3615,8 +3615,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         keyTypes,
                         listColumnFilterA,
                         sampleByFill,
-                        validateSampleByFillType,
-                        false
+                        validateSampleByFillType
                 );
 
                 return new SampleByInterpolateRecordCursorFactory(
@@ -3671,8 +3670,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     keyTypes,
                     listColumnFilterA,
                     sampleByFill,
-                    validateSampleByFillType,
-                    false
+                    validateSampleByFillType
             );
 
             boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
@@ -4443,8 +4441,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     keyTypes,
                     listColumnFilterA,
                     null,
-                    validateSampleByFillType,
-                    true
+                    validateSampleByFillType
             );
 
             // Check if we have a non-keyed query with all early exit aggregate functions (e.g. count_distinct(symbol))
@@ -4458,7 +4455,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 enableParallelGroupBy = false;
             }
 
-            ObjList<Function> keyFunctions = extractFunctions(innerProjectionFunctions, projectionFunctionFlags, 1);
+            ObjList<Function> keyFunctions = extractFunctions(innerProjectionFunctions, projectionFunctionFlags);
             if (
                     enableParallelGroupBy
                             && SqlUtil.isParallelismSupported(keyFunctions)
@@ -4536,14 +4533,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             baseMetadata
                     );
 
-                    ObjList<VirtualRecord> perWorkerInnerProjectionRecords = null;
-                    if (perWorkerInnerProjectionFunctions != null) {
-                        perWorkerInnerProjectionRecords = new ObjList<>();
-                        for (int i =0, n = perWorkerInnerProjectionFunctions.size(); i < n; i++) {
-                            perWorkerInnerProjectionRecords.add(new VirtualRecord(perWorkerInnerProjectionFunctions.getQuick(i)));
-                        }
-                    }
-
                     return generateFill(
                             model,
                             new AsyncGroupByRecordCursorFactory(
@@ -4552,7 +4541,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     executionContext.getMessageBus(),
                                     factory,
                                     outerProjectionMetadata,
-                                    priorityMetadata,
                                     listColumnFilterCopy,
                                     keyTypesCopy,
                                     valueTypesCopy,
@@ -4572,8 +4560,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL
                                     ),
                                     outerProjectionFunctions,
-                                    new VirtualRecord(innerProjectionFunctions),
-                                    perWorkerInnerProjectionRecords,
                                     compiledFilter,
                                     bindVarMemory,
                                     bindVarFunctions,
