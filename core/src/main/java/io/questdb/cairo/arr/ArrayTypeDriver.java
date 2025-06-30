@@ -212,12 +212,13 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static void arrayToJson(
             @Nullable ArrayView arrayView,
             @NotNull CharSink<?> sink,
-            @NotNull ArrayWriteState arrayState
+            @NotNull ArrayWriteState arrayState,
+            boolean strictJson
     ) {
         if (arrayView == null) {
             sink.put("null");
         } else {
-            arrayToJson(arrayView, sink, resolveAppender(arrayView, true), arrayState);
+            arrayToJson(arrayView, sink, resolveAppender(arrayView, strictJson), arrayState);
         }
     }
 
@@ -758,11 +759,11 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return res;
     }
 
-    private static @NotNull ArrayValueAppender resolveAppender(@NotNull ArrayView array, boolean convertNonFiniteToNull) {
+    private static @NotNull ArrayValueAppender resolveAppender(@NotNull ArrayView array, boolean strictJson) {
         int elemType = array.getElemType();
         switch (elemType) {
             case ColumnType.DOUBLE:
-                return convertNonFiniteToNull ? VALUE_APPENDER_DOUBLE_JSON : VALUE_APPENDER_DOUBLE;
+                return strictJson ? VALUE_APPENDER_DOUBLE_JSON : VALUE_APPENDER_DOUBLE;
             case ColumnType.LONG:
             case ColumnType.NULL:
                 return VALUE_APPENDER_LONG;
