@@ -310,7 +310,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                      filter: bid_price=189.4\n" +
                     "                        PageFrame\n" +
                     "                            Row forward scan\n" +
-                    "                            Frame forward scan on: order_book";
+                    "                            Frame forward scan on: order_book\n";
 
             assertPlanNoLeakCheck(q1, expectedPlan);
         });
