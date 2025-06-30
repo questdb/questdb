@@ -36,7 +36,6 @@ import java.util.Objects;
 public class QueryColumn implements Mutable, Sinkable {
     public static final ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
     private CharSequence alias;
-    private boolean aliasOrganic;
     private ExpressionNode ast;
     private int columnType;
     private boolean includeIntoWildcard = true;
@@ -81,10 +80,6 @@ public class QueryColumn implements Mutable, Sinkable {
         return Objects.hash(alias, ast, includeIntoWildcard);
     }
 
-    public boolean isAliasOrganic() {
-        return aliasOrganic;
-    }
-
     public boolean isIncludeIntoWildcard() {
         return includeIntoWildcard;
     }
@@ -93,30 +88,28 @@ public class QueryColumn implements Mutable, Sinkable {
         return false;
     }
 
-    public QueryColumn of(CharSequence alias, boolean aliasOrganic, ExpressionNode ast) {
-        return of(alias, aliasOrganic, ast, true);
+    public QueryColumn of(CharSequence alias, ExpressionNode ast) {
+        return of(alias, ast, true);
     }
 
-    public QueryColumn of(CharSequence alias, boolean aliasOrganic, ExpressionNode ast, boolean includeIntoWildcard) {
-        return of(alias, aliasOrganic, ast, includeIntoWildcard, -1);
+    public QueryColumn of(CharSequence alias, ExpressionNode ast, boolean includeIntoWildcard) {
+        return of(alias, ast, includeIntoWildcard, -1);
     }
 
-    public QueryColumn of(CharSequence alias, boolean aliasOrganic, ExpressionNode ast, boolean includeIntoWildcard, int type) {
+    public QueryColumn of(CharSequence alias, ExpressionNode ast, boolean includeIntoWildcard, int type) {
         this.alias = alias;
-        this.aliasOrganic = aliasOrganic;
         this.ast = ast;
         this.includeIntoWildcard = includeIntoWildcard;
         this.columnType = type;
         return this;
     }
 
-    public void setAlias(CharSequence alias, boolean aliasOrganic) {
+    public void setAlias(CharSequence alias) {
         // do not override organic flag by setting the same alias with "false"
         if (this.alias == alias || Chars.equalsNc(alias, this.alias)) {
             return;
         }
         this.alias = alias;
-        this.aliasOrganic = aliasOrganic;
     }
 
     public void setIncludeIntoWildcard(boolean includeIntoWildcard) {

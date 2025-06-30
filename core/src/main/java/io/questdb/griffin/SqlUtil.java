@@ -75,7 +75,7 @@ public class SqlUtil {
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<ExpressionNode> expressionNodePool
     ) throws SqlException {
-        model.addBottomUpColumn(nextColumn(queryColumnPool, expressionNodePool, "*", false, "*", 0));
+        model.addBottomUpColumn(nextColumn(queryColumnPool, expressionNodePool, "*", "*", 0));
         model.setArtificialStar(true);
     }
 
@@ -1041,11 +1041,10 @@ public class SqlUtil {
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<ExpressionNode> sqlNodePool,
             CharSequence alias,
-            boolean aliasOrganic,
             CharSequence column,
             int position
     ) {
-        return queryColumnPool.next().of(alias, aliasOrganic, nextLiteral(sqlNodePool, column, position));
+        return queryColumnPool.next().of(alias, nextLiteral(sqlNodePool, column, position));
     }
 
     static ExpressionNode nextConstant(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {

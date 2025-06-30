@@ -2742,7 +2742,7 @@ public class SqlParser {
                     expectTok(lexer, '(');
                     overClauseMode = true;//prevent lexer returning ')' ending over clause as null in a sub-query
                     try {
-                        WindowColumn winCol = windowColumnPool.next().of(null, false, expr);
+                        WindowColumn winCol = windowColumnPool.next().of(null, expr);
                         col = winCol;
 
                         tok = tokIncludingLocalBrace(lexer, "'partition' or 'order' or ')'");
@@ -2864,7 +2864,7 @@ public class SqlParser {
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
                                         long timeUnit = parseTimeUnit(lexer);
                                         if (timeUnit != -1) {
-                                            winCol.setRowsLoExprTimeUnit(timeUnit, lexer.lastTokenPosition());
+                                            winCol.setRowsLoExprTimeUnit(timeUnit);
                                         }
                                     }
 
@@ -2908,7 +2908,7 @@ public class SqlParser {
                                         if (framingMode == WindowColumn.FRAMING_RANGE) {
                                             long timeUnit = parseTimeUnit(lexer);
                                             if (timeUnit != -1) {
-                                                winCol.setRowsHiExprTimeUnit(timeUnit, lexer.lastTokenPosition());
+                                                winCol.setRowsHiExprTimeUnit(timeUnit);
                                             }
                                         }
 
@@ -2948,7 +2948,7 @@ public class SqlParser {
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
                                         long timeUnit = parseTimeUnit(lexer);
                                         if (timeUnit != -1) {
-                                            winCol.setRowsLoExprTimeUnit(timeUnit, lexer.lastTokenPosition());
+                                            winCol.setRowsLoExprTimeUnit(timeUnit);
                                         }
                                     }
                                     tok = tok(lexer, "'preceding'");
@@ -3006,7 +3006,7 @@ public class SqlParser {
                     if (expr.type == ExpressionNode.QUERY) {
                         throw SqlException.$(expr.position, "query is not expected, did you mean column?");
                     }
-                    col = queryColumnPool.next().of(null, false, expr);
+                    col = queryColumnPool.next().of(null, expr);
                 }
 
                 if (tok != null && columnAliasStop.excludes(tok)) {
@@ -3045,7 +3045,7 @@ public class SqlParser {
                     if (alias.length() == 0) {
                         throw err(lexer, null, "column alias cannot be a blank string");
                     }
-                    col.setAlias(alias, true);
+                    col.setAlias(alias);
                 }
 
                 accumulatedColumns.add(col);
@@ -3094,7 +3094,7 @@ public class SqlParser {
                         }
                         alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
                     }
-                    qc.setAlias(alias, false);
+                    qc.setAlias(alias);
                     aliasMap.put(alias, qc);
                 }
                 model.addBottomUpColumn(accumulatedColumnPositions.getQuick(i), qc, false);
@@ -3277,7 +3277,7 @@ public class SqlParser {
             ExpressionNode setColumnExpression = expressionNodePool.next().of(ExpressionNode.LITERAL, col, 0, colPosition);
             updateQueryModel.getUpdateExpressions().add(setColumnExpression);
 
-            QueryColumn valueColumn = queryColumnPool.next().of(col, true, expr);
+            QueryColumn valueColumn = queryColumnPool.next().of(col, expr);
             fromModel.addBottomUpColumn(colPosition, valueColumn, false, "in SET clause");
 
             tok = optTok(lexer);

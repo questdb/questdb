@@ -540,7 +540,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             if (qc.getAst().type != ExpressionNode.LITERAL) {
                 qc = queryColumnPool.next().of(
                         alias,
-                        qc.isAliasOrganic(),
                         expressionNodePool.next().of(
                                 ExpressionNode.LITERAL,
                                 alias,
@@ -1140,7 +1139,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 // models. The bottomUpColumns are also referenced by `aliasToColumnMap`. Typically,
                 // `thisColumn` alias should let us lookup, the column's reference
                 QueryColumn col = queryColumnPool.next();
-                col.of(thisColumn.getAlias(), thisColumn.isAliasOrganic(), thatColumn.getAst());
+                col.of(thisColumn.getAlias(), thatColumn.getAst());
                 bottomUpColumns.setQuick(i, col);
 
                 int index = aliasToColumnMap.keyIndex(thisColumn.getAlias());

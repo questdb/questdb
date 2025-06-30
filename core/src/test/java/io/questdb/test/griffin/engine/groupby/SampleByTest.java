@@ -4479,7 +4479,7 @@ public class SampleByTest extends AbstractCairoTest {
             ObjList<QueryColumn> columns = new ObjList<>();
             ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "first", 0, 0);
             first.rhs = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "col1", 0, 0);
-            QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", false, first);
+            QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", first);
             columns.add(col);
 
             new SampleByFirstLastRecordCursorFactory(
@@ -4520,7 +4520,7 @@ public class SampleByTest extends AbstractCairoTest {
             ObjList<QueryColumn> columns = new ObjList<>();
             ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "min", 0, 0);
             first.rhs = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "col1", 0, 0);
-            QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", false, first);
+            QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", first);
             columns.add(col);
 
             new SampleByFirstLastRecordCursorFactory(
