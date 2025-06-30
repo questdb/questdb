@@ -22,26 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.array;
+package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IntervalFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.NotNull;
 
-public class IntIntervalRightOpenFunctionFactory implements FunctionFactory {
+public class FirstArrayGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return ":(I)";
+        return "first(D[])";
+    }
+
+    @Override
+    public boolean isGroupBy() {
+        return true;
     }
 
     @Override
@@ -51,42 +49,7 @@ public class IntIntervalRightOpenFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        return new IntIntervalFunction(args.getQuick(0));
-    }
-
-    static class IntIntervalFunction extends IntervalFunction implements UnaryFunction {
-        private final Function arg;
-        private final Interval interval = new Interval();
-
-        public IntIntervalFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public @NotNull Interval getInterval(Record rec) {
-            interval.of(arg.getInt(rec), Long.MAX_VALUE);
-            return interval;
-        }
-
-        @Override
-        public String getName() {
-            return ":";
-        }
-
-        @Override
-        public boolean isOperator() {
-            return true;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(arg).val(':');
-        }
+    ) {
+        return new FirstArrayGroupByFunction(args.getQuick(0));
     }
 }
