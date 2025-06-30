@@ -24,16 +24,14 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import org.junit.Test;
-
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
 public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
-
-    public static char[] units = {'y', 'M', 'w', 'd', 'h', 'm', 's', 'T', 'u'};
+    public static char[] units = {'y', 'M', 'w', 'd', 'h', 'm', 's', 'T', 'U'};
 
     @Test
     public void testNullStride() throws Exception {
@@ -72,8 +70,8 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
         assertSqlWithTypes("dateadd\n2020-04-19T05:49:14.886758Z:TIMESTAMP\n", "select dateadd('s', -5, 1587275359886758L)");
         assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.891758Z:TIMESTAMP\n", "select dateadd('T', 5, 1587275359886758L)");
         assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.881758Z:TIMESTAMP\n", "select dateadd('T', -5, 1587275359886758L)");
-        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.886763Z:TIMESTAMP\n", "select dateadd('u', 5, 1587275359886758L)");
-        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.886753Z:TIMESTAMP\n", "select dateadd('u', -5, 1587275359886758L)");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.886763Z:TIMESTAMP\n", "select dateadd('U', 5, 1587275359886758L)");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.886753Z:TIMESTAMP\n", "select dateadd('U', -5, 1587275359886758L)");
     }
 
     @Test
