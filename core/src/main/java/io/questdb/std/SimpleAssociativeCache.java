@@ -107,7 +107,7 @@ public class SimpleAssociativeCache<V> implements AssociativeCache<V> {
                 return NOT_FOUND;
             }
 
-            if (Chars.equals(k, key)) {
+            if (Chars.equals(k, key) && values[i] != null) {
                 return i;
             }
         }
@@ -151,31 +151,78 @@ public class SimpleAssociativeCache<V> implements AssociativeCache<V> {
     @Override
     public void put(@NotNull CharSequence key, @Nullable V value) {
         final int lo = lo(key);
-        V outgoingValue;
+        final int hi = lo + blocks;
+        int reusableSlot = -1;
 
-        if (Chars.equalsNc(key, keys[lo])) {
-            // Present entry case.
-            if (values[lo] == value) {
-                return;
+        // search the block for an exact match or a reusable slot
+        for (int i = lo; i < hi; i++) {
+            final String k = keys[i];
+            if (k == null) {
+                break;
             }
-            outgoingValue = values[lo];
-        } else {
-            // New entry case.
-            outgoingValue = values[lo + blocks - 1];
 
-            System.arraycopy(keys, lo, keys, lo + 1, blocks - 1);
-            System.arraycopy(values, lo, values, lo + 1, blocks - 1);
-            keys[lo] = Chars.toString(key);
+            if (Chars.equals(k, key)) {
+                // key match, check the value
+                if (values[i] == value) {
+                    // exact (key, value) match
+                    if (i > lo) {
+                        // shift to the front
+                        System.arraycopy(keys, lo, keys, lo + 1, i - lo);
+                        System.arraycopy(values, lo, values, lo + 1, i - lo);
+                        keys[lo] = k;
+                        values[lo] = value;
+                    }
+                    return;
+                }
+
+                if (values[i] == null && reusableSlot == -1) {
+                    reusableSlot = i;
+                    // don't stop; an exact match later in the block takes precedence
+                    // why? because if someone does a sequence of peek(), put() we want the put() to be a no-op
+                }
+            }
         }
+
+        // at this point we know the cache does not contain an exact (key, value) match
+        // we either have a reusable slot (=equal key, but null value) or we need to create a new entry
+
+        // case 1: we found a reusable (key, null) slot
+        if (reusableSlot != -1) {
+            final String k = keys[reusableSlot];
+
+            // update gauge since we are replacing a null value
+            cachedGauge.inc();
+
+            // if the slot is not at the front, shift other elements to make room
+            if (reusableSlot > lo) {
+                System.arraycopy(keys, lo, keys, lo + 1, reusableSlot - lo);
+                System.arraycopy(values, lo, values, lo + 1, reusableSlot - lo);
+            }
+
+            // update the front slot with the reused key and new value
+            keys[lo] = k;
+            values[lo] = value;
+            return;
+        }
+
+        // case 2: insert as a new entry
+        final V evictedValue = values[hi - 1];
+
+        // shift entries to the right
+        System.arraycopy(keys, lo, keys, lo + 1, blocks - 1);
+        System.arraycopy(values, lo, values, lo + 1, blocks - 1);
+
+        // insert the new entry at the front
+        keys[lo] = Chars.toString(key);
         values[lo] = value;
 
-        if (outgoingValue == null) {
-            // We're inserting.
+        // update gauge based on what was inserted vs. what was evicted
+        if (value != null && evictedValue == null) {
             cachedGauge.inc();
-        } else {
-            // We're replacing the value with another one, no need to change the gauge.
-            Misc.freeIfCloseable(outgoingValue);
+        } else if (value == null && evictedValue != null) {
+            cachedGauge.dec();
         }
+        Misc.freeIfCloseable(evictedValue);
     }
 
     private int lo(CharSequence key) {

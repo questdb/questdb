@@ -1274,9 +1274,17 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
 
             if (expectAscendingOrder) {
-                Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_FORWARD, factory.getScanDirection());
+                try {
+                    Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_FORWARD, factory.getScanDirection());
+                } catch (AssertionError e) {
+                    throw new AssertionError("expected ASCENDING timestamp", e);
+                }
             } else {
-                Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_BACKWARD, factory.getScanDirection());
+                try {
+                    Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_BACKWARD, factory.getScanDirection());
+                } catch (AssertionError e) {
+                    throw new AssertionError("expected DESCENDING timestamp", e);
+                }
             }
 
             int index = factory.getMetadata().getColumnIndexQuiet(expectedTimestamp);
@@ -1662,8 +1670,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
             boolean expectSize,
             boolean sizeCanBeVariable
     ) throws SqlException {
-        assertTimestamp(expectedTimestamp, factory, executionContext);
         assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
+        // v Please keep this check after ^ that one.
+        // Factories that have a scan order dependent on the bind variable will not test correctly.
+        // See generate_series
+        assertTimestamp(expectedTimestamp, factory, executionContext);
         // make sure we get the same outcome when we get factory to create new cursor
         assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
         // make sure strings, binary fields and symbols are compliant with expected record behaviour
