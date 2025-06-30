@@ -53,6 +53,55 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindingVars() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setLong(0, 1);
+
+            assertQuery(
+                    "b\tinc\n" +
+                            "1\t2\n" +
+                            "1\t2\n" +
+                            "1\t2\n",
+                    "select $1 as b, b + 1 as inc from long_sequence(3)",
+                    true,
+                    true
+            );
+
+            // we can use a projected column insude an expression
+            assertQuery(
+                    "b\tinc\n" +
+                            "2\t3\n" +
+                            "3\t4\n" +
+                            "4\t5\n",
+                    "select $1 + x as b, b + 1 as inc from long_sequence(3)",
+                    true,
+                    true
+            );
+
+            // we prioritise base column over projection
+            assertQuery(
+                    "x\tx_orig\n" +
+                            "1\t1\n" +
+                            "1\t2\n" +
+                            "1\t3\n",
+                    "select $1 as x, x as x_orig from long_sequence(3)",
+                    true,
+                    true
+            );
+
+            assertQuery(
+                    "x\tx_orig\n" +
+                            "2\t1\n" +
+                            "3\t2\n" +
+                            "4\t3\n",
+                    "select $1 + x as x, x as x_orig from long_sequence(3)",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testInnerJoinSimple() throws Exception {
         execute("create table t1 (id int, val int)");
         execute("create table t2 (id int, val int)");
