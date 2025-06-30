@@ -168,6 +168,11 @@ public class PGWireServerModern implements IPGWireServer {
     }
 
     @Override
+    public boolean isListening() {
+        return dispatcher.isListening();
+    }
+
+    @Override
     public void resetQueryCache() {
         if (typesAndSelectCache != null) {
             typesAndSelectCache.clear();

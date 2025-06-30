@@ -108,7 +108,7 @@ _The public demo queries over 1.6BN rows and uses a `r6a.12xlarge` 48 vCPU and 3
 | `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
 | `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
 | `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
-| `SELECT * FROM trades LATEST ON timestamp PARTITION BY symbol`                | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
+| `SELECT * FROM trades WHERE symbol IN ('BTC-USD', 'ETH-USD') LATEST ON timestamp PARTITION BY symbol, side` | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20%2A%20FROM%20trades%20WHERE%20symbol%20IN%20%28%27BTC-USD%27%2C%20%27ETH-USD%27%29%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol%2C%20side;&executeQuery=true) |
 
 We also have some public, real-time demo dashboards using
 our [Grafana-native](https://questdb.io/docs/third-party-tools/grafana/) plugin:

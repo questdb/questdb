@@ -24,7 +24,7 @@
 
 package io.questdb.test.mp;
 
-import io.questdb.mp.ConcurrentQueue;
+import io.questdb.mp.ConcurrentPool;
 import io.questdb.mp.ValueHolder;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -39,7 +39,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class ConcurrentQueueFuzzTest {
+public class ConcurrentPoolFuzzTest {
     @Test
     public void testManyConsumers() throws InterruptedException {
         runFuzz(-3, 5);
@@ -80,7 +80,7 @@ public class ConcurrentQueueFuzzTest {
         int elementsCount = 33 + rnd.nextInt(1_000) + (int) Math.pow(2, rnd.nextInt(20));
         boolean[] received = new boolean[elementsCount];
 
-        ConcurrentQueue<IntHolderQueue> queue = ConcurrentQueue.createConcurrentQueue(IntHolderQueue::new);
+        ConcurrentPool<Integer> pool = new ConcurrentPool<>();
         AtomicInteger counter = new AtomicInteger();
 
         CyclicBarrier barrier = new CyclicBarrier(nProducers + nConsumers);
@@ -93,17 +93,16 @@ public class ConcurrentQueueFuzzTest {
             Thread th = new Thread(() -> {
                 try {
                     barrier.await();
-                    IntHolderQueue holder = new IntHolderQueue();
                     do {
                         int next = counter.getAndIncrement();
                         if (next >= elementsCount) {
                             break;
                         }
-                        holder.value = next;
-                        queue.enqueue(holder);
+                        pool.push(next);
                     } while (true);
                 } catch (Exception e) {
                     e.printStackTrace();
+                    errors.add(-2);
                 }
             });
             th.start();
@@ -115,14 +114,13 @@ public class ConcurrentQueueFuzzTest {
             Thread th = new Thread(() -> {
                 try {
                     barrier.await();
-                    IntHolderQueue holder = new IntHolderQueue();
-                    boolean found = queue.tryDequeue(holder);
+                    Integer found = pool.pop();
                     do {
-                        if (found) {
-                            if (received[holder.value]) {
-                                errors.add(holder.value);
+                        if (found != null) {
+                            if (received[found]) {
+                                errors.add(found);
                             }
-                            received[holder.value] = true;
+                            received[found] = true;
 
                             if (pauseReader) {
                                 int pause = rnd.nextInt(100) - 98;
@@ -130,16 +128,21 @@ public class ConcurrentQueueFuzzTest {
                                     Os.sleep(pause);
                                 }
                             }
-                            found = queue.tryDequeue(holder);
+                            found = pool.pop();
                         } else {
-                            if (allPublished.get() && !(found = queue.tryDequeue(holder))) {
-                                break;
+                            if (allPublished.get()) {
+                                found = pool.pop();
+                                if (found == null) {
+                                    // No more items in the pool, exit
+                                    break;
+                                }
                             }
                             Os.pause();
                         }
                     } while (true);
                 } catch (Exception e) {
                     e.printStackTrace();
+                    errors.add(-1);
                 }
             });
             th.start();
@@ -169,20 +172,6 @@ public class ConcurrentQueueFuzzTest {
             Assert.fail("Items not received: " + missing);
         }
 
-        System.out.println("Processed " + elementsCount + " queue size: " + queue.capacity());
-    }
-
-    static class IntHolderQueue implements ValueHolder<IntHolderQueue> {
-        int value;
-
-        @Override
-        public void clear() {
-            value = 0;
-        }
-
-        @Override
-        public void copyTo(IntHolderQueue intHolder) {
-            intHolder.value = value;
-        }
+        System.out.println("Processed " + elementsCount + " pool size: " + pool.capacity());
     }
 }

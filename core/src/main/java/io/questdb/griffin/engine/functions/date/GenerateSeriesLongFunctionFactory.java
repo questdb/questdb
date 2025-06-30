@@ -22,36 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.griffin.engine.functions.date;
 
-import io.questdb.std.Unsafe;
-import io.questdb.std.bytes.DirectByteSequence;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-/**
- * A sequence of UTF-8 bytes stored in native memory.
- */
-public interface DirectUtf8Sequence extends Utf8Sequence, DirectByteSequence {
 
+public class GenerateSeriesLongFunctionFactory implements FunctionFactory {
     @Override
-    default byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte(ptr() + index);
+    public String getSignature() {
+        return "generate_series(LLL)";
     }
 
     @Override
-    default int intAt(int offset) {
-        return Unsafe.getUnsafe().getInt(ptr() + offset);
-    }
-
-    @Override
-    default long longAt(int offset) {
-        return Unsafe.getUnsafe().getLong(ptr() + offset);
-    }
-
-    @Override
-    long ptr();
-
-    @Override
-    default short shortAt(int offset) {
-        return Unsafe.getUnsafe().getShort(ptr() + offset);
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return new CursorFunction(new GenerateSeriesLongRecordCursorFactory(args.getQuick(0), args.getQuick(1), args.getQuick(2), argPositions));
     }
 }
