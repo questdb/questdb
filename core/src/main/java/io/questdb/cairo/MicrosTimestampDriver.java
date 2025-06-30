@@ -245,10 +245,10 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long from(long timestamp, int timestampType) {
-        if (timestampType != ColumnType.TIMESTAMP_NANO) {
-            return timestamp;
+        if (timestampType == ColumnType.TIMESTAMP_NANO) {
+            return CommonUtils.nanosToMicros(timestamp);
         }
-        return CommonUtils.nanosToMicros(timestamp);
+        return timestamp;
     }
 
     @Override
