@@ -119,7 +119,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static final ArrayTypeDriver INSTANCE = new ArrayTypeDriver();
     public static final long OFFSET_MAX = (1L << 48) - 1L;
     private static final ArrayValueAppender VALUE_APPENDER_DOUBLE = ArrayTypeDriver::appendDoubleFromArrayToSink;
-    private static final ArrayValueAppender VALUE_APPENDER_DOUBLE_FINITE = ArrayTypeDriver::appendDoubleFromArrayToSinkFiniteOnly;
+    private static final ArrayValueAppender VALUE_APPENDER_DOUBLE_JSON = ArrayTypeDriver::appendDoubleFromArrayToSinkJson;
     private static final ArrayValueAppender VALUE_APPENDER_LONG = ArrayTypeDriver::appendLongFromArrayToSink;
 
     public static void appendDoubleFromArrayToSink(
@@ -131,14 +131,18 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         sink.put(d);
     }
 
-    public static void appendDoubleFromArrayToSinkFiniteOnly(
+    public static void appendDoubleFromArrayToSinkJson(
             @NotNull ArrayView array,
             int index,
             @NotNull CharSink<?> sink
     ) {
         double d = array.getDouble(index);
-        if (Numbers.isNull(d)) {
-            sink.putAscii("null");
+        if (d == Double.POSITIVE_INFINITY) {
+            sink.put("\"+Infinity\"");
+        } else if (d == Double.NEGATIVE_INFINITY) {
+            sink.put("\"-Infinity\"");
+        } else if (Double.isNaN(d)) {
+            sink.put("\"NaN\"");
         } else {
             sink.put(d);
         }
@@ -760,7 +764,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         int elemType = array.getElemType();
         switch (elemType) {
             case ColumnType.DOUBLE:
-                return convertNonFiniteToNull ? VALUE_APPENDER_DOUBLE_FINITE : VALUE_APPENDER_DOUBLE;
+                return convertNonFiniteToNull ? VALUE_APPENDER_DOUBLE_JSON : VALUE_APPENDER_DOUBLE;
             case ColumnType.LONG:
             case ColumnType.NULL:
                 return VALUE_APPENDER_LONG;
