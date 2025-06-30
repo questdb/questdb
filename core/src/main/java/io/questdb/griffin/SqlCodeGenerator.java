@@ -1531,7 +1531,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastDateToTimestampFunctionFactory.CastDateToTimestampFunction(DateColumn.newInstance(i)));
                                 break;
                             case ColumnType.TIMESTAMP:
-                                castFunctions.add(TimestampColumn.newInstance(i));
+                                castFunctions.add(TimestampColumn.newInstance(i, fromType));
                                 break;
                             default:
                                 throw SqlException.unsupportedCast(
@@ -1622,7 +1622,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastDateToStrFunctionFactory.Func(DateColumn.newInstance(i)));
                                 break;
                             case ColumnType.TIMESTAMP:
-                                castFunctions.add(new CastTimestampToStrFunctionFactory.Func(TimestampColumn.newInstance(i)));
+                                castFunctions.add(new CastTimestampToStrFunctionFactory.Func(TimestampColumn.newInstance(i, fromType)));
                                 break;
                             case ColumnType.FLOAT:
                                 castFunctions.add(new CastFloatToStrFunctionFactory.Func(
@@ -1944,7 +1944,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastDateToVarcharFunctionFactory.Func(DateColumn.newInstance(i)));
                                 break;
                             case ColumnType.TIMESTAMP:
-                                castFunctions.add(new CastTimestampToVarcharFunctionFactory.Func(TimestampColumn.newInstance(i)));
+                                castFunctions.add(new CastTimestampToVarcharFunctionFactory.Func(TimestampColumn.newInstance(i, fromType)));
                                 break;
                             case ColumnType.FLOAT:
                                 castFunctions.add(new CastFloatToVarcharFunctionFactory.Func(
@@ -2082,8 +2082,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         ObjList<Function> fillValues = null;
-        Function fillFromFunc = TimestampConstant.NULL;
-        Function fillToFunc = TimestampConstant.NULL;
+        Function fillFromFunc = TimestampConstant.TIMESTAMP_MICRO_NULL;
+        Function fillToFunc = TimestampConstant.TIMESTAMP_MICRO_NULL;
 
         final ExpressionNode fillFrom = curr.getFillFrom();
         final ExpressionNode fillTo = curr.getFillTo();
@@ -2176,7 +2176,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     samplingIntervalUnit,
                     timestampSampler,
                     fillValues,
-                    timestampIndex
+                    timestampIndex,
+                    groupByFactory.getMetadata().getColumnType(timestampIndex)
+
             );
         } catch (Throwable e) {
             Misc.freeObjList(fillValues);
@@ -3473,7 +3475,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             sampleFromFuncPos = model.getSampleByFrom().position;
             coerceRuntimeConstantType(sampleFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", sampleFromFuncPos);
         } else {
-            sampleFromFunc = TimestampConstant.NULL;
+            sampleFromFunc = TimestampConstant.TIMESTAMP_MICRO_NULL;
             sampleFromFuncPos = 0;
         }
 
@@ -3482,11 +3484,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             sampleToFuncPos = model.getSampleByTo().position;
             coerceRuntimeConstantType(sampleToFunc, ColumnType.TIMESTAMP, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", sampleToFuncPos);
         } else {
-            sampleToFunc = TimestampConstant.NULL;
+            sampleToFunc = TimestampConstant.TIMESTAMP_MICRO_NULL;
             sampleToFuncPos = 0;
         }
 
-        final boolean isFromTo = sampleFromFunc != TimestampConstant.NULL || sampleToFunc != TimestampConstant.NULL;
+        final boolean isFromTo = sampleFromFunc != TimestampConstant.TIMESTAMP_MICRO_NULL || sampleToFunc != TimestampConstant.TIMESTAMP_MICRO_NULL;
 
         RecordCursorFactory factory = null;
         // We require timestamp with asc order.
@@ -3576,6 +3578,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         entityColumnFilter,
                         groupByFunctionPositions,
                         timestampIndex,
+                        metadata.getColumnType(timestampIndex),
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -3653,6 +3656,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             groupByFunctions,
                             recordFunctions,
                             timestampIndex,
+                            metadata.getColumnType(timestampIndex),
                             valueTypes.getColumnCount(),
                             timezoneNameFunc,
                             timezoneNameFuncPos,
@@ -3679,6 +3683,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         groupByFunctions,
                         recordFunctions,
                         timestampIndex,
+                        metadata.getColumnType(timestampIndex),
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -3703,6 +3708,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             recordFunctions,
                             valueTypes.getColumnCount(),
                             timestampIndex,
+                            metadata.getColumnType(timestampIndex),
                             timezoneNameFunc,
                             timezoneNameFuncPos,
                             offsetFunc,
@@ -3728,6 +3734,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         keyTypes,
                         valueTypes,
                         timestampIndex,
+                        metadata.getColumnType(timestampIndex),
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -3752,6 +3759,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             recordFunctionPositions,
                             valueTypes.getColumnCount(),
                             timestampIndex,
+                            metadata.getColumnType(timestampIndex),
                             timezoneNameFunc,
                             timezoneNameFuncPos,
                             offsetFunc,
@@ -3778,6 +3786,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         recordFunctions,
                         recordFunctionPositions,
                         timestampIndex,
+                        metadata.getColumnType(timestampIndex),
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -3804,6 +3813,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         recordFunctionPositions,
                         valueTypes.getColumnCount(),
                         timestampIndex,
+                        metadata.getColumnType(timestampIndex),
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -3831,6 +3841,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     recordFunctions,
                     recordFunctionPositions,
                     timestampIndex,
+                    metadata.getColumnType(timestampIndex),
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
@@ -6564,7 +6575,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         countConstructors.put(ColumnType.INT, CountIntVectorAggregateFunction::new);
         countConstructors.put(ColumnType.LONG, CountLongVectorAggregateFunction::new);
         countConstructors.put(ColumnType.DATE, CountLongVectorAggregateFunction::new);
-        countConstructors.put(ColumnType.TIMESTAMP, CountLongVectorAggregateFunction::new);
+        countConstructors.put(ColumnType.TIMESTAMP_MICRO, CountLongVectorAggregateFunction::new);
+        countConstructors.put(ColumnType.TIMESTAMP_NANO, CountLongVectorAggregateFunction::new);
 
         sumConstructors.put(ColumnType.DOUBLE, SumDoubleVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.INT, SumIntVectorAggregateFunction::new);
@@ -6583,14 +6595,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         minConstructors.put(ColumnType.DOUBLE, MinDoubleVectorAggregateFunction::new);
         minConstructors.put(ColumnType.LONG, MinLongVectorAggregateFunction::new);
         minConstructors.put(ColumnType.DATE, MinDateVectorAggregateFunction::new);
-        minConstructors.put(ColumnType.TIMESTAMP, MinTimestampVectorAggregateFunction::new);
+        minConstructors.put(ColumnType.TIMESTAMP_MICRO, (int keyKind, int columnIndex, int workerCount) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, workerCount, TIMESTAMP_MICRO));
+        minConstructors.put(ColumnType.TIMESTAMP_NANO, (int keyKind, int columnIndex, int workerCount) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, workerCount, TIMESTAMP_NANO));
         minConstructors.put(ColumnType.INT, MinIntVectorAggregateFunction::new);
         minConstructors.put(ColumnType.SHORT, MinShortVectorAggregateFunction::new);
 
         maxConstructors.put(ColumnType.DOUBLE, MaxDoubleVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.LONG, MaxLongVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.DATE, MaxDateVectorAggregateFunction::new);
-        maxConstructors.put(ColumnType.TIMESTAMP, MaxTimestampVectorAggregateFunction::new);
+        maxConstructors.put(ColumnType.TIMESTAMP_MICRO, (int keyKind, int columnIndex, int workerCount) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, workerCount, TIMESTAMP_MICRO));
+        maxConstructors.put(ColumnType.TIMESTAMP_NANO, (int keyKind, int columnIndex, int workerCount) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, workerCount, TIMESTAMP_NANO));
         maxConstructors.put(ColumnType.INT, MaxIntVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.SHORT, MaxShortVectorAggregateFunction::new);
     }

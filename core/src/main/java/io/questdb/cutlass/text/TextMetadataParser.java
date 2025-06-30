@@ -42,7 +42,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.microtime.TimestampFormatFactory;
+import io.questdb.std.datetime.microtime.MicrosFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.str.AbstractCharSequence;
 
@@ -66,7 +66,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private final DateFormatFactory dateFormatFactory;
     private final DateLocale dateLocale;
     private final DateLocaleFactory dateLocaleFactory;
-    private final TimestampFormatFactory timestampFormatFactory;
+    private final MicrosFormatFactory microsFormatFactory;
     private final TypeManager typeManager;
     private long buf;
     private long bufCapacity = 0;
@@ -88,7 +88,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         this.csPool = new ObjectPool<>(FloatingCharSequence::new, textConfiguration.getMetadataStringPoolCapacity());
         this.dateLocaleFactory = typeManager.getInputFormatConfiguration().getDateLocaleFactory();
         this.dateFormatFactory = typeManager.getInputFormatConfiguration().getDateFormatFactory();
-        this.timestampFormatFactory = typeManager.getInputFormatConfiguration().getTimestampFormatFactory();
+        this.microsFormatFactory = typeManager.getInputFormatConfiguration().getTimestampFormatFactory();
         this.typeManager = typeManager;
         this.dateLocale = textConfiguration.getDefaultDateLocale();
     }
@@ -258,7 +258,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                 if (pattern == null) {
                     throw JsonException.$(0, "TIMESTAMP format pattern is required");
                 }
-                columnTypes.add(typeManager.nextTimestampAdapter(utf8, timestampFormatFactory.get(pattern), timestampLocale));
+                columnTypes.add(typeManager.nextTimestampAdapter(utf8, microsFormatFactory.get(pattern), timestampLocale));
                 break;
             case ColumnType.SYMBOL:
                 columnTypes.add(typeManager.nextSymbolAdapter(index));

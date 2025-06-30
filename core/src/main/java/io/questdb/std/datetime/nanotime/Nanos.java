@@ -290,19 +290,24 @@ public final class Nanos {
         return (nanos - ((nanos - offsetNanos) % (stride * HOUR_NANOS)));
     }
 
+    public static long floorMC(long nanos) {
+        return nanos - nanos % MICRO_NANOS;
+    }
+
     /**
-     * Floors timestamp value to the nearest nanosecond.
+     * Floors timestamp value to the nearest microsecond.
      *
      * @param nanos  the input value to floor
      * @param stride the number of nanos to floor to.
      * @return floored value.
      */
     public static long floorMC(long nanos, int stride) {
-        return nanos - nanos % stride;
+        return nanos - nanos % (stride * MICRO_NANOS);
     }
 
     public static long floorMC(long nanos, int stride, long offset) {
-        return nanos - ((nanos - offset) % stride);
+        long result = nanos - ((nanos - offset) % (stride * MICRO_NANOS));
+        return Math.min(result, nanos);
     }
 
     public static long floorMI(long nanos) {

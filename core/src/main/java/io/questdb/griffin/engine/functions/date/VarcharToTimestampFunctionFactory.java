@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -47,13 +48,14 @@ public final class VarcharToTimestampFunctionFactory implements FunctionFactory 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new ToTimestampFunction(arg);
+        return new ToTimestampFunction(arg, ColumnType.TIMESTAMP_MICRO);
     }
 
     public static final class ToTimestampFunction extends TimestampFunction implements UnaryFunction {
         private final Function arg;
 
-        public ToTimestampFunction(Function arg) {
+        public ToTimestampFunction(Function arg, int timestampType) {
+            super(timestampType);
             this.arg = arg;
         }
 

@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -59,6 +60,8 @@ public interface TimestampDriver {
     }
 
     void appendPGWireText(CharSink<?> sink, long timestamp);
+
+    PlanSink appendTypeToPlan(PlanSink sink);
 
     default long castStr(CharSequence value, int tupleIndex, int fromType, int toType) {
         try {
@@ -118,13 +121,23 @@ public interface TimestampDriver {
 
     PartitionAddMethod getPartitionAddMethod(int partitionBy);
 
-    PartitionCeilMethod getPartitionCeilMethod(int partitionBy);
+    TimestampCeilMethod getPartitionCeilMethod(int partitionBy);
 
     DateFormat getPartitionDirFormatMethod(int partitionBy);
 
-    PartitionFloorMethod getPartitionFloorMethod(int partitionBy);
+    TimestampFloorMethod getPartitionFloorMethod(int partitionBy);
 
     long getTicks();
+
+    TimestampCeilMethod getTimestampCeilMethod(char c);
+
+    TimestampDateFormatFactory getTimestampDateFormatFactory();
+
+    TimestampFloorMethod getTimestampFloorMethod(String c);
+
+    TimestampFloorWithOffsetMethod getTimestampFloorWithOffsetMethod(char c);
+
+    TimestampFloorWithStrideMethod getTimestampFloorWithStrideMethod(String c);
 
     CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType);
 
@@ -211,13 +224,23 @@ public interface TimestampDriver {
     }
 
     @FunctionalInterface
-    interface PartitionCeilMethod {
+    interface TimestampCeilMethod {
         // returns exclusive ceiling for the give timestamp
         long ceil(long timestamp);
     }
 
     @FunctionalInterface
-    interface PartitionFloorMethod {
+    interface TimestampFloorMethod {
         long floor(long timestamp);
+    }
+
+    @FunctionalInterface
+    interface TimestampFloorWithOffsetMethod {
+        long floor(long micros, int stride, long offset);
+    }
+
+    @FunctionalInterface
+    interface TimestampFloorWithStrideMethod {
+        long floor(long micros, int stride);
     }
 }

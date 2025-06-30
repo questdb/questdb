@@ -91,10 +91,10 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.MicrosFormatFactory;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.microtime.TimestampFormatFactory;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.Dates;
@@ -1410,7 +1410,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
                     DateLocaleFactory.INSTANCE,
-                    new TimestampFormatFactory(),
+                    new MicrosFormatFactory(),
                     this.locale
             );
 

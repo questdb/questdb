@@ -71,7 +71,7 @@ public final class PartitionBy {
         return ColumnType.getTimestampDriver(timestampType).getPartitionAddMethod(partitionBy);
     }
 
-    public static TimestampDriver.PartitionCeilMethod getPartitionCeilMethod(int timestampType, int partitionBy) {
+    public static TimestampDriver.TimestampCeilMethod getPartitionCeilMethod(int timestampType, int partitionBy) {
         return ColumnType.getTimestampDriver(timestampType).getPartitionCeilMethod(partitionBy);
     }
 
@@ -79,7 +79,7 @@ public final class PartitionBy {
         return ColumnType.getTimestampDriver(timestampType).getPartitionDirFormatMethod(partitionBy);
     }
 
-    public static TimestampDriver.PartitionFloorMethod getPartitionFloorMethod(int timestampType, int partitionBy) {
+    public static TimestampDriver.TimestampFloorMethod getPartitionFloorMethod(int timestampType, int partitionBy) {
         return ColumnType.getTimestampDriver(timestampType).getPartitionFloorMethod(partitionBy);
     }
 

@@ -2349,7 +2349,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             constFuncs.put(ColumnType.IPv4, list(new IPv4Constant(3)));
             constFuncs.put(ColumnType.LONG, list(new LongConstant(4)));
             constFuncs.put(ColumnType.DATE, list(new DateConstant(0)));
-            constFuncs.put(ColumnType.TIMESTAMP, list(new TimestampConstant(86400000000L)));
+            constFuncs.put(ColumnType.TIMESTAMP_MICRO, list(new TimestampConstant(86400000000L, ColumnType.TIMESTAMP_MICRO)));
+            constFuncs.put(ColumnType.TIMESTAMP_NANO, list(new TimestampConstant(86400000000000L, ColumnType.TIMESTAMP_NANO)));
             constFuncs.put(ColumnType.FLOAT, list(new FloatConstant(5f)));
             constFuncs.put(ColumnType.DOUBLE, list(new DoubleConstant(1))); // has to be [0.0, 1.0] for approx_percentile
             constFuncs.put(ColumnType.STRING, list(new StrConstant("bbb"), new StrConstant("1"), new StrConstant("1.1.1.1"), new StrConstant("1.1.1.1/24")));
@@ -2389,7 +2390,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             colFuncs.put(ColumnType.IPv4, new IPv4Column(1));
             colFuncs.put(ColumnType.LONG, LongColumn.newInstance(1));
             colFuncs.put(ColumnType.DATE, DateColumn.newInstance(1));
-            colFuncs.put(ColumnType.TIMESTAMP, TimestampColumn.newInstance(1));
+            colFuncs.put(ColumnType.TIMESTAMP_MICRO, TimestampColumn.newInstance(1, ColumnType.TIMESTAMP_MICRO));
+            colFuncs.put(ColumnType.TIMESTAMP_NANO, TimestampColumn.newInstance(1, ColumnType.TIMESTAMP_NANO));
             colFuncs.put(ColumnType.FLOAT, FloatColumn.newInstance(1));
             colFuncs.put(ColumnType.DOUBLE, DoubleColumn.newInstance(1));
             colFuncs.put(ColumnType.STRING, new StrColumn(1));
@@ -2612,7 +2614,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 } else if (factory instanceof HydrateTableMetadataFunctionFactory) {
                                     args.add(new StrConstant("*"));
                                 } else if (factory instanceof InTimestampIntervalFunctionFactory) {
-                                    args.add(new TimestampConstant(123141));
+                                    args.add(new TimestampConstant(123141, ColumnType.TIMESTAMP_MICRO));
                                     args.add(new IntervalConstant(1231, 123146));
                                 } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
                                     args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
@@ -11832,8 +11834,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 return new LongConstant(val);
             case ColumnType.DATE:
                 return new DateConstant(val * 86_400_000L);
-            case ColumnType.TIMESTAMP:
-                return new TimestampConstant(val * 86_400_000L);
+            case ColumnType.TIMESTAMP_MICRO:
+                return new TimestampConstant(val * 86_400_000L, ColumnType.TIMESTAMP_MICRO);
+            case ColumnType.TIMESTAMP_NANO:
+                return new TimestampConstant(val * 86_400_000L, ColumnType.TIMESTAMP_NANO);
             default:
                 ObjList<Function> availableValues = values.get(type);
                 if (availableValues != null) {

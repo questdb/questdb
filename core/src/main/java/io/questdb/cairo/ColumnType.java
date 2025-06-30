@@ -69,6 +69,7 @@ public final class ColumnType {
     public static final int MIGRATION_VERSION = 427;
     public static final short OVERLOAD_FULL = -1; // akin to no distance
     public static final short OVERLOAD_NONE = 10000; // akin to infinite distance
+    public static final int TIMESTAMP_TYPE_MASK = 0x0001FFFF;
     // our type system is absolutely ordered ranging
     // - from UNDEFINED: index 0, represents lack of type, an internal parsing concept.
     // - to NULL: index must be last, other parts of the codebase rely on this fact.
@@ -253,7 +254,7 @@ public final class ColumnType {
         }
 
         assert tagOf(timestampType) == TIMESTAMP;
-        switch (timestampType) {
+        switch (timestampType & TIMESTAMP_TYPE_MASK) {
             case TIMESTAMP_MICRO:
                 return MicrosTimestampDriver.INSTANCE;
             case TIMESTAMP_NANO:

@@ -191,7 +191,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.DATE:
                 return DateColumn.newInstance(index);
             case ColumnType.TIMESTAMP:
-                return TimestampColumn.newInstance(index);
+                return TimestampColumn.newInstance(index, columnType);
             case ColumnType.RECORD:
                 return new RecordColumn(index, metadata.getMetadata(index));
             case ColumnType.GEOBYTE:
@@ -994,7 +994,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         for (int k = 0; k < candidateSigArgCount; k++) {
             final Function arg = args.getQuick(k);
-            final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(candidateDescriptor.getArgTypeWithFlags(k));
+            final int sigArgType = candidateDescriptor.getArgTypeWithFlags(k);
+            final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(sigArgType);
             final short argTypeTag = ColumnType.tagOf(arg.getType());
 
             if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Numbers.isNull(arg.getDouble(null))) {
@@ -1008,7 +1009,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (sigArgTypeTag == ColumnType.TIMESTAMP) {
                     int position = argPositions.getQuick(k);
                     long timestamp = parseTimestamp(arg.getStrA(null), position);
-                    args.set(k, TimestampConstant.newInstance(timestamp));
+                    args.set(k, TimestampConstant.newInstance(timestamp, sigArgType));
                 } else if (sigArgTypeTag == ColumnType.DATE) {
                     int position = argPositions.getQuick(k);
                     long millis = parseDate(arg.getStrA(null), position);
@@ -1218,7 +1219,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof TimestampConstant) {
                     return function;
                 } else {
-                    return TimestampConstant.newInstance(function.getTimestamp(null));
+                    return TimestampConstant.newInstance(function.getTimestamp(null), type);
                 }
             case ColumnType.UUID:
                 if (function instanceof UuidConstant) {

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -51,6 +52,7 @@ public class SystimestampFunctionFactory implements FunctionFactory {
         private final SqlExecutionContext context;
 
         public Func(SqlExecutionContext context) {
+            super(ColumnType.TIMESTAMP_MICRO);
             this.context = context;
         }
 

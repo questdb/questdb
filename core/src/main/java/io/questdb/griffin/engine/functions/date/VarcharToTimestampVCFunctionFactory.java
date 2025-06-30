@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
@@ -38,7 +39,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.microtime.TimestampFormatFactory;
 import io.questdb.std.str.Utf8Sequence;
 
 public final class VarcharToTimestampVCFunctionFactory extends ToTimestampVCFunctionFactory {
@@ -62,24 +62,25 @@ public final class VarcharToTimestampVCFunctionFactory extends ToTimestampVCFunc
         }
         DateLocale defaultDateLocale = configuration.getDefaultDateLocale();
         if (arg.isConstant()) {
-            return evaluateConstant(arg, TimestampFormatFactory.INSTANCE.get(pattern), defaultDateLocale);
+            return evaluateConstant(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_MICRO);
         } else {
             if ("en".equals(defaultDateLocale.getName()) || (defaultDateLocale.getName() != null && defaultDateLocale.getName().startsWith("en-"))) {
-                return new ToAsciiTimestampFuc(arg, TimestampFormatFactory.INSTANCE.get(pattern), defaultDateLocale);
+                return new ToAsciiTimestampFunc(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_MICRO);
             }
-            return new Func(arg, TimestampFormatFactory.INSTANCE.get(pattern), defaultDateLocale);
+            return new Func(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_MICRO);
         }
     }
 
-    protected static final class ToAsciiTimestampFuc extends TimestampFunction implements UnaryFunction {
+    protected static final class ToAsciiTimestampFunc extends TimestampFunction implements UnaryFunction {
 
         private final Function arg;
         private final DateLocale locale;
         private final DateFormat timestampFormat;
 
-        public ToAsciiTimestampFuc(Function arg, DateFormat timestampFormat, DateLocale locale) {
+        public ToAsciiTimestampFunc(Function arg, CharSequence pattern, DateLocale locale, int timestampType) {
+            super(timestampType);
             this.arg = arg;
-            this.timestampFormat = timestampFormat;
+            this.timestampFormat = timestampDriver.getTimestampDateFormatFactory().get(pattern);
             this.locale = locale;
         }
 

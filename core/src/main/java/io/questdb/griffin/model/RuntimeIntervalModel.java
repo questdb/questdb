@@ -252,7 +252,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         }
     }
 
-    private boolean allIntervalsHitOnePartition(TimestampDriver.PartitionFloorMethod floorMethod) {
+    private boolean allIntervalsHitOnePartition(TimestampDriver.TimestampFloorMethod floorMethod) {
         if (!isStatic()) {
             return false;
         }

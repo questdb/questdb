@@ -346,7 +346,7 @@ public class GroupByUtils {
                 func = DateColumn.newInstance(keyColumnIndex - 1);
                 break;
             case ColumnType.TIMESTAMP:
-                func = TimestampColumn.newInstance(keyColumnIndex - 1);
+                func = TimestampColumn.newInstance(keyColumnIndex - 1, type);
                 break;
             case ColumnType.LONG256:
                 func = Long256Column.newInstance(keyColumnIndex - 1);

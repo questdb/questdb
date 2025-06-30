@@ -66,7 +66,7 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     private int frameCount = 0;
     private PageFrameCursor frameCursor;
     private boolean isFrameCacheBuilt;
-    private TimestampDriver.PartitionCeilMethod partitionCeilMethod;
+    private TimestampDriver.TimestampCeilMethod partitionCeilMethod;
     private int partitionHi;
     private TableReader reader;
 

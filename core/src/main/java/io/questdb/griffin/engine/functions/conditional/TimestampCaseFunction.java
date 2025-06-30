@@ -33,7 +33,8 @@ class TimestampCaseFunction extends TimestampFunction implements CaseFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;
 
-    public TimestampCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
+    public TimestampCaseFunction(CaseFunctionPicker picker, ObjList<Function> args, int columnType) {
+        super(columnType);
         this.picker = picker;
         this.args = args;
     }
@@ -45,6 +46,7 @@ class TimestampCaseFunction extends TimestampFunction implements CaseFunction {
 
     @Override
     public long getTimestamp(Record rec) {
-        return picker.pick(rec).getTimestamp(rec);
+        Function f = picker.pick(rec);
+        return timestampDriver.from(f.getTimestamp(rec), f.getType());
     }
 }

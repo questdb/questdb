@@ -25,15 +25,16 @@
 package io.questdb.std.datetime.microtime;
 
 
+import io.questdb.cairo.TimestampDateFormatFactory;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.datetime.DateFormat;
 
 import java.util.function.Function;
 
-public class TimestampFormatFactory {
+public class MicrosFormatFactory implements TimestampDateFormatFactory {
     private final static ThreadLocal<TimestampFormatCompiler> tlCompiler = ThreadLocal.withInitial(TimestampFormatCompiler::new);
-    private static final Function<CharSequence, DateFormat> mapper = TimestampFormatFactory::map;
-    public static TimestampFormatFactory INSTANCE = new TimestampFormatFactory();
+    private static final Function<CharSequence, DateFormat> mapper = MicrosFormatFactory::map;
+    public static MicrosFormatFactory INSTANCE = new MicrosFormatFactory();
     private final ConcurrentHashMap<DateFormat> cache = new ConcurrentHashMap<>();
 
     /**
@@ -46,6 +47,7 @@ public class TimestampFormatFactory {
      * @param pattern can be mutable and is not stored if same pattern already in cache.
      * @return compiled implementation of DateFormat
      */
+    @Override
     public DateFormat get(CharSequence pattern) {
         return cache.computeIfAbsent(pattern, mapper);
     }

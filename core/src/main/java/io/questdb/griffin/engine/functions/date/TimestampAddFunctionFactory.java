@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -75,14 +76,14 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
 
             if (strideFunc.isConstant()) {
                 if ((stride = strideFunc.getInt(null)) != Numbers.INT_NULL) {
-                    return new TimestampAddConstConstVar(period, periodAddFunc, stride, timestampFunc);
+                    return new TimestampAddConstConstVar(period, periodAddFunc, stride, timestampFunc, ColumnType.TIMESTAMP_MICRO);
                 } else {
                     throw SqlException.$(argPositions.getQuick(1), "`null` is not a valid stride");
                 }
             }
-            return new TimestampAddConstVarVar(period, periodAddFunc, strideFunc, timestampFunc);
+            return new TimestampAddConstVarVar(period, periodAddFunc, strideFunc, timestampFunc, ColumnType.TIMESTAMP_MICRO);
         }
-        return new TimestampAddFunc(periodFunc, strideFunc, argPositions.getQuick(1), timestampFunc);
+        return new TimestampAddFunc(periodFunc, strideFunc, argPositions.getQuick(1), timestampFunc, ColumnType.TIMESTAMP_MICRO);
     }
 
     static @Nullable LongAddIntFunction lookupAddFunction(char period) {
@@ -121,7 +122,8 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         private final int stride;
         private final Function timestampFunc;
 
-        public TimestampAddConstConstVar(char period, LongAddIntFunction periodAddFunction, int stride, Function timestampFunc) {
+        public TimestampAddConstConstVar(char period, LongAddIntFunction periodAddFunction, int stride, Function timestampFunc, int timestampType) {
+            super(timestampType);
             this.period = period;
             this.periodAddFunction = periodAddFunction;
             this.stride = stride;
@@ -154,7 +156,8 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         private final Function strideFunc;
         private final Function timestampFunc;
 
-        public TimestampAddConstVarVar(char period, LongAddIntFunction periodAddFunc, Function strideFunc, Function timestampFunc) {
+        public TimestampAddConstVarVar(char period, LongAddIntFunction periodAddFunc, Function strideFunc, Function timestampFunc, int timestampType) {
+            super(timestampType);
             this.period = period;
             this.periodAddFunc = periodAddFunc;
             this.strideFunc = strideFunc;
@@ -193,7 +196,8 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         private final int stridePosition;
         private final Function timestampFunc;
 
-        public TimestampAddFunc(Function periodFunc, Function strideFunc, int stridePosition, Function timestampFunc) {
+        public TimestampAddFunc(Function periodFunc, Function strideFunc, int stridePosition, Function timestampFunc, int timestampType) {
+            super(timestampType);
             this.periodFunc = periodFunc;
             this.strideFunc = strideFunc;
             this.stridePosition = stridePosition;

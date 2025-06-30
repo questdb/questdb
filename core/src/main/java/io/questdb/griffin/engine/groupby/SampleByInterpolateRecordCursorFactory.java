@@ -101,6 +101,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             @Transient @NotNull EntityColumnFilter entityColumnFilter,
             @Transient @NotNull IntList groupByFunctionPositions,
             int timestampIndex,
+            int timestampType,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
@@ -115,7 +116,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             this.sampler = timestampSampler;
 
             // create timestamp column
-            TimestampColumn timestampColumn = TimestampColumn.newInstance(valueTypes.getColumnCount() + keyTypes.getColumnCount());
+            TimestampColumn timestampColumn = TimestampColumn.newInstance(valueTypes.getColumnCount() + keyTypes.getColumnCount(), timestampType);
             for (int i = 0, n = recordFunctions.size(); i < n; i++) {
                 if (recordFunctions.getQuick(i) == null) {
                     recordFunctions.setQuick(i, timestampColumn);

@@ -29,11 +29,15 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.microtime.TimestampFormatFactory;
+import io.questdb.std.datetime.microtime.MicrosFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 
 import java.io.File;
@@ -61,7 +65,7 @@ public class InputFormatConfiguration {
     private final DateLocaleFactory dateLocaleFactory;
     private final ObjList<DateLocale> dateLocales = new ObjList<>();
     private final IntList dateUtf8Flags = new IntList();
-    private final TimestampFormatFactory timestampFormatFactory;
+    private final MicrosFormatFactory timestampFormatFactory;
     private final ObjList<DateFormat> timestampFormats = new ObjList<>();
     private final ObjList<DateLocale> timestampLocales = new ObjList<>();
     private final IntList timestampUtf8Flags = new IntList();
@@ -76,12 +80,12 @@ public class InputFormatConfiguration {
     public InputFormatConfiguration(
             DateFormatFactory dateFormatFactory,
             DateLocaleFactory dateLocaleFactory,
-            TimestampFormatFactory timestampFormatFactory,
+            MicrosFormatFactory microsFormatFactory,
             DateLocale dateLocale
     ) {
         this.dateFormatFactory = dateFormatFactory;
         this.dateLocaleFactory = dateLocaleFactory;
-        this.timestampFormatFactory = timestampFormatFactory;
+        this.timestampFormatFactory = microsFormatFactory;
         this.dateLocale = dateLocale;
     }
 
@@ -121,7 +125,7 @@ public class InputFormatConfiguration {
         return dateUtf8Flags;
     }
 
-    public TimestampFormatFactory getTimestampFormatFactory() {
+    public MicrosFormatFactory getTimestampFormatFactory() {
         return timestampFormatFactory;
     }
 

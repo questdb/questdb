@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -51,13 +52,14 @@ public class IntervalEndFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0));
+        return new Func(args.getQuick(0), ColumnType.TIMESTAMP_MICRO);
     }
 
     private static class Func extends TimestampFunction implements UnaryFunction {
         private final Function intervalFunc;
 
-        public Func(Function intervalFunc) {
+        public Func(Function intervalFunc, int timestampType) {
+            super(timestampType);
             this.intervalFunc = intervalFunc;
         }
 

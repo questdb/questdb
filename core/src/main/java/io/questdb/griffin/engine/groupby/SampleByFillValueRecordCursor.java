@@ -59,6 +59,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
             ObjList<Function> recordFunctions,
             ObjList<Function> placeholderFunctions,
             int timestampIndex, // index of timestamp column in base cursor
+            int timestampType,
             TimestampSampler timestampSampler,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
@@ -73,6 +74,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
                 configuration,
                 recordFunctions,
                 timestampIndex,
+                timestampType,
                 timestampSampler,
                 groupByFunctions,
                 groupByFunctionsUpdater,

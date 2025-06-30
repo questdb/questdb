@@ -383,8 +383,8 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                             timeFrameCursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), frame.getRowLo()));
                             long tsLo = record.getTimestamp(0);
 
-                            TimestampDriver.PartitionFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, partitionBy);
-                            TimestampDriver.PartitionCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, partitionBy);
+                            TimestampDriver.TimestampFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, partitionBy);
+                            TimestampDriver.TimestampCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, partitionBy);
 
                             long expectedEstimateTsLo = floorMethod != null ? floorMethod.floor(tsLo) : 0;
                             long expectedEstimateTsHi = ceilMethod != null ? ceilMethod.ceil(tsLo) : Long.MAX_VALUE;
@@ -450,8 +450,8 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                         timeFrameCursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), frame.getRowLo()));
                         long tsLo = record.getTimestamp(0);
 
-                        TimestampDriver.PartitionFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, PartitionBy.DAY);
-                        TimestampDriver.PartitionCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, PartitionBy.DAY);
+                        TimestampDriver.TimestampFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, PartitionBy.DAY);
+                        TimestampDriver.TimestampCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, PartitionBy.DAY);
 
                         long expectedEstimateTsLo = floorMethod != null ? floorMethod.floor(tsLo) : 0;
                         long expectedEstimateTsHi = ceilMethod != null ? ceilMethod.ceil(tsLo) : Long.MAX_VALUE;

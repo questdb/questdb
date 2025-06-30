@@ -129,7 +129,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private long offset;
     private DateFormat partitionDirFormatMethod;
     // used to map timestamp to output file
-    private TimestampDriver.PartitionFloorMethod partitionFloorMethod;
+    private TimestampDriver.TimestampFloorMethod partitionFloorMethod;
     // work dir path
     private Path path;
     private boolean rollBufferUnusable = false;

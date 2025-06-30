@@ -30,7 +30,7 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.microtime.TimestampFormatFactory;
+import io.questdb.std.datetime.microtime.MicrosFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -50,7 +50,7 @@ public class DefaultTextConfiguration implements TextConfiguration {
         this.inputFormatConfiguration = new InputFormatConfiguration(
                 new DateFormatFactory(),
                 DateLocaleFactory.INSTANCE,
-                new TimestampFormatFactory(),
+                new MicrosFormatFactory(),
                 EN_LOCALE
         );
 

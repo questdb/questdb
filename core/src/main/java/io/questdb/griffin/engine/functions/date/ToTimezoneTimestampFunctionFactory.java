@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -68,9 +69,9 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         if (timezoneFunc.isConstant()) {
             return toTimezoneConstFunction(timestampFunc, timezoneFunc, timezonePos);
         } else if (timezoneFunc.isRuntimeConstant()) {
-            return new RuntimeConstFunc(timestampFunc, timezoneFunc, timezonePos);
+            return new RuntimeConstFunc(timestampFunc, timezoneFunc, timezonePos, ColumnType.TIMESTAMP_MICRO);
         } else {
-            return new Func(timestampFunc, timezoneFunc);
+            return new Func(timestampFunc, timezoneFunc, ColumnType.TIMESTAMP_MICRO);
         }
     }
 
@@ -90,7 +91,8 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
                             timestampFunc,
                             DateLocaleFactory.EN_LOCALE.getZoneRules(
                                     Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
-                            )
+                            ),
+                            ColumnType.TIMESTAMP_MICRO
                     );
                 } catch (NumericException e) {
                     Misc.free(timestampFunc);
@@ -99,7 +101,8 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
             } else {
                 return new OffsetTimestampFunction(
                         timestampFunc,
-                        Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS
+                        Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS,
+                        ColumnType.TIMESTAMP_MICRO
                 );
             }
         }
@@ -110,7 +113,8 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         private final Function timestampFunc;
         private final TimeZoneRules tzRules;
 
-        public ConstRulesFunc(Function timestampFunc, TimeZoneRules tzRules) {
+        public ConstRulesFunc(Function timestampFunc, TimeZoneRules tzRules, int timestampType) {
+            super(timestampType);
             this.timestampFunc = timestampFunc;
             this.tzRules = tzRules;
         }
@@ -136,7 +140,8 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         private final Function timestampFunc;
         private final Function timezoneFunc;
 
-        public Func(Function timestampFunc, Function timezoneFunc) {
+        public Func(Function timestampFunc, Function timezoneFunc, int timestampType) {
+            super(timestampType);
             this.timestampFunc = timestampFunc;
             this.timezoneFunc = timezoneFunc;
         }
@@ -175,7 +180,8 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         private long tzOffset;
         private TimeZoneRules tzRules;
 
-        public RuntimeConstFunc(Function timestampFunc, Function timezoneFunc, int timezonePos) {
+        public RuntimeConstFunc(Function timestampFunc, Function timezoneFunc, int timezonePos, int timestampType) {
+            super(timestampType);
             this.timestampFunc = timestampFunc;
             this.timezoneFunc = timezoneFunc;
             this.timezonePos = timezonePos;

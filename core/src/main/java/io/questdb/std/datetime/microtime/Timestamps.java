@@ -300,6 +300,10 @@ public final class Timestamps {
         return (micros - ((micros - offset) % (stride * HOUR_MICROS)));
     }
 
+    public static long floorMC(long micros) {
+        return micros;
+    }
+
     /**
      * Floors timestamp value to the nearest microsecond.
      *

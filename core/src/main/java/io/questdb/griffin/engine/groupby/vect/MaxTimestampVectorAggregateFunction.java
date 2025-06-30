@@ -48,7 +48,8 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
     );
     private int valueOffset;
 
-    public MaxTimestampVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public MaxTimestampVectorAggregateFunction(int keyKind, int columnIndex, int workerCount, int timestampType) {
+        super(timestampType);
         this.columnIndex = columnIndex;
         if (keyKind == GKK_HOUR_INT) {
             this.distinctFunc = Rosti::keyedHourDistinct;

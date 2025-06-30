@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -84,7 +85,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
 
             if (strideFunc.isConstant()) {
                 if ((stride = strideFunc.getInt(null)) != Numbers.INT_NULL) {
-                    return new TimestampAddConstConstVarConst(period, periodAddFunc, stride, timestampFunc, timeZoneRules, tzFunc);
+                    return new TimestampAddConstConstVarConst(period, periodAddFunc, stride, timestampFunc, timeZoneRules, tzFunc, ColumnType.TIMESTAMP_MICRO);
                 } else {
                     throw SqlException.$(argPositions.getQuick(1), "`null` is not a valid stride");
                 }
@@ -97,7 +98,8 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
                     argPositions.getQuick(1),
                     timestampFunc,
                     timeZoneRules,
-                    tzFunc
+                    tzFunc,
+                    ColumnType.TIMESTAMP_MICRO
             );
         }
 
@@ -108,7 +110,8 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
                 argPositions.getQuick(1),
                 timestampFunc,
                 tzFunc,
-                argPositions.getQuick(3)
+                argPositions.getQuick(3),
+                ColumnType.TIMESTAMP_MICRO
         );
     }
 
@@ -135,8 +138,10 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
                 int stride,
                 Function timestampFunc,
                 TimeZoneRules timeZoneRules,
-                Function tzFunc
+                Function tzFunc,
+                int timestampType
         ) {
+            super(timestampType);
             this.period = period;
             this.periodAddFunction = periodAddFunction;
             this.stride = stride;
@@ -177,8 +182,10 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
                 int stridePosition,
                 Function timestampFunc,
                 TimeZoneRules timeZoneRules,
-                Function tzFunc
+                Function tzFunc,
+                int timestampType
         ) {
+            super(timestampType);
             this.period = period;
             this.periodAddFunc = periodAddFunc;
             this.strideFunc = strideFunc;
@@ -236,8 +243,10 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
                 int stridePosition,
                 Function timestampFunc,
                 Function tzFunc,
-                int timezonePosition
+                int timezonePosition,
+                int timestampType
         ) {
+            super(timestampType);
             this.periodFunc = periodFunc;
             this.periodPosition = periodPosition;
             this.strideFunc = strideFunc;

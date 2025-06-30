@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -55,13 +56,13 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
         long start = args.getQuick(0).getTimestamp(null);
         long end = args.getQuick(1).getTimestamp(null);
         if (start == Numbers.LONG_NULL || end == Numbers.LONG_NULL) {
-            return TimestampConstant.NULL;
+            return TimestampConstant.TIMESTAMP_MICRO_NULL;
         }
 
         if (start <= end) {
-            return new TimestampShuffleFunction(start, end);
+            return new TimestampShuffleFunction(start, end, ColumnType.TIMESTAMP_MICRO);
         } else {
-            return new TimestampShuffleFunction(end, start);
+            return new TimestampShuffleFunction(end, start, ColumnType.TIMESTAMP_MICRO);
         }
     }
 
@@ -70,7 +71,8 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
         private final long start;
         private Rnd rnd;
 
-        public TimestampShuffleFunction(long start, long end) {
+        public TimestampShuffleFunction(long start, long end, int columnType) {
+            super(columnType);
             this.start = start;
             this.end = end;
         }

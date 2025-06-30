@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions;
 
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -39,16 +38,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
-public abstract class TimestampFunction implements Function {
-    protected TimestampDriver timestampDriver;
-    protected int timestampType;
-
-    public TimestampFunction(int timestampType) {
-        assert ColumnType.isTimestamp(timestampType);
-        this.timestampType = timestampType;
-        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
-    }
-
+public abstract class TimestampNSFunction implements Function {
     @Override
     public ArrayView getArray(Record rec) {
         throw new UnsupportedOperationException();
@@ -82,7 +72,7 @@ public abstract class TimestampFunction implements Function {
     @Override
     public final long getDate(Record rec) {
         final long value = getTimestamp(rec);
-        return timestampDriver.toDate(value);
+        return value == Numbers.LONG_NULL ? value : value / 1000L;
     }
 
     @Override
@@ -199,7 +189,7 @@ public abstract class TimestampFunction implements Function {
 
     @Override
     public final int getType() {
-        return timestampType;
+        return ColumnType.TIMESTAMP;
     }
 
     @Override
@@ -215,10 +205,5 @@ public abstract class TimestampFunction implements Function {
     @Override
     public final int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
-    }
-
-    public void setType(int type) {
-        this.timestampType = type;
-        this.timestampDriver = ColumnType.getTimestampDriver(type);
     }
 }

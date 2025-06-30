@@ -34,7 +34,7 @@ import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.microtime.TimestampFormatFactory;
+import io.questdb.std.datetime.microtime.MicrosFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -242,7 +242,7 @@ public class TypeManagerTest extends AbstractTest {
         InputFormatConfiguration inputFormatConfiguration = new InputFormatConfiguration(
                 new DateFormatFactory(),
                 DateLocaleFactory.INSTANCE,
-                new TimestampFormatFactory(),
+                new MicrosFormatFactory(),
                 EN_LOCALE
         );
 

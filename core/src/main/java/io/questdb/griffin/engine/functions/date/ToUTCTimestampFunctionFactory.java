@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -68,11 +69,11 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         final int timezonePos = argPositions.getQuick(1);
 
         if (timezoneFunc.isConstant()) {
-            return toUTCConstFunction(timestampFunc, timezoneFunc, timezonePos);
+            return toUTCConstFunction(timestampFunc, timezoneFunc, timezonePos, ColumnType.TIMESTAMP_MICRO);
         } else if (timezoneFunc.isRuntimeConstant()) {
-            return new RuntimeConstFunc(timestampFunc, timezoneFunc, timezonePos);
+            return new RuntimeConstFunc(timestampFunc, timezoneFunc, timezonePos, ColumnType.TIMESTAMP_MICRO);
         } else {
-            return new Func(timestampFunc, timezoneFunc);
+            return new Func(timestampFunc, timezoneFunc, ColumnType.TIMESTAMP_MICRO);
         }
     }
 
@@ -80,7 +81,8 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
     private static TimestampFunction toUTCConstFunction(
             Function timestampFunc,
             Function timezoneFunc,
-            int timezonePos
+            int timezonePos,
+            int timestampType
     ) throws SqlException {
         final CharSequence tz = timezoneFunc.getStrA(null);
         if (tz != null) {
@@ -92,7 +94,8 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
                             timestampFunc,
                             DateLocaleFactory.EN_LOCALE.getZoneRules(
                                     Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
-                            )
+                            ),
+                            timestampType
                     );
                 } catch (NumericException e) {
                     Misc.free(timestampFunc);
@@ -101,7 +104,8 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
             } else {
                 return new OffsetTimestampFunction(
                         timestampFunc,
-                        -Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS
+                        -Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS,
+                        timestampType
                 );
             }
         }
@@ -112,7 +116,8 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         private final Function timestampFunc;
         private final TimeZoneRules tzRules;
 
-        public ConstRulesFunc(Function timestampFunc, TimeZoneRules tzRules) {
+        public ConstRulesFunc(Function timestampFunc, TimeZoneRules tzRules, int timestampTType) {
+            super(ColumnType.TIMESTAMP_MICRO);
             this.timestampFunc = timestampFunc;
             this.tzRules = tzRules;
         }
@@ -139,7 +144,8 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         private final Function timestampFunc;
         private final Function timezoneFunc;
 
-        public Func(Function timestampFunc, Function timezoneFunc) {
+        public Func(Function timestampFunc, Function timezoneFunc, int timestampType) {
+            super(timestampType);
             this.timestampFunc = timestampFunc;
             this.timezoneFunc = timezoneFunc;
         }
@@ -178,7 +184,8 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         private long tzOffset;
         private TimeZoneRules tzRules;
 
-        public RuntimeConstFunc(Function timestampFunc, Function timezoneFunc, int timezonePos) {
+        public RuntimeConstFunc(Function timestampFunc, Function timezoneFunc, int timezonePos, int timestampType) {
+            super(timestampType);
             this.timestampFunc = timestampFunc;
             this.timezoneFunc = timezoneFunc;
             this.timezonePos = timezonePos;

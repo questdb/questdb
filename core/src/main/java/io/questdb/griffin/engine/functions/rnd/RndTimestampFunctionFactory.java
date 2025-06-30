@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -61,19 +62,20 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
         }
 
         if (lo < hi) {
-            return new Func(lo, hi, nanRate);
+            return new Func(lo, hi, nanRate, ColumnType.TIMESTAMP_MICRO);
         }
 
         throw SqlException.$(position, "invalid range");
     }
 
-    private static class Func extends TimestampFunction implements Function {
+    public static class Func extends TimestampFunction implements Function {
         private final long lo;
         private final int nanRate;
         private final long range;
         private Rnd rnd;
 
-        public Func(long lo, long hi, int nanRate) {
+        public Func(long lo, long hi, int nanRate, int timestampType) {
+            super(timestampType);
             this.lo = lo;
             this.range = hi - lo + 1;
             this.nanRate = nanRate + 1;

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -56,11 +57,15 @@ public class NowFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func();
+        return new Func(ColumnType.TIMESTAMP_MICRO);
     }
 
     private static class Func extends TimestampFunction implements Function {
         private long now;
+
+        public Func(int timestampType) {
+            super(timestampType);
+        }
 
         @Override
         public long getTimestamp(Record rec) {
@@ -78,12 +83,12 @@ public class NowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isThreadSafe() {
+        public boolean isRuntimeConstant() {
             return true;
         }
 
         @Override
-        public boolean isRuntimeConstant() {
+        public boolean isThreadSafe() {
             return true;
         }
 

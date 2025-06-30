@@ -22,49 +22,55 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.bind;
+package io.questdb.griffin.engine.functions.date;
 
-import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.std.Mutable;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.datetime.microtime.Timestamps;
 
-class TimestampBindVariable extends TimestampFunction implements Mutable {
-    long value;
 
-    public TimestampBindVariable() {
-        super(ColumnType.TIMESTAMP_MICRO);
+public final class TimestampFloorOffsetFunction extends TimestampFunction implements UnaryFunction {
+
+    private final Function arg;
+    private final TimestampDriver.TimestampFloorWithOffsetMethod floor;
+    private final long offset;
+    private final int stride;
+    private final char unit;
+
+    public TimestampFloorOffsetFunction(Function arg, char unit, int stride, long offset, int timestampType) {
+        super(timestampType);
+        this.arg = arg;
+        this.stride = stride;
+        this.offset = offset;
+        this.unit = unit;
+        floor = this.timestampDriver.getTimestampFloorWithOffsetMethod(unit);
     }
 
     @Override
-    public void clear() {
-        this.value = Numbers.LONG_NULL;
+    public Function getArg() {
+        return arg;
     }
 
     @Override
     public long getTimestamp(Record rec) {
-        return value;
-    }
-
-    @Override
-    public boolean isNonDeterministic() {
-        return true;
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
-
-    @Override
-    public boolean isThreadSafe() {
-        return true;
+        final long ts = arg.getTimestamp(rec);
+        return ts == Numbers.LONG_NULL ? Numbers.LONG_NULL : floor.floor(ts, stride, offset);
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("?::timestamp");
+        sink.val(TimestampFloorFunctionFactory.NAME).val("('");
+        sink.val(stride);
+        sink.val(unit).val("',");
+        sink.val(getArg());
+        if (offset != 0) {
+            sink.val(",'").val(Timestamps.toString(offset)).val('\'');
+        }
+        sink.val(')');
     }
 }

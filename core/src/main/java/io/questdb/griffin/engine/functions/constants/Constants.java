@@ -82,7 +82,8 @@ public final class Constants {
         nullConstants.extendAndSet(ColumnType.SYMBOL, SymbolConstant.NULL);
         nullConstants.extendAndSet(ColumnType.LONG, LongConstant.NULL);
         nullConstants.extendAndSet(ColumnType.DATE, DateConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.TIMESTAMP_MICRO, TimestampConstant.TIMESTAMP_MICRO_NULL);
+        nullConstants.extendAndSet(ColumnType.TIMESTAMP_NANO, TimestampConstant.TIMESTAMP_NANO_NULL);
         nullConstants.extendAndSet(ColumnType.BYTE, ByteConstant.ZERO);
         nullConstants.extendAndSet(ColumnType.SHORT, ShortConstant.ZERO);
         nullConstants.extendAndSet(ColumnType.CHAR, CharConstant.ZERO);
@@ -107,7 +108,8 @@ public final class Constants {
         typeConstants.extendAndSet(ColumnType.SYMBOL, SymbolTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.LONG, LongTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.DATE, DateTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.TIMESTAMP_MICRO, TimestampTypeConstant.TIMESTAMP_MS_CONSTANT);
+        typeConstants.extendAndSet(ColumnType.TIMESTAMP_NANO, TimestampTypeConstant.TIMESTAMP_NS_CONSTANT);
         typeConstants.extendAndSet(ColumnType.BYTE, ByteTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.SHORT, ShortTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.CHAR, CharTypeConstant.INSTANCE);

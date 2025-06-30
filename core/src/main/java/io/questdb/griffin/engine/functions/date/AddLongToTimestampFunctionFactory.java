@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -43,14 +44,15 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new AddLongFunc(args.getQuick(0), args.getQuick(1));
+        return new AddLongFunc(args.getQuick(0), args.getQuick(1), ColumnType.TIMESTAMP_MICRO);
     }
 
     private static class AddLongFunc extends TimestampFunction implements BinaryFunction {
         final Function left;
         final Function right;
 
-        public AddLongFunc(Function left, Function right) {
+        public AddLongFunc(Function left, Function right, int type) {
+            super(type);
             this.left = left;
             this.right = right;
         }

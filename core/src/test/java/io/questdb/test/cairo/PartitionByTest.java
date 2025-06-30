@@ -119,9 +119,9 @@ public class PartitionByTest {
     public void testAddCeilFloorNone() {
         TimestampDriver.PartitionAddMethod addMethod = PartitionBy.getPartitionAddMethod(ColumnType.TIMESTAMP, PartitionBy.NONE);
         Assert.assertNull(addMethod);
-        TimestampDriver.PartitionFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, PartitionBy.NONE);
+        TimestampDriver.TimestampFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, PartitionBy.NONE);
         Assert.assertNull(floorMethod);
-        TimestampDriver.PartitionCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, PartitionBy.NONE);
+        TimestampDriver.TimestampCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, PartitionBy.NONE);
         Assert.assertNull(ceilMethod);
     }
 
@@ -745,10 +745,10 @@ public class PartitionByTest {
         TimestampDriver.PartitionAddMethod addMethod = PartitionBy.getPartitionAddMethod(ColumnType.TIMESTAMP, partitionBy);
         Assert.assertNotNull(addMethod);
 
-        TimestampDriver.PartitionFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, partitionBy);
+        TimestampDriver.TimestampFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, partitionBy);
         Assert.assertNotNull(floorMethod);
 
-        TimestampDriver.PartitionCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, partitionBy);
+        TimestampDriver.TimestampCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, partitionBy);
         Assert.assertNotNull(ceilMethod);
 
         Assert.assertEquals(expectedNextPartitionTimestamp, addMethod.calculate(partitionTimestamp, 1));

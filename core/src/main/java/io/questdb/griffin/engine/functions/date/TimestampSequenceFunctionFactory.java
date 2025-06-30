@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -56,11 +57,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         if (args.getQuick(0).isConstant()) {
             final long start = args.getQuick(0).getTimestamp(null);
             if (start == Numbers.LONG_NULL) {
-                return TimestampConstant.NULL;
+                return TimestampConstant.TIMESTAMP_MICRO_NULL;
             }
-            return new TimestampSequenceFunction(start, args.getQuick(1));
+            return new TimestampSequenceFunction(start, args.getQuick(1), ColumnType.TIMESTAMP_MICRO);
         } else {
-            return new TimestampSequenceVariableFunction(args.getQuick(0), args.getQuick(1));
+            return new TimestampSequenceVariableFunction(args.getQuick(0), args.getQuick(1), ColumnType.TIMESTAMP_MICRO);
         }
     }
 
@@ -69,7 +70,8 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         private final long start;
         private long next;
 
-        public TimestampSequenceFunction(long start, Function longIncrement) {
+        public TimestampSequenceFunction(long start, Function longIncrement, int timestampType) {
+            super(timestampType);
             this.start = start;
             this.next = start;
             this.longIncrement = longIncrement;
@@ -114,7 +116,8 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         private final Function start;
         private long next;
 
-        public TimestampSequenceVariableFunction(Function start, Function longIncrement) {
+        public TimestampSequenceVariableFunction(Function start, Function longIncrement, int timestampType) {
+            super(timestampType);
             this.start = start;
             this.next = 0;
             this.longIncrement = longIncrement;

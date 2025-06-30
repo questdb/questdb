@@ -25,12 +25,13 @@
 package io.questdb.std.datetime.nanotime;
 
 
+import io.questdb.cairo.TimestampDateFormatFactory;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.datetime.DateFormat;
 
 import java.util.function.Function;
 
-public class NanosFormatFactory {
+public class NanosFormatFactory implements TimestampDateFormatFactory {
     private final static ThreadLocal<NanosFormatCompiler> tlCompiler = ThreadLocal.withInitial(NanosFormatCompiler::new);
     private static final Function<CharSequence, DateFormat> mapper = NanosFormatFactory::map;
     public static NanosFormatFactory INSTANCE = new NanosFormatFactory();
@@ -46,6 +47,7 @@ public class NanosFormatFactory {
      * @param pattern can be mutable and is not stored if same pattern already in cache.
      * @return compiled implementation of DateFormat
      */
+    @Override
     public DateFormat get(CharSequence pattern) {
         return cache.computeIfAbsent(pattern, mapper);
     }

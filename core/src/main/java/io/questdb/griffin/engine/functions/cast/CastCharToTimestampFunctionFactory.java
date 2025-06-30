@@ -53,7 +53,7 @@ public class CastCharToTimestampFunctionFactory implements FunctionFactory {
 
     private static class Func extends AbstractCastToTimestampFunction {
         public Func(Function arg) {
-            super(arg);
+            super(arg, ColumnType.TIMESTAMP_MICRO);
         }
 
         @Override

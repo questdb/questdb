@@ -91,8 +91,8 @@ public class TxReader implements Closeable, Mutable {
     protected long truncateVersion;
     protected long txn;
     private int baseOffset;
-    private TimestampDriver.PartitionCeilMethod partitionCeilMethod;
-    private TimestampDriver.PartitionFloorMethod partitionFloorMethod;
+    private TimestampDriver.TimestampCeilMethod partitionCeilMethod;
+    private TimestampDriver.TimestampFloorMethod partitionFloorMethod;
     private int partitionSegmentSize;
     private MemoryMR roTxMemBase;
     private long size;

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -46,7 +47,7 @@ public class CastFloatToTimestampFunctionFactory implements FunctionFactory {
 
     public static class CastFloatToTimestampFunction extends AbstractCastToTimestampFunction {
         public CastFloatToTimestampFunction(Function arg) {
-            super(arg);
+            super(arg, ColumnType.TIMESTAMP_MICRO);
         }
 
         @Override

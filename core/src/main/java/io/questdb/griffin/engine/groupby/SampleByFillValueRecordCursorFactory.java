@@ -74,6 +74,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             ObjList<Function> recordFunctions,
             @Transient IntList recordFunctionPositions,
             int timestampIndex,
+            int timestampType,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
@@ -113,6 +114,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     recordFunctions,
                     placeholderFunctions,
                     timestampIndex,
+                    timestampType,
                     timestampSampler,
                     timezoneNameFunc,
                     timezoneNameFuncPos,
@@ -166,7 +168,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     if (!Chars.isQuoted(fillNode.token)) {
                         throw SqlException.position(fillNode.position).put("Invalid fill value: '").put(fillNode.token).put("'. Timestamp fill value must be in quotes. Example: '2019-01-01T00:00:00.000Z'");
                     }
-                    return TimestampConstant.newInstance(timestampDriver.parseFloorConstant(fillNode.token));
+                    return TimestampConstant.newInstance(timestampDriver.parseFloorConstant(fillNode.token), type);
                 default:
                     throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
             }

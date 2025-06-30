@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -55,13 +55,13 @@ public class CastVarcharToTimestampFunctionFactory implements FunctionFactory {
 
     public static class Func extends AbstractCastToTimestampFunction {
         public Func(Function arg) {
-            super(arg);
+            super(arg, ColumnType.TIMESTAMP_MICRO);
         }
 
         @Override
         public long getTimestamp(Record rec) {
             try {
-                return MicrosTimestampDriver.INSTANCE.parseFloorLiteral(arg.getVarcharA(rec));
+                return timestampDriver.parseFloorLiteral(arg.getVarcharA(rec));
             } catch (NumericException e) {
                 return Numbers.LONG_NULL;
             }
