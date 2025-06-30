@@ -137,14 +137,12 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             @NotNull CharSink<?> sink
     ) {
         double d = array.getDouble(index);
-        if (d == Double.POSITIVE_INFINITY) {
-            sink.put("\"+Infinity\"");
-        } else if (d == Double.NEGATIVE_INFINITY) {
-            sink.put("\"-Infinity\"");
-        } else if (Double.isNaN(d)) {
-            sink.put("\"NaN\"");
+        if (Double.isFinite(d)) {
+            Numbers.append(sink, d);
         } else {
-            sink.put(d);
+            sink.put("\"");
+            Numbers.append(sink, d);
+            sink.put("\"");
         }
     }
 
