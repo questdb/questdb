@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
@@ -35,6 +36,8 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.test.tools.TestUtils.createSqlExecutionCtx;
 
 public class InsertAsSelectTest extends AbstractCairoTest {
     @Test
@@ -65,7 +68,6 @@ public class InsertAsSelectTest extends AbstractCairoTest {
             // insert as select
             execute("insert into target select * from append");
             drainWalQueue();
-
 
             // check
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -98,7 +100,7 @@ public class InsertAsSelectTest extends AbstractCairoTest {
                 startLatch.countDown();
                 startLatch.await();
 
-                for (int i = 0; i < 6; i++) {
+                for (int i = 0; i < 10; i++) {
                     execute("insert into target (ts) select ts from source");
                     drainWalQueue();
                     Os.sleep(10);
@@ -112,13 +114,16 @@ public class InsertAsSelectTest extends AbstractCairoTest {
         });
 
         Thread alterThread = new Thread(() -> {
-            try {
+            try (
+                    final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, bindVariableService, 1)
+            ) {
                 startLatch.countDown();
                 startLatch.await();
 
+
                 for (int i = 0; i < 3; i++) {
                     try {
-                        execute("alter table source add column new_col" + i + " int");
+                        execute("alter table source add column new_col" + i + " int", sqlExecutionContext);
                         Os.sleep(10);
                     } catch (Throwable e) {
                         LOG.info().$("Alter retry ").$(i).$(" failed with: ").$(e).$();
@@ -134,6 +139,6 @@ public class InsertAsSelectTest extends AbstractCairoTest {
         doneLatch.await();
         Assert.assertNull(insertException.get());
         drainWalQueue();
-        assertSql("count\n60\n", "select count(*) from target");
+        assertSql("count\n100\n", "select count(*) from target");
     }
 }
