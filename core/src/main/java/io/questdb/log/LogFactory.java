@@ -26,6 +26,7 @@ package io.questdb.log;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.Job;
 import io.questdb.mp.MPSequence;
@@ -1034,6 +1035,11 @@ public class LogFactory implements Closeable {
 
         @Override
         public LogRecord $ts(long x) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $ts(TimestampDriver driver, long x) {
             return this;
         }
 

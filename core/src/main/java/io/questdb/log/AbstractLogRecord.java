@@ -24,6 +24,8 @@
 
 package io.questdb.log;
 
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.network.Net;
@@ -31,7 +33,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
@@ -333,6 +334,12 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $ts(TimestampDriver driver, long x) {
+        sink().putISODate(driver, x);
+        return this;
+    }
+
+    @Override
     public LogRecord $uuid(long lo, long hi) {
         Numbers.appendUuid(lo, hi, this);
         return this;
@@ -387,7 +394,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
 
     @Override
     public LogRecord microTime(long x) {
-        TimestampFormatUtils.appendDateTimeUSec(sink(), x);
+        MicrosTimestampDriver.INSTANCE.append(sink(), x);
         return this;
     }
 

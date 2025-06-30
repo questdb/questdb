@@ -5496,7 +5496,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         reader
                 );
             } else {
-                intrinsicModel = whereClauseParser.getEmpty();
+                intrinsicModel = whereClauseParser.getEmpty(
+                        reader.getMetadata().getTimestampType(),
+                        reader.getPartitionedBy()
+                );
             }
 
             // When we run materialized view refresh we want to restrict queries to the base table
@@ -5566,7 +5569,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             dfcFactoryMeta
                     );
                 }
-                intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
+                intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition();
             } else {
                 if (model.isForceBackwardScan()) {
                     dfcFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);

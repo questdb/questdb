@@ -30,7 +30,6 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -38,6 +37,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -117,6 +117,11 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     }
 
     @Override
+    public int getDefaultColumnTypeForTimestamp() {
+        return ColumnType.TIMESTAMP_MICRO;
+    }
+
+    @Override
     public int getDefaultPartitionBy() {
         return PartitionBy.DAY;
     }
@@ -192,8 +197,8 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     }
 
     @Override
-    public LineTcpTimestampAdapter getTimestampAdapter() {
-        return LineTcpTimestampAdapter.DEFAULT_TS_INSTANCE;
+    public byte getTimestampUnit() {
+        return CommonUtils.TIMESTAMP_UNIT_NANOS;
     }
 
     @Override

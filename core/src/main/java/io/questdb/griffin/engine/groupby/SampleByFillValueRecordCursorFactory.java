@@ -28,17 +28,31 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.constants.*;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.FloatConstant;
+import io.questdb.griffin.engine.functions.constants.IPv4Constant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.groupby.InterpolationGroupByFunction;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.*;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.griffin.SqlKeywords.*;
@@ -82,6 +96,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
         );
         try {
             final ObjList<Function> placeholderFunctions = createPlaceholderFunctions(
+                    ColumnType.getTimestampDriver(base.getMetadata().getTimestampType()),
                     groupByFunctions,
                     recordFunctions,
                     recordFunctionPositions,
@@ -124,7 +139,13 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
         sink.child(base);
     }
 
-    static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type, ExpressionNode fillNode) throws SqlException {
+    static Function createPlaceHolderFunction(
+            TimestampDriver timestampDriver,
+            IntList recordFunctionPositions,
+            int index,
+            int type,
+            ExpressionNode fillNode
+    ) throws SqlException {
         try {
             switch (ColumnType.tagOf(type)) {
                 case ColumnType.INT:
@@ -145,8 +166,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     if (!Chars.isQuoted(fillNode.token)) {
                         throw SqlException.position(fillNode.position).put("Invalid fill value: '").put(fillNode.token).put("'. Timestamp fill value must be in quotes. Example: '2019-01-01T00:00:00.000Z'");
                     }
-                    long ts = IntervalUtils.parseFloorPartialTimestamp(fillNode.token, 1, fillNode.token.length() - 1);
-                    return TimestampConstant.newInstance(ts);
+                    return TimestampConstant.newInstance(timestampDriver.parseFloorConstant(fillNode.token));
                 default:
                     throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
             }
@@ -157,6 +177,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
 
     @NotNull
     static ObjList<Function> createPlaceholderFunctions(
+            TimestampDriver timestampDriver,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             @Transient IntList recordFunctionPositions,
@@ -186,7 +207,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     groupByFunctions.set(fillIndex - 1, interpolation);
                     recordFunctions.set(i, interpolation);
                 } else {
-                    placeholderFunctions.add(createPlaceHolderFunction(recordFunctionPositions, i, function.getType(), fillNode));
+                    placeholderFunctions.add(createPlaceHolderFunction(timestampDriver, recordFunctionPositions, i, function.getType(), fillNode));
                 }
             } else {
                 placeholderFunctions.add(function);

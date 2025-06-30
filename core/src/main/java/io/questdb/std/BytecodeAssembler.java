@@ -72,8 +72,8 @@ public class BytecodeAssembler {
     private static final int lstore_1 = 0x40;
     private static final int lstore_2 = 0x41;
     private static final int lstore_3 = 0x42;
-    private static final int sipush = 0x11;
     private static final int new_ = 0xbb;
+    private static final int sipush = 0x11;
     private final ObjIntHashMap<Class<?>> classCache = new ObjIntHashMap<>();
     private final Utf8Appender utf8Appender = new Utf8Appender();
     private final CharSequenceIntHashMap utf8Cache = new CharSequenceIntHashMap();
@@ -240,6 +240,11 @@ public class BytecodeAssembler {
 
     public int getPoolCount() {
         return poolCount;
+    }
+
+    public void getStatic(int index) {
+        putByte(178);
+        putShort(index);
     }
 
     public void getfield(int index) {

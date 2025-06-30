@@ -641,7 +641,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             case ColumnType.TIMESTAMP:
                 l = rec.getTimestamp(columnIndex);
                 if (l != Numbers.LONG_NULL) {
-                    response.putAscii('"').putISODate(l).putAscii('"');
+                    response.putAscii('"').putISODate(ColumnType.getTimestampDriver(columnType), l).putAscii('"');
                 }
                 break;
             case ColumnType.SHORT:
