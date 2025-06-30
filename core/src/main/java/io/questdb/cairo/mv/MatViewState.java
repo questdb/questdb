@@ -49,7 +49,6 @@ import static io.questdb.TelemetrySystemEvent.*;
 public class MatViewState implements QuietCloseable {
     public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_PERIOD_MSG_TYPE = 2;
-    public static final int MAT_VIEW_STATE_FORMAT_EXTRA_REFRESH_TYPE_MSG_TYPE = 3;
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE = 1;
     public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
     // used to avoid concurrent refresh runs
