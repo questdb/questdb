@@ -790,6 +790,12 @@ public class ArrayTest extends AbstractCairoTest {
                     "SELECT arr[i -> i > 1.0] FROM tango");
             assertSql("[]\n[22.0,21.0,]\n[]\n",
                     "SELECT arr2[1, i -> i > 20.0] FROM tango");
+            assertSql("[]\n[2.0,3.0,4.0]\n[10.0,9.0,8.0]\n",
+                    "SELECT arr[x() > 1.0] FROM tango");
+            assertSql("[]\n[2.0,3.0,4.0]\n[10.0,9.0,8.0]\n",
+                    "SELECT arr[i -> i > 1.0] FROM tango");
+            assertSql("[]\n[[22.0,21.0,23.0,24.0]]\n\n[[]]",
+                    "SELECT arr2[2, i -> i > 20.0] FROM tango");
         });
     }
 
