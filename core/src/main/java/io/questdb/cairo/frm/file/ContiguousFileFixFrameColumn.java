@@ -157,10 +157,11 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                 ff.close(fd);
                 fd = -1;
             }
-            if (!recycleBin.isClosed()) {
+            closed = true;
+
+            if (recycleBin != null && !recycleBin.isClosed()) {
                 recycleBin.put(this);
             }
-            closed = true;
         }
     }
 

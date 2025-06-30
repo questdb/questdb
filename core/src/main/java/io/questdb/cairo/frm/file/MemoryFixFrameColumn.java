@@ -55,7 +55,7 @@ public class MemoryFixFrameColumn implements FrameColumn {
     public void close() {
         if (!closed) {
             closed = true;
-            if (!recycleBin.isClosed()) {
+            if (recycleBin != null && !recycleBin.isClosed()) {
                 recycleBin.put(this);
             }
         }

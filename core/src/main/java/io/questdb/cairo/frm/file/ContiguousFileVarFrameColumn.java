@@ -257,13 +257,13 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 ff.close(dataFd);
                 dataFd = -1;
             }
+            closed = true;
 
             if (recycleBin != null && !recycleBin.isClosed()) {
                 appendOffsetRowCount = 0;
                 dataAppendOffsetBytes = 0;
                 recycleBin.put(this);
             }
-            closed = true;
         }
     }
 

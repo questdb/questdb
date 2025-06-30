@@ -55,10 +55,10 @@ public class MemoryVarFrameColumn implements FrameColumn {
     @Override
     public void close() {
         if (!closed) {
-            if (!recycleBin.isClosed()) {
+            closed = true;
+            if (recycleBin != null && !recycleBin.isClosed()) {
                 recycleBin.put(this);
             }
-            closed = true;
         }
     }
 
