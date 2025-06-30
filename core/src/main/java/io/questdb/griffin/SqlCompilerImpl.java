@@ -470,6 +470,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @Override
+    public RecordCursorFactory generateInsertSelectWithRetries(
+            InsertModel insertModel,
+            @Transient SqlExecutionContext executionContext,
+            boolean generateProgressLogger
+    ) throws SqlException {
+        QueryModel queryModel = insertModel.getQueryModel();
+        int remainingRetries = maxRecompileAttempts;
+        for (; ; ) {
+            try {
+                return generateSelectOneShot(queryModel, executionContext, generateProgressLogger);
+            } catch (TableReferenceOutOfDateException e) {
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(0).put("too many ").put(e.getFlyweightMessage());
+                }
+                LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).I$();
+                clearExceptSqlText();
+                lexer.restart();
+                queryModel = compileExecutionModel(executionContext).getQueryModel();
+                insertModel.setQueryModel(queryModel);
+            }
+        }
+    }
+
+    @Override
     public RecordCursorFactory generateSelectWithRetries(
             @Transient QueryModel initialQueryModel,
             @Transient SqlExecutionContext executionContext,
@@ -2441,9 +2465,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         RecordCursorFactory factory = null;
 
         try (TableRecordMetadata writerMetadata = executionContext.getMetadataForWrite(tableToken)) {
-            QueryModel queryModel = model.getQueryModel();
             final long metadataVersion = writerMetadata.getMetadataVersion();
-            factory = generateSelectWithRetries(queryModel, executionContext, true);
+            factory = generateInsertSelectWithRetries(model, executionContext, true);
             final RecordMetadata cursorMetadata = factory.getMetadata();
             // Convert sparse writer metadata into dense
             final int writerTimestampIndex = writerMetadata.getTimestampIndex();

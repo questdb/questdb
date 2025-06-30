@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Rnd;
@@ -146,6 +147,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public void execute(Operation op, SqlExecutionContext executionContext) throws SqlException {
             delegate.execute(op, executionContext);
+        }
+
+        @Override
+        public RecordCursorFactory generateInsertSelectWithRetries(InsertModel queryModel, SqlExecutionContext executionContext, boolean generateProgressLogger) throws SqlException {
+            return delegate.generateInsertSelectWithRetries(queryModel, executionContext, generateProgressLogger);
         }
 
         @Override
