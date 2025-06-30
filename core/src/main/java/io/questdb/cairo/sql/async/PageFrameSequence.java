@@ -81,6 +81,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private int frameCount;
     private PageFrameCursor frameCursor;
     private long id;
+    // todo: this has to be a join record
     private PageFrameMemoryRecord localRecord;
     // Local reduce task used when there is no slots in the queue to dispatch tasks.
     private PageFrameReduceTask localTask;
